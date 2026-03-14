@@ -538,11 +538,13 @@ impl Renderer {
 
     fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
         let pr = node.padding_rect;
-        let pw = pr.w as i32;
-        let ph = pr.h as i32;
+        let sc = self.scale;
+        // Work in physical pixels: scale logical coords/sizes to match the pixmap.
+        let pw = (pr.w * sc) as i32;
+        let ph = (pr.h * sc) as i32;
         if pw <= 0 || ph <= 0 { return; }
-        let ox = (pr.x - sx) as i32;
-        let oy = (pr.y - sy) as i32;
+        let ox = ((pr.x - sx) * sc) as i32;
+        let oy = ((pr.y - sy) * sc) as i32;
 
         let stops = &node.style.gradient_stops;
 
