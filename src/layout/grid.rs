@@ -324,11 +324,21 @@ pub fn layout_grid(
 
         // Stretch align-self: set explicit height and re-layout
         if eff_align == AlignItems::Stretch && child.style.height.is_auto() {
-            let css_h = (cell_h
-                - crbox.margin_top - crbox.margin_bottom
-                - crbox.padding_top - crbox.padding_bottom
-                - crbox.border_top  - crbox.border_bottom)
-                .max(0.0);
+            // Compute the height value to assign to child.style.height.
+            // resolve_box will later interpret this through box-sizing:
+            //   border-box → subtracts padding+border from the assigned value
+            //   content-box → uses the assigned value as-is
+            // So for border-box we pass (cell_h - margins) and let resolve_box
+            // subtract padding+border. For content-box we subtract them ourselves.
+            let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
+                (cell_h - crbox.margin_top - crbox.margin_bottom).max(0.0)
+            } else {
+                (cell_h
+                    - crbox.margin_top - crbox.margin_bottom
+                    - crbox.padding_top - crbox.padding_bottom
+                    - crbox.border_top  - crbox.border_bottom)
+                    .max(0.0)
+            };
             let saved_h = child.style.height.clone();
             child.style.height = CssLength::Px(css_h);
             engine.layout_box(child, span_w, ix, iy, font_px, root_font_px);

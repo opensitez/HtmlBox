@@ -15,9 +15,7 @@ const SCROLLBAR_WIDTH: f32 = 10.0;
 pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
-    /// HiDPI scale factor (physical pixels / logical pixels).  Default 1.0.
-    /// Set this to `window.scale_factor() as f32` before each render call.
-    pub scale: f32,
+    scale: f32,
 }
 
 impl Renderer {
@@ -37,6 +35,9 @@ impl Renderer {
 
     /// Render the full document onto a pixmap.
     ///
+    /// `scale` — HiDPI scale factor (physical pixels / logical pixel); pass the value
+    /// provided by `Platform::render`.
+    ///
     /// `caret_info` — `Some((box_ptr, local_byte_offset))` where `box_ptr` is a raw pointer
     /// to the `HtmlBox` that owns the caret and `local_byte_offset` is the byte index within
     /// that box's flat text.  Mirrors C++ `Render(... caretPos, caretVisible, hasFocus)`.
@@ -44,6 +45,7 @@ impl Renderer {
         &mut self,
         doc:          &Document,
         pixmap:       &mut Pixmap,
+        scale:        f32,
         scroll_x:     f32,
         scroll_y:     f32,
         sel_start:    Option<usize>,
@@ -52,6 +54,7 @@ impl Renderer {
         caret_visible: bool,
         has_focus:    bool,
     ) {
+        self.scale = scale;
         pixmap.fill(tiny_skia::Color::WHITE);
         // Clip rect in logical pixels (layout coordinates).
         let w = pixmap.width()  as f32 / self.scale;

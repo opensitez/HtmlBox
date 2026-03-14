@@ -32,7 +32,7 @@ fn test_nested_em_scaling() {
     "#;
     let doc = parse_and_layout(html, 800.0);
     
-    let inner = find_box(&doc.root, &|b| b.id == "inner").expect("inner div not found");
+    let inner = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "inner").unwrap_or(false)).expect("inner div not found");
     // Outer div resolved to 32px. Inner div resolves 2em against 32px -> 64px.
     assert_eq!(inner.style.font_size, CssLength::Px(64.0));
 }
