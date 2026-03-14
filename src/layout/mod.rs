@@ -360,6 +360,20 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let layout_w = constrained_w.unwrap_or(containing_w);
     engine.layout_box(node, layout_w, 0.0, 0.0, font_px, root_font_px);
 
+    // Shrink-to-fit: width:auto absolutely-positioned elements wrap their content
+    // (CSS 2.1 §10.3.7), just like floats — but only when width is not already
+    // constrained by having both left and right set.
+    if constrained_w.is_none() && node.style.width.is_auto() {
+        let intrinsic_w = block::compute_intrinsic_width(node);
+        if intrinsic_w > 0.0 && intrinsic_w < layout_w {
+            let shrink_w = intrinsic_w
+                + node.resolved_pad_left  + node.resolved_pad_right
+                + node.resolved_border_left + node.resolved_border_right
+                + node.resolved_margin_left + node.resolved_margin_right;
+            engine.layout_box(node, shrink_w, 0.0, 0.0, font_px, root_font_px);
+        }
+    }
+
     // Now resolve position offsets
     let rbox = resolve_box(&node.style, font_px, containing_w, root_font_px);
     let res_l = node.style.left.resolve(font_px, containing_w, root_font_px);

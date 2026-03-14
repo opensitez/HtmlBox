@@ -76,10 +76,13 @@ fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
 /// Compute the intrinsic (max-content) width of a box that was laid out at a
 /// larger containing width.  Mirrors C++ ComputeIntrinsicWidth.
 pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
+    // Line positions are absolute; subtract the box's own content origin so we
+    // measure content-relative width (avoids double-counting padding/border).
+    let origin = node.content_rect.x;
     let mut w = 0.0f32;
     // Inline line widths
     for line in &node.line_cache {
-        let rw = line.x + line.width;
+        let rw = line.x + line.width - origin;
         if rw > w { w = rw; }
     }
     // Children

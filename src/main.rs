@@ -362,15 +362,12 @@ impl ApplicationHandler for App {
             ).expect("Failed to create window")
         );
 
-        let size    = window.inner_size();
-        let scale   = window.scale_factor() as f32;
-        self.scale  = scale;
-        self.width  = size.width  as f32 / scale;
-        self.height = size.height as f32 / scale;
-        self.renderer.scale = scale;
+        let platform = Platform::new_windowed(window.clone());
+        self.scale  = platform.scale_factor();
+        self.width  = platform.logical_width();
+        self.height = platform.logical_height();
         self.doc   = Some(load_html(DEMO_HTML, self.width));
 
-        let platform = Platform::new_windowed(window.clone());
         self.window   = Some(window);
         self.platform = Some(platform);
     }
@@ -391,21 +388,22 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Resized(size) => {
-                self.width  = size.width  as f32 / self.scale;
-                self.height = size.height as f32 / self.scale;
-                if let Some(p) = self.platform.as_mut() { p.resize(size.width, size.height); }
+                if let Some(p) = self.platform.as_mut() {
+                    p.resize(size.width, size.height);
+                    self.scale  = p.scale_factor();
+                    self.width  = p.logical_width();
+                    self.height = p.logical_height();
+                }
                 self.relayout();
                 self.request_redraw();
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.scale = scale_factor as f32;
-                self.renderer.scale = self.scale;
-                if let Some(w) = self.window.as_ref() {
-                    let size = w.inner_size();
-                    self.width  = size.width  as f32 / self.scale;
-                    self.height = size.height as f32 / self.scale;
-                    if let Some(p) = self.platform.as_mut() { p.resize(size.width, size.height); }
+                if let Some(p) = self.platform.as_mut() {
+                    let _ = scale_factor;
+                    self.scale  = p.scale_factor();
+                    self.width  = p.logical_width();
+                    self.height = p.logical_height();
                 }
                 self.relayout();
                 self.request_redraw();
@@ -508,13 +506,12 @@ impl ApplicationHandler for App {
                 let caret_visible        = self.editor.caret_visible && self.editor.has_focus;
                 let has_focus            = self.editor.has_focus;
                 let scroll_y             = self.scroll_y;
-                self.renderer.scale      = self.scale;
                 let renderer             = &mut self.renderer;
 
                 if let Some(platform) = self.platform.as_mut() {
-                    platform.render(|pixmap| {
+                    platform.render(|scale, pixmap| {
                         renderer.render(
-                            doc, pixmap,
+                            doc, pixmap, scale,
                             0.0, scroll_y,
                             sel_start, sel_end,
                             caret_info, caret_visible, has_focus,
