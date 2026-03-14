@@ -1,0 +1,25 @@
+[package]
+name = "rhtmledit"
+version = "0.1.0"
+edition = "2021"
+description = "HTML/CSS editor and renderer in Rust using tiny-skia"
+
+[lib]
+name = "rhtmledit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rhtmledit"
+path = "src/main.rs"
+
+[dependencies]
+tiny-skia = "0.11"
+winit = "0.30"
+softbuffer = "0.4"
+bytemuck = "1"
+raw-window-handle = "0.6"
+cosmic-text = "0.12"
+unicode-bidi = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+resvg = "0.44"
+encoding_rs = "0.8"
