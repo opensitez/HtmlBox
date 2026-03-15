@@ -248,29 +248,22 @@ pub struct HitResult {
 // entirely in absolute coordinates and does NOT subtract content_rect offsets
 // when recursing into children.
 
-fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
+fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitResult> {
     if matches!(node.style.display, Display::None) { return None; }
 
     // Adjust for this node's own scroll offset (rare — only scrollable boxes)
     let px = doc_pt.0 + node.scroll_left;
     let py = doc_pt.1 + node.scroll_top;
 
-    // Pass 0: If this box has inline content, check lines first.
-    // This ensures clicks on text return the block container's offset.
-    if !node.line_cache.is_empty() {
-        let flat = collect_flat_text(node);
-        let line = snap_to_line(&node.line_cache, py);
-        // Only return if the point is actually within the vertical range of the lines
-        // or if this is the deepest block container.
-        let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
-        return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: off });
-    }
+    // Note: inline-content hit test is performed after child checks so that
+    // block children (e.g. buttons) receive hits even when the parent has
+    // inline text nodes. See fallback handling below.
 
     // Pass 1: deepest child whose borderRect (absolute) contains the point
     for child in node.children.iter().rev() {
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
-            if let Some(r) = hit_test_impl(child, (px, py)) { return Some(r); }
+            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
             // Child contains the point but hit-test inside returned None
             // (e.g. leaf node with no text). Return the child itself.
             return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
@@ -284,7 +277,7 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
         if in_border { continue; }
         let m = &child.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
-            if let Some(r) = hit_test_impl(child, (px, py)) { return Some(r); }
+            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
         }
     }
 
@@ -295,13 +288,21 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
         if in_margin { continue; }
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w {
-            if let Some(r) = hit_test_impl(child, (px, py)) { return Some(r); }
+            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
         }
     }
 
     // Fallback: If no children hit, but this node contains the point
     let b = &node.border_rect;
     if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
+        // If this node has inline content, return the inline hit offset
+        // (caret/text hit). Otherwise select the node itself.
+            if !node.line_cache.is_empty() {
+            let flat = collect_flat_text(node);
+            let line = snap_to_line(&node.line_cache, py);
+            let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
+            return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: off });
+        }
         return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: 0 });
     }
 
@@ -339,9 +340,9 @@ fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
 ///
 /// The point is relative to the document origin (top-left of viewport content),
 /// before any scroll offset is applied — i.e. `(mouse_x + scroll_x, mouse_y + scroll_y)`.
-pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
+pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<HitResult> {
     // Coordinates are absolute — pass directly (root.content_rect is always 0,0)
-    hit_test_impl(root, doc_pt)
+    hit_test_impl(root, doc_pt, button)
 }
 
 /// Map a (box_ptr, local_byte_offset) back to a document-space (x, y) point
@@ -456,17 +457,17 @@ fn caret_point_in_box(
 }
 
 /// Find the deepest box at a document-space point.
-pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32)) -> *const HtmlBox {
-    deepest_box_at(root, doc_pt).unwrap_or(root as *const HtmlBox)
+pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> *const HtmlBox {
+    deepest_box_at(root, doc_pt, button).unwrap_or(root as *const HtmlBox)
 }
 
-fn deepest_box_at(node: &HtmlBox, pt: (f32, f32)) -> Option<*const HtmlBox> {
+fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<*const HtmlBox> {
     if matches!(node.style.display, Display::None) { return None; }
     let (px, py) = (pt.0 + node.scroll_left, pt.1 + node.scroll_top);
     for child in node.children.iter().rev() {
         let m = &child.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
-            if let Some(r) = deepest_box_at(child, (px, py)) { return Some(r); }
+            if let Some(r) = deepest_box_at(child, (px, py), _button) { return Some(r); }
             return Some(child as *const HtmlBox);
         }
     }
@@ -474,9 +475,9 @@ fn deepest_box_at(node: &HtmlBox, pt: (f32, f32)) -> Option<*const HtmlBox> {
 }
 
 /// Find a link URL at a document-space point, if any.
-pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
+pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<String> {
     // 1. Try hitting text content (inline runs)
-    if let Some(hit) = hit_test_impl(root, doc_pt) {
+    if let Some(hit) = hit_test_impl(root, doc_pt, button) {
         let node = unsafe { &*hit.box_ptr };
         // Find which run was hit
         for run in &node.inline_runs {
@@ -489,7 +490,7 @@ pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
     }
 
     // 2. Fallback: find the deepest box and search up for 'href' attribute
-    let box_ptr = hit_test_box_at(root, doc_pt);
+    let box_ptr = hit_test_box_at(root, doc_pt, button);
     if box_ptr.is_null() { return None; }
     find_href_up(root, box_ptr)
 }

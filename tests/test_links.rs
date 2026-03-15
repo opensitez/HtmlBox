@@ -33,13 +33,13 @@ fn link_hit_test() {
     let a_box = doc.root.query_selector_all("a")[0];
     let pt = offset_to_point(&doc.root, a_box as *const HtmlBox, 0, 0.0, 0.0).unwrap();
     
-    let url = hit_test_link(&doc.root, (pt.0 + 2.0, pt.1 + 2.0));
+    let url = hit_test_link(&doc.root, (pt.0 + 2.0, pt.1 + 2.0), 0);
     assert_eq!(url, Some("http://example.com".to_string()));
 }
 
 #[test]
 fn link_hit_test_no_link() {
     let doc = layout("<p>No link here</p>", 800.0);
-    let url = hit_test_link(&doc.root, (10.0, 10.0));
+    let url = hit_test_link(&doc.root, (10.0, 10.0), 0);
     assert!(url.is_none());
 }

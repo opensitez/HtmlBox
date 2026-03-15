@@ -1443,18 +1443,23 @@ impl Document {
 
     /// High-level mouse event entry point.
     pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
-        let mut redraw = self.editor.handle_mouse_event(&self.root, etype, doc_pt);
-
-        // Dispatch to custom listeners
+        // First dispatch to listeners so they can `prevent_default()`.
         let mut evt = crate::dom::HtmlEvent::new(etype);
         evt.doc_pos = doc_pt;
         evt.button  = button;
-        if let Some(hit) = crate::layout::hit_test::point_to_hit(&self.root, doc_pt) {
+        if let Some(hit) = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button) {
             evt.target = hit.box_ptr;
         }
 
-        if self.events.dispatch(&self.root, evt) {
-            redraw = true;
+        let (handled, evt) = self.events.dispatch_and_return(&self.root, evt);
+
+        let mut redraw = handled;
+
+        // Only perform editor/default behavior if not prevented by handlers.
+        if !evt.default_prevented {
+            if self.editor.handle_mouse_event(&self.root, etype, doc_pt, button) {
+                redraw = true;
+            }
         }
 
         redraw
@@ -1471,9 +1476,7 @@ impl Document {
         alt: bool,
         meta: bool,
     ) -> bool {
-        let mut redraw = self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl);
-
-        // Dispatch to custom listeners
+        // Dispatch to listeners first so they can prevent default handling.
         let mut evt = crate::dom::HtmlEvent::new(etype);
         evt.key_code = key_code;
         evt.char_code = ch;
@@ -1482,8 +1485,14 @@ impl Document {
         evt.alt_key = alt;
         evt.meta_key = meta;
 
-        if self.events.dispatch(&self.root, evt) {
-            redraw = true;
+        let (handled, evt) = self.events.dispatch_and_return(&self.root, evt);
+
+        let mut redraw = handled;
+
+        if !evt.default_prevented {
+            if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
+                redraw = true;
+            }
         }
 
         redraw

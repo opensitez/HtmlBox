@@ -198,7 +198,7 @@ impl ApplicationHandler for App {
                     _ => None,
                 };
                 if let Some(doc) = self.doc.as_mut() {
-                    if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false) {
+                    if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
                         LayoutEngine::new().layout(doc, self.width);
                         self.request_redraw();
                     }

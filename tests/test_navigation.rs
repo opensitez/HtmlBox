@@ -23,7 +23,7 @@ fn nav_offset_to_point_basic() {
 #[test]
 fn nav_point_to_hit_basic() {
     let doc = layout("<p>Hello</p>", 800.0);
-    let hit = point_to_hit(&doc.root, (5.0, 5.0));
+    let hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
     assert!(hit.is_some());
 }
 
@@ -32,8 +32,8 @@ fn nav_hit_test_distinct_offsets() {
     let doc = layout("<p>A</p><p>B</p><p>C</p>", 800.0);
     
     // We'll hit specific points and verify they hit different boxes or offsets
-    let hit_a = point_to_hit(&doc.root, (5.0, 5.0)).unwrap();
-    let hit_b = point_to_hit(&doc.root, (5.0, 30.0)).unwrap(); // assuming some line height
+    let hit_a = point_to_hit(&doc.root, (5.0, 5.0), 0).unwrap();
+    let hit_b = point_to_hit(&doc.root, (5.0, 30.0), 0).unwrap(); // assuming some line height
     
     assert!(hit_a.box_ptr != hit_b.box_ptr || hit_a.local_offset != hit_b.local_offset);
 }
@@ -42,7 +42,7 @@ fn nav_hit_test_distinct_offsets() {
 fn nav_caret_x_roundtrip() {
     let doc = layout("<p>Hello World</p>", 800.0);
     // Hit roughly in the middle of "Hello"
-    let hit = point_to_hit(&doc.root, (20.0, 5.0)).unwrap();
+    let hit = point_to_hit(&doc.root, (20.0, 5.0), 0).unwrap();
     let pt = offset_to_point(&doc.root, hit.box_ptr, hit.local_offset, 0.0, 0.0).unwrap();
     
     // X should be close to 20.0
@@ -53,8 +53,8 @@ fn nav_caret_x_roundtrip() {
 fn nav_wrapped_text_multiple_lines() {
     let doc = layout("<p>This is a long sentence that should wrap multiple times in a narrow viewport of one hundred pixels</p>", 100.0);
     
-    let hit_start = point_to_hit(&doc.root, (5.0, 5.0)).unwrap();
-    let hit_end   = point_to_hit(&doc.root, (5.0, 100.0)).unwrap();
+    let hit_start = point_to_hit(&doc.root, (5.0, 5.0), 0).unwrap();
+    let hit_end   = point_to_hit(&doc.root, (5.0, 100.0), 0).unwrap();
     
     let pt_start = offset_to_point(&doc.root, hit_start.box_ptr, hit_start.local_offset, 0.0, 0.0).unwrap();
     let pt_end   = offset_to_point(&doc.root, hit_end.box_ptr, hit_end.local_offset, 0.0, 0.0).unwrap();
@@ -67,8 +67,8 @@ fn nav_table_hit_test() {
     let doc = layout("<table><tr><td>A</td><td>B</td></tr></table>", 800.0);
     
     // A and B should be at different X
-    let hit_a = point_to_hit(&doc.root, (10.0, 10.0)).unwrap();
-    let hit_b = point_to_hit(&doc.root, (500.0, 10.0)).unwrap();
+    let hit_a = point_to_hit(&doc.root, (10.0, 10.0), 0).unwrap();
+    let hit_b = point_to_hit(&doc.root, (500.0, 10.0), 0).unwrap();
     
     let pt_a = offset_to_point(&doc.root, hit_a.box_ptr, hit_a.local_offset, 0.0, 0.0).unwrap();
     let pt_b = offset_to_point(&doc.root, hit_b.box_ptr, hit_b.local_offset, 0.0, 0.0).unwrap();
@@ -290,8 +290,8 @@ fn nav_click_returns_distinct_offsets_per_box() {
     assert!(xh > xa, "expected 'here' to be right of 'After', got xa={xa} xh={xh}");
 
     // Now click back at those screen positions
-    let hit_after = point_to_hit(&doc.root, (xa + 2.0, ya + 5.0));
-    let hit_here  = point_to_hit(&doc.root, (xh + 2.0, ya + 5.0));
+    let hit_after = point_to_hit(&doc.root, (xa + 2.0, ya + 5.0), 0);
+    let hit_here  = point_to_hit(&doc.root, (xh + 2.0, ya + 5.0), 0);
     assert!(hit_after.is_some());
     assert!(hit_here.is_some());
 
@@ -334,9 +334,9 @@ fn nav_click_on_each_paragraph_returns_distinct_offsets() {
     assert!(pt_b.1 != pt_c.1, "B and C should have different Y");
 
     // Click on each Y, verify ordering
-    let hit_a = point_to_hit(&doc.root, (pt_a.0, pt_a.1 + 2.0));
-    let hit_b = point_to_hit(&doc.root, (pt_b.0, pt_b.1 + 2.0));
-    let hit_c = point_to_hit(&doc.root, (pt_c.0, pt_c.1 + 2.0));
+    let hit_a = point_to_hit(&doc.root, (pt_a.0, pt_a.1 + 2.0), 0);
+    let hit_b = point_to_hit(&doc.root, (pt_b.0, pt_b.1 + 2.0), 0);
+    let hit_c = point_to_hit(&doc.root, (pt_c.0, pt_c.1 + 2.0), 0);
 
     assert!(hit_a.is_some());
     assert!(hit_b.is_some());
@@ -379,7 +379,7 @@ fn nav_wrapped_text_line_ordering() {
 fn nav_nested_divs_have_content() {
     // Deeply nested div should still produce a hittable point
     let doc = layout("<div><div><p>Inner paragraph</p></div></div>", 800.0);
-    let hit = point_to_hit(&doc.root, (5.0, 5.0));
+    let hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
     assert!(hit.is_some());
 }
 

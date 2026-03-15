@@ -206,6 +206,49 @@ impl EventListeners {
 
         handled || evt.default_prevented
     }
+
+    /// Dispatch and return the (possibly modified) event so callers can inspect
+    /// `evt.default_prevented` to decide whether to run default behavior.
+    pub fn dispatch_and_return(&self, root: &HtmlBox, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
+        let inner = self.inner.read().unwrap();
+        if inner.entries.is_empty() { return (false, evt); }
+        evt.root = root as *const HtmlBox;
+
+        let mut handled = false;
+        let target = evt.target;
+
+        if !target.is_null() {
+            // Build the ancestor path [root … parent, target]
+            let path = find_ancestor_path(root, target);
+
+            // Bubble: fire from target outward
+            for &box_ptr in path.iter().rev() {
+                let b = unsafe { &*box_ptr };
+                evt.current_target = box_ptr;
+                for entry in &inner.entries {
+                    if entry.event_type != evt.event_type { continue; }
+                    if !matches_simple_selector(b, &entry.selector) { continue; }
+                    (entry.callback)(&mut evt);
+                    handled = true;
+                    if evt.propagation_stopped { break; }
+                }
+                if evt.propagation_stopped { break; }
+            }
+        } else {
+            // No positional target: fire on root (keyboard, scroll, selection-change)
+            evt.current_target = root as *const HtmlBox;
+            for entry in &inner.entries {
+                if entry.event_type != evt.event_type { continue; }
+                let sel = entry.selector.as_str();
+                if sel != "*" && sel != "html" && sel != "body" { continue; }
+                (entry.callback)(&mut evt);
+                handled = true;
+                if evt.propagation_stopped { break; }
+            }
+        }
+
+        (handled, evt)
+    }
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -819,19 +862,19 @@ impl Editor {
     }
 
     /// Primary mouse event handler for selection/caret.
-    pub fn handle_mouse_event(&mut self, root: &HtmlBox, etype: HtmlEventType, doc_pt: (f32, f32)) -> bool {
+    pub fn handle_mouse_event(&mut self, root: &HtmlBox, etype: HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
         match etype {
             HtmlEventType::MouseDown => {
                 self.mouse_down = true;
                 self.has_focus  = true;
-                if let Some(hit) = point_to_hit(root, doc_pt) {
+                if let Some(hit) = point_to_hit(root, doc_pt, button) {
                     self.set_caret_from_hit(hit.box_ptr, hit.local_offset, false);
                     return true;
                 }
             }
             HtmlEventType::MouseMove => {
                 if self.mouse_down {
-                    if let Some(hit) = point_to_hit(root, doc_pt) {
+                    if let Some(hit) = point_to_hit(root, doc_pt, button) {
                         if self.caret_box == Some(hit.box_ptr) {
                             self.caret_local = hit.local_offset;
                             self.sel_start = self.sel_anchor.min(hit.local_offset);
