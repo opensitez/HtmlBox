@@ -1514,16 +1514,25 @@ fn rect_path(x: f32, y: f32, w: f32, h: f32) -> Option<tiny_skia::Path> {
 fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
     let r = r.min(w / 2.0).min(h / 2.0);
     if r <= 0.0 { return rect_path(x, y, w, h); }
+    let k = r * 0.5522848;  // kappa for quarter-circle approximation
     let mut pb = PathBuilder::new();
+    // Top edge
     pb.move_to(x + r, y);
     pb.line_to(x + w - r, y);
-    pb.cubic_to(x + w, y,        x + w, y,        x + w, y + r);
+    // Top-right corner
+    pb.cubic_to(x + w - r + k, y,          x + w, y + r - k,      x + w, y + r);
+    // Right edge
     pb.line_to(x + w, y + h - r);
-    pb.cubic_to(x + w, y + h,    x + w, y + h,    x + w - r, y + h);
+    // Bottom-right corner
+    pb.cubic_to(x + w, y + h - r + k,      x + w - r + k, y + h,  x + w - r, y + h);
+    // Bottom edge
     pb.line_to(x + r, y + h);
-    pb.cubic_to(x, y + h,        x, y + h,        x, y + h - r);
+    // Bottom-left corner
+    pb.cubic_to(x + r - k, y + h,          x, y + h - r + k,      x, y + h - r);
+    // Left edge
     pb.line_to(x, y + r);
-    pb.cubic_to(x, y,            x, y,            x + r, y);
+    // Top-left corner
+    pb.cubic_to(x, y + r - k,              x + r - k, y,           x + r, y);
     pb.close();
     pb.finish()
 }
