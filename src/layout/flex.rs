@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::layout::{LayoutEngine, ResolvedBox, resolve_box, layout_positioned, shift_rects};
+use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 
 /// Flexbox layout (CSS Flexible Box).
 /// Faithful port of C++ LayoutFlex.
@@ -13,10 +13,11 @@ pub fn layout_flex(
     font_px:      f32,
     root_font_px: f32,
 ) -> f32 {
-    let content_w = match rbox.content_width {
+    let mut content_w = match rbox.content_width {
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
     };
+    let shrink_to_fit = node.style.display == Display::InlineFlex && rbox.content_width.is_none();
     let content_x = x + rbox.margin_left + rbox.border_left + rbox.padding_left;
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
@@ -28,7 +29,7 @@ pub fn layout_flex(
     let wrap_reverse = node.style.flex_wrap == FlexWrap::WrapReverse;
 
     // Main axis size of container
-    let main_size: f32 = if is_row {
+    let mut main_size: f32 = if is_row {
         content_w
     } else if let Some(ch) = rbox.content_height {
         ch
@@ -37,14 +38,14 @@ pub fn layout_flex(
     };
 
     let gap_main  = if is_row {
-        node.style.column_gap.resolve(font_px, content_w, root_font_px)
+        node.style.column_gap.resolve_vp(font_px, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
     } else {
-        node.style.row_gap.resolve(font_px, content_w, root_font_px)
+        node.style.row_gap.resolve_vp(font_px, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
     };
     let gap_cross = if is_row {
-        node.style.row_gap.resolve(font_px, content_w, root_font_px)
+        node.style.row_gap.resolve_vp(font_px, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
     } else {
-        node.style.column_gap.resolve(font_px, content_w, root_font_px)
+        node.style.column_gap.resolve_vp(font_px, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
     };
 
     // ── Collect flex items ────────────────────────────────────────────────────
@@ -80,7 +81,7 @@ pub fn layout_flex(
         if child.tag == "#text" && child.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
 
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        let irb = resolve_box(&child.style, child_font, content_w, root_font_px);
+        let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
 
         // Outer extra = padding + border + margin on main axis
         let outer_extra = if is_row {
@@ -93,7 +94,7 @@ pub fn layout_flex(
 
         // Resolve flex-basis → basis_main (content-box size)
         let basis_main: f32 = if !child.style.flex_basis.is_auto() {
-            let raw = child.style.flex_basis.resolve(child_font, if is_row { content_w } else { 0.0 }, root_font_px);
+            let raw = child.style.flex_basis.resolve_vp(child_font, if is_row { content_w } else { 0.0 }, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 if is_row {
                     (raw - irb.border_left - irb.border_right - irb.padding_left - irb.padding_right).max(0.0)
@@ -104,14 +105,14 @@ pub fn layout_flex(
                 raw.max(0.0)
             }
         } else if is_row && !child.style.width.is_auto() {
-            let raw = child.style.width.resolve(child_font, content_w, root_font_px);
+            let raw = child.style.width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 (raw - irb.border_left - irb.border_right - irb.padding_left - irb.padding_right).max(0.0)
             } else {
                 raw.max(0.0)
             }
         } else if !is_row && !child.style.height.is_auto() {
-            let raw = child.style.height.resolve(child_font, 0.0, root_font_px);
+            let raw = child.style.height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 (raw - irb.border_top - irb.border_bottom - irb.padding_top - irb.padding_bottom).max(0.0)
             } else {
@@ -137,20 +138,20 @@ pub fn layout_flex(
         // Apply min/max constraints on main axis
         let min_main: f32 = if is_row {
             if !child.style.min_width.is_auto() {
-                child.style.min_width.resolve(child_font, content_w, root_font_px)
+                child.style.min_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
             } else { 0.0 }
         } else {
             if !child.style.min_height.is_auto() {
-                child.style.min_height.resolve(child_font, 0.0, root_font_px)
+                child.style.min_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h)
             } else { 0.0 }
         };
         let max_main: f32 = if is_row {
             if !child.style.max_width.is_none() {
-                child.style.max_width.resolve(child_font, content_w, root_font_px)
+                child.style.max_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
             } else { f32::MAX }
         } else {
             if !child.style.max_height.is_none() {
-                child.style.max_height.resolve(child_font, 0.0, root_font_px)
+                child.style.max_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h)
             } else { f32::MAX }
         };
         let hyp = basis_main.max(min_main).min(max_main);
@@ -173,6 +174,15 @@ pub fn layout_flex(
 
     // Sort by order (stable)
     items.sort_by(|a, b| a.order.cmp(&b.order));
+
+    // Shrink-to-fit for inline-flex with auto width: content_w = sum of item intrinsic sizes
+    if shrink_to_fit && is_row && !items.is_empty() {
+        let total: f32 = items.iter().map(|i| i.hyp + i.outer_extra).sum::<f32>()
+            + gap_main * items.len().saturating_sub(1) as f32;
+        let max_w = (containing_w - rbox.h_space()).max(0.0);
+        content_w = total.min(max_w);
+        main_size = content_w;
+    }
 
     if items.is_empty() {
         let ch = rbox.content_height.unwrap_or(0.0);
@@ -274,7 +284,7 @@ pub fn layout_flex(
     for item in &mut items {
         let child = &mut node.children[item.idx];
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        let irb = resolve_box(&child.style, child_font, content_w, root_font_px);
+        let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
 
         // Set CSS dimension to the resolved content-box main size
         if is_row {
@@ -461,7 +471,7 @@ pub fn layout_flex(
                 // Stretch: re-layout with explicit cross-axis size, mirrors C++
                 let child = &mut node.children[items[item_idx].idx];
                 let child_font = child.style.font_size_px(font_px, root_font_px);
-                let irb = resolve_box(&child.style, child_font, content_w, root_font_px);
+                let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
                 let item_containing = if is_row { items[item_idx].main_used + items[item_idx].outer_extra } else { content_w };
                 if is_row && child.style.height.is_auto() {
                     let cross_extra = irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom

@@ -8,7 +8,7 @@ use crate::css::apply_property;
 /// Parse HTML and run layout at given viewport width.
 pub fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     let mut doc = parse_html(html);
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, viewport_width);
     doc
 }

@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::layout::{LayoutEngine, ResolvedBox, resolve_box, layout_positioned, shift_rects};
+use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use crate::layout::block::apply_relative_offset;
 
 // ─── Border conflict resolution for border-collapse ───────────────────────────
@@ -166,7 +166,7 @@ pub fn layout_table(
     }
 
     let spacing = {
-        let raw = node.style.border_spacing_h.resolve(font_px, containing_w, root_font_px);
+        let raw = engine.res_len(&node.style.border_spacing_h, font_px, containing_w, root_font_px);
         // HTML default: tables get 2px spacing when no CSS border-spacing is set
         let raw = if raw == 0.0 && node.style.border_spacing_h.is_auto() { 2.0 } else { raw };
         if node.style.border_collapse { 0.0 } else { raw }
@@ -182,7 +182,7 @@ pub fn layout_table(
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
     let table_width = if !node.style.width.is_auto() {
-        node.style.width.resolve(font_px, containing_w, root_font_px)
+        engine.res_len(&node.style.width, font_px, containing_w, root_font_px)
     } else {
         content_w
     };
@@ -268,7 +268,7 @@ pub fn layout_table(
             for _ in 0..span {
                 if ci >= num_cols { break; }
                 if !col_box.style.width.is_auto() {
-                    col_widths[ci] = col_box.style.width.resolve(font_px, cell_area, root_font_px);
+                    col_widths[ci] = engine.res_len(&col_box.style.width, font_px, cell_area, root_font_px);
                     col_has_explicit[ci] = true;
                     explicit_count += 1;
                 }
@@ -285,7 +285,7 @@ pub fn layout_table(
                 if let Some((_, ci)) = slot.box_path {
                     let cell = &row_ref(node, &row_refs[0]).children[ci];
                     if !cell.style.width.is_auto() {
-                        col_widths[c] = cell.style.width.resolve(font_px, cell_area, root_font_px);
+                        col_widths[c] = engine.res_len(&cell.style.width, font_px, cell_area, root_font_px);
                         col_has_explicit[c] = true;
                         explicit_count += 1;
                     }
@@ -316,7 +316,7 @@ pub fn layout_table(
                 if let Some((row_idx, ci)) = slot.box_path {
                     let cell = &row_ref(node, &row_refs[row_idx]).children[ci];
                     if !cell.style.width.is_auto() {
-                        let w = cell.style.width.resolve(font_px, cell_area, root_font_px);
+                        let w = engine.res_len(&cell.style.width, font_px, cell_area, root_font_px);
                         if w > col_widths[c] {
                             if !col_has_explicit[c] { col_has_explicit[c] = true; explicit_count += 1; }
                             col_widths[c] = w;

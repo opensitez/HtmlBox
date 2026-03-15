@@ -17,8 +17,15 @@ pub use renderer::Renderer;
 
 /// High-level convenience: parse HTML, layout, ready to render.
 pub fn load_html(html: &str, viewport_width: f32) -> Document {
+    load_html_vp(html, viewport_width, 700.0)
+}
+
+/// Like `load_html` but with explicit viewport height (needed for `100vh` layouts).
+pub fn load_html_vp(html: &str, viewport_width: f32, viewport_height: f32) -> Document {
     let mut doc = parse_html(html);
-    let engine  = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
+    engine.viewport_w = viewport_width;
+    engine.viewport_h = viewport_height;
     engine.layout(&mut doc, viewport_width);
     doc
 }

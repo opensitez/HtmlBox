@@ -7,7 +7,7 @@ use rhtmledit::layout::LayoutEngine;
 
 fn layout(html: &str, width: f32) -> Document {
     let mut doc = parse_html(html);
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, width);
     doc
 }

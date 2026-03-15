@@ -23,9 +23,9 @@ pub fn layout_inline_block(
         None    => (containing_w - rbox.h_space()).max(0.0),
     };
     // Apply min/max-width
-    let min_w = node.style.min_width.resolve(font_px, containing_w, root_font_px);
+    let min_w = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
     let max_w = if node.style.max_width.is_none() { f32::MAX }
-                else { node.style.max_width.resolve(font_px, containing_w, root_font_px) };
+                else { engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px) };
     let content_w = raw_w.max(min_w).min(max_w);
 
     // Auto margin centering (CSS 2.1 §10.3.3)
@@ -113,7 +113,7 @@ pub fn layout_inline_block(
     }
 
     // ── 4. Line-by-line layout (float-aware) ──────────────────────────────────
-    let text_indent = node.style.text_indent.resolve(font_px, content_w, root_font_px);
+    let text_indent = engine.res_len(&node.style.text_indent, font_px, content_w, root_font_px);
     let is_rtl = node.style.direction == Direction::RTL;
 
     let mut cursor_y     = content_y;
@@ -164,7 +164,7 @@ pub fn layout_inline_block(
 
         // CSS line-height: apply only when explicitly set (not auto)
         if !node.style.line_height.is_auto() {
-            let lh_val = node.style.line_height.resolve(font_px, 0.0, root_font_px);
+            let lh_val = engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px);
             if lh_val > line_h {
                 let half = ((lh_val - line_h) / 2.0).floor();
                 line_asc  += half;
@@ -240,9 +240,9 @@ pub fn layout_inline_block(
                     .unwrap_or(cursor_y);
                 let raw_h = (bottom - content_y).max(0.0);
                 let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
-                let min_h = node.style.min_height.resolve(font_px, 0.0, root_font_px);
+                let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
                 let max_h = if node.style.max_height.is_none() { f32::MAX }
-                            else { node.style.max_height.resolve(font_px, 0.0, root_font_px) };
+                            else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
                 let content_h = content_h.max(min_h).min(max_h);
                 set_box_rects(node, content_x, content_y, content_w, content_h,
                               rbox, margin_left, margin_right);
@@ -309,9 +309,9 @@ pub fn layout_inline_block(
 
     // ── 5. Compute content height ──────────────────────────────────────────────
     let raw_h = (cursor_y - content_y).max(0.0);
-    let min_h = node.style.min_height.resolve(font_px, 0.0, root_font_px);
+    let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
     let max_h = if node.style.max_height.is_none() { f32::MAX }
-                else { node.style.max_height.resolve(font_px, 0.0, root_font_px) };
+                else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
     let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
     let content_h = content_h.max(min_h).min(max_h);
 
@@ -455,7 +455,7 @@ pub fn collect_items(
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let (ascent, descent) = approx_font_metrics(font_px, font_system);
-    let line_h = node.style.line_height.resolve(font_px, 0.0, root_font_px)
+    let line_h = engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px)
                      .max(font_px * 1.2);
 
     // ── Text node ─────────────────────────────────────────────────────────

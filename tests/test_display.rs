@@ -341,7 +341,7 @@ fn display_inline_block_layout_stable_on_relayout() {
            <span style='display:inline-block; width:80px; height:40px;' id='ib'>IB</span>\
          </div>",
     );
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 400.0);
     let (y1, h1) = {
         let ib = find_box(&doc.root, &|b: &HtmlBox| {

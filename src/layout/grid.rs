@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::layout::{LayoutEngine, ResolvedBox, resolve_box, layout_positioned, shift_rects};
+use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use crate::layout::block::apply_relative_offset;
 use crate::css::parse_single_track;
 
@@ -23,8 +23,8 @@ pub fn layout_grid(
     let content_x = x + rbox.margin_left + rbox.border_left + rbox.padding_left;
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
-    let col_gap = node.style.column_gap.resolve(font_px, content_w, root_font_px);
-    let row_gap = node.style.row_gap   .resolve(font_px, content_w, root_font_px);
+    let col_gap = engine.res_len(&node.style.column_gap, font_px, content_w, root_font_px);
+    let row_gap = engine.res_len(&node.style.row_gap, font_px, content_w, root_font_px);
 
     // Resolve column track sizes
     let mut col_tracks = resolve_track_sizes(&node.style.grid_template_columns,
@@ -231,7 +231,7 @@ pub fn layout_grid(
 
         let child = &mut node.children[idx];
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        let crbox = resolve_box(&child.style, child_font, span_w, root_font_px);
+        let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
         engine.layout_box(child, span_w, content_x, 0.0, font_px, root_font_px);
         let h = child.border_rect.h + crbox.margin_top + crbox.margin_bottom;
         // Distribute height across spanned rows
@@ -316,7 +316,7 @@ pub fn layout_grid(
 
         let child = &mut node.children[idx];
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        let crbox = resolve_box(&child.style, child_font, span_w, root_font_px);
+        let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
 
         // Handle justify-self / align-self
         let eff_justify = effective_justify_self(child, node.style.justify_items);
@@ -348,7 +348,7 @@ pub fn layout_grid(
         }
 
         // Re-read crbox after potential re-layout
-        let crbox = resolve_box(&child.style, child_font, span_w, root_font_px);
+        let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
         let cell_w = span_w;
 
         let dx_align = match eff_justify {

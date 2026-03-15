@@ -1,6 +1,6 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, has_block_children,
-                    shift_rects, layout_positioned, resolve_box};
+                    shift_rects, layout_positioned};
 
 // ─── Margin collapsing helpers ────────────────────────────────────────────────
 
@@ -235,9 +235,9 @@ pub fn layout_block_with_fc(
     };
 
     // Apply min/max-width constraints
-    let min_w = node.style.min_width.resolve(font_px, containing_w, root_font_px);
+    let min_w = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
     let max_w = if node.style.max_width.is_none() { f32::MAX }
-                else { node.style.max_width.resolve(font_px, containing_w, root_font_px) };
+                else { engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px) };
     let content_w = raw_w.max(min_w).min(max_w);
 
     // Auto margin centering (CSS 2.1 §10.3.3)
@@ -491,9 +491,9 @@ pub fn layout_block_with_fc(
     };
 
     // Apply min/max-height
-    let min_h = node.style.min_height.resolve(font_px, 0.0, root_font_px);
+    let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
     let max_h = if node.style.max_height.is_none() { f32::MAX }
-                else { node.style.max_height.resolve(font_px, 0.0, root_font_px) };
+                else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
     let content_h = content_h.max(min_h).min(max_h).max(0.0);
 
     // ─── Build rects ──────────────────────────────────────────────────────────

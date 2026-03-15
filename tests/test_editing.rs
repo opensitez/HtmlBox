@@ -8,7 +8,7 @@ use rhtmledit::parse_html;
 #[test]
 fn editing_toggle_bold() {
     let mut doc = parse_html("<p>Hello world</p>");
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
     
     let mut p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -27,7 +27,7 @@ fn editing_toggle_bold() {
 #[test]
 fn editing_toggle_italic() {
     let mut doc = parse_html("<p>Hello world</p>");
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
     
     let mut p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -43,7 +43,7 @@ fn editing_toggle_italic() {
 #[test]
 fn editing_set_font_size() {
     let mut doc = parse_html("<p>Hello world</p>");
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
     
     let mut p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -56,7 +56,7 @@ fn editing_set_font_size() {
 #[test]
 fn editing_set_text_color() {
     let mut doc = parse_html("<p>Hello world</p>");
-    let engine = LayoutEngine::new();
+    let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
     
     let mut p = query_selector_mut(&mut doc.root, "p").unwrap();

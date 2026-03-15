@@ -218,12 +218,25 @@ pub struct LayoutEngine {
 impl LayoutEngine {
     pub fn new() -> Self { Self { root_font_px: 16.0, viewport_w: 900.0, viewport_h: 700.0, font_system: None } }
 
+    /// Resolve a box's styles using the engine's viewport dimensions.
+    #[inline]
+    pub fn res_box(&self, style: &ComputedStyle, font_px: f32, containing_w: f32, root_font_px: f32) -> ResolvedBox {
+        resolve_box_vp(style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h)
+    }
+
+    /// Resolve a single CSS length using the engine's viewport dimensions.
+    #[inline]
+    pub fn res_len(&self, len: &CssLength, font_px: f32, containing: f32, root_font_px: f32) -> f32 {
+        len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
+    }
+
     /// Main entry point: layout the full document.
-    pub fn layout(&self, doc: &mut Document, viewport_width: f32) {
+    pub fn layout(&mut self, doc: &mut Document, viewport_width: f32) {
+        self.viewport_w = viewport_width;
         let root_font_px = self.root_font_px;
 
         // Set up root geometry
-        let rbox = resolve_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
+        let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
         doc.root.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
         doc.root.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
@@ -271,7 +284,7 @@ impl LayoutEngine {
         }
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-        let rbox = resolve_box(&node.style, font_px, containing_w, root_font_px);
+        let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
 
         match node.style.display {
             Display::Flex | Display::InlineFlex => {
@@ -304,7 +317,7 @@ impl LayoutEngine {
         root_font_px:   f32,
     ) -> (f32, f32, f32) {
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-        let _rbox = resolve_box(&node.style, font_px, max_w, root_font_px);
+        let _rbox = self.res_box(&node.style, font_px, max_w, root_font_px);
 
         let h = self.layout_box(node, max_w, x, y, parent_font_px, root_font_px);
         let w = node.border_rect.w;
@@ -337,9 +350,9 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
 
     // If both horizontal sides are set, we can compute width from stretch
     let constrained_w = if !left_auto && !right_auto {
-        let l = node.style.left.resolve(font_px, containing_w, root_font_px);
-        let r = node.style.right.resolve(font_px, containing_w, root_font_px);
-        let rbox_inner = resolve_box(&node.style, font_px, containing_w, root_font_px);
+        let l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+        let r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
         let w = (containing_w - l - r - rbox_inner.inner_h_space()).max(0.0);
         Some(w)
     } else {
@@ -347,9 +360,9 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     };
 
     let constrained_h = if !top_auto && !bot_auto {
-        let t = node.style.top.resolve(font_px, containing_h, root_font_px);
-        let b = node.style.bottom.resolve(font_px, containing_h, root_font_px);
-        let rbox_inner = resolve_box(&node.style, font_px, containing_w, root_font_px);
+        let t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+        let b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
         let h = (containing_h - t - b - rbox_inner.inner_v_space()).max(0.0);
         Some(h)
     } else {
@@ -375,11 +388,11 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     }
 
     // Now resolve position offsets
-    let rbox = resolve_box(&node.style, font_px, containing_w, root_font_px);
-    let res_l = node.style.left.resolve(font_px, containing_w, root_font_px);
-    let res_r = node.style.right.resolve(font_px, containing_w, root_font_px);
-    let res_t = node.style.top.resolve(font_px, containing_h, root_font_px);
-    let res_b = node.style.bottom.resolve(font_px, containing_h, root_font_px);
+    let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+    let res_l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+    let res_r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+    let res_t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+    let res_b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
 
     let x = if !left_auto {
         containing_rect.x + res_l + rbox.margin_left
