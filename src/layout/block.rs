@@ -89,7 +89,20 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
     for ch in &node.children {
         if matches!(ch.style.display, Display::None) { continue; }
         if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
-        if matches!(ch.style.display, Display::Inline) { continue; }
+        // Inline-display children: only measure text nodes that have been laid out
+        // as standalone items (e.g. flex children). Regular inline content is in line_cache.
+        if matches!(ch.style.display, Display::Inline) {
+            if ch.is_text_node() && !ch.line_cache.is_empty() {
+                // Text node flex child: its intrinsic width is its own line widths
+                let cw = compute_intrinsic_width(ch);
+                let total = cw
+                    + ch.resolved_pad_left + ch.resolved_pad_right
+                    + ch.resolved_border_left + ch.resolved_border_right
+                    + ch.resolved_margin_left + ch.resolved_margin_right;
+                if total > w { w = total; }
+            }
+            continue;
+        }
         // Block children with auto width: their marginRect is inflated to containing width.
         // Recurse to get real content width.
         let is_auto_width_block = ch.style.width.is_auto()
@@ -103,11 +116,14 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                 + ch.resolved_margin_left + ch.resolved_margin_right;
             if total > w { w = total; }
         } else {
-            let rw = ch.margin_rect.x + ch.margin_rect.w;
+            // Use origin-relative position for non-block children
+            let rw = (ch.margin_rect.x - origin) + ch.margin_rect.w;
             if rw > w { w = rw; }
         }
     }
-    w
+    // Add 1px epsilon to prevent floating-point rounding from causing spurious wraps
+    // when the layout re-runs at exactly the measured width.
+    if w > 0.0 { w + 1.0 } else { w }
 }
 
 // ─── Apply relative offset ────────────────────────────────────────────────────

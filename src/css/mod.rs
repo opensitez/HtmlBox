@@ -2856,6 +2856,13 @@ tr    { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
 th { font-weight: bold; text-align: center; }
 thead, tbody, tfoot, tr { vertical-align: middle; }
+button, input[type=submit], input[type=button], input[type=reset] {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding-left: 6px; padding-right: 6px; cursor: default;
+}
+input { display: inline-block; }
+select { display: inline-block; }
+textarea { display: inline-block; }
 fieldset { display: block; margin-left: 2px; margin-right: 2px; padding-top: 0.35em; padding-bottom: 0.625em; padding-left: 0.75em; padding-right: 0.75em; border: 2px groove #ccc; }
 legend { padding-left: 2px; padding-right: 2px; }
 bdo { unicode-bidi: bidi-override; }

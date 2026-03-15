@@ -1665,7 +1665,8 @@ fn approx_text_width_ls(text: &str, font_px: f32, letter_spacing: f32) -> f32 {
         let cw = if "iIlj1!|:;,.'`".contains(ch) { base * 0.45 }
                  else if "mwMW".contains(ch)       { base * 1.20 }
                  else if ch == ' '                  { base * 0.35 }
-                 else                               { base };
+                 else if ch.is_ascii()              { base }
+                 else                               { font_px * 1.0 };  // emoji / CJK: full square
         w += cw + letter_spacing;
     }
     w

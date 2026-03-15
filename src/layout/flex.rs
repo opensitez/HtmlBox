@@ -118,9 +118,20 @@ pub fn layout_flex(
                 raw.max(0.0)
             }
         } else {
-            // Content-based: lay out to get intrinsic size
+            // Content-based: lay out at full container width, then take the
+            // max-content (shrink-to-fit) size on the main axis.
+            // For row items with width:auto, using the stretched content_w would
+            // make every item look as wide as the container, breaking flex-wrap.
             engine.layout_box(child, content_w, content_x, content_y, font_px, root_font_px);
-            if is_row { child.content_rect.w } else { child.content_rect.h }
+            if is_row {
+                if child.style.width.is_auto() {
+                    crate::layout::block::compute_intrinsic_width(child)
+                } else {
+                    child.content_rect.w
+                }
+            } else {
+                child.content_rect.h
+            }
         };
 
         // Apply min/max constraints on main axis

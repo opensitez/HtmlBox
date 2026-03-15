@@ -85,11 +85,19 @@ pub fn layout_inline_block(
         collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i);
     }
     // Also collect from own text (text directly inside element)
-    if !node.text.is_empty() && !node.is_text_node() {
-        let mut tmp_node = HtmlBox::new("#text");
-        tmp_node.text = node.text.clone();
-        tmp_node.style = node.style.clone();
-        collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+    if !node.text.is_empty() {
+        if node.is_text_node() {
+            // Text node laid out directly (e.g. as a flex child): collect self,
+            // but skip whitespace-only nodes (handled by parent inline layout).
+            if !node.text.chars().all(|c| c.is_ascii_whitespace()) {
+                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+            }
+        } else {
+            let mut tmp_node = HtmlBox::new("#text");
+            tmp_node.text = node.text.clone();
+            tmp_node.style = node.style.clone();
+            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+        }
     }
 
     // ── 3. Save old lines for early-stop optimization ─────────────────────────
@@ -727,12 +735,12 @@ pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {
     let space_w = char_w * 0.35;
     let ts = (tab_size.max(1)) as f32;
     text.chars().map(|c| {
-        if c == '\t'                     { space_w * ts }
+        if c == '\t'                         { space_w * ts }
         else if "iIlj1!|:;,.'`".contains(c) { char_w * 0.45 }
-        else if "mwMW".contains(c)       { char_w * 1.20 }
-        else if c == ' '                 { space_w }
-        else if c.is_ascii()             { char_w }
-        else                             { char_w }        // CJK ≈ same for now
+        else if "mwMW".contains(c)           { char_w * 1.20 }
+        else if c == ' '                     { space_w }
+        else if c.is_ascii()                 { char_w }
+        else                                 { font_px * 1.0 }  // emoji / CJK: full square width
     }).sum()
 }
 
