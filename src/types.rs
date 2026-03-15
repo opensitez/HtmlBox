@@ -1417,6 +1417,7 @@ impl HtmlBox {
 
 pub use crate::css::Stylesheet;
 use crate::dom::{Editor, EventListeners};
+use crate::layout::LayoutEngine;
 
 /// The root document: box tree + stylesheet + metadata.
 #[derive(Debug, Clone)]
@@ -1460,6 +1461,14 @@ impl Document {
             if self.editor.handle_mouse_event(&self.root, etype, doc_pt, button) {
                 redraw = true;
             }
+        }
+
+        // If handlers or default behavior indicated a redraw is needed, run
+        // a layout pass now so the renderer sees updated line caches/inline
+        // runs immediately. Use the root's last known containing width.
+        if redraw {
+            let width = self.root.last_containing_width.max(0.0);
+            LayoutEngine::new().layout(self, width);
         }
 
         redraw
