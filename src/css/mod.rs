@@ -197,7 +197,7 @@ fn matches_part_with_context(
                 }
             }
         }
-        SelectorPart::PseudoElement(_) => true,
+        SelectorPart::PseudoElement(_) => false, // pseudo-elements never match real elements
         SelectorPart::Combinator(_)    => true,
     }
 }

@@ -1179,3 +1179,122 @@ fn cascade_heading_margins_collapse_with_siblings() {
 // cascade_media_query_reapply — SKIPPED: media conditions stored but not evaluated
 // cascade_media_print_type    — SKIPPED: MediaType not implemented in Rust cascade
 // cascade_media_screen_type   — SKIPPED: MediaType not implemented in Rust cascade
+
+// ============================================================
+// Pseudo-element selector isolation
+// ============================================================
+
+#[test]
+fn pseudo_element_webkit_scrollbar_not_applied_to_elements() {
+    // ::-webkit-scrollbar { width: 6px } must NOT set width:6px on html/body
+    let doc = parse_and_layout(
+        r#"<style>
+            ::-webkit-scrollbar { width: 6px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+        </style><p>Hello</p>"#,
+        900.0,
+    );
+    // The root (html/body) should be viewport-wide, not 6px
+    assert!(doc.root.content_rect.w > 100.0,
+        "root unexpectedly narrow ({}) — ::-webkit-scrollbar leaked to real elements",
+        doc.root.content_rect.w);
+    let body = find_box(&doc.root, &|b: &HtmlBox| b.tag == "body");
+    assert!(body.is_some(), "body not found");
+    assert!(body.unwrap().content_rect.w > 100.0,
+        "body width {} — ::-webkit-scrollbar leaked to body",
+        body.unwrap().content_rect.w);
+}
+
+#[test]
+fn pseudo_element_selector_does_not_match_real_elements() {
+    // Any unknown ::pseudo-element rule should be silently ignored for real elements
+    let doc = parse_and_layout(
+        r#"<style>
+            ::selection { background: blue; }
+            ::placeholder { color: red; }
+            div::marker { color: green; }
+            p { color: black; }
+        </style><div><p id="p1">Text</p></div>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "p1").unwrap_or(false));
+    assert!(p.is_some(), "p#p1 not found");
+    // p should have black color (from `p { color: black }`), not red from ::placeholder
+    assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 0),
+        "::placeholder color leaked to <p>");
+}
+
+// ============================================================
+// Viewport units (vh / vw)
+// ============================================================
+
+#[test]
+fn vh_resolves_to_viewport_height() {
+    // height: 100vh on a block should equal the viewport height passed to the engine
+    let doc = rhtmledit::load_html_vp(
+        r#"<div id="box" style="height:100vh; background:red;"></div>"#,
+        900.0, 600.0,
+    );
+    let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
+    assert!(b.is_some(), "box not found");
+    let h = b.unwrap().border_rect.h;
+    assert!((h - 600.0).abs() < 2.0,
+        "height:100vh should be 600px (viewport_h=600), got {h}");
+}
+
+#[test]
+fn vw_resolves_to_viewport_width() {
+    let doc = rhtmledit::load_html_vp(
+        r#"<div id="box" style="width:50vw; height:10px;"></div>"#,
+        800.0, 600.0,
+    );
+    let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
+    assert!(b.is_some(), "box not found");
+    let w = b.unwrap().border_rect.w;
+    assert!((w - 400.0).abs() < 2.0,
+        "width:50vw should be 400px (viewport_w=800), got {w}");
+}
+
+#[test]
+fn vh_on_flex_item_resolves_correctly() {
+    // A flex item with height:100vh in a column flex container should get full viewport height
+    let doc = rhtmledit::load_html_vp(
+        r#"<style>
+            body { display:flex; flex-direction:column; height:100vh; margin:0; }
+            #app  { flex:1; }
+        </style><div id="app"></div>"#,
+        900.0, 800.0,
+    );
+    let app = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "app").unwrap_or(false));
+    assert!(app.is_some(), "app not found");
+    let h = app.unwrap().border_rect.h;
+    assert!(h > 700.0,
+        "#app with flex:1 in 100vh body should fill ~800px, got {h}");
+}
+
+#[test]
+fn three_column_flex_layout_with_vh() {
+    // Regression: email-style three-column layout should lay out all three columns
+    let doc = rhtmledit::load_html_vp(
+        r#"<style>
+            body { display:flex; flex-direction:column; height:100vh; margin:0; }
+            .app  { display:flex; flex-direction:row; flex:1; }
+            .sidebar { width:200px; flex-shrink:0; background:#f5f5f5; }
+            .main    { flex:1; }
+        </style>
+        <div class="app">
+          <div id="sidebar" class="sidebar">Sidebar</div>
+          <div id="main"    class="main">Main</div>
+        </div>"#,
+        900.0, 800.0,
+    );
+    let sidebar = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "sidebar").unwrap_or(false));
+    let main    = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "main").unwrap_or(false));
+    assert!(sidebar.is_some(), "sidebar not found");
+    assert!(main.is_some(), "main not found");
+    let sw = sidebar.unwrap().border_rect.w;
+    let mw = main.unwrap().border_rect.w;
+    assert!((sw - 200.0).abs() < 2.0, "sidebar width should be 200px, got {sw}");
+    assert!((mw - 700.0).abs() < 2.0, "main should fill remaining 700px, got {mw}");
+}
