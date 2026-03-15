@@ -400,11 +400,18 @@ fn serialize_selector(sel: &CssSelector) -> String {
 }
 
 fn serialize_rule(rule: &CssRule) -> String {
-    let sel_text = rule.selectors.iter()
-        .map(serialize_selector)
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Prefer the verbatim original selector for a faithful roundtrip (preserves
+    // vendor pseudo-elements, whitespace, unknown syntax, etc.).  Fall back to
+    // reconstructing from parsed parts only for programmatically-added rules.
+    let sel_text = if !rule.original_selector.is_empty() {
+        rule.original_selector.clone()
+    } else {
+        rule.selectors.iter()
+            .map(serialize_selector)
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
 
     if sel_text.is_empty() {
         return String::new();

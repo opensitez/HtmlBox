@@ -310,15 +310,14 @@ impl Renderer {
             let first = &node.line_cache[0];
             let tx = first.x - sx;
             let ty = first.y - sy;
-            let line_h = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
-            let fc = node.style.color;
-            let ct_col = CTextColor::rgba(
-                fc.r, fc.g, fc.b,
-                ((fc.a as f32) * node.style.opacity) as u8,
-            );
+            let ps = node.style.before_style.as_deref().unwrap_or(&node.style);
+            let ps_font_px = { let f = ps.font_size.resolve(font_px, 0.0, 16.0); if f > 0.0 { f } else { font_px } };
+            let line_h = ps.line_height.resolve(ps_font_px, 0.0, 16.0).max(ps_font_px * 1.2);
+            let fc = ps.color;
+            let ct_col = CTextColor::rgba(fc.r, fc.g, fc.b, ((fc.a as f32) * ps.opacity) as u8);
             self.draw_text_run(
-                &node.style.before_content.clone(), tx, ty, font_px, line_h,
-                node.style.font_weight, node.style.font_style, ct_col, pixmap, eff_mask,
+                &node.style.before_content.clone(), tx, ty, ps_font_px, line_h,
+                ps.font_weight, ps.font_style, ct_col, pixmap, eff_mask,
             );
         }
 
@@ -337,15 +336,14 @@ impl Renderer {
             let last = &node.line_cache[node.line_cache.len() - 1];
             let tx = last.x - sx + last.width;
             let ty = last.y - sy;
-            let line_h = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
-            let fc = node.style.color;
-            let ct_col = CTextColor::rgba(
-                fc.r, fc.g, fc.b,
-                ((fc.a as f32) * node.style.opacity) as u8,
-            );
+            let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
+            let ps_font_px = { let f = ps.font_size.resolve(font_px, 0.0, 16.0); if f > 0.0 { f } else { font_px } };
+            let line_h = ps.line_height.resolve(ps_font_px, 0.0, 16.0).max(ps_font_px * 1.2);
+            let fc = ps.color;
+            let ct_col = CTextColor::rgba(fc.r, fc.g, fc.b, ((fc.a as f32) * ps.opacity) as u8);
             self.draw_text_run(
-                &node.style.after_content.clone(), tx, ty, font_px, line_h,
-                node.style.font_weight, node.style.font_style, ct_col, pixmap, eff_mask,
+                &node.style.after_content.clone(), tx, ty, ps_font_px, line_h,
+                ps.font_weight, ps.font_style, ct_col, pixmap, eff_mask,
             );
         }
 
@@ -684,7 +682,12 @@ impl Renderer {
                 let h_end   = sel_max.min(line_end);
                 if h_start < h_end {
                     let mut sel_paint = Paint::default();
-                    sel_paint.set_color_rgba8(200, 220, 255, 200);
+                    if let Some(ss) = node.style.selection_style.as_deref() {
+                        let bg = ss.background_color;
+                        sel_paint.set_color_rgba8(bg.r, bg.g, bg.b, if bg.a > 0 { bg.a } else { 200 });
+                    } else {
+                        sel_paint.set_color_rgba8(200, 220, 255, 200);
+                    }
                     if !line.visual_segments.is_empty() {
                         for vs in &line.visual_segments {
                             let seg_s = vs.logical_start;
@@ -1008,11 +1011,12 @@ impl Renderer {
         sy:     f32,
         mask:   Option<&Mask>,
     ) {
-        let font_px    = node.style.font_size_px(16.0, 16.0);
+        let ms         = node.style.marker_style.as_deref();
+        let font_px    = ms.map(|s| s.font_size_px(16.0, 16.0)).unwrap_or_else(|| node.style.font_size_px(16.0, 16.0));
         let first_line = match node.line_cache.first() { Some(l) => l.clone(), None => return };
         let inside     = node.style.list_style_position == ListStylePosition::Inside;
 
-        let c = node.style.color;
+        let c = ms.map(|s| s.color).unwrap_or(node.style.color);
         let mut paint = Paint::default();
         paint.set_color(c.to_tiny_skia());
         paint.anti_alias = true;

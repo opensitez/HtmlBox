@@ -611,9 +611,17 @@ pub struct ComputedStyle {
     // Object fit for replaced elements
     pub object_fit: ObjectFit,
 
-    // Pseudo-element content
+    // Pseudo-element content and style
     pub before_content: String,
     pub after_content:  String,
+    /// Full computed style for ::before (inherits from element, has its own declarations applied).
+    pub before_style:    Option<Box<ComputedStyle>>,
+    /// Full computed style for ::after.
+    pub after_style:     Option<Box<ComputedStyle>>,
+    /// Style for ::selection (background-color / color for selected text).
+    pub selection_style: Option<Box<ComputedStyle>>,
+    /// Style for ::marker (color / font / content for list markers).
+    pub marker_style:    Option<Box<ComputedStyle>>,
 
     // Caret and scrollbar theming
     pub caret_color:           Option<Color>,
@@ -1001,6 +1009,10 @@ impl Default for ComputedStyle {
 
             before_content: String::new(),
             after_content:  String::new(),
+            before_style:    None,
+            after_style:     None,
+            selection_style: None,
+            marker_style:    None,
 
             caret_color:           None,
             scrollbar_thumb_color: None,

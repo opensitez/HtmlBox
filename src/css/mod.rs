@@ -242,7 +242,14 @@ fn parse_nth_ab(expr: &str) -> (i32, i32) {
 // ─── CSS Rule ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum PseudoElement { None, Before, After }
+pub enum PseudoElement {
+    None,         // regular rule
+    Before,       // ::before
+    After,        // ::after
+    Selection,    // ::selection
+    Marker,       // ::marker
+    Ignored,      // ::first-line, ::first-letter, ::placeholder, unknown vendor pseudo-elements
+}
 
 impl Default for PseudoElement {
     fn default() -> Self { Self::None }
@@ -468,25 +475,29 @@ fn strip_css_comments(css: &str) -> String {
 /// Detect and strip `::before` / `::after` (and CSS2 `:before`/`:after`) from
 /// a selector string.  Returns (cleaned_selector, PseudoElement).
 fn strip_pseudo_element(sel: &str) -> (String, PseudoElement) {
-    // ::before / ::after
+    // :: double-colon pseudo-elements
     if let Some(pos) = sel.find("::") {
         let pe_str = sel[pos+2..].to_ascii_lowercase();
-        if pe_str.starts_with("before") {
-            let clean = format!("{}{}", &sel[..pos], &sel[pos+2+6..]).trim().to_string();
-            let clean = if clean.is_empty() { "*".to_string() } else { clean };
-            return (clean, PseudoElement::Before);
-        }
-        if pe_str.starts_with("after") {
-            let clean = format!("{}{}", &sel[..pos], &sel[pos+2+5..]).trim().to_string();
-            let clean = if clean.is_empty() { "*".to_string() } else { clean };
-            return (clean, PseudoElement::After);
-        }
+        let (kw_len, pe) =
+            if pe_str.starts_with("before")       { (6,  PseudoElement::Before)    }
+            else if pe_str.starts_with("after")    { (5,  PseudoElement::After)     }
+            else if pe_str.starts_with("selection"){ (9,  PseudoElement::Selection) }
+            else if pe_str.starts_with("marker")   { (6,  PseudoElement::Marker)    }
+            else if pe_str.starts_with("first-line")    { (10, PseudoElement::Ignored) }
+            else if pe_str.starts_with("first-letter")  { (12, PseudoElement::Ignored) }
+            else if pe_str.starts_with("placeholder")   { (11, PseudoElement::Ignored) }
+            else {
+                // Unknown vendor or other pseudo-element — ignore rule entirely
+                return (String::new(), PseudoElement::Ignored);
+            };
+        let clean = format!("{}{}", &sel[..pos], &sel[pos+2+kw_len..]).trim().to_string();
+        let clean = if clean.is_empty() { "*".to_string() } else { clean };
+        return (clean, pe);
     }
     // CSS2 single-colon :before / :after (not preceded by another colon)
     let sel_lower = sel.to_ascii_lowercase();
     for (kw, pe) in &[(":before", PseudoElement::Before), (":after", PseudoElement::After)] {
         if let Some(pos) = sel_lower.find(kw) {
-            // make sure it's not ::before
             if pos > 0 && sel.as_bytes()[pos-1] == b':' { continue; }
             let clean = format!("{}{}", &sel[..pos], &sel[pos+kw.len()..]).trim().to_string();
             let clean = if clean.is_empty() { "*".to_string() } else { clean };
@@ -2719,24 +2730,21 @@ fn apply_cascade_inner(
     }
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
-    let mut matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut matched:           Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut before_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut after_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut selection_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut marker_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
     for rule in &stylesheet.rules {
         for sel in &rule.selectors {
             if sel.matches_with_ancestors(root, child_index, sibling_count, ancestors) {
                 match rule.pseudo_element {
-                    PseudoElement::Before => {
-                        if let Some(content) = rule.declarations.get("content") {
-                            style.before_content = resolve_content_value(content);
-                        }
-                    }
-                    PseudoElement::After => {
-                        if let Some(content) = rule.declarations.get("content") {
-                            style.after_content = resolve_content_value(content);
-                        }
-                    }
-                    PseudoElement::None => {
-                        matched.push((rule.specificity, rule.declarations.clone()));
-                    }
+                    PseudoElement::Before     => before_matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::After      => after_matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::Selection  => selection_matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::Marker     => marker_matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::None       => matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::Ignored    => {}
                 }
                 break;
             }
@@ -2770,6 +2778,48 @@ fn apply_cascade_inner(
     style.font_size = CssLength::Px(font_px);
 
     root.style = style.clone();
+
+    // Build full ComputedStyle for ::before / ::after pseudo-elements.
+    // Each inherits from the element's computed style, then has its own declarations applied.
+    let build_pseudo_style = |matched: &mut Vec<(u32, HashMap<String, String>)>,
+                               base: &ComputedStyle,
+                               vars: &HashMap<String, String>|
+     -> Option<(String, Box<ComputedStyle>)> {
+        if matched.is_empty() { return None; }
+        matched.sort_by_key(|(sp, _)| *sp);
+        let mut ps = base.clone();
+        ps.before_style = None;   // pseudo-elements don't nest
+        ps.after_style  = None;
+        ps.before_content = String::new();
+        ps.after_content  = String::new();
+        let mut content = String::new();
+        for (_, decls) in matched.iter() {
+            for (prop, val) in decls {
+                let resolved = resolve_var_references(val, vars);
+                if prop == "content" {
+                    content = resolve_content_value(&resolved);
+                } else {
+                    apply_property(&mut ps, prop, &resolved);
+                }
+            }
+        }
+        Some((content, Box::new(ps)))
+    };
+
+    if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &stylesheet.variables) {
+        root.style.before_content = txt;
+        root.style.before_style   = Some(ps);
+    }
+    if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &stylesheet.variables) {
+        root.style.after_content = txt;
+        root.style.after_style   = Some(ps);
+    }
+    if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &stylesheet.variables) {
+        root.style.selection_style = Some(ps);
+    }
+    if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &stylesheet.variables) {
+        root.style.marker_style = Some(ps);
+    }
 
     // Build this box's AncestorInfo for children
     let my_info = AncestorInfo {

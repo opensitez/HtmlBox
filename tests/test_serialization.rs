@@ -563,3 +563,49 @@ fn empty_document() {
     // Either empty or just a root element tag; should not contain content
     assert!(!html.contains("undefined"));
 }
+
+#[test]
+fn unknown_pseudo_element_survives_roundtrip() {
+    // ::-webkit-scrollbar and other unknown pseudo-elements should be preserved
+    // verbatim through a parse → serialize cycle, just like browsers do.
+    use rhtmledit::html::serialize_html;
+    let html = r#"<html><head><style>
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+::cue { color: white; background: rgba(0,0,0,0.8); }
+</style></head><body><p>Hello</p></body></html>"#;
+
+    let doc = rhtmledit::load_html(html, 800.0);
+    let out = serialize_html(&doc);
+
+    assert!(out.contains("::-webkit-scrollbar"),
+        "`::-webkit-scrollbar` rule was dropped during serialization");
+    assert!(out.contains("::-webkit-scrollbar-track"),
+        "`::-webkit-scrollbar-track` rule was dropped");
+    assert!(out.contains("::-webkit-scrollbar-thumb"),
+        "`::-webkit-scrollbar-thumb` rule was dropped");
+    assert!(out.contains("::cue"),
+        "`::cue` rule was dropped");
+}
+
+#[test]
+fn known_pseudo_elements_survive_roundtrip() {
+    use rhtmledit::html::serialize_html;
+    let html = r#"<html><head><style>
+p::before { content: ">> "; color: red; }
+p::after  { content: " <<"; }
+::selection { background-color: yellow; }
+li::marker { color: blue; }
+p::first-line { font-size: 18px; }
+</style></head><body><p>Hi</p></body></html>"#;
+
+    let doc = rhtmledit::load_html(html, 800.0);
+    let out = serialize_html(&doc);
+
+    assert!(out.contains("p::before"),  "p::before lost");
+    assert!(out.contains("p::after"),   "p::after lost");
+    assert!(out.contains("::selection"),"::selection lost");
+    assert!(out.contains("li::marker"), "li::marker lost");
+    assert!(out.contains("p::first-line"), "p::first-line lost");
+}

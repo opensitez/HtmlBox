@@ -66,14 +66,19 @@ pub fn layout_inline_block(
     }
 
     // ── 1. Measure ::before / ::after pseudo-element widths ───────────────────
+    let pseudo_font_px = |ps: Option<&ComputedStyle>| -> f32 {
+        ps.and_then(|s| { let f = s.font_size.resolve(font_px, 0.0, root_font_px); if f > 0.0 { Some(f) } else { None } })
+          .unwrap_or(font_px)
+    };
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let before_w = if !node.style.before_content.is_empty() {
-        measure_text_width(&node.style.before_content, font_px, font_system)
+        let bfpx = pseudo_font_px(node.style.before_style.as_deref());
+        measure_text_width(&node.style.before_content, bfpx, font_system)
     } else { 0.0 };
-    // Need to re-get because it might have been consumed (borrow checker)
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let after_w = if !node.style.after_content.is_empty() {
-        measure_text_width(&node.style.after_content, font_px, font_system)
+        let afpx = pseudo_font_px(node.style.after_style.as_deref());
+        measure_text_width(&node.style.after_content, afpx, font_system)
     } else { 0.0 };
 
     // ── 2. Collect flat inline items from all inline children ─────────────────

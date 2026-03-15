@@ -326,6 +326,80 @@ fn pseudo_element_content() {
     assert!(after_box.is_some(), "p should have after_content from ::after rule");
 }
 
+#[test]
+fn pseudo_element_before_has_own_style() {
+    // ::before with its own color/font-weight should store a full ComputedStyle
+    let doc = load_html(
+        r#"<style>
+            p::before { content: ">> "; color: red; font-weight: bold; }
+        </style><p>Hello</p>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.tag == "p");
+    assert!(p.is_some(), "p not found");
+    let p = p.unwrap();
+    assert_eq!(p.style.before_content, ">> ", "before_content text");
+    let bs = p.style.before_style.as_deref();
+    assert!(bs.is_some(), "before_style should be Some — other declarations were dropped");
+    let bs = bs.unwrap();
+    assert_eq!(bs.color, Color::rgb(255, 0, 0), "::before color should be red");
+    assert_eq!(bs.font_weight, rhtmledit::types::FontWeight::Bold, "::before font-weight should be bold");
+}
+
+#[test]
+fn pseudo_element_after_has_own_style() {
+    let doc = load_html(
+        r#"<style>
+            span::after { content: " OK"; color: #00aa00; font-style: italic; }
+        </style><p><span id="s">Done</span></p>"#,
+        800.0,
+    );
+    let s = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "s").unwrap_or(false));
+    assert!(s.is_some(), "span not found");
+    let s = s.unwrap();
+    assert_eq!(s.style.after_content, " OK");
+    let as_ = s.style.after_style.as_deref();
+    assert!(as_.is_some(), "after_style should be Some");
+    let c = as_.unwrap().color;
+    assert_eq!((c.r, c.g, c.b), (0, 170, 0), "::after color should be #00aa00");
+    assert_eq!(as_.unwrap().font_style, rhtmledit::types::FontStyle::Italic);
+}
+
+#[test]
+fn pseudo_element_inherits_font_from_element() {
+    // When ::before has no explicit font-size, it should inherit from the element
+    let doc = load_html(
+        r#"<style>
+            p { font-size: 20px; }
+            p::before { content: ">> "; }
+        </style><p>Text</p>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.tag == "p");
+    assert!(p.is_some());
+    let p = p.unwrap();
+    assert_eq!(p.style.before_content, ">> ");
+    // before_style inherits font-size from element
+    let bs = p.style.before_style.as_deref();
+    assert!(bs.is_some(), "before_style should be set");
+    let f = bs.unwrap().font_size.resolve(16.0, 0.0, 16.0);
+    assert!((f - 20.0).abs() < 1.0, "::before should inherit font-size 20px, got {f}");
+}
+
+#[test]
+fn pseudo_element_does_not_nest() {
+    // before_style and after_style on a pseudo-element style should be None (no nesting)
+    let doc = load_html(
+        r#"<style>p::before { content: "X"; color: blue; }</style><p>Hi</p>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    if let Some(bs) = p.style.before_style.as_deref() {
+        assert!(bs.before_style.is_none(), "pseudo-element style should not have nested before_style");
+        assert!(bs.after_style.is_none(),  "pseudo-element style should not have nested after_style");
+    }
+}
+
 // ============================================================
 // Stylesheet struct: CSS variables in :root
 // ============================================================
@@ -383,3 +457,96 @@ fn background_shorthand_contain() {
     assert_eq!(div.style.background_size, BackgroundSize::Contain);
 }
 
+
+// ============================================================
+// ::selection pseudo-element
+// ============================================================
+
+#[test]
+fn selection_style_stored_on_element() {
+    let doc = load_html(
+        r#"<style>
+            ::selection { background-color: #ffcc00; color: #000000; }
+        </style><p id="p">Hello</p>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "p").unwrap_or(false));
+    assert!(p.is_some(), "p not found");
+    let ss = p.unwrap().style.selection_style.as_deref();
+    assert!(ss.is_some(), "::selection style should be stored on element");
+    let bg = ss.unwrap().background_color;
+    assert_eq!((bg.r, bg.g, bg.b), (255, 204, 0), "::selection background should be #ffcc00");
+}
+
+#[test]
+fn selection_style_per_element_override() {
+    // p::selection overrides ::selection for <p> elements only
+    let doc = load_html(
+        r#"<style>
+            ::selection          { background-color: blue; }
+            p::selection         { background-color: red; }
+        </style><p id="p">Text</p><div id="d">Other</div>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "p").unwrap_or(false));
+    let d = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "d").unwrap_or(false));
+    let p_bg = p.unwrap().style.selection_style.as_deref().map(|s| s.background_color);
+    let d_bg = d.unwrap().style.selection_style.as_deref().map(|s| s.background_color);
+    assert!(p_bg.is_some(), "p should have selection_style");
+    assert!(d_bg.is_some(), "div should have selection_style");
+    assert_eq!((p_bg.unwrap().r, p_bg.unwrap().g, p_bg.unwrap().b), (255, 0, 0),
+        "p::selection should be red");
+    assert_eq!((d_bg.unwrap().r, d_bg.unwrap().g, d_bg.unwrap().b), (0, 0, 255),
+        "div::selection should fall back to blue");
+}
+
+// ============================================================
+// ::marker pseudo-element
+// ============================================================
+
+#[test]
+fn marker_style_stored_on_list_item() {
+    let doc = load_html(
+        r#"<style>
+            li::marker { color: red; }
+        </style><ul><li id="li">Item</li></ul>"#,
+        800.0,
+    );
+    let li = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "li").unwrap_or(false));
+    assert!(li.is_some(), "li not found");
+    let ms = li.unwrap().style.marker_style.as_deref();
+    assert!(ms.is_some(), "::marker style should be stored on <li>");
+    let c = ms.unwrap().color;
+    assert_eq!((c.r, c.g, c.b), (255, 0, 0), "::marker color should be red");
+}
+
+// ============================================================
+// Ignored pseudo-elements don't leak styles
+// ============================================================
+
+#[test]
+fn first_line_does_not_apply_to_element() {
+    let doc = load_html(
+        r#"<style>p::first-line { font-size: 99px; }</style><p id="p">Text</p>"#,
+        800.0,
+    );
+    let p = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "p").unwrap_or(false));
+    assert!(p.is_some());
+    let fs = p.unwrap().style.font_size.resolve(16.0, 0.0, 16.0);
+    // ::first-line should not set font-size to 99px on the element itself
+    assert!(fs < 50.0, "::first-line font-size leaked to element: {fs}px");
+}
+
+#[test]
+fn placeholder_does_not_apply_to_element() {
+    let doc = load_html(
+        r#"<style>input::placeholder { color: hotpink; }</style>
+           <input id="inp" type="text">"#,
+        800.0,
+    );
+    let inp = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "inp").unwrap_or(false));
+    assert!(inp.is_some());
+    // color should NOT be hotpink (placeholder style must not leak to the input element)
+    let c = inp.unwrap().style.color;
+    assert_ne!((c.r, c.g, c.b), (255, 105, 180), "::placeholder color leaked to <input>");
+}
