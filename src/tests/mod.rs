@@ -6,3 +6,4 @@ pub mod test_layout_advanced;
 pub mod test_html;
 pub mod test_inheritance;
 pub mod test_grid;
+mod test_floats;

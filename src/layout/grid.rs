@@ -1,6 +1,7 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use crate::layout::block::apply_relative_offset;
+#[allow(unused_imports)]
 use crate::css::parse_single_track;
 
 /// CSS Grid layout.
@@ -27,7 +28,7 @@ pub fn layout_grid(
     let row_gap = engine.res_len(&node.style.row_gap, font_px, content_w, root_font_px);
 
     // Resolve column track sizes
-    let mut col_tracks = resolve_track_sizes(&node.style.grid_template_columns,
+    let col_tracks = resolve_track_sizes(&node.style.grid_template_columns,
         &node.style.auto_repeat_columns, content_w, font_px, root_font_px);
     let row_tracks = node.style.grid_template_rows.clone();
 
@@ -199,7 +200,7 @@ pub fn layout_grid(
     for (ii, &idx) in item_indices.iter().enumerate() {
         let (cs, ce, _rs, _re) = placements[ii];
         let child = &mut node.children[idx];
-        let child_font = child.style.font_size_px(font_px, root_font_px);
+        let _child_font = child.style.font_size_px(font_px, root_font_px);
         // Dry run layout to find intrinsic width
         engine.layout_box(child, 10000.0, 0.0, 0.0, font_px, root_font_px);
         let intrinsic_w = crate::layout::block::compute_intrinsic_width(child);
@@ -446,7 +447,7 @@ fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<St
 fn resolve_placement(
     child: &HtmlBox,
     area_map: &std::collections::HashMap<String,(usize,usize,usize,usize)>,
-    n_cols: usize,
+    _n_cols: usize,
 ) -> (usize, usize, usize, usize) {
     // Named grid area
     if !child.style.grid_area.is_empty() {
@@ -538,7 +539,7 @@ fn resolve_track_sizes(
                     if px > 0.0 { total_fixed += px; } else { total_fixed += 50.0; }
                 }
                 let pattern_w = total_fixed.max(1.0);
-                let pat_size = auto_repeat.len() as f32;
+                let _pat_size = auto_repeat.len() as f32;
                 // Repeat count accounts for gaps between pattern tracks
                 let avail = container;
                 let count = (avail / (pattern_w)).max(1.0).min(100.0) as usize;
@@ -734,7 +735,7 @@ fn resolve_to_pixels(
     sizes
 }
 
-fn span_width(col_px: &[f32], col_x: &[f32], cs: usize, ce: usize, col_gap: f32, fallback: f32) -> f32 {
+fn span_width(col_px: &[f32], _col_x: &[f32], cs: usize, ce: usize, col_gap: f32, fallback: f32) -> f32 {
     if col_px.is_empty() { return fallback; }
     let cs = cs.min(col_px.len().saturating_sub(1));
     let ce = ce.min(col_px.len());

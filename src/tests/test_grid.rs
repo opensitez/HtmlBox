@@ -1,8 +1,8 @@
 use crate::tests::harness::{parse_and_layout, find_box};
 use crate::types::*;
 
-fn find_by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
-    find_box(root, &|b| b.attributes.get("id").map(|s| s == id).unwrap_or(false))
+pub fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+    find_box(node, &|b| b.attributes.get("id").map(|s| s == id).unwrap_or(false))
 }
 
 #[test]

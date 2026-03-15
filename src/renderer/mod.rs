@@ -129,7 +129,16 @@ impl Renderer {
         let pw      = pr.w;
         let ph      = pr.h;
         let font_px = node.style.font_size_px(16.0, 16.0);
-        let radius  = node.style.border_radius.resolve(font_px, pr.w, 16.0);
+        let radius  = {
+            let r = node.style.border_radius.resolve(font_px, pr.w, 16.0);
+            if r > 0.0 { r } else {
+                // Fallback to corners if shorthand is zero
+                node.style.border_top_left_radius.resolve(font_px, pr.w, 16.0)
+                    .max(node.style.border_top_right_radius.resolve(font_px, pr.w, 16.0))
+                    .max(node.style.border_bottom_left_radius.resolve(font_px, pr.w, 16.0))
+                    .max(node.style.border_bottom_right_radius.resolve(font_px, pr.w, 16.0))
+            }
+        };
 
         // ── Hover check (exact box match; C++ traverses parent chain) ─────────
         let is_hovered = !hovered_ptr.is_null()

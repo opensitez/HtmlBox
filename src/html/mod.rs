@@ -2,7 +2,7 @@ pub mod serializer;
 
 use std::collections::HashMap;
 use crate::types::{HtmlBox, Document, Display, ListStyleType};
-use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet, SelectorPart, CssRule, CssSelector};
+use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet, SelectorPart};
 
 // ─── SVG extraction ────────────────────────────────────────────────────────
 
@@ -34,7 +34,8 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
             None => {
                 // Malformed: no closing tag, emit rest as-is
                 result.push_str(&html[svg_start..]);
-                pos = html.len();
+                pos = html.len(); // consumed everything
+                let _ = pos;
                 break;
             }
         };

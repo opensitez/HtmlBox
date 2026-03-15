@@ -1,7 +1,7 @@
 use crate::types::*;
 use cosmic_text::{Attrs, Buffer, Metrics, Shaping};
-use crate::layout::{LayoutEngine, ResolvedBox, FloatContext};
-use crate::layout::block::collapse_two;
+use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide};
+use crate::layout::block::{collapse_two, compute_intrinsic_width};
 use crate::layout::text::resolve_bidi_line;
 
 /// Lay out a box whose children are inline-level (text runs, inline-block).
@@ -16,8 +16,20 @@ pub fn layout_inline_block(
     y:            f32,
     font_px:      f32,
     root_font_px: f32,
-    float_ctx:    Option<&FloatContext>,
+    parent_float_ctx: Option<&mut FloatContext>,
 ) -> f32 {
+    // Create a local float context if the parent didn't provide one.
+    // This ensures floated children inside inline containers are placed correctly.
+    let mut fc_owned = FloatContext::default();
+    let mut float_ctx: Option<&mut FloatContext> = if let Some(fc) = parent_float_ctx {
+        // Use parent's float context -- but we can't store it directly because of
+        // borrow rules, so we clone its state into fc_owned and use that.
+        fc_owned = fc.clone();
+        Some(&mut fc_owned)
+    } else {
+        Some(&mut fc_owned)
+    };
+
     let raw_w = match rbox.content_width {
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
@@ -55,13 +67,37 @@ pub fn layout_inline_block(
     let content_x = x + margin_left + rbox.border_left + rbox.padding_left;
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
-    // ── 0. Pre-layout atomic inline-block children so their sizes are known ─────
+    // Set float context origin now that content_y is known
+    if let Some(ref mut fc) = float_ctx {
+        if fc.origin_y == 0.0 && fc.floats.is_empty() {
+            fc.origin_y = content_y;
+        }
+    }
+
+    // ── 0. Pre-layout atomic inline-block and float children so sizes are known ──
     //    Mirrors C++ LayoutInlines(): LayoutBox(*run.atomicBox, …) before line-breaking
     for ci in 0..node.children.len() {
         if matches!(node.children[ci].style.display,
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
             engine.layout_box(&mut node.children[ci], content_w,
                                0.0, 0.0, font_px, root_font_px);
+        } else if !matches!(node.children[ci].style.float, crate::types::Float::None) {
+            // Float children need to be laid out to get valid dimensions.
+            engine.layout_box(&mut node.children[ci], content_w,
+                               content_x, content_y, font_px, root_font_px);
+            // Shrink-to-fit for auto-width floats
+            if node.children[ci].style.width.is_auto() {
+                let intrinsic_w = compute_intrinsic_width(&node.children[ci]);
+                if intrinsic_w > 0.0 && intrinsic_w < content_w {
+                    let irb = &node.children[ci];
+                    let shrink_w = intrinsic_w
+                        + irb.resolved_pad_left + irb.resolved_pad_right
+                        + irb.resolved_border_left + irb.resolved_border_right
+                        + irb.resolved_margin_left + irb.resolved_margin_right;
+                    engine.layout_box(&mut node.children[ci], shrink_w,
+                                       content_x, content_y, font_px, root_font_px);
+                }
+            }
         }
     }
 
@@ -134,11 +170,30 @@ pub fn layout_inline_block(
         if loop_guard > 10000 { break; }
         let is_first_line = line_cache.is_empty();
 
+        // ── Place leading floats before current line ──────────────────────────
+        while item_idx < items.len() {
+            if let InlineItemKind::Float { child_idx } = items[item_idx].kind {
+                if let Some(ref mut fc) = float_ctx {
+                    let child = &mut node.children[child_idx];
+                    let float_w = child.margin_rect.w;
+                    let float_h = child.margin_rect.h;
+                    let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
+                    let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
+                    let dx = content_x + placed.x - child.margin_rect.x;
+                    let dy = fc.origin_y + placed.y - child.margin_rect.y;
+                    crate::layout::shift_rects(child, dx, dy);
+                }
+                item_idx += 1;
+            } else {
+                break;
+            }
+        }
+
         // Query float context for available horizontal band at this Y
         let est_line_h = font_px * 1.2;
         let (mut fc_left, mut fc_right) = (0.0f32, content_w);
-        if let Some(fc) = float_ctx {
-            fc.available_width(cursor_y - content_y, est_line_h, content_w,
+        if let Some(fc) = float_ctx.as_ref() {
+            fc.available_width(cursor_y - fc.origin_y, est_line_h, content_w,
                                &mut fc_left, &mut fc_right);
         }
 
@@ -148,16 +203,51 @@ pub fn layout_inline_block(
             fc_left += before_w;
         }
 
-        let avail_w = (fc_right - fc_left).max(20.0);
+        let mut avail_w = (fc_right - fc_left).max(20.0);
 
         // Break items for this line
-        let (line_end, next_start, was_break) =
+        let (mut line_end, mut next_start, mut was_break) =
             break_one_line(&items, item_idx, avail_w);
+
+        // Greedily pull in and place floats that were included in the line slice
+        // If a float placement narrows the width such that items no longer fit,
+        // we must re-break the line.
+        let mut i = item_idx;
+        while i < line_end {
+            if let InlineItemKind::Float { child_idx } = items[i].kind {
+                if let Some(ref mut fc) = float_ctx {
+                    let child = &mut node.children[child_idx];
+                    let float_w = child.margin_rect.w;
+                    let float_h = child.margin_rect.h;
+                    let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
+                    let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
+                    let dx = content_x + placed.x - child.margin_rect.x;
+                    let dy = fc.origin_y + placed.y - child.margin_rect.y;
+                    crate::layout::shift_rects(child, dx, dy);
+                    
+                    // Width might have changed
+                    fc.available_width(cursor_y - fc.origin_y, est_line_h, content_w, &mut fc_left, &mut fc_right);
+                    let temp_fc_left = if is_first_line { fc_left + text_indent + before_w } else { fc_left };
+                    avail_w = (fc_right - temp_fc_left).max(20.0);
+                    
+                    // Re-evaluate line break from THIS point forward
+                    let (new_end, new_next, new_break) = break_one_line(&items, i + 1, avail_w);
+                    line_end = new_end;
+                    next_start = new_next;
+                    was_break = new_break;
+                }
+            }
+            i += 1;
+        }
 
         ends_with_break = was_break;
 
         if line_end == item_idx && !was_break {
-            // No progress and no forced break — should not happen but guard anyway
+            // Safety: avoid infinite loop if no progress made
+            if item_idx < items.len() && matches!(items[item_idx].kind, InlineItemKind::Float { .. }) {
+                item_idx += 1;
+                continue;
+            }
             break;
         }
 
@@ -313,7 +403,14 @@ pub fn layout_inline_block(
     }
 
     // ── 5. Compute content height ──────────────────────────────────────────────
-    let raw_h = (cursor_y - content_y).max(0.0);
+    let inline_h = (cursor_y - content_y).max(0.0);
+    // Include float bottom so the container encloses its floats
+    let float_bottom = if let Some(ref fc) = float_ctx {
+        fc.floats.iter().map(|f| f.clear - fc.origin_y).fold(0.0f32, f32::max)
+    } else {
+        0.0
+    };
+    let raw_h = inline_h.max(float_bottom);
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
     let max_h = if node.style.max_height.is_none() { f32::MAX }
                 else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
@@ -428,6 +525,8 @@ pub enum InlineItemKind {
     Atomic { child_idx: usize },
     /// Forced line break (<br>).
     Break,
+    /// A floated child.
+    Float { child_idx: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -456,6 +555,16 @@ pub fn collect_items(
     box_idx:        usize,
 ) {
     if matches!(node.style.display, Display::None) { return; }
+    
+    // ── Float ─────────────────────────────────────────────────────────────
+    if !matches!(node.style.float, crate::types::Float::None) {
+        items.push(InlineItem {
+            kind: InlineItemKind::Float { child_idx: box_idx },
+            advance: 0.0, ascent: 0.0, descent: 0.0, height: 0.0,
+            is_space: false, breakable: false,
+        });
+        return;
+    }
 
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };

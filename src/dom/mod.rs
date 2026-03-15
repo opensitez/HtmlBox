@@ -154,7 +154,7 @@ impl EventListeners {
             }
         } else {
             // No positional target: fire on root (keyboard, scroll, selection-change)
-            let b = root;
+            let _b = root;
             for entry in &self.entries {
                 if entry.event_type != evt.event_type { continue; }
                 let sel = entry.selector.as_str();

@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, has_block_children,
+use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide,
                     shift_rects, layout_positioned};
 
 // ─── Margin collapsing helpers ────────────────────────────────────────────────
@@ -285,9 +285,14 @@ pub fn layout_block_with_fc(
     }
 
     // ─── Float context ────────────────────────────────────────────────────────
-    // BFC boxes get their own float context; non-BFC share parent's.
-    // Since layout_box doesn't thread a FC, we always use a local one here.
-    let mut float_ctx = FloatContext::default();
+    let mut fc_owned;
+    let fc = if let Some(f) = parent_fc {
+        f
+    } else {
+        fc_owned = FloatContext::default();
+        fc_owned.origin_y = content_y;
+        &mut fc_owned
+    };
 
     // ─── Main block children loop ─────────────────────────────────────────────
     let mut child_y = 0.0f32;
@@ -311,7 +316,7 @@ pub fn layout_block_with_fc(
         match child_clear {
             Clear::None => {}
             clear => {
-                child_y = float_ctx.clear_y(child_y, clear);
+                child_y = fc.clear_y(content_y + child_y - fc.origin_y, clear) - (content_y - fc.origin_y);
                 prev_bottom_margin = 0.0;
             }
         }
@@ -341,7 +346,7 @@ pub fn layout_block_with_fc(
             let float_w = node.children[i].margin_rect.w;
             let float_h = node.children[i].margin_rect.h;
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
-            let placed = float_ctx.place_float(child_y, float_w, float_h, content_w, side);
+            let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, content_w, side);
             let dx = content_x + placed.x - node.children[i].margin_rect.x;
             let dy = content_y + placed.y - node.children[i].margin_rect.y;
             shift_rects(&mut node.children[i], dx, dy);
@@ -372,14 +377,15 @@ pub fn layout_block_with_fc(
             } else {
                 let collapsed = collapse_two(prev_bottom_margin, child_top_margin);
                 child_y += collapsed - prev_bottom_margin;
-                is_first_in_flow = false;
+                is_first_in_flow = false; // value may not be read again
             }
+            let _ = is_first_in_flow;
 
             // Check available width from floats
             let child_h = node.children[i].margin_rect.h;
             let mut left_edge = 0.0f32;
             let mut right_edge = content_w;
-            float_ctx.available_width(child_y, child_h, content_w, &mut left_edge, &mut right_edge);
+            fc.available_width(content_y + child_y - fc.origin_y, child_h, content_w, &mut left_edge, &mut right_edge);
 
             // Rebuild rects at correct position using cached resolved values
             let child_margin_left  = node.children[i].resolved_margin_left;
@@ -464,7 +470,7 @@ pub fn layout_block_with_fc(
     }
 
     // ─── Parent-last-child bottom margin collapsing ───────────────────────────
-    let last_child_collapsed_bottom = if let Some(idx) = last_in_flow_idx {
+    let _last_child_collapsed_bottom = if let Some(idx) = last_in_flow_idx {
         if can_collapse_bottom {
             let lcb = node.children[idx].collapsed_margin_bottom;
             child_y -= lcb;
@@ -479,7 +485,7 @@ pub fn layout_block_with_fc(
     // ─── Content height ───────────────────────────────────────────────────────
     // Include float bottom if BFC
     let float_bottom = if is_bfc {
-        float_ctx.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
+        fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
     } else {
         0.0
     };

@@ -27,6 +27,7 @@ impl Default for FloatSide {
 #[derive(Debug, Default, Clone)]
 pub struct FloatContext {
     pub floats: Vec<FloatItem>,
+    pub origin_y: f32, // Document Y of the context root
 }
 
 impl FloatContext {
@@ -149,7 +150,7 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
                    containing_w: f32, root_font_px: f32,
                    viewport_w: f32, viewport_h: f32) -> ResolvedBox {
     let res = |l: &CssLength| l.resolve_vp(parent_font_px, containing_w, root_font_px, viewport_w, viewport_h);
-    let font_px = style.font_size_px(parent_font_px, root_font_px);
+    let _font_px = style.font_size_px(parent_font_px, root_font_px);
 
     let pad_left   = res(&style.padding_left);
     let pad_right  = res(&style.padding_right);
@@ -353,7 +354,9 @@ impl LayoutEngine {
 pub fn has_block_children(node: &HtmlBox) -> bool {
     node.children.iter().any(|c|
         !matches!(c.style.display, Display::None) &&
-        (c.style.is_block_level() || !matches!(c.style.float, Float::None))
+        matches!(c.style.position, Position::Static | Position::Relative) &&
+        c.style.is_block_level() &&
+        matches!(c.style.float, Float::None)
     )
 }
 
@@ -381,7 +384,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
         None
     };
 
-    let constrained_h = if !top_auto && !bot_auto {
+    let _constrained_h = if !top_auto && !bot_auto {
         let t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
         let b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
         let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
