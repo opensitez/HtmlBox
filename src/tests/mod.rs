@@ -5,3 +5,4 @@ pub mod test_box_model;
 pub mod test_layout_advanced;
 pub mod test_html;
 pub mod test_inheritance;
+pub mod test_grid;

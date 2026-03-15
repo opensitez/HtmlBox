@@ -194,9 +194,27 @@ pub fn layout_grid(
 
     // ── Resolve column pixel widths ──────────────────────────────────────────
 
+    // Measure items for Auto track sizing
+    let mut col_content_widths = vec![0.0f32; n_explicit_cols.max(max_col)];
+    for (ii, &idx) in item_indices.iter().enumerate() {
+        let (cs, ce, _rs, _re) = placements[ii];
+        let child = &mut node.children[idx];
+        let child_font = child.style.font_size_px(font_px, root_font_px);
+        // Dry run layout to find intrinsic width
+        engine.layout_box(child, 10000.0, 0.0, 0.0, font_px, root_font_px);
+        let intrinsic_w = crate::layout::block::compute_intrinsic_width(child);
+        let span = (ce - cs).max(1);
+        let w_per_col = intrinsic_w / span as f32;
+        for c in cs..ce {
+            if c < col_content_widths.len() {
+                if w_per_col > col_content_widths[c] { col_content_widths[c] = w_per_col; }
+            }
+        }
+    }
+
     let col_px = resolve_to_pixels(&col_tracks, &node.style.grid_auto_columns,
                                    content_w, col_gap, n_explicit_cols.max(max_col),
-                                   font_px, root_font_px);
+                                   font_px, root_font_px, &col_content_widths);
     let n_cols_actual = col_px.len();
 
     // justify-content: compute extra horizontal space distribution
@@ -578,6 +596,7 @@ fn resolve_to_pixels(
     n_cols: usize,
     font_px: f32,
     root_font_px: f32,
+    content_widths: &[f32],
 ) -> Vec<f32> {
     let effective_n = tracks.len().max(n_cols);
     let mut sizes: Vec<f32> = vec![0.0; effective_n];
@@ -631,9 +650,15 @@ fn resolve_to_pixels(
                 // Non-fr max handled in second pass
             }
             GridTrackKind::Auto | GridTrackKind::MinContent | GridTrackKind::MaxContent => {
+                let cw = content_widths.get(i).copied().unwrap_or(0.0);
+                sizes[i] = cw;
+                used += cw;
                 flexible_cols += 1;
             }
             GridTrackKind::FitContent => {
+                let cw = content_widths.get(i).copied().unwrap_or(0.0);
+                sizes[i] = cw;
+                used += cw;
                 flexible_cols += 1;
             }
         }
@@ -690,10 +715,10 @@ fn resolve_to_pixels(
                 }
             }
             GridTrackKind::Auto | GridTrackKind::MinContent | GridTrackKind::MaxContent => {
-                sizes[i] = if total_fr > 0.0 { 0.0 } else { auto_share };
+                sizes[i] += if total_fr > 0.0 { 0.0 } else { auto_share };
             }
             GridTrackKind::FitContent => {
-                sizes[i] = if total_fr > 0.0 { 0.0 } else { auto_share };
+                sizes[i] += if total_fr > 0.0 { 0.0 } else { auto_share };
                 // Clamp to fit-content limit
                 if track.max_kind == GridTrackKind::Fixed {
                     sizes[i] = sizes[i].min(track.value);

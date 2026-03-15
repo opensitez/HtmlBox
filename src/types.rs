@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,29 @@ impl Rect {
     }
     pub fn right(&self)  -> f32 { self.x + self.w }
     pub fn bottom(&self) -> f32 { self.y + self.h }
+}
+
+// ─── Custom Components ───────────────────────────────────────────────────────
+
+pub type ComponentMeasureFn = Arc<dyn Fn(&HtmlBox, f32) -> (f32, f32) + Send + Sync>;
+pub type ComponentPaintFn   = Arc<dyn Fn(&HtmlBox, &mut tiny_skia::Pixmap, f32, f32, f32, f32, f32) + Send + Sync>;
+
+#[derive(Clone)]
+pub struct ComponentCallbacks {
+    pub measure: ComponentMeasureFn,
+    pub paint:   ComponentPaintFn,
+}
+
+#[derive(Default, Clone)]
+pub struct ComponentRegistry {
+    pub map: HashMap<String, ComponentCallbacks>,
+}
+
+impl ComponentRegistry {
+    pub fn new() -> Self { Self::default() }
+    pub fn register(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
+        self.map.insert(tag.to_string(), ComponentCallbacks { measure, paint });
+    }
 }
 
 // ─── Color ───────────────────────────────────────────────────────────────────

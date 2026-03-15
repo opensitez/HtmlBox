@@ -22,10 +22,21 @@ pub fn load_html(html: &str, viewport_width: f32) -> Document {
 
 /// Like `load_html` but with explicit viewport height (needed for `100vh` layouts).
 pub fn load_html_vp(html: &str, viewport_width: f32, viewport_height: f32) -> Document {
+    load_html_with_registry(html, viewport_width, viewport_height, types::ComponentRegistry::default())
+}
+
+/// Parse HTML and layout with custom component registry.
+pub fn load_html_with_registry(
+    html: &str,
+    viewport_width: f32,
+    viewport_height: f32,
+    registry: types::ComponentRegistry,
+) -> Document {
     let mut doc = parse_html(html);
     let mut engine = LayoutEngine::new();
     engine.viewport_w = viewport_width;
     engine.viewport_h = viewport_height;
+    engine.component_registry = registry;
     engine.layout(&mut doc, viewport_width);
     doc
 }

@@ -76,6 +76,13 @@ fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
 /// Compute the intrinsic (max-content) width of a box that was laid out at a
 /// larger containing width.  Mirrors C++ ComputeIntrinsicWidth.
 pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
+    // If the box has a fixed width, that IS its intrinsic width (min and max).
+    // (In a more complete engine we'd distinguish min-content vs max-content,
+    // but for now max-content is what matters for 'Auto' tracks).
+    if let crate::types::CssLength::Px(px) = node.style.width {
+        if px >= 0.0 { return px; }
+    }
+
     // Line positions are absolute; subtract the box's own content origin so we
     // measure content-relative width (avoids double-counting padding/border).
     let origin = node.content_rect.x;
@@ -116,7 +123,7 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                 + ch.resolved_margin_left + ch.resolved_margin_right;
             if total > w { w = total; }
         } else {
-            // Use origin-relative position for non-block children
+            // Use origin-relative position for non-block children (e.g. fixed-width blocks, images)
             let rw = (ch.margin_rect.x - origin) + ch.margin_rect.w;
             if rw > w { w = rw; }
         }

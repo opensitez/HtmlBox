@@ -15,6 +15,7 @@ const SCROLLBAR_WIDTH: f32 = 10.0;
 pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
+    pub component_registry: ComponentRegistry,
     scale: f32,
 }
 
@@ -23,8 +24,13 @@ impl Renderer {
         Self {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
+            component_registry: ComponentRegistry::default(),
             scale: 1.0,
         }
+    }
+
+    pub fn register_component(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
+        self.component_registry.register(tag, measure, paint);
     }
 
     /// Returns a transform that upscales logical-pixel coordinates to physical pixels.
@@ -355,6 +361,12 @@ impl Renderer {
         // ── HR ───────────────────────────────────────────────────────────────
         if node.tag == "hr" {
             self.draw_hr(node, pixmap, sx, sy, eff_mask);
+        }
+
+        // ── Custom Component Painting ────────────────────────────────────────
+        if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
+            let cr = node.content_rect;
+            (callbacks.paint)(node, pixmap, cr.x - sx, cr.y - sy, cr.w, cr.h, self.scale);
         }
 
         // ── Image placeholder for <img> ─────────────────────────────────────

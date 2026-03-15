@@ -44,16 +44,24 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
         // Parse width/height from the opening <svg …> tag
         let tag_end = html[svg_start..].find('>').map(|o| svg_start + o + 1).unwrap_or(svg_end);
         let svg_tag = &html[svg_start..tag_end];
-        let w = parse_svg_attr(svg_tag, "width").unwrap_or(200);
-        let h = parse_svg_attr(svg_tag, "height").unwrap_or(150);
+        let vb = parse_svg_viewbox(svg_tag);
+        let w = parse_svg_attr(svg_tag, "width")
+            .or_else(|| vb.map(|(w, _)| w))
+            .unwrap_or(200);
+        let h = parse_svg_attr(svg_tag, "height")
+            .or_else(|| vb.map(|(_, h)| h))
+            .unwrap_or(150);
+        let class_attr = parse_svg_class(svg_tag)
+            .map(|c| format!(" class=\"{}\"", c))
+            .unwrap_or_default();
 
         let key = format!("__svg_{}__", svg_idx);
         svg_idx += 1;
         svg_map.insert(key.clone(), svg_markup.to_string());
 
         result.push_str(&format!(
-            "<img src=\"{}\" width=\"{}\" height=\"{}\">",
-            key, w, h
+            "<img src=\"{}\" width=\"{}\" height=\"{}\" data-svg-w=\"{}\" data-svg-h=\"{}\"{}>",
+            key, w, h, w, h, class_attr
         ));
 
         pos = svg_end;
@@ -81,6 +89,44 @@ fn parse_svg_attr(tag: &str, attr: &str) -> Option<u32> {
     num_str.parse().ok()
 }
 
+/// Parse a `viewBox="min-x min-y width height"` attribute and return (width, height).
+fn parse_svg_viewbox(tag: &str) -> Option<(u32, u32)> {
+    let lower = tag.to_ascii_lowercase();
+    let idx = lower.find("viewbox=")?;
+    let after_eq = idx + "viewbox=".len();
+    let rest = tag[after_eq..].trim_start();
+    let rest = rest.trim_start_matches(|c| c == '"' || c == '\'');
+    // viewBox has 4 numbers: min-x min-y width height
+    let parts: Vec<f32> = rest
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if parts.len() >= 4 {
+        Some((parts[2].round() as u32, parts[3].round() as u32))
+    } else {
+        None
+    }
+}
+
+/// Extract the `class` attribute value from an SVG opening tag string.
+fn parse_svg_class(tag: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let idx = lower.find("class=")?;
+    let after_eq = idx + "class=".len();
+    let rest = tag[after_eq..].trim_start();
+    if rest.starts_with('"') {
+        let end = rest[1..].find('"')? + 1;
+        Some(rest[1..end].to_string())
+    } else if rest.starts_with('\'') {
+        let end = rest[1..].find('\'')? + 1;
+        Some(rest[1..end].to_string())
+    } else {
+        let val: String = rest.chars().take_while(|c| !c.is_whitespace() && *c != '>').collect();
+        if val.is_empty() { None } else { Some(val) }
+    }
+}
+
 /// Post-pass: walk the box tree, find `<img>` placeholders with `__svg_N__` src,
 /// rasterize the SVG to RGBA pixel data, and store it on the box.
 fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
@@ -88,8 +134,12 @@ fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
         if let Some(src) = node.attributes.get("src") {
             if src.starts_with("__svg_") {
                 if let Some(svg_source) = svg_map.get(src) {
-                    let w = if node.image_width > 0 { node.image_width } else { 200 };
-                    let h = if node.image_height > 0 { node.image_height } else { 150 };
+                    let w = node.attributes.get("data-svg-w")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or_else(|| if node.image_width > 0 { node.image_width } else { 200 });
+                    let h = node.attributes.get("data-svg-h")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or_else(|| if node.image_height > 0 { node.image_height } else { 150 });
                     if let Some(rgba) = rasterize_svg_to_rgba(svg_source, w, h) {
                         node.image_data = Some(rgba);
                         node.image_width = w;

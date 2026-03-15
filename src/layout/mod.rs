@@ -213,10 +213,20 @@ pub struct LayoutEngine {
     pub viewport_h: f32,
     /// Reference to a font system for accurate measurement.
     pub font_system: Option<*mut cosmic_text::FontSystem>,
+    /// Custom component registry for custom tags
+    pub component_registry: ComponentRegistry,
 }
 
 impl LayoutEngine {
-    pub fn new() -> Self { Self { root_font_px: 16.0, viewport_w: 900.0, viewport_h: 700.0, font_system: None } }
+    pub fn new() -> Self {
+        Self {
+            root_font_px: 16.0,
+            viewport_w: 900.0,
+            viewport_h: 700.0,
+            font_system: None,
+            component_registry: ComponentRegistry::default(),
+        }
+    }
 
     /// Resolve a box's styles using the engine's viewport dimensions.
     #[inline]
@@ -285,6 +295,18 @@ impl LayoutEngine {
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
         let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+
+        // Check for custom component measurement
+        if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
+            let (cw, ch) = (callbacks.measure)(node, containing_w);
+            let final_w = if node.style.width.is_auto() { cw } else { rbox.content_width.unwrap_or(cw) };
+            let final_h = if node.style.height.is_auto() { ch } else { rbox.content_height.unwrap_or(ch) };
+            block::build_box_rects(node, &rbox, x + rbox.margin_left + rbox.border_left + rbox.padding_left,
+                                   y + rbox.margin_top + rbox.border_top + rbox.padding_top,
+                                   final_w, final_h, rbox.margin_left, rbox.margin_right);
+            node.layout_dirty = false;
+            return node.margin_rect.h;
+        }
 
         match node.style.display {
             Display::Flex | Display::InlineFlex => {
