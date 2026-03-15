@@ -380,6 +380,10 @@ impl Renderer {
 
         // ── Image placeholder for <img> ─────────────────────────────────────
         if node.tag == "img" {
+            let cr = node.content_rect;
+            eprintln!("[RENDER img] content_rect=({},{},{},{}) has_data={} iw={} ih={}",
+                      cr.x, cr.y, cr.w, cr.h,
+                      node.image_data.is_some(), node.image_width, node.image_height);
             self.draw_image_placeholder(node, pixmap, sx, sy, eff_mask);
         }
 
@@ -1239,11 +1243,12 @@ impl Renderer {
         }
         let _ = clip_mask_storage; // suppress unused warning when mask not stored
 
+        let final_transform = Transform::from_scale(self.scale, self.scale).pre_concat(transform);
         pixmap.draw_pixmap(
             0, 0,
             src_pm.as_ref(),
             &tiny_skia::PixmapPaint::default(),
-            transform,
+            final_transform,
             final_mask,
         );
     }

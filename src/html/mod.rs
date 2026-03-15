@@ -40,25 +40,33 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
             }
         };
 
-        let svg_markup = &html[svg_start..svg_end];
-
-        // Parse width/height from the opening <svg …> tag
+        // Extract and patch <svg> tag if needed
         let tag_end = html[svg_start..].find('>').map(|o| svg_start + o + 1).unwrap_or(svg_end);
-        let svg_tag = &html[svg_start..tag_end];
-        let vb = parse_svg_viewbox(svg_tag);
-        let w = parse_svg_attr(svg_tag, "width")
+        let mut svg_tag = html[svg_start..tag_end].to_string();
+        // Patch in xmlns if missing
+        if !svg_tag.contains("xmlns=") {
+            // Insert before closing '>'
+            if let Some(insert_pos) = svg_tag.rfind('>') {
+                svg_tag.insert_str(insert_pos, " xmlns=\"http://www.w3.org/2000/svg\"");
+            }
+        }
+        // Rebuild svg_markup with patched tag
+        let svg_markup = format!("{}{}", svg_tag, &html[tag_end..svg_end]);
+
+        let vb = parse_svg_viewbox(&svg_tag);
+        let w = parse_svg_attr(&svg_tag, "width")
             .or_else(|| vb.map(|(w, _)| w))
             .unwrap_or(200);
-        let h = parse_svg_attr(svg_tag, "height")
+        let h = parse_svg_attr(&svg_tag, "height")
             .or_else(|| vb.map(|(_, h)| h))
             .unwrap_or(150);
-        let class_attr = parse_svg_class(svg_tag)
+        let class_attr = parse_svg_class(&svg_tag)
             .map(|c| format!(" class=\"{}\"", c))
             .unwrap_or_default();
 
         let key = format!("__svg_{}__", svg_idx);
         svg_idx += 1;
-        svg_map.insert(key.clone(), svg_markup.to_string());
+        svg_map.insert(key.clone(), svg_markup);
 
         result.push_str(&format!(
             "<img src=\"{}\" width=\"{}\" height=\"{}\" data-svg-w=\"{}\" data-svg-h=\"{}\"{}>",
@@ -141,7 +149,9 @@ fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
                     let h = node.attributes.get("data-svg-h")
                         .and_then(|s| s.parse().ok())
                         .unwrap_or_else(|| if node.image_height > 0 { node.image_height } else { 150 });
+                    eprintln!("[SVG] rasterizing {} ({}x{}) markup len={}", src, w, h, svg_source.len());
                     if let Some(rgba) = rasterize_svg_to_rgba(svg_source, w, h) {
+                        eprintln!("[SVG] success: {} bytes of RGBA data", rgba.len());
                         node.image_data = Some(rgba);
                         node.image_width = w;
                         node.image_height = h;
@@ -166,13 +176,27 @@ fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
 /// Rasterize an SVG string to RGBA pixel data using resvg.
 fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> {
     use resvg::usvg;
+    eprintln!("[SVG] full markup ({} bytes):\n{}", svg.len(), svg);
     let opt = usvg::Options::default();
-    let tree = usvg::Tree::from_str(svg, &opt).ok()?;
+    let tree = match usvg::Tree::from_str(svg, &opt) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[SVG] usvg parse error: {}", e);
+            return None;
+        }
+    };
     let size = tree.size();
+    eprintln!("[SVG] tree size: {}x{}", size.width(), size.height());
     let sx = width as f32 / size.width();
     let sy = height as f32 / size.height();
     let transform = resvg::tiny_skia::Transform::from_scale(sx, sy);
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
+    let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
+        Some(p) => p,
+        None => {
+            eprintln!("[SVG] pixmap creation failed for {}x{}", width, height);
+            return None;
+        }
+    };
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     // resvg outputs premultiplied RGBA; convert to straight alpha
     let pma = pixmap.data();
