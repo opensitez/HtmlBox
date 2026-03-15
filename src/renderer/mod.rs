@@ -418,6 +418,10 @@ impl Renderer {
                 .collect();
             positioned.sort_by_key(|c| c.style.z_index);
             for child in positioned {
+                let cr = child.content_rect;
+                eprintln!("[POS CHILD] tag={} pos={:?} z={} rect=({},{} {}x{}) opacity={}",
+                          child.tag, child.style.position, child.style.z_index,
+                          cr.x, cr.y, cr.w, cr.h, child.style.opacity);
                 let (csx, csy) = if child.style.position == Position::Fixed {
                     (0.0, 0.0)
                 } else {

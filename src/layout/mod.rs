@@ -365,8 +365,18 @@ pub fn has_block_children(node: &HtmlBox) -> bool {
 pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
                          containing_rect: Rect, parent_font_px: f32, root_font_px: f32) {
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-    let containing_w = containing_rect.w;
-    let containing_h = containing_rect.h;
+    // By default the containing block is the passed containing_rect. For `fixed`
+    // positioned elements the containing block is the viewport (0,0, viewport_w, viewport_h).
+    let mut containing_w = containing_rect.w;
+    let mut containing_h = containing_rect.h;
+    let mut containing_x = containing_rect.x;
+    let mut containing_y = containing_rect.y;
+    if node.style.position == Position::Fixed {
+        containing_w = engine.viewport_w;
+        containing_h = engine.viewport_h;
+        containing_x = 0.0;
+        containing_y = 0.0;
+    }
 
     let left_auto  = node.style.left.is_auto();
     let right_auto = node.style.right.is_auto();
@@ -420,17 +430,17 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let res_b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
 
     let x = if !left_auto {
-        containing_rect.x + res_l + rbox.margin_left
+        containing_x + res_l + rbox.margin_left
     } else if !right_auto {
-        containing_rect.right() - res_r - node.border_rect.w - rbox.margin_right
+        (containing_x + containing_w) - res_r - node.border_rect.w - rbox.margin_right
     } else {
         node.border_rect.x
     };
 
     let y = if !top_auto {
-        containing_rect.y + res_t + rbox.margin_top
+        containing_y + res_t + rbox.margin_top
     } else if !bot_auto {
-        containing_rect.bottom() - res_b - node.border_rect.h - rbox.margin_bottom
+        (containing_y + containing_h) - res_b - node.border_rect.h - rbox.margin_bottom
     } else {
         node.border_rect.y
     };

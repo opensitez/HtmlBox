@@ -1286,6 +1286,17 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
     let ss = doc.stylesheet.clone();
     apply_cascade(&mut doc.root, &ss, None, root_font_px);
 
+    // Debug: dump computed `display` for paragraph nodes to diagnose layout issues
+    fn dump_p_displays(node: &crate::types::HtmlBox) {
+        if node.tag == "p" {
+            eprintln!("[DBG P] tag=<{}> display={:?}", node.tag, node.style.display);
+        }
+        for child in &node.children {
+            dump_p_displays(child);
+        }
+    }
+    dump_p_displays(&doc.root);
+
     // Post-cascade: fix summary display and details open/closed state
     // (cascade overwrites our pre-cascade settings with UA rules)
     apply_details_summary_post_cascade(&mut doc.root);
