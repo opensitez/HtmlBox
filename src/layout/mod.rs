@@ -448,7 +448,10 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     // Shift all rects to final position
     let dx = x - node.border_rect.x;
     let dy = y - node.border_rect.y;
+    eprintln!("[LAYOUT_POS] tag={} containing_x={} containing_y={} -> x={} y={} (dx={} dy={})",
+              node.tag, containing_x, containing_y, x, y, dx, dy);
     shift_rects(node, dx, dy);
+    eprintln!("[LAYOUT_POS_DONE] tag={} border_rect={:?} content_rect={:?} margin_rect={:?}", node.tag, node.border_rect, node.content_rect, node.margin_rect);
 
     // If both sides set → we may need to re-layout with constrained size
     if let Some(cw) = constrained_w {

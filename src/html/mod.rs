@@ -1279,6 +1279,8 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
         stylesheet,
         title,
         base_url: base_url.to_string(),
+        editor: crate::dom::Editor::new(),
+        events: crate::dom::EventListeners::new(),
     };
 
     // Apply cascade

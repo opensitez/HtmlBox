@@ -557,7 +557,10 @@ pub fn layout_block_with_fc(
     }
 
     // ─── Absolute/fixed children ──────────────────────────────────────────────
-    let containing_rect = node.content_rect;
+    // Use the padding box as the containing block for positioned children
+    // (CSS: containing block for absolutely positioned elements is the padding box
+    //  of the nearest positioned ancestor).
+    let containing_rect = node.padding_rect;
     for &i in &abs_children {
         let child = &mut node.children[i];
         layout_positioned(engine, child, containing_rect, font_px, root_font_px);

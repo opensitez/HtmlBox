@@ -1416,6 +1416,7 @@ impl HtmlBox {
 // ─── Document ─────────────────────────────────────────────────────────────────
 
 pub use crate::css::Stylesheet;
+use crate::dom::{Editor, EventListeners};
 
 /// The root document: box tree + stylesheet + metadata.
 #[derive(Debug, Clone)]
@@ -1424,6 +1425,8 @@ pub struct Document {
     pub stylesheet: Stylesheet,
     pub title:      String,
     pub base_url:   String,
+    pub editor:     Editor,
+    pub events:     EventListeners,
 }
 
 impl Document {
@@ -1433,7 +1436,57 @@ impl Document {
             stylesheet: Stylesheet::default(),
             title:      String::new(),
             base_url:   String::new(),
+            editor:     Editor::new(),
+            events:     EventListeners::new(),
         }
+    }
+
+    /// High-level mouse event entry point.
+    pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+        let mut redraw = self.editor.handle_mouse_event(&self.root, etype, doc_pt);
+
+        // Dispatch to custom listeners
+        let mut evt = crate::dom::HtmlEvent::new(etype);
+        evt.doc_pos = doc_pt;
+        evt.button  = button;
+        if let Some(hit) = crate::layout::hit_test::point_to_hit(&self.root, doc_pt) {
+            evt.target = hit.box_ptr;
+        }
+
+        if self.events.dispatch(&self.root, evt) {
+            redraw = true;
+        }
+
+        redraw
+    }
+
+    /// High-level keyboard event entry point.
+    pub fn process_key_event(
+        &mut self,
+        etype: crate::dom::HtmlEventType,
+        key_code: u32,
+        ch: Option<char>,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+        meta: bool,
+    ) -> bool {
+        let mut redraw = self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl);
+
+        // Dispatch to custom listeners
+        let mut evt = crate::dom::HtmlEvent::new(etype);
+        evt.key_code = key_code;
+        evt.char_code = ch;
+        evt.ctrl_key = ctrl;
+        evt.shift_key = shift;
+        evt.alt_key = alt;
+        evt.meta_key = meta;
+
+        if self.events.dispatch(&self.root, evt) {
+            redraw = true;
+        }
+
+        redraw
     }
 
     /// Walk all boxes in depth-first order.

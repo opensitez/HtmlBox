@@ -2,8 +2,13 @@
 //!
 //! This module ports the C++ `wxHtmlEditWidget` DOM/events/editing API to Rust.
 
+use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
 use crate::types::{HtmlBox, Document, Color, Display, FontWeight, FontStyle, CssLength};
 use crate::css::apply_property;
+use crate::layout::hit_test::point_to_hit;
+
+const CARET_BLINK_MS: u64 = 500;
 
 // ─── Event types ──────────────────────────────────────────────────────────────
 
@@ -26,7 +31,11 @@ pub enum HtmlEventType {
 pub struct HtmlEvent {
     pub event_type:  HtmlEventType,
     /// Deepest box hit (valid only during dispatch).
-    pub target:      *const HtmlBox,
+    pub target:          *const HtmlBox,
+    /// Box the current listener is registered on.
+    pub current_target:  *const HtmlBox,
+    /// Root of the document tree (valid only during dispatch).
+    pub root:        *const HtmlBox,
     /// Position in window coordinates.
     pub client_pos:  (f32, f32),
     /// Position in document coordinates.
@@ -51,6 +60,8 @@ impl HtmlEvent {
         Self {
             event_type,
             target:          std::ptr::null(),
+            current_target:  std::ptr::null(),
+            root:            std::ptr::null(),
             client_pos:      (0.0, 0.0),
             doc_pos:         (0.0, 0.0),
             button:          0,
@@ -73,7 +84,7 @@ impl HtmlEvent {
 
 // ─── Event listener registry ──────────────────────────────────────────────────
 
-pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent) + 'static>;
+pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent) + Send + Sync + 'static>;
 
 struct EventListenerEntry {
     id:         i32,
@@ -82,28 +93,49 @@ struct EventListenerEntry {
     callback:   HtmlEventCallback,
 }
 
-/// Holds all registered event listeners.  Store one in your application state.
-#[derive(Default)]
-pub struct EventListeners {
+struct EventListenersInner {
     entries: Vec<EventListenerEntry>,
     next_id: i32,
 }
 
+/// Holds all registered event listeners.  Store one in your application state.
+#[derive(Clone, Default)]
+pub struct EventListeners {
+    inner: Arc<RwLock<EventListenersInner>>,
+}
+
+impl Default for EventListenersInner {
+    fn default() -> Self {
+        Self { entries: Vec::new(), next_id: 1 }
+    }
+}
+
+impl std::fmt::Debug for EventListeners {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.read().unwrap();
+        f.debug_struct("EventListeners")
+            .field("entry_count", &inner.entries.len())
+            .field("next_id", &inner.next_id)
+            .finish()
+    }
+}
+
 impl EventListeners {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), next_id: 1 }
+        Self { inner: Arc::new(RwLock::new(EventListenersInner::default())) }
     }
 
     /// Register a listener.  Returns an ID that can be used to remove it later.
     pub fn add(
-        &mut self,
+        &self,
         selector:   impl Into<String>,
         event_type: HtmlEventType,
         callback:   HtmlEventCallback,
     ) -> i32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.entries.push(EventListenerEntry {
+        let mut inner = self.inner.write().unwrap();
+        let id = inner.next_id;
+        inner.next_id += 1;
+        inner.entries.push(EventListenerEntry {
             id,
             selector: selector.into(),
             event_type,
@@ -112,29 +144,34 @@ impl EventListeners {
         id
     }
 
-    pub fn remove(&mut self, id: i32) {
-        self.entries.retain(|e| e.id != id);
+    pub fn remove(&self, id: i32) {
+        self.inner.write().unwrap().entries.retain(|e| e.id != id);
     }
 
-    pub fn remove_by_selector(&mut self, selector: &str) {
-        self.entries.retain(|e| e.selector != selector);
+    pub fn remove_by_selector(&self, selector: &str) {
+        self.inner.write().unwrap().entries.retain(|e| e.selector != selector);
     }
 
-    pub fn remove_by_selector_and_type(&mut self, selector: &str, t: HtmlEventType) {
-        self.entries.retain(|e| !(e.selector == selector && e.event_type == t));
+    pub fn remove_by_selector_and_type(&self, selector: &str, t: HtmlEventType) {
+        self.inner.write().unwrap().entries.retain(|e| !(e.selector == selector && e.event_type == t));
     }
 
-    pub fn remove_all(&mut self) {
-        self.entries.clear();
+    pub fn remove_all(&self) {
+        self.inner.write().unwrap().entries.clear();
     }
 
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.inner.read().unwrap().entries.is_empty()
+    }
 
     /// Dispatch an event from a hit-test target, bubbling up through ancestors.
-    /// Returns `true` if `prevent_default()` was called.
+    /// Returns `true` if any handler was executed (useful for triggered redraws).
     pub fn dispatch(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
-        if self.entries.is_empty() { return false; }
+        let inner = self.inner.read().unwrap();
+        if inner.entries.is_empty() { return false; }
+        evt.root = root as *const HtmlBox;
 
+        let mut handled = false;
         let target = evt.target;
 
         if !target.is_null() {
@@ -144,27 +181,30 @@ impl EventListeners {
             // Bubble: fire from target outward
             for &box_ptr in path.iter().rev() {
                 let b = unsafe { &*box_ptr };
-                for entry in &self.entries {
+                evt.current_target = box_ptr;
+                for entry in &inner.entries {
                     if entry.event_type != evt.event_type { continue; }
                     if !matches_simple_selector(b, &entry.selector) { continue; }
                     (entry.callback)(&mut evt);
-                    if evt.default_prevented { return true; }
-                    if evt.propagation_stopped { return evt.default_prevented; }
+                    handled = true;
+                    if evt.propagation_stopped { break; }
                 }
+                if evt.propagation_stopped { break; }
             }
         } else {
             // No positional target: fire on root (keyboard, scroll, selection-change)
-            let _b = root;
-            for entry in &self.entries {
+            evt.current_target = root as *const HtmlBox;
+            for entry in &inner.entries {
                 if entry.event_type != evt.event_type { continue; }
                 let sel = entry.selector.as_str();
                 if sel != "*" && sel != "html" && sel != "body" { continue; }
                 (entry.callback)(&mut evt);
+                handled = true;
                 if evt.propagation_stopped { break; }
             }
         }
 
-        evt.default_prevented
+        handled || evt.default_prevented
     }
 }
 
@@ -360,6 +400,22 @@ pub fn query_selector_all<'a>(root: &'a HtmlBox, selector: &str) -> Vec<&'a Html
 fn collect_all<'a>(node: &'a HtmlBox, sel: &str, out: &mut Vec<&'a HtmlBox>) {
     if matches_simple_selector(node, sel) { out.push(node); }
     for child in &node.children { collect_all(child, sel, out); }
+}
+
+/// Returns all boxes matching the selector (mutable).
+pub fn query_selector_all_mut<'a>(root: &'a mut HtmlBox, selector: &str) -> Vec<&'a mut HtmlBox> {
+    let mut out: Vec<*mut HtmlBox> = Vec::new();
+    collect_all_mut_internal(root as *mut HtmlBox, selector, &mut out);
+    out.into_iter().map(|p| unsafe { &mut *p }).collect()
+}
+
+fn collect_all_mut_internal(node: *mut HtmlBox, sel: &str, out: &mut Vec<*mut HtmlBox>) {
+    unsafe {
+        if matches_simple_selector(&*node, sel) { out.push(node); }
+        for child in &mut (*node).children {
+            collect_all_mut_internal(child as *mut HtmlBox, sel, out);
+        }
+    }
 }
 
 // ─── Tree traversal ───────────────────────────────────────────────────────────
@@ -634,4 +690,335 @@ impl UndoStack {
         });
         Some(entry)
     }
+}
+
+// ─── Editor ──────────────────────────────────────────────────────────────────
+
+/// High-level editor state and operations.
+#[derive(Debug, Clone)]
+pub struct Editor {
+    pub caret_box:    Option<*const HtmlBox>,
+    pub caret_local:  usize,
+    pub sel_anchor:   usize,
+    pub sel_start:    usize,
+    pub sel_end:      usize,
+    pub caret_visible: bool,
+    pub last_blink:   Instant,
+    pub mouse_down:   bool,
+    pub has_focus:    bool,
+    pub read_only:    bool,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            caret_box:    None,
+            caret_local:  0,
+            sel_anchor:   0,
+            sel_start:    0,
+            sel_end:      0,
+            caret_visible: true,
+            last_blink:   Instant::now(),
+            mouse_down:   false,
+            has_focus:    false,
+            read_only:    false,
+        }
+    }
+}
+
+impl Editor {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn has_selection(&self) -> bool { self.sel_start < self.sel_end }
+
+    pub fn caret_info(&self) -> Option<(*const HtmlBox, usize)> {
+        self.caret_box.map(|p| (p, self.caret_local))
+    }
+
+    pub fn sel_args(&self) -> (Option<usize>, Option<usize>) {
+        if self.has_selection() {
+            (Some(self.sel_start), Some(self.sel_end))
+        } else {
+            (None, None)
+        }
+    }
+
+    pub fn set_caret_from_hit(&mut self, box_ptr: *const HtmlBox, local: usize, extend: bool) {
+        if !extend {
+            self.sel_anchor  = local;
+            self.sel_start   = local;
+            self.sel_end     = local;
+        }
+        self.caret_box   = Some(box_ptr);
+        self.caret_local = local;
+        if extend && self.caret_box == Some(box_ptr) {
+            self.sel_start = self.sel_anchor.min(local);
+            self.sel_end   = self.sel_anchor.max(local);
+        }
+        self.caret_visible = true;
+        self.last_blink    = Instant::now();
+    }
+
+    pub fn move_left(&mut self, flat: &str, extend: bool) {
+        let pos = self.caret_local;
+        if !extend && self.has_selection() {
+            let new = self.sel_start;
+            self.collapse_to(new);
+            return;
+        }
+        let new = prev_char_boundary(flat, pos);
+        self.move_to(new, extend);
+    }
+
+    pub fn move_right(&mut self, flat: &str, extend: bool) {
+        let pos = self.caret_local;
+        if !extend && self.has_selection() {
+            let new = self.sel_end;
+            self.collapse_to(new);
+            return;
+        }
+        let new = next_char_boundary(flat, pos);
+        self.move_to(new, extend);
+    }
+
+    pub fn move_to(&mut self, new_pos: usize, extend: bool) {
+        self.caret_local = new_pos;
+        if !extend {
+            self.sel_anchor = new_pos;
+            self.sel_start  = new_pos;
+            self.sel_end    = new_pos;
+        } else {
+            self.sel_start = self.sel_anchor.min(new_pos);
+            self.sel_end   = self.sel_anchor.max(new_pos);
+        }
+        self.caret_visible = true;
+        self.last_blink    = Instant::now();
+    }
+
+    pub fn collapse_to(&mut self, pos: usize) {
+        self.caret_local = pos;
+        self.sel_anchor  = pos;
+        self.sel_start   = pos;
+        self.sel_end     = pos;
+        self.caret_visible = true;
+        self.last_blink    = Instant::now();
+    }
+
+    pub fn blink_update(&mut self) -> bool {
+        if self.last_blink.elapsed() >= Duration::from_millis(CARET_BLINK_MS) {
+            self.caret_visible = !self.caret_visible;
+            self.last_blink    = Instant::now();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn next_blink_deadline(&self) -> Instant {
+        self.last_blink + Duration::from_millis(CARET_BLINK_MS)
+    }
+
+    /// Primary mouse event handler for selection/caret.
+    pub fn handle_mouse_event(&mut self, root: &HtmlBox, etype: HtmlEventType, doc_pt: (f32, f32)) -> bool {
+        match etype {
+            HtmlEventType::MouseDown => {
+                self.mouse_down = true;
+                self.has_focus  = true;
+                if let Some(hit) = point_to_hit(root, doc_pt) {
+                    self.set_caret_from_hit(hit.box_ptr, hit.local_offset, false);
+                    return true;
+                }
+            }
+            HtmlEventType::MouseMove => {
+                if self.mouse_down {
+                    if let Some(hit) = point_to_hit(root, doc_pt) {
+                        if self.caret_box == Some(hit.box_ptr) {
+                            self.caret_local = hit.local_offset;
+                            self.sel_start = self.sel_anchor.min(hit.local_offset);
+                            self.sel_end   = self.sel_anchor.max(hit.local_offset);
+                            self.caret_visible = true;
+                            return true;
+                        }
+                    }
+                }
+            }
+            HtmlEventType::MouseUp => {
+                self.mouse_down = false;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Primary keyboard event handler. Returns true if redraw needed.
+    pub fn handle_key_event(&mut self, root: &mut HtmlBox, etype: HtmlEventType, key_code: u32, ch: Option<char>, _ctrl: bool) -> bool {
+        if self.read_only { return false; }
+        if etype != HtmlEventType::KeyDown && etype != HtmlEventType::KeyPress { return false; }
+
+        let box_ptr = match self.caret_box { Some(p) => p, None => return false };
+
+        match key_code {
+            37 => { // ArrowLeft
+                let flat = crate::layout::inline_layout::collect_flat_text(unsafe { &*box_ptr });
+                self.move_left(&flat, false);
+                return true;
+            }
+            39 => { // ArrowRight
+                let flat = crate::layout::inline_layout::collect_flat_text(unsafe { &*box_ptr });
+                self.move_right(&flat, false);
+                return true;
+            }
+            8 => { // Backspace
+                self.delete_selection_or_before(root);
+                return true;
+            }
+            46 => { // Delete
+                self.delete_selection_or_at(root);
+                return true;
+            }
+            13 => { // Enter
+                self.insert_char(root, '\n');
+                return true;
+            }
+            _ => {
+                if let Some(c) = ch {
+                    if !c.is_control() {
+                        self.insert_char(root, c);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn insert_char(&mut self, root: &mut HtmlBox, ch: char) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        if let Some(container) = find_box_mut(root, box_ptr) {
+            if self.has_selection() {
+                let s = self.sel_start;
+                let e = self.sel_end;
+                delete_range(container, s, e);
+                self.collapse_to(s);
+            }
+            match find_node_offset_mut(container, self.caret_local) {
+                Ok((leaf, local)) => {
+                    let mut buf = [0u8; 4];
+                    let s = ch.encode_utf8(&mut buf);
+                    leaf.text.insert_str(local, s);
+                    self.caret_local += s.len();
+                    self.collapse_to(self.caret_local);
+                }
+                Err(_) => {
+                    let ins = self.caret_local.min(container.text.len());
+                    container.text.insert(ins, ch);
+                    self.caret_local += ch.len_utf8();
+                    self.collapse_to(self.caret_local);
+                }
+            }
+        }
+    }
+
+    pub fn delete_selection_or_before(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        if let Some(node) = find_box_mut(root, box_ptr) {
+            if self.has_selection() {
+                let s = self.sel_start;
+                let e = self.sel_end;
+                delete_range(node, s, e);
+                self.collapse_to(s);
+            } else {
+                if self.caret_local > 0 {
+                    let flat = crate::layout::inline_layout::collect_flat_text(node);
+                    let new_off = prev_char_boundary(&flat, self.caret_local);
+                    delete_range(node, new_off, self.caret_local);
+                    self.collapse_to(new_off);
+                }
+            }
+        }
+    }
+
+    pub fn delete_selection_or_at(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        if let Some(node) = find_box_mut(root, box_ptr) {
+            if self.has_selection() {
+                let s = self.sel_start;
+                let e = self.sel_end;
+                delete_range(node, s, e);
+                self.collapse_to(s);
+            } else {
+                let flat = crate::layout::inline_layout::collect_flat_text(node);
+                if self.caret_local < flat.len() {
+                    let next_off = next_char_boundary(&flat, self.caret_local);
+                    delete_range(node, self.caret_local, next_off);
+                    self.collapse_to(self.caret_local);
+                }
+            }
+        }
+    }
+}
+
+// ─── Internal Editor helpers ──────────────────────────────────────────────────
+
+fn prev_char_boundary(s: &str, mut idx: usize) -> usize {
+    if idx == 0 { return 0; }
+    idx -= 1;
+    while idx > 0 && !s.is_char_boundary(idx) { idx -= 1; }
+    idx
+}
+
+fn next_char_boundary(s: &str, idx: usize) -> usize {
+    if idx >= s.len() { return s.len(); }
+    let mut i = idx + 1;
+    while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+    i
+}
+
+
+pub fn find_box_mut<'a>(root: &'a mut HtmlBox, ptr: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+    if std::ptr::eq(root as *const HtmlBox, ptr) { return Some(root); }
+    for child in &mut root.children {
+        if let Some(b) = find_box_mut(child, ptr) { return Some(b); }
+    }
+    None
+}
+
+/// Resolves a global offset (from collect_flat_text) to a specific leaf node and local offset.
+fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut HtmlBox, usize), usize> {
+    if node.is_text_node() {
+        if offset <= node.text.len() {
+            return Ok((node, offset));
+        } else {
+            return Err(offset - node.text.len());
+        }
+    }
+    if matches!(node.style.display, Display::None) { return Err(offset); }
+    if node.tag == "br" { return Err(offset); }
+
+    if !node.text.is_empty() {
+        if offset <= node.text.len() {
+            return Ok((node, offset));
+        } else {
+            offset -= node.text.len();
+        }
+    }
+
+    for child in &mut node.children {
+        match find_node_offset_mut(child, offset) {
+            Ok(res) => return Ok(res),
+            Err(rem) => offset = rem,
+        }
+    }
+    Err(offset)
+}
+
+fn delete_range(node: &mut HtmlBox, start: usize, end: usize) -> (usize, usize) {
+    // This is a simplified range deletion that only works within a single node for now.
+    // In a real editor, this needs to handle multi-node spans.
+    if let Ok((leaf, local_s)) = find_node_offset_mut(node, start) {
+        let len = (end - start).min(leaf.text.len() - local_s);
+        leaf.text.drain(local_s..local_s + len);
+        return (len, 0); // (deleted_count, remaining)
+    }
+    (0, end - start)
 }

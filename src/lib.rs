@@ -14,6 +14,7 @@ pub use html::{parse_html, parse_html_with_base, parse_html_bytes, parse_html_by
 pub use layout::LayoutEngine;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
 pub use renderer::Renderer;
+pub use dom::HtmlEventType;
 
 /// High-level convenience: parse HTML, layout, ready to render.
 pub fn load_html(html: &str, viewport_width: f32) -> Document {

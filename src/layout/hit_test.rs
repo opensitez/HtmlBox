@@ -255,11 +255,25 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
     let px = doc_pt.0 + node.scroll_left;
     let py = doc_pt.1 + node.scroll_top;
 
+    // Pass 0: If this box has inline content, check lines first.
+    // This ensures clicks on text return the block container's offset.
+    if !node.line_cache.is_empty() {
+        let flat = collect_flat_text(node);
+        let line = snap_to_line(&node.line_cache, py);
+        // Only return if the point is actually within the vertical range of the lines
+        // or if this is the deepest block container.
+        let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
+        return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: off });
+    }
+
     // Pass 1: deepest child whose borderRect (absolute) contains the point
     for child in node.children.iter().rev() {
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py)) { return Some(r); }
+            // Child contains the point but hit-test inside returned None
+            // (e.g. leaf node with no text). Return the child itself.
+            return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
         }
     }
 
@@ -285,12 +299,10 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32)) -> Option<HitResult> {
         }
     }
 
-    // This box's own inline content — line.x/y are absolute doc coords
-    if !node.line_cache.is_empty() {
-        let flat = collect_flat_text(node);
-        let line = snap_to_line(&node.line_cache, py);
-        let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
-        return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: off });
+    // Fallback: If no children hit, but this node contains the point
+    let b = &node.border_rect;
+    if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
+        return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: 0 });
     }
 
     None
@@ -464,8 +476,7 @@ fn deepest_box_at(node: &HtmlBox, pt: (f32, f32)) -> Option<*const HtmlBox> {
 /// Find a link URL at a document-space point, if any.
 pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
     // 1. Try hitting text content (inline runs)
-    let pt = (doc_pt.0 - root.content_rect.x, doc_pt.1 - root.content_rect.y);
-    if let Some(hit) = hit_test_impl(root, pt) {
+    if let Some(hit) = hit_test_impl(root, doc_pt) {
         let node = unsafe { &*hit.box_ptr };
         // Find which run was hit
         for run in &node.inline_runs {

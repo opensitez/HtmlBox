@@ -54,12 +54,11 @@ impl Renderer {
         scale:        f32,
         scroll_x:     f32,
         scroll_y:     f32,
-        sel_start:    Option<usize>,
-        sel_end:      Option<usize>,
-        caret_info:   Option<(*const HtmlBox, usize)>,
-        caret_visible: bool,
-        has_focus:    bool,
     ) {
+        let (sel_start, sel_end) = doc.editor.sel_args();
+        let caret_info = doc.editor.caret_info();
+        let caret_visible = doc.editor.caret_visible;
+        let _has_focus = doc.editor.has_focus;
         self.scale = scale;
         pixmap.fill(tiny_skia::Color::WHITE);
         // Clip rect in logical pixels (layout coordinates).
@@ -77,7 +76,7 @@ impl Renderer {
         );
 
         // ── Caret ─────────────────────────────────────────────────────────────
-        if caret_visible && has_focus {
+        if caret_visible {
             if let Some((caret_box_ptr, caret_local)) = caret_info {
                 self.draw_caret(
                     &doc.root, pixmap,
