@@ -1293,6 +1293,9 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
         scroll_x: 0.0,
         scroll_y: 0.0,
         scrollbar_drag: None,
+        hovered_box: std::ptr::null(),
+        active_box:  std::ptr::null(),
+        focused_box: std::ptr::null(),
     };
 
     // Apply cascade

@@ -492,6 +492,48 @@ impl GridTrackSize {
     pub fn is_none(&self) -> bool { self.kind == GridTrackKind::Auto && self.value == 0.0 }
 }
 
+// ─── CSS Transform ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default)]
+pub struct CssTransform {
+    pub ops: Vec<TransformOp>,
+}
+
+#[derive(Clone, Debug)]
+pub enum TransformOp {
+    Translate(f32, f32),
+    TranslateX(f32),
+    TranslateY(f32),
+    Scale(f32, f32),
+    ScaleX(f32),
+    ScaleY(f32),
+    Rotate(f32),   // degrees
+    SkewX(f32),   // degrees
+    SkewY(f32),   // degrees
+    Matrix(f32, f32, f32, f32, f32, f32),  // a b c d e f
+}
+
+// ─── CSS Filter ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default)]
+pub struct CssFilters {
+    pub ops: Vec<FilterOp>,
+}
+
+#[derive(Clone, Debug)]
+pub enum FilterOp {
+    Blur(f32),
+    Brightness(f32),
+    Contrast(f32),
+    Grayscale(f32),
+    HueRotate(f32),
+    Invert(f32),
+    Opacity(f32),
+    Saturate(f32),
+    Sepia(f32),
+    DropShadow { dx: f32, dy: f32, blur: f32, color: Color },
+}
+
 // ─── Computed Style ───────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -705,6 +747,10 @@ pub struct ComputedStyle {
     pub hover_color:            Option<Color>,
     pub hover_background_color: Option<Color>,
 
+    // Active (pressed) colors
+    pub active_color:            Option<Color>,
+    pub active_background_color: Option<Color>,
+
     // List style image
     pub list_style_image: String,
 
@@ -718,6 +764,25 @@ pub struct ComputedStyle {
     // Text decoration extras
     pub text_decoration_color: Option<Color>,
     pub text_decoration_style: TextDecorationStyle,
+    pub text_decoration_thickness: CssLength,
+
+    // Scroll snap
+    pub scroll_snap_type:  ScrollSnapType,
+    pub scroll_snap_align: ScrollSnapAlign,
+
+    // Containment
+    pub contain_layout: bool,
+    pub contain_paint:  bool,
+    pub contain_size:   bool,
+
+    // Will-change hints
+    pub will_change_transform: bool,
+
+    // Scroll padding
+    pub scroll_padding_top:    CssLength,
+    pub scroll_padding_right:  CssLength,
+    pub scroll_padding_bottom: CssLength,
+    pub scroll_padding_left:   CssLength,
 
     // User interaction
     pub user_select: UserSelect,
@@ -735,11 +800,21 @@ pub struct ComputedStyle {
     pub column_rule_style: BorderStyle,
     pub column_rule_color: Color,
     pub column_fill:       bool,  // true = balance, false = auto
+    pub column_span_all:   bool,  // true = span all columns
 
     // Transform / filter (stored raw; actual matrix math not implemented)
     pub transform:        String,
     pub filter:           String,
     pub backdrop_filter:  String,
+
+    // Parsed transform / filter (for rendering)
+    pub css_transform:        CssTransform,
+    pub transform_origin_x:   f32,   // 0.0..1.0, default 0.5
+    pub transform_origin_y:   f32,   // 0.0..1.0, default 0.5
+    pub css_filter:           CssFilters,
+
+    // Text underline offset
+    pub text_underline_offset: CssLength,
 
     // Transition / animation (stored for future use)
     pub transition: String,
@@ -834,6 +909,15 @@ impl Default for ScrollBehavior { fn default() -> Self { Self::Auto } }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextDecorationStyle { Solid, Double, Dotted, Dashed, Wavy }
 impl Default for TextDecorationStyle { fn default() -> Self { Self::Solid } }
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ScrollSnapType {
+    #[default] None, X, Y, Both, Block, Inline,
+    Mandatory, Proximity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ScrollSnapAlign { #[default] None, Start, End, Center }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MixBlendMode {
@@ -1083,6 +1167,9 @@ impl Default for ComputedStyle {
             hover_color:            None,
             hover_background_color: None,
 
+            active_color:            None,
+            active_background_color: None,
+
             list_style_image: String::new(),
 
             object_position_x: CssLength::Percent(50.0),
@@ -1092,6 +1179,21 @@ impl Default for ComputedStyle {
 
             text_decoration_color: None,
             text_decoration_style: TextDecorationStyle::Solid,
+            text_decoration_thickness: CssLength::Auto,
+
+            scroll_snap_type:  ScrollSnapType::None,
+            scroll_snap_align: ScrollSnapAlign::None,
+
+            contain_layout: false,
+            contain_paint:  false,
+            contain_size:   false,
+
+            will_change_transform: false,
+
+            scroll_padding_top:    CssLength::Zero,
+            scroll_padding_right:  CssLength::Zero,
+            scroll_padding_bottom: CssLength::Zero,
+            scroll_padding_left:   CssLength::Zero,
 
             user_select: UserSelect::Auto,
             resize:      Resize::None,
@@ -1106,10 +1208,18 @@ impl Default for ComputedStyle {
             column_rule_style: BorderStyle::None,
             column_rule_color: Color::BLACK,
             column_fill:       true,
+            column_span_all:   false,
 
             transform:       String::new(),
             filter:          String::new(),
             backdrop_filter: String::new(),
+
+            css_transform:      CssTransform::default(),
+            transform_origin_x: 0.5,
+            transform_origin_y: 0.5,
+            css_filter:         CssFilters::default(),
+
+            text_underline_offset: CssLength::Auto,
 
             transition:  String::new(),
             animation:   String::new(),
@@ -1461,6 +1571,12 @@ pub struct Document {
     pub scroll_y:        f32,
     /// Active scrollbar drag state (None when not dragging).
     pub scrollbar_drag:  Option<ScrollbarDrag>,
+    /// Currently hovered element (raw pointer, null if none).
+    pub hovered_box:     *const HtmlBox,
+    /// Currently active (pressed) element (raw pointer, null if none).
+    pub active_box:      *const HtmlBox,
+    /// Currently focused element (raw pointer, null if none).
+    pub focused_box:     *const HtmlBox,
 }
 
 impl Document {
@@ -1475,15 +1591,33 @@ impl Document {
             scroll_x:        0.0,
             scroll_y:        0.0,
             scrollbar_drag:  None,
+            hovered_box:     std::ptr::null(),
+            active_box:      std::ptr::null(),
+            focused_box:     std::ptr::null(),
         }
     }
 
     /// Re-apply the CSS cascade to the entire document tree.
     /// Call this after mutating class attributes (e.g. toggling dark mode) so
     /// that `ComputedStyle` on every box is updated before the next layout pass.
+    /// Resets hover/active pointers since box addresses may change after re-layout.
     pub fn recascade(&mut self) {
+        // Invalidate hover/active pointers — raw pointers may alias differently
+        // after HtmlBox trees are rebuilt or re-allocated during parsing.
+        self.hovered_box = std::ptr::null();
+        self.active_box  = std::ptr::null();
         let ss = self.stylesheet.clone();
-        crate::css::apply_cascade(&mut self.root, &ss, None, 16.0);
+        let focused = self.focused_box;
+        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, focused);
+    }
+
+    /// Re-apply cascade with an explicit focused element pointer.
+    pub fn recascade_with_focus(&mut self, focused: *const HtmlBox) {
+        self.focused_box = focused;
+        self.hovered_box = std::ptr::null();
+        self.active_box  = std::ptr::null();
+        let ss = self.stylesheet.clone();
+        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, focused);
     }
 
     /// High-level mouse event entry point.
@@ -1492,13 +1626,39 @@ impl Document {
         let mut evt = crate::dom::HtmlEvent::new(etype);
         evt.doc_pos = doc_pt;
         evt.button  = button;
-        if let Some(hit) = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button) {
-            evt.target = hit.box_ptr;
+        let hit_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button)
+            .map(|h| h.box_ptr)
+            .unwrap_or(std::ptr::null());
+        evt.target = hit_ptr;
+
+        // Update hover/active state; a pointer change means we need a redraw
+        // but NOT necessarily a full cascade (hover styles are pre-baked into
+        // the style at cascade time; only the pointer changes at runtime).
+        let mut redraw = false;
+        match etype {
+            crate::dom::HtmlEventType::MouseMove => {
+                if self.hovered_box != hit_ptr {
+                    self.hovered_box = hit_ptr;
+                    redraw = true;
+                }
+            }
+            crate::dom::HtmlEventType::MouseDown => {
+                if self.active_box != hit_ptr {
+                    self.active_box = hit_ptr;
+                    redraw = true;
+                }
+            }
+            crate::dom::HtmlEventType::MouseUp => {
+                if !self.active_box.is_null() {
+                    self.active_box = std::ptr::null();
+                    redraw = true;
+                }
+            }
+            _ => {}
         }
 
         let (handled, evt) = self.events.dispatch_and_return(&self.root, evt);
-
-        let mut redraw = handled;
+        if handled { redraw = true; }
 
         // Only perform editor/default behavior if not prevented by handlers.
         if !evt.default_prevented {
@@ -1507,11 +1667,9 @@ impl Document {
             }
         }
 
-        // If handlers or default behavior indicated a redraw is needed, run
-        // a cascade + layout pass so the renderer sees updated styles and geometry.
-        // Cascade must run first because event handlers may have toggled classes
-        // (e.g. dark mode) that change which CSS rules apply.
-        if redraw {
+        // Full cascade + layout only when event handlers or editor logic changed
+        // DOM state (class toggles, etc.), not merely for hover/active pointer updates.
+        if handled {
             let width = self.root.last_containing_width.max(0.0);
             self.recascade();
             LayoutEngine::new().layout(self, width);

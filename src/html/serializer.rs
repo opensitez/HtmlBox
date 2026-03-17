@@ -394,6 +394,32 @@ fn serialize_selector(sel: &CssSelector) -> String {
                     Combinator::GeneralSibling  => out.push_str(" ~ "),
                 }
             }
+            SelectorPart::Not(inner) => {
+                out.push_str(":not(");
+                out.push_str(&serialize_selector(inner));
+                out.push(')');
+            }
+            SelectorPart::Is(list) => {
+                out.push_str(":is(");
+                for (i, s) in list.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    out.push_str(&serialize_selector(s));
+                }
+                out.push(')');
+            }
+            SelectorPart::Where(list) => {
+                out.push_str(":where(");
+                for (i, s) in list.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    out.push_str(&serialize_selector(s));
+                }
+                out.push(')');
+            }
+            SelectorPart::Has(inner) => {
+                out.push_str(":has(");
+                out.push_str(&serialize_selector(inner));
+                out.push(')');
+            }
         }
     }
     out

@@ -35,10 +35,12 @@ fn ancestor_info(
     sibling_count: usize,
 ) -> rhtmledit::css::AncestorInfo {
     rhtmledit::css::AncestorInfo {
-        tag:           b.tag.clone(),
-        attributes:    b.attributes.clone(),
+        tag:              b.tag.clone(),
+        attributes:       b.attributes.clone(),
         child_index,
         sibling_count,
+        type_child_index: child_index,
+        type_sibling_count: sibling_count,
     }
 }
 

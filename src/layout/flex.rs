@@ -329,7 +329,10 @@ pub fn layout_flex(
         + gap_cross * (lines.len().saturating_sub(1)) as f32;
 
     let container_cross = if is_row {
-        rbox.content_height.unwrap_or(total_cross)
+        if let Some(h) = rbox.content_height { h }
+        else if let Some(ratio) = node.style.aspect_ratio {
+            if ratio > 0.0 { (content_w / ratio).max(total_cross) } else { total_cross }
+        } else { total_cross }
     } else {
         content_w
     };
@@ -531,7 +534,7 @@ pub fn layout_flex(
         shift_rects(child, dx, dy);
 
         // Apply relative offset if position:relative
-        if matches!(child.style.position, Position::Relative) {
+        if matches!(child.style.position, Position::Relative | Position::Sticky) {
             let child_font = child.style.font_size_px(font_px, root_font_px);
             crate::layout::block::apply_relative_offset(child, child_font, content_w, root_font_px);
         }
@@ -551,6 +554,9 @@ pub fn layout_flex(
 
     let content_h = if let Some(h) = rbox.content_height {
         h
+    } else if let Some(ratio) = node.style.aspect_ratio {
+        // Derive height from width via aspect-ratio when no explicit height is set
+        if ratio > 0.0 { (content_w / ratio).max(0.0) } else { 0.0 }
     } else if is_row {
         // Cross axis = height, which is cross_offset minus trailing gap
         let used = cross_offset - if lines.is_empty() { 0.0 } else { gap_cross };

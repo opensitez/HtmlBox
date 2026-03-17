@@ -550,7 +550,7 @@ pub fn layout_table(
                     cell.style.background_color    = Color::TRANSPARENT;
                 }
 
-                if matches!(pos, Position::Relative) {
+                if matches!(pos, Position::Relative | Position::Sticky) {
                     apply_relative_offset(cell, cell.style.font_size_px(font_px, root_font_px),
                                           table_width, root_font_px);
                 }
@@ -564,7 +564,7 @@ pub fn layout_table(
             row.padding_rect = row.content_rect;
             row.border_rect  = row.content_rect;
             row.margin_rect  = row.content_rect;
-            if matches!(row.style.position, Position::Relative) {
+            if matches!(row.style.position, Position::Relative | Position::Sticky) {
                 apply_relative_offset(row, row.style.font_size_px(font_px, root_font_px),
                                       table_width, root_font_px);
             }

@@ -241,6 +241,20 @@ impl LayoutEngine {
         len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
     }
 
+    /// Load custom fonts declared by @font-face rules into the font system.
+    pub fn load_font_faces(&mut self, faces: &[crate::css::FontFaceDecl]) {
+        if let Some(fs_ptr) = self.font_system {
+            let fs = unsafe { &mut *fs_ptr };
+            for face in faces {
+                let path = crate::css::extract_url_path(&face.src);
+                if path.is_empty() { continue; }
+                if let Ok(data) = std::fs::read(&path) {
+                    fs.db_mut().load_font_data(data);
+                }
+            }
+        }
+    }
+
     /// Main entry point: layout the full document.
     pub fn layout(&mut self, doc: &mut Document, viewport_width: f32) {
         self.viewport_w = viewport_width;
@@ -354,7 +368,7 @@ impl LayoutEngine {
 pub fn has_block_children(node: &HtmlBox) -> bool {
     node.children.iter().any(|c|
         !matches!(c.style.display, Display::None) &&
-        matches!(c.style.position, Position::Static | Position::Relative) &&
+        matches!(c.style.position, Position::Static | Position::Relative | Position::Sticky) &&
         c.style.is_block_level() &&
         matches!(c.style.float, Float::None)
     )

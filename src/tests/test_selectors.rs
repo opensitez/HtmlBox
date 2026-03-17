@@ -172,6 +172,7 @@ fn selectors_nth_child_odd() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 4,
+        ..Default::default()
     }];
     assert!(sel.matches_with_ancestors(&b_first, 0, 4, &ancestors));
     assert!(!sel.matches_with_ancestors(&b_first, 1, 4, &ancestors));
@@ -186,6 +187,7 @@ fn selectors_nth_child_even() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 4,
+        ..Default::default()
     }];
     let b = HtmlBox::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 4, &ancestors)); // pos=1, odd
@@ -201,6 +203,7 @@ fn selectors_nth_child_simple_number() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 4,
+        ..Default::default()
     }];
     let b = HtmlBox::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 4, &ancestors));
@@ -218,6 +221,7 @@ fn selectors_first_child_match() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 2,
+        ..Default::default()
     }];
     let b = HtmlBox::new("li");
     assert!(sel.matches_with_ancestors(&b, 0, 2, &ancestors));  // first child
@@ -233,6 +237,7 @@ fn selectors_last_child_match() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 2,
+        ..Default::default()
     }];
     let b = HtmlBox::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 2, &ancestors)); // first child
@@ -248,12 +253,14 @@ fn selectors_only_child_match() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 1,
+        ..Default::default()
     }];
     let ancestors_two = vec![AncestorInfo {
         tag: "div".into(),
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 2,
+        ..Default::default()
     }];
     let b = HtmlBox::new("p");
     assert!(sel.matches_with_ancestors(&b, 0, 1, &ancestors_single));  // only child
@@ -270,6 +277,7 @@ fn selectors_descendant_match() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 1,
+        ..Default::default()
     }];
     assert!(sel.matches_with_ancestors(&b, 0, 1, &ancestors));
     // "span p" should not match when ancestor is div
@@ -289,6 +297,7 @@ fn selectors_child_match() {
         attributes: Default::default(),
         child_index: 0,
         sibling_count: 1,
+        ..Default::default()
     }];
     assert!(sel.matches_with_ancestors(&b, 0, 1, &ancestors));
 }
@@ -304,8 +313,8 @@ fn selectors_deep_descendant_match() {
     let b = HtmlBox::new("p");
     // ancestors listed outermost-first: div → section → p
     let ancestors = vec![
-        AncestorInfo { tag: "div".into(),     attributes: Default::default(), child_index: 0, sibling_count: 1 },
-        AncestorInfo { tag: "section".into(), attributes: Default::default(), child_index: 0, sibling_count: 1 },
+        AncestorInfo { tag: "div".into(),     attributes: Default::default(), child_index: 0, sibling_count: 1, ..Default::default() },
+        AncestorInfo { tag: "section".into(), attributes: Default::default(), child_index: 0, sibling_count: 1, ..Default::default() },
     ];
     // "div p" — descendant match (div is ancestor)
     assert!(sel_desc.matches_with_ancestors(&b, 0, 1, &ancestors));

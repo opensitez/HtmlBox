@@ -1,5 +1,5 @@
 use crate::types::*;
-use cosmic_text::{Attrs, Buffer, Metrics, Shaping};
+use cosmic_text::{Attrs, Buffer, Metrics, Shaping, Style as CTextStyle, Weight};
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
 use crate::layout::block::{collapse_two, compute_intrinsic_width};
 use crate::layout::text::resolve_bidi_line;
@@ -146,7 +146,16 @@ pub fn layout_inline_block(
 
     if items.is_empty() {
         // Nothing to lay out
-        let content_h = match rbox.content_height { Some(h) => h, None => 0.0 };
+        let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
+        let max_h = if node.style.max_height.is_none() { f32::MAX }
+                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+        let content_h = if let Some(h) = rbox.content_height {
+            h
+        } else if let Some(ratio) = node.style.aspect_ratio {
+            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { 0.0 }
+        } else {
+            0.0
+        };
         set_box_rects(node, content_x, content_y, content_w, content_h,
                       rbox, margin_left, margin_right);
         node.inline_runs = runs;
@@ -425,6 +434,13 @@ pub fn layout_inline_block(
     let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
     let content_h = content_h.max(min_h).min(max_h);
 
+    // Apply aspect-ratio: if height is auto and aspect_ratio is set, derive height from width
+    let content_h = if rbox.content_height.is_none() {
+        if let Some(ratio) = node.style.aspect_ratio {
+            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { content_h }
+        } else { content_h }
+    } else { content_h };
+
     set_box_rects(node, content_x, content_y, content_w, content_h,
                   rbox, margin_left, margin_right);
     node.line_cache  = line_cache;
@@ -600,7 +616,7 @@ pub fn collect_items(
     if node.is_text_node() {
         if !node.text.is_empty() {
             let start = *text_offset;
-            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items);
+            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style);
             runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
             *text_offset += node.text.len();
         }
@@ -637,7 +653,7 @@ pub fn collect_items(
     // ── Own text ──────────────────────────────────────────────────────────
     if !node.text.is_empty() {
         let start = *text_offset;
-        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items);
+        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style);
         runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
         *text_offset += node.text.len();
     }
@@ -662,6 +678,8 @@ fn tokenize_text(
     line_h:      f32,
     box_idx:     usize,
     items:       &mut Vec<InlineItem>,
+    font_weight: FontWeight,
+    font_style:  FontStyle,
 ) {
     if text.is_empty() { return; }
 
@@ -679,7 +697,7 @@ fn tokenize_text(
         if (at_end || is_space || is_nl) && i > word_start {
             // Emit word
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let w = measure_text_width(&text[word_start..i], font_px, font_system);
+            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style);
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + word_start,
@@ -727,7 +745,7 @@ fn tokenize_text(
             // (Previously all consecutive spaces were collapsed to one rendered item,
             //  causing the caret to drift right while text stayed left.)
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let space_w = measure_text_width(" ", font_px, font_system);
+            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style);
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + i,
@@ -887,15 +905,44 @@ pub fn measure_text_width(text: &str, font_px: f32, font_system: Option<&mut cos
     }
 }
 
+pub fn measure_text_width_weighted(
+    text:        &str,
+    font_px:     f32,
+    font_system: Option<&mut cosmic_text::FontSystem>,
+    weight:      FontWeight,
+    style:       FontStyle,
+) -> f32 {
+    if let Some(fs) = font_system {
+        let ct_weight = if weight.is_bold() { Weight::BOLD } else { Weight::NORMAL };
+        let ct_style  = match style {
+            FontStyle::Italic  => CTextStyle::Italic,
+            FontStyle::Oblique => CTextStyle::Oblique,
+            FontStyle::Normal  => CTextStyle::Normal,
+        };
+        measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style)
+    } else {
+        measure_text_width_ts(text, font_px, 8)
+    }
+}
+
 pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_px: f32) -> f32 {
+    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal)
+}
+
+pub fn measure_text_width_fs_attrs(
+    fs:     &mut cosmic_text::FontSystem,
+    text:   &str,
+    font_px: f32,
+    weight: Weight,
+    style:  CTextStyle,
+) -> f32 {
     if text.is_empty() { return 0.0; }
-    // Use a large enough height to avoid vertical wrapping if not desired here.
     let metrics = Metrics::new(font_px, font_px * 1.2);
     let mut buffer = Buffer::new(fs, metrics);
-    buffer.set_text(fs, text, Attrs::new(), Shaping::Advanced);
-    // Since we want the natural width, we don't set a width limit.
+    let attrs = Attrs::new().weight(weight).style(style);
+    buffer.set_text(fs, text, attrs, Shaping::Advanced);
     buffer.shape_until_scroll(fs, false);
-    
+
     let mut max_w = 0.0f32;
     for run in buffer.layout_runs() {
         if run.line_w > max_w { max_w = run.line_w; }

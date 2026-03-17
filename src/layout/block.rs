@@ -294,6 +294,26 @@ pub fn layout_block_with_fc(
         &mut fc_owned
     };
 
+    // ─── Multi-column layout (early return path) ──────────────────────────────
+    if establishes_column_context(&node.style) && !node.children.is_empty() {
+        let col_h = layout_columns(engine, node, rbox, content_x, content_y, content_w, font_px, root_font_px);
+        let content_h = match rbox.content_height { Some(h) => h, None => col_h };
+        let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
+        let max_h = if node.style.max_height.is_none() { f32::MAX }
+                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+        let content_h = content_h.max(min_h).min(max_h).max(0.0);
+        build_box_rects(node, rbox, content_x, content_y, content_w, content_h, margin_left, margin_right);
+        // Absolute/fixed children
+        let containing_rect = node.padding_rect;
+        for &i in &abs_children {
+            let child = &mut node.children[i];
+            layout_positioned(engine, child, containing_rect, font_px, root_font_px);
+        }
+        node.layout_dirty = false;
+        node.last_containing_width = containing_w;
+        return node.margin_rect.h;
+    }
+
     // ─── Main block children loop ─────────────────────────────────────────────
     let mut child_y = 0.0f32;
     let mut prev_bottom_margin = 0.0f32;
@@ -351,7 +371,7 @@ pub fn layout_block_with_fc(
             let dy = content_y + placed.y - node.children[i].margin_rect.y;
             shift_rects(&mut node.children[i], dx, dy);
 
-            if matches!(node.children[i].style.position, Position::Relative) {
+            if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                 let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
                 apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
             }
@@ -415,7 +435,7 @@ pub fn layout_block_with_fc(
             let dy = cy - node.children[i].content_rect.y;
             shift_rects(&mut node.children[i], dx, dy);
 
-            if matches!(node.children[i].style.position, Position::Relative) {
+            if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                 let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
                 apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
             }
@@ -460,7 +480,7 @@ pub fn layout_block_with_fc(
                 shift_rects(&mut node.children[i], dx, dy);
                 child_y += node.children[i].margin_rect.h;
 
-                if matches!(node.children[i].style.position, Position::Relative) {
+                if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                     let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
                     apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
                 }
@@ -508,6 +528,13 @@ pub fn layout_block_with_fc(
     let max_h = if node.style.max_height.is_none() { f32::MAX }
                 else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
     let content_h = content_h.max(min_h).min(max_h).max(0.0);
+
+    // Apply aspect-ratio: if height is auto and aspect_ratio is set, derive height from width
+    let content_h = if rbox.content_height.is_none() {
+        if let Some(ratio) = node.style.aspect_ratio {
+            if ratio > 0.0 { (content_w / ratio).max(0.0) } else { content_h }
+        } else { content_h }
+    } else { content_h };
 
     // ─── Build rects ──────────────────────────────────────────────────────────
     build_box_rects(node, rbox, content_x, content_y, content_w, content_h, margin_left, margin_right);
@@ -574,3 +601,125 @@ pub fn layout_block_with_fc(
 
     node.margin_rect.h
 }
+
+// ─── Multi-column layout ──────────────────────────────────────────────────────
+
+/// Returns true if this element establishes a multi-column container.
+pub fn establishes_column_context(style: &ComputedStyle) -> bool {
+    style.column_count.is_some() || !style.column_width.is_auto()
+}
+
+/// Lay out node's children in a multi-column arrangement.
+/// Returns the total content height.
+pub fn layout_columns(
+    engine:       &LayoutEngine,
+    node:         &mut HtmlBox,
+    _rbox:        &ResolvedBox,
+    content_x:    f32,
+    content_y:    f32,
+    content_w:    f32,
+    font_px:      f32,
+    root_font_px: f32,
+) -> f32 {
+    // 1. Determine column gap
+    let gap = if !node.style.column_gap.is_auto() {
+        engine.res_len(&node.style.column_gap, font_px, content_w, root_font_px)
+    } else {
+        font_px  // Default gap is 1em
+    };
+
+    // 2. Determine column count
+    let col_count_from_width = if !node.style.column_width.is_auto() {
+        let cw = engine.res_len(&node.style.column_width, font_px, content_w, root_font_px);
+        if cw > 0.0 { ((content_w + gap) / (cw + gap)).floor().max(1.0) as u32 } else { 1 }
+    } else {
+        u32::MAX
+    };
+
+    let n_cols = match node.style.column_count {
+        Some(c) if c > 0 => {
+            let c = c as u32;
+            if !node.style.column_width.is_auto() { c.min(col_count_from_width) } else { c }
+        }
+        _ => {
+            if col_count_from_width == u32::MAX { 1 } else { col_count_from_width }
+        }
+    }.max(1);
+
+    // 3. Column width
+    let total_gaps = gap * (n_cols - 1) as f32;
+    let col_w = ((content_w - total_gaps) / n_cols as f32).max(1.0);
+
+    // 4. First-pass layout to get child heights (with span-all flag)
+    let mut child_heights: Vec<(f32, bool)> = Vec::new(); // (height, is_span_all)
+    for child in node.children.iter_mut() {
+        if matches!(child.style.display, Display::None) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        let h = engine.layout_box(child, col_w, content_x, content_y, font_px, root_font_px);
+        child_heights.push((h, child.style.column_span_all));
+    }
+
+    // 5. Distribute children into columns
+    let balance = node.style.column_fill; // true = balance
+    // Exclude column-span:all children from balance total (they don't occupy a column)
+    let total_content_h: f32 = child_heights.iter().filter(|(_, span)| !span).map(|(h, _)| h).sum();
+    let target_col_h = if balance && n_cols > 1 {
+        (total_content_h / n_cols as f32).max(1.0)
+    } else {
+        f32::MAX
+    };
+
+    let mut col_idx = 0usize;
+    let mut col_cursor: Vec<f32> = vec![0.0; n_cols as usize];
+    let mut in_flow_idx = 0usize;
+    // Tracks the y-offset added by column-span:all elements
+    let mut span_all_y_offset = 0.0f32;
+
+    for i in 0..node.children.len() {
+        if matches!(node.children[i].style.display, Display::None) { continue; }
+        if matches!(node.children[i].style.position, Position::Absolute | Position::Fixed) { continue; }
+
+        let (child_h, _) = child_heights[in_flow_idx];
+        in_flow_idx += 1;
+
+        // column-span: all — lay out across full width, then resume all columns below it
+        if node.children[i].style.column_span_all {
+            let max_col_y = col_cursor.iter().cloned().fold(0.0f32, f32::max);
+            let span_y = content_y + span_all_y_offset + max_col_y;
+            // Re-layout at full content_w to get correct height (first pass used col_w)
+            let actual_span_h = engine.layout_box(
+                &mut node.children[i], content_w, content_x, span_y, font_px, root_font_px
+            );
+            span_all_y_offset += max_col_y + actual_span_h;
+            col_cursor = vec![0.0; n_cols as usize];
+            col_idx = 0;
+            continue;
+        }
+
+        if col_idx + 1 < n_cols as usize
+            && balance
+            && col_cursor[col_idx] + child_h > target_col_h * 1.1
+        {
+            col_idx += 1;
+        }
+        if col_idx >= n_cols as usize { col_idx = n_cols as usize - 1; }
+
+        let col_x = content_x + col_idx as f32 * (col_w + gap);
+        let col_y = content_y + span_all_y_offset + col_cursor[col_idx];
+
+        // Re-layout child at its column position
+        engine.layout_box(
+            &mut node.children[i], col_w, col_x, col_y, font_px, root_font_px
+        );
+
+        col_cursor[col_idx] += child_h;
+
+        if col_cursor[col_idx] >= target_col_h && col_idx + 1 < n_cols as usize {
+            col_idx += 1;
+        }
+    }
+
+    let max_col_y = col_cursor.iter().cloned().fold(0.0f32, f32::max);
+    span_all_y_offset + max_col_y
+}
+

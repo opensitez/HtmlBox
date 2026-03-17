@@ -122,7 +122,9 @@ impl ApplicationHandler for App {
         self.scale  = platform.scale_factor();
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
-        self.doc   = Some(load_html(DEMO_HTML, self.width));
+        let mut doc = load_html(DEMO_HTML, self.width);
+        self.renderer.layout_engine().layout(&mut doc, self.width);
+        self.doc   = Some(doc);
 
         self.window   = Some(window);
         self.platform = Some(platform);
@@ -152,7 +154,7 @@ impl ApplicationHandler for App {
                 self.width  = platform.logical_width();
                 self.height = platform.logical_height();
                 if let Some(doc) = self.doc.as_mut() {
-                    LayoutEngine::new().layout(doc, self.width);
+                    self.renderer.layout_engine().layout(doc, self.width);
                 }
                 self.request_redraw();
             }
@@ -220,7 +222,7 @@ impl ApplicationHandler for App {
                 };
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        LayoutEngine::new().layout(doc, self.width);
+                        self.renderer.layout_engine().layout(doc, self.width);
                         self.request_redraw();
                     }
                 }

@@ -33,6 +33,14 @@ impl Renderer {
         self.component_registry.register(tag, measure, paint);
     }
 
+    /// Create a [`LayoutEngine`] that shares this renderer's font system so that
+    /// line-breaking metrics match the actual rendered glyph widths.
+    pub fn layout_engine(&mut self) -> crate::layout::LayoutEngine {
+        let mut engine = crate::layout::LayoutEngine::new();
+        engine.font_system = Some(&mut self.font_system as *mut _);
+        engine
+    }
+
     /// Returns a transform that upscales logical-pixel coordinates to physical pixels.
     #[inline]
     fn ts(&self) -> Transform {
@@ -74,6 +82,8 @@ impl Renderer {
         let scroll_x = doc.scroll_x;
         let scroll_y = doc.scroll_y;
 
+        let hovered_ptr = doc.hovered_box;
+        let active_ptr  = doc.active_box;
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -81,7 +91,8 @@ impl Renderer {
             /* parent_mask */ None,
             sel_start, sel_end,
             sel_box_ptr,
-            std::ptr::null(),
+            hovered_ptr,
+            active_ptr,
         );
 
         // ── Caret ─────────────────────────────────────────────────────────────
@@ -136,6 +147,7 @@ impl Renderer {
         sel_end:      Option<usize>,
         sel_box_ptr:  *const HtmlBox,
         hovered_ptr:  *const HtmlBox,
+        active_ptr:   *const HtmlBox,
     ) {
         if matches!(node.style.display, Display::None) { return; }
         if !node.style.visibility { return; }
@@ -173,11 +185,46 @@ impl Renderer {
             }
         };
 
-        // ── Hover check (exact box match; C++ traverses parent chain) ─────────
+        // ── Hover / active check ──────────────────────────────────────────────
         let is_hovered = !hovered_ptr.is_null()
             && (node.style.hover_background_color.is_some()
                 || node.style.hover_color.is_some())
             && std::ptr::eq(node as *const HtmlBox, hovered_ptr);
+        let is_active = !active_ptr.is_null()
+            && (node.style.active_background_color.is_some()
+                || node.style.active_color.is_some())
+            && std::ptr::eq(node as *const HtmlBox, active_ptr);
+
+        // ── Sticky positioning ────────────────────────────────────────────────
+        // For position:sticky, clamp the element's scroll offset so it stays
+        // within the viewport while still allowing normal flow scrolling.
+        let (px, py) = if node.style.position == Position::Sticky {
+            // top/left sticky thresholds relative to the current clip viewport
+            let top_val  = node.style.top.resolve(font_px, clip.h, 16.0);
+            let left_val = node.style.left.resolve(font_px, clip.w, 16.0);
+            // Natural position (already scroll-adjusted above)
+            let nat_x = pr.x - sx;
+            let nat_y = pr.y - sy;
+            // Clamp: don't scroll past the sticky threshold
+            let cx = if !node.style.left.is_auto() { nat_x.max(left_val) } else { nat_x };
+            let cy = if !node.style.top.is_auto()  { nat_y.max(top_val)  } else { nat_y };
+            (cx, cy)
+        } else {
+            (px, py)
+        };
+
+        // ── CSS transform ─────────────────────────────────────────────────────
+        // Compute the element-level transform (CSS transform + DPI scale).
+        let has_css_transform = !node.style.css_transform.ops.is_empty();
+        let elem_ts: Transform = if has_css_transform {
+            let ox = px + node.style.transform_origin_x * pw;
+            let oy = py + node.style.transform_origin_y * ph;
+            let css_t = build_css_transform(&node.style.css_transform, ox, oy);
+            // Combine: first apply CSS transform in logical coords, then scale to physical
+            Transform::from_scale(self.scale, self.scale).pre_concat(css_t)
+        } else {
+            Transform::from_scale(self.scale, self.scale)
+        };
 
         // ── Clip-path ─────────────────────────────────────────────────────────
         // Build a pixmap-sized clip mask from clip-path shape (if any).
@@ -211,11 +258,10 @@ impl Renderer {
                     paint.anti_alias = true;
                     if radius > 0.0 {
                         if let Some(path) = rounded_rect_path(sx2, sy2, sw2, sh2, radius) {
-                            pixmap.fill_path(&path, &paint, FillRule::Winding,
-                                Transform::from_scale(self.scale, self.scale), eff_mask);
+                            pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, eff_mask);
                         }
                     } else if let Some(r) = SkRect::from_xywh(sx2, sy2, sw2, sh2) {
-                        pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), eff_mask);
+                        pixmap.fill_rect(r, &paint, elem_ts, eff_mask);
                     }
                 }
             }
@@ -223,8 +269,10 @@ impl Renderer {
 
         // ── Background ───────────────────────────────────────────────────────
         {
-            let raw_bg = if is_hovered {
-                node.style.hover_background_color.unwrap_or(node.style.background_color)
+            let raw_bg = if is_active && node.style.active_background_color.is_some() {
+                node.style.active_background_color.unwrap()
+            } else if is_hovered && node.style.hover_background_color.is_some() {
+                node.style.hover_background_color.unwrap()
             } else {
                 node.style.background_color
             };
@@ -235,13 +283,13 @@ impl Renderer {
                 let mut paint = Paint::default();
                 paint.set_color(bg.to_tiny_skia());
                 paint.anti_alias = true;
+                paint.blend_mode = css_blend_mode(node.style.mix_blend_mode);
                 if radius > 0.0 {
                     if let Some(path) = rounded_rect_path(px, py, pw, ph, radius) {
-                        pixmap.fill_path(&path, &paint, FillRule::Winding,
-                            Transform::from_scale(self.scale, self.scale), eff_mask);
+                        pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, eff_mask);
                     }
                 } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
-                    pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), eff_mask);
+                    pixmap.fill_rect(r, &paint, elem_ts, eff_mask);
                 }
             }
         }
@@ -250,7 +298,7 @@ impl Renderer {
         if node.style.gradient_type != GradientType::None
             && node.style.gradient_stops.len() >= 2
         {
-            self.draw_gradient(node, pixmap, sx, sy);
+            self.draw_gradient(node, pixmap, sx, sy, radius);
         }
 
         // ── Inset box-shadow (after background, before borders) ───────────────
@@ -274,7 +322,7 @@ impl Renderer {
                     let mut stroke = Stroke::default();
                     stroke.width = 1.0;
                     if let Some(path) = rect_path(ix, iy, iw, ih) {
-                        pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), eff_mask);
+                        pixmap.stroke_path(&path, &paint, &stroke, elem_ts, eff_mask);
                     }
                 }
             }
@@ -375,7 +423,7 @@ impl Renderer {
             self.draw_inline_content(
                 node, &flat, pixmap, sx, sy,
                 sel_start, sel_end, sel_box_ptr,
-                is_hovered, eff_mask,
+                is_hovered, is_active, eff_mask,
             );
         }
 
@@ -426,7 +474,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
                     );
                 }
             }
@@ -437,7 +485,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
                     );
                 }
             }
@@ -456,13 +504,19 @@ impl Renderer {
                 self.render_box(
                     child, pixmap, csx, csy,
                     clip, eff_mask,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
                 );
             }
         }
 
         // ── Scrollbars ────────────────────────────────────────────────────────
         self.draw_scrollbars(node, pixmap, sx, sy);
+
+        // ── CSS Filters ───────────────────────────────────────────────────────
+        // Apply pixel-level filter ops (blur, brightness, etc.) to the element region.
+        if !node.style.css_filter.ops.is_empty() {
+            apply_css_filters(pixmap, &node.style.css_filter, px, py, pw, ph, self.scale);
+        }
     }
 
     // ─── Borders (mask-aware) ────────────────────────────────────────────────
@@ -588,7 +642,7 @@ impl Renderer {
 
     // ─── Gradient ────────────────────────────────────────────────────────────
 
-    fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
+    fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, radius: f32) {
         let pr = node.padding_rect;
         let sc = self.scale;
         // Work in physical pixels: scale logical coords/sizes to match the pixmap.
@@ -597,6 +651,37 @@ impl Renderer {
         if pw <= 0 || ph <= 0 { return; }
         let ox = ((pr.x - sx) * sc) as i32;
         let oy = ((pr.y - sy) * sc) as i32;
+
+        // Pre-compute corner-clipping radius in physical pixels.
+        let r_px = (radius * sc).min(pw as f32 / 2.0).min(ph as f32 / 2.0);
+        let in_rounded_rect = |px2: i32, py2: i32| -> bool {
+            if r_px <= 0.0 { return true; }
+            let x = px2 as f32 + 0.5;
+            let y = py2 as f32 + 0.5;
+            let w = pw as f32;
+            let h = ph as f32;
+            let near_left   = x < r_px;
+            let near_right  = x > w - r_px;
+            let near_top    = y < r_px;
+            let near_bottom = y > h - r_px;
+            if near_left && near_top {
+                let dx = x - r_px; let dy = y - r_px;
+                return dx * dx + dy * dy <= r_px * r_px;
+            }
+            if near_right && near_top {
+                let dx = x - (w - r_px); let dy = y - r_px;
+                return dx * dx + dy * dy <= r_px * r_px;
+            }
+            if near_left && near_bottom {
+                let dx = x - r_px; let dy = y - (h - r_px);
+                return dx * dx + dy * dy <= r_px * r_px;
+            }
+            if near_right && near_bottom {
+                let dx = x - (w - r_px); let dy = y - (h - r_px);
+                return dx * dx + dy * dy <= r_px * r_px;
+            }
+            true
+        };
 
         let stops = &node.style.gradient_stops;
 
@@ -639,6 +724,7 @@ impl Renderer {
                 for py2 in 0..ph {
                     let ny = py2 as f32 / (ph - 1).max(1) as f32;
                     for px2 in 0..pw {
+                        if !in_rounded_rect(px2, py2) { continue; }
                         let nx = px2 as f32 / (pw - 1).max(1) as f32;
                         let t  = (nx * dx + ny * dy - t_min) / t_range;
                         let c  = interp_color(t);
@@ -664,6 +750,7 @@ impl Renderer {
                 let max_r = (cx * cx + cy * cy).sqrt().max(1.0);
                 for py2 in 0..ph {
                     for px2 in 0..pw {
+                        if !in_rounded_rect(px2, py2) { continue; }
                         let dist = ((px2 as f32 - cx).powi(2) + (py2 as f32 - cy).powi(2)).sqrt();
                         let t    = dist / max_r;
                         let c    = interp_color(t);
@@ -695,6 +782,7 @@ impl Renderer {
         sel_end:     Option<usize>,
         sel_box_ptr: *const HtmlBox,
         is_hovered:  bool,
+        is_active:   bool,
         mask:        Option<&Mask>,
     ) {
         if node.line_cache.is_empty() || flat.is_empty() { return; }
@@ -702,7 +790,9 @@ impl Renderer {
         let opacity             = node.style.opacity;
         let fallback_font_px    = node.style.font_size_px(16.0, 16.0);
         let fallback_letter_spc = node.style.letter_spacing.resolve(fallback_font_px, 0.0, 16.0);
-        let fallback_color      = if is_hovered && node.style.hover_color.is_some() {
+        let fallback_color      = if is_active && node.style.active_color.is_some() {
+            node.style.active_color.unwrap()
+        } else if is_hovered && node.style.hover_color.is_some() {
             node.style.hover_color.unwrap()
         } else {
             node.style.color
@@ -835,18 +925,26 @@ impl Renderer {
                 let seg_text = &flat[s..e];
                 let draw_text = apply_text_transform(seg_text, style_ref.text_transform);
 
+                let run_line_h = style_ref.line_height.resolve(run_font_px, 0.0, 16.0)
+                    .max(run_font_px * 1.2);
+
+                // Approx width for pre-draw uses (background rect, ellipsis check).
+                // The true advance is returned by draw_text_run after shaping.
+                let approx_seg_w = approx_text_width_ls(&draw_text, run_font_px, run_letter_spc);
+
                 // Run background color
                 if style_ref.background_color.a > 0 {
-                    let seg_w = approx_text_width_ls(&draw_text, run_font_px, run_letter_spc);
                     let mut bp = Paint::default();
                     bp.set_color(style_ref.background_color.to_tiny_skia());
-                    if let Some(r) = SkRect::from_xywh(cursor_x, ly, seg_w, line.height) {
+                    if let Some(r) = SkRect::from_xywh(cursor_x, ly, approx_seg_w, line.height) {
                         pixmap.fill_rect(r, &bp, Transform::from_scale(self.scale, self.scale), mask);
                     }
                 }
 
-                // Text color (hover override applies to all runs)
-                let run_color = if is_hovered && node.style.hover_color.is_some() {
+                // Text color (active > hover > normal)
+                let run_color = if is_active && node.style.active_color.is_some() {
+                    node.style.active_color.unwrap()
+                } else if is_hovered && node.style.hover_color.is_some() {
                     node.style.hover_color.unwrap()
                 } else {
                     style_ref.color
@@ -856,14 +954,8 @@ impl Renderer {
                     ((run_color.a as f32) * opacity) as u8,
                 );
 
-                let run_line_h = style_ref.line_height.resolve(run_font_px, 0.0, 16.0)
-                    .max(run_font_px * 1.2);
-
-                // Compute segment width (used for decorations and cursor advance)
-                let seg_w = approx_text_width_ls(&draw_text, run_font_px, run_letter_spc);
-
                 // text-overflow: ellipsis check
-                let final_text = if use_ellipsis && cursor_x + seg_w > max_content_w {
+                let final_text = if use_ellipsis && cursor_x + approx_seg_w > max_content_w {
                     let avail = max_content_w - cursor_x;
                     if avail > 0.0 {
                         truncate_with_ellipsis(&draw_text, run_font_px, run_letter_spc, avail)
@@ -874,7 +966,7 @@ impl Renderer {
                     draw_text.clone()
                 };
 
-                // Text shadow
+                // Text shadow (advance not needed)
                 if let Some(ref ts) = style_ref.text_shadow {
                     let sh = CTextColor::rgba(ts.color.r, ts.color.g, ts.color.b, ts.color.a);
                     self.draw_text_run(
@@ -886,23 +978,25 @@ impl Renderer {
                     );
                 }
 
-                // Main text
-                self.draw_text_run(
+                // Main text — returns the actual cosmic-text advance (logical pixels).
+                let actual_advance = self.draw_text_run(
                     &final_text, cursor_x, ly,
                     run_font_px, run_line_h,
                     style_ref.font_weight, style_ref.font_style,
                     ct_color, pixmap, mask,
                 );
 
+                // Use actual rendered width for decorations and cursor advance.
+                // Add CSS word-spacing and justify extra-space per space character.
+                let n_spaces = draw_text.chars().filter(|&c| c == ' ').count() as f32;
+                let seg_w = actual_advance + n_spaces * (run_word_spc + run_extra);
+
                 // Per-segment text decorations
                 self.draw_text_decorations_segment(
                     style_ref, cursor_x, ly, seg_w, line.height, line.ascent, opacity, pixmap, mask,
                 );
 
-                // Advance cursor with word/letter spacing
-                cursor_x += advance_with_spacing(
-                    &draw_text, run_font_px, run_letter_spc, run_word_spc, run_extra,
-                );
+                cursor_x += seg_w;
             }
 
             // Whole-line decorations (when no per-run decorations)
@@ -929,28 +1023,77 @@ impl Renderer {
         let dec = style.text_decoration;
         if !dec.underline && !dec.strikethrough && !dec.overline { return; }
         let font_px    = style.font_size_px(16.0, 16.0);
-        let line_thick = (font_px / 12.0).max(1.0);
-        let color      = style.color;
+        // Resolve line thickness: text-decoration-thickness or default
+        let line_thick = {
+            let t = style.text_decoration_thickness.resolve(font_px, font_px, 16.0);
+            if t > 0.0 { t } else { (font_px / 12.0).max(1.0) }
+        };
+        // Decoration color: text-decoration-color or fallback to text color
+        let color      = style.text_decoration_color.unwrap_or(style.color);
         let alpha      = ((color.a as f32) * opacity) as u8;
-        let mut paint  = Paint::default();
-        paint.set_color_rgba8(color.r, color.g, color.b, alpha);
+        let dec_color  = Color::rgba(color.r, color.g, color.b, alpha);
+        let dec_style  = style.text_decoration_style;
+        let ts         = Transform::from_scale(self.scale, self.scale);
+
+        // Helper closure to draw a decoration line using the correct style
+        let draw_deco_line = |pixmap: &mut Pixmap, lx: f32, ly: f32, lw: f32, lh: f32| {
+            let mut paint = Paint::default();
+            paint.set_color(dec_color.to_tiny_skia());
+            paint.anti_alias = true;
+            match dec_style {
+                TextDecorationStyle::Solid | TextDecorationStyle::Double => {
+                    if let Some(r) = SkRect::from_xywh(lx, ly, lw, lh) {
+                        pixmap.fill_rect(r, &paint, ts, mask);
+                    }
+                    if dec_style == TextDecorationStyle::Double {
+                        // Draw a second line below/above with a gap
+                        let gap = lh + 1.0;
+                        if let Some(r) = SkRect::from_xywh(lx, ly + gap, lw, lh) {
+                            pixmap.fill_rect(r, &paint, ts, mask);
+                        }
+                    }
+                }
+                TextDecorationStyle::Dotted => {
+                    draw_dotted_line(pixmap, &paint, lh, lx, ly + lh / 2.0, lx + lw, ly + lh / 2.0, self.scale);
+                }
+                TextDecorationStyle::Dashed => {
+                    draw_dashed_line(pixmap, &paint, lh, lx, ly + lh / 2.0, lx + lw, ly + lh / 2.0, self.scale);
+                }
+                TextDecorationStyle::Wavy => {
+                    // Draw a wavy line using short strokes approximating a sine wave
+                    let amplitude = lh.max(1.0);
+                    let period = (font_px * 0.4).max(4.0);
+                    let mut stroke = Stroke::default();
+                    stroke.width = (lh * 0.6).max(0.5);
+                    let cy = ly + lh / 2.0;
+                    let mut px2 = lx;
+                    while px2 < lx + lw {
+                        let t1 = (px2 - lx) / period * std::f32::consts::TAU;
+                        let t2 = ((px2 + period * 0.25) - lx) / period * std::f32::consts::TAU;
+                        let y1 = cy + t1.sin() * amplitude;
+                        let y2 = cy + t2.sin() * amplitude;
+                        if let Some(path) = line_path(px2, y1, (px2 + period * 0.25).min(lx + lw), y2) {
+                            pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                        }
+                        px2 += period * 0.25;
+                    }
+                }
+            }
+        };
 
         if dec.underline {
-            let uy = y + ascent + line_thick * 2.0;
-            if let Some(r) = SkRect::from_xywh(x, uy, width, line_thick) {
-                pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            // Resolve underline offset: text-underline-offset or default
+            let offset = style.text_underline_offset.resolve(font_px, font_px, 16.0);
+            let offset = if offset > 0.0 { offset } else { line_thick * 2.0 };
+            let uy = y + ascent + offset;
+            draw_deco_line(pixmap, x, uy, width, line_thick);
         }
         if dec.strikethrough {
             let sy2 = y + ascent * 0.55;
-            if let Some(r) = SkRect::from_xywh(x, sy2, width, line_thick) {
-                pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            draw_deco_line(pixmap, x, sy2, width, line_thick);
         }
         if dec.overline {
-            if let Some(r) = SkRect::from_xywh(x, y, width, line_thick) {
-                pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            draw_deco_line(pixmap, x, y, width, line_thick);
         }
         let _ = height;
     }
@@ -968,35 +1111,85 @@ impl Renderer {
         let dec = node.style.text_decoration;
         if !dec.underline && !dec.strikethrough && !dec.overline { return; }
 
-        let font_px = node.style.font_size_px(16.0, 16.0);
-        let c  = node.style.color;
+        let font_px  = node.style.font_size_px(16.0, 16.0);
+        let lw       = line.width;
+        // Resolve line thickness
+        let line_thick = {
+            let t = node.style.text_decoration_thickness.resolve(font_px, font_px, 16.0);
+            if t > 0.0 { t } else { (font_px * 0.08).max(1.0) }
+        };
+        // Decoration color
+        let c  = node.style.text_decoration_color.unwrap_or(node.style.color);
         let ca = ((c.a as f32) * opacity) as u8;
-        let mut paint = Paint::default();
-        paint.set_color(Color::rgba(c.r, c.g, c.b, ca).to_tiny_skia());
-        let mut stroke = Stroke::default();
-        stroke.width = (font_px * 0.08).max(1.0);
+        let dec_color = Color::rgba(c.r, c.g, c.b, ca);
+        let dec_style = node.style.text_decoration_style;
+        let ts = Transform::from_scale(self.scale, self.scale);
+
+        let draw_line_seg = |pixmap: &mut Pixmap, x1: f32, y1: f32, x2: f32, y2: f32| {
+            let mut paint = Paint::default();
+            paint.set_color(dec_color.to_tiny_skia());
+            paint.anti_alias = true;
+            let mut stroke = Stroke::default();
+            stroke.width = line_thick;
+            match dec_style {
+                TextDecorationStyle::Solid => {
+                    if let Some(path) = line_path(x1, y1, x2, y2) {
+                        pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                    }
+                }
+                TextDecorationStyle::Double => {
+                    if let Some(path) = line_path(x1, y1, x2, y2) {
+                        pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                    }
+                    let gap = line_thick + 1.0;
+                    if let Some(path) = line_path(x1, y1 + gap, x2, y2 + gap) {
+                        pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                    }
+                }
+                TextDecorationStyle::Dotted => {
+                    draw_dotted_line(pixmap, &paint, line_thick, x1, y1, x2, y2, self.scale);
+                }
+                TextDecorationStyle::Dashed => {
+                    draw_dashed_line(pixmap, &paint, line_thick, x1, y1, x2, y2, self.scale);
+                }
+                TextDecorationStyle::Wavy => {
+                    let amplitude = line_thick.max(1.0);
+                    let period = (font_px * 0.4).max(4.0);
+                    stroke.width = (line_thick * 0.6).max(0.5);
+                    let mut xp = x1;
+                    while xp < x2 {
+                        let t1 = (xp - x1) / period * std::f32::consts::TAU;
+                        let t2 = ((xp + period * 0.25) - x1) / period * std::f32::consts::TAU;
+                        let yp1 = y1 + t1.sin() * amplitude;
+                        let yp2 = y1 + t2.sin() * amplitude;
+                        if let Some(path) = line_path(xp, yp1, (xp + period * 0.25).min(x2), yp2) {
+                            pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                        }
+                        xp += period * 0.25;
+                    }
+                }
+            }
+        };
 
         if dec.underline {
-            let uy = oy + line.ascent + 2.0;
-            if let Some(path) = line_path(ox, uy, ox + line.width, uy) {
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            let offset = node.style.text_underline_offset.resolve(font_px, font_px, 16.0);
+            let offset = if offset > 0.0 { offset } else { 2.0 };
+            let uy = oy + line.ascent + offset;
+            draw_line_seg(pixmap, ox, uy, ox + lw, uy);
         }
         if dec.strikethrough {
             let sy2 = oy + line.ascent * 0.55;
-            if let Some(path) = line_path(ox, sy2, ox + line.width, sy2) {
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            draw_line_seg(pixmap, ox, sy2, ox + lw, sy2);
         }
         if dec.overline {
-            if let Some(path) = line_path(ox, oy, ox + line.width, oy) {
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
-            }
+            draw_line_seg(pixmap, ox, oy, ox + lw, oy);
         }
     }
 
     // ─── Text run (cosmic-text) ───────────────────────────────────────────────
 
+    /// Draw a text run using cosmic-text and return the **logical-pixel advance**
+    /// (the true rendered width, used by callers to advance the cursor).
     fn draw_text_run(
         &mut self,
         text:       &str,
@@ -1009,8 +1202,8 @@ impl Renderer {
         color:      CTextColor,
         pixmap:     &mut Pixmap,
         mask:       Option<&Mask>,
-    ) {
-        if text.is_empty() { return; }
+    ) -> f32 {
+        if text.is_empty() { return 0.0; }
         // Cosmic-text shapes at physical pixel sizes for correct sub-pixel rendering.
         let sc       = self.scale;
         let phys_px  = font_px  * sc;
@@ -1032,6 +1225,13 @@ impl Renderer {
         );
         buf.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);
         buf.shape_until_scroll(&mut self.font_system, false);
+
+        // Measure the actual advance from the shaped run (physical pixels → logical).
+        let mut phys_advance = 0.0f32;
+        for run in buf.layout_runs() {
+            if run.line_w > phys_advance { phys_advance = run.line_w; }
+        }
+        let logical_advance = phys_advance / sc;
 
         // Glyph positions from cosmic-text are in physical pixels.
         // Draw them directly without a scale transform.
@@ -1060,6 +1260,8 @@ impl Renderer {
                 pixmap.fill_rect(r, &paint, Transform::identity(), mask);
             }
         }
+
+        logical_advance
     }
 
     // ─── List marker ─────────────────────────────────────────────────────────
@@ -1794,4 +1996,368 @@ enum Side { Top, Right, Bottom, Left }
 
 impl Default for Renderer {
     fn default() -> Self { Self::new() }
+}
+
+// ─── CSS Transform helpers ────────────────────────────────────────────────────
+
+/// Build a tiny_skia Transform from a CssTransform, incorporating origin offset.
+/// `ox`, `oy` are the transform origin in logical pixels (screen coords after scroll).
+/// Returns a transform in logical pixels, which can then be combined with the scale factor.
+fn build_css_transform(
+    css: &CssTransform,
+    ox: f32, oy: f32,
+) -> Transform {
+    if css.ops.is_empty() { return Transform::identity(); }
+
+    // Step 1: translate to origin
+    // Step 2: apply ops (left to right)
+    // Step 3: translate back from origin
+    // Combined matrix accumulation
+    let mut m = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0]; // [a, b, c, d, e, f] = [sx, kx, ky, sy, tx, ty]
+
+    for op in &css.ops {
+        let op_m: [f32; 6] = match op {
+            TransformOp::Translate(tx, ty)    => [1.0, 0.0, 0.0, 1.0, *tx, *ty],
+            TransformOp::TranslateX(tx)       => [1.0, 0.0, 0.0, 1.0, *tx, 0.0],
+            TransformOp::TranslateY(ty)       => [1.0, 0.0, 0.0, 1.0, 0.0, *ty],
+            TransformOp::Scale(sx, sy)        => [*sx, 0.0, 0.0, *sy, 0.0, 0.0],
+            TransformOp::ScaleX(sx)           => [*sx, 0.0, 0.0, 1.0, 0.0, 0.0],
+            TransformOp::ScaleY(sy)           => [1.0, 0.0, 0.0, *sy, 0.0, 0.0],
+            TransformOp::Rotate(deg) => {
+                let r = deg * std::f32::consts::PI / 180.0;
+                let c = r.cos(); let s = r.sin();
+                [c, s, -s, c, 0.0, 0.0]
+            }
+            TransformOp::SkewX(deg) => {
+                let t = (deg * std::f32::consts::PI / 180.0).tan();
+                [1.0, 0.0, t, 1.0, 0.0, 0.0]
+            }
+            TransformOp::SkewY(deg) => {
+                let t = (deg * std::f32::consts::PI / 180.0).tan();
+                [1.0, t, 0.0, 1.0, 0.0, 0.0]
+            }
+            TransformOp::Matrix(a, b, c, d, e, f) => [*a, *b, *c, *d, *e, *f],
+        };
+        // Multiply m = m * op_m  (column-major 2D affine: [sx,kx,ky,sy,tx,ty])
+        // A = [a c e]   B = [a' c' e']
+        //     [b d f]       [b' d' f']
+        //     [0 0 1]       [0  0  1 ]
+        // C = A*B
+        let (a, b, c, d, e, f)   = (m[0], m[1], m[2], m[3], m[4], m[5]);
+        let (a2,b2,c2,d2,e2,f2) = (op_m[0], op_m[1], op_m[2], op_m[3], op_m[4], op_m[5]);
+        m = [
+            a*a2 + c*b2,   b*a2 + d*b2,
+            a*c2 + c*d2,   b*c2 + d*d2,
+            a*e2 + c*f2 + e,  b*e2 + d*f2 + f,
+        ];
+    }
+
+    // Apply origin: translate to origin, apply m, translate back
+    // T(ox,oy) * M * T(-ox,-oy)
+    // The full transform in homogeneous coords:
+    // tx' = m[0]*(-ox) + m[2]*(-oy) + m[4] + ox
+    // ty' = m[1]*(-ox) + m[3]*(-oy) + m[5] + oy
+    let (a, b, c, d, e, f) = (m[0], m[1], m[2], m[3], m[4], m[5]);
+    let tx = -a*ox - c*oy + e + ox;
+    let ty = -b*ox - d*oy + f + oy;
+
+    // tiny_skia Transform::from_row(sx, ky, kx, sy, tx, ty)
+    // Our matrix: [a=sx, b=kx_row(ky_col?), c=ky_row, d=sy, e=tx, f=ty]
+    // tiny_skia uses column-major: from_row(a, b, c, d, e, f) maps to
+    // the matrix [a c e; b d f; 0 0 1]
+    // We want: x' = a*x + c*y + e, y' = b*x + d*y + f
+    // That matches our [sx,kx,ky,sy,tx,ty] convention where:
+    //   x' = sx*x + ky*y + tx   → a=sx, c=ky, e=tx
+    //   y' = kx*x + sy*y + ty   → b=kx, d=sy, f=ty
+    // Our m[] = [sx, kx, ky, sy, tx, ty] → a=m[0], b=m[1], c=m[2], d=m[3]
+    Transform::from_row(a, b, c, d, tx, ty)
+}
+
+/// Map CSS MixBlendMode to tiny_skia::BlendMode.
+fn css_blend_mode(mode: MixBlendMode) -> tiny_skia::BlendMode {
+    match mode {
+        MixBlendMode::Normal     => tiny_skia::BlendMode::SourceOver,
+        MixBlendMode::Multiply   => tiny_skia::BlendMode::Multiply,
+        MixBlendMode::Screen     => tiny_skia::BlendMode::Screen,
+        MixBlendMode::Overlay    => tiny_skia::BlendMode::Overlay,
+        MixBlendMode::Darken     => tiny_skia::BlendMode::Darken,
+        MixBlendMode::Lighten    => tiny_skia::BlendMode::Lighten,
+        MixBlendMode::ColorDodge => tiny_skia::BlendMode::ColorDodge,
+        MixBlendMode::ColorBurn  => tiny_skia::BlendMode::ColorBurn,
+        MixBlendMode::HardLight  => tiny_skia::BlendMode::HardLight,
+        MixBlendMode::SoftLight  => tiny_skia::BlendMode::SoftLight,
+        MixBlendMode::Difference => tiny_skia::BlendMode::Difference,
+        MixBlendMode::Exclusion  => tiny_skia::BlendMode::Exclusion,
+        MixBlendMode::Hue        => tiny_skia::BlendMode::Hue,
+        MixBlendMode::Saturation => tiny_skia::BlendMode::Saturation,
+        MixBlendMode::Color      => tiny_skia::BlendMode::Color,
+        MixBlendMode::Luminosity => tiny_skia::BlendMode::Luminosity,
+    }
+}
+
+// ─── CSS Filter application ───────────────────────────────────────────────────
+
+/// Apply CSS filter operations to a rectangular region of the pixmap.
+/// `rx`, `ry` are in logical pixels. `scale` converts to physical pixels.
+fn apply_css_filters(
+    pixmap: &mut Pixmap,
+    filters: &CssFilters,
+    rx: f32, ry: f32, rw: f32, rh: f32,
+    scale: f32,
+) {
+    if filters.ops.is_empty() || rw <= 0.0 || rh <= 0.0 { return; }
+    let pix_x = (rx * scale) as i32;
+    let pix_y = (ry * scale) as i32;
+    let pix_w = (rw * scale) as i32;
+    let pix_h = (rh * scale) as i32;
+    let pw = pixmap.width() as i32;
+    let ph = pixmap.height() as i32;
+
+    // Clamp to pixmap bounds
+    let x0 = pix_x.max(0);
+    let y0 = pix_y.max(0);
+    let x1 = (pix_x + pix_w).min(pw);
+    let y1 = (pix_y + pix_h).min(ph);
+    if x0 >= x1 || y0 >= y1 { return; }
+    let region_w = (x1 - x0) as usize;
+    let region_h = (y1 - y0) as usize;
+
+    for filter_op in &filters.ops {
+        match filter_op {
+            FilterOp::Blur(blur_px) => {
+                let radius = ((*blur_px * scale) as i32).max(1).min(32);
+                apply_box_blur(pixmap, pw as usize, ph as usize, x0, y0, x1, y1, radius);
+            }
+            FilterOp::Brightness(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let r2 = ((r as f32 * f).min(255.0)) as u8;
+                    let g2 = ((g as f32 * f).min(255.0)) as u8;
+                    let b2 = ((b as f32 * f).min(255.0)) as u8;
+                    (r2, g2, b2, a)
+                });
+            }
+            FilterOp::Contrast(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let adj = |c: u8| -> u8 {
+                        let c2 = (c as f32 - 128.0) * f + 128.0;
+                        c2.max(0.0).min(255.0) as u8
+                    };
+                    (adj(r), adj(g), adj(b), a)
+                });
+            }
+            FilterOp::Grayscale(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let lum = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+                    let r2 = lerp_u8(r, lum as u8, f);
+                    let g2 = lerp_u8(g, lum as u8, f);
+                    let b2 = lerp_u8(b, lum as u8, f);
+                    (r2, g2, b2, a)
+                });
+            }
+            FilterOp::HueRotate(deg) => {
+                let deg = *deg;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let (h, s, l) = rgb_to_hsl(r, g, b);
+                    let h2 = (h + deg / 360.0).rem_euclid(1.0);
+                    let (r2, g2, b2) = hsl_to_rgb(h2, s, l);
+                    (r2, g2, b2, a)
+                });
+            }
+            FilterOp::Invert(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let r2 = lerp_u8(r, 255 - r, f);
+                    let g2 = lerp_u8(g, 255 - g, f);
+                    let b2 = lerp_u8(b, 255 - b, f);
+                    (r2, g2, b2, a)
+                });
+            }
+            FilterOp::Opacity(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    (r, g, b, ((a as f32) * f) as u8)
+                });
+            }
+            FilterOp::Saturate(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let (h, s, l) = rgb_to_hsl(r, g, b);
+                    let s2 = (s * f).min(1.0);
+                    let (r2, g2, b2) = hsl_to_rgb(h, s2, l);
+                    (r2, g2, b2, a)
+                });
+            }
+            FilterOp::Sepia(f) => {
+                let f = *f;
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                    let rf = r as f32; let gf = g as f32; let bf = b as f32;
+                    let sr = (rf * 0.393 + gf * 0.769 + bf * 0.189).min(255.0) as u8;
+                    let sg = (rf * 0.349 + gf * 0.686 + bf * 0.168).min(255.0) as u8;
+                    let sb = (rf * 0.272 + gf * 0.534 + bf * 0.131).min(255.0) as u8;
+                    (lerp_u8(r, sr, f), lerp_u8(g, sg, f), lerp_u8(b, sb, f), a)
+                });
+            }
+            FilterOp::DropShadow { dx, dy, blur, color } => {
+                // Drop shadow: draw colored, blurred, offset copy beneath the element.
+                // Simple approximation: draw a solid rect offset by dx,dy in shadow color.
+                // This is a simplified version since pixel-accurate drop shadow needs a 2-pass approach.
+                let _ = (dx, dy, blur, color, region_w, region_h);
+                // Skip complex drop-shadow for now (would need temp pixmap)
+            }
+        }
+    }
+}
+
+fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t) as u8
+}
+
+fn apply_pixel_op<F>(pixmap: &mut Pixmap, pw: i32, x0: i32, y0: i32, x1: i32, y1: i32, mut f: F)
+where F: FnMut(u8, u8, u8, u8) -> (u8, u8, u8, u8)
+{
+    let data = pixmap.data_mut();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = ((y * pw + x) * 4) as usize;
+            if idx + 3 >= data.len() { continue; }
+            let (r, g, b, a) = (data[idx], data[idx+1], data[idx+2], data[idx+3]);
+            let (r2, g2, b2, a2) = f(r, g, b, a);
+            data[idx] = r2; data[idx+1] = g2; data[idx+2] = b2; data[idx+3] = a2;
+        }
+    }
+}
+
+fn apply_box_blur(
+    pixmap: &mut Pixmap,
+    pw: usize, ph: usize,
+    x0: i32, y0: i32, x1: i32, y1: i32,
+    radius: i32,
+) {
+    // Two-pass separable box blur on premultiplied RGBA data
+    let w = pw as i32; let h = ph as i32;
+    let data = pixmap.data_mut();
+    let len = data.len();
+
+    // Horizontal pass
+    let mut row_buf = vec![0u8; (x1 - x0) as usize * 4];
+    for y in y0..y1 {
+        let yi = y as usize;
+        for xi in x0..x1 {
+            let mut r = 0i32; let mut g = 0i32; let mut b = 0i32; let mut a = 0i32;
+            let mut count = 0i32;
+            for dx in -radius..=radius {
+                let sx = xi + dx;
+                if sx < 0 || sx >= w { continue; }
+                let idx = ((yi as i32 * w + sx) * 4) as usize;
+                if idx + 3 >= len { continue; }
+                r += data[idx] as i32;
+                g += data[idx+1] as i32;
+                b += data[idx+2] as i32;
+                a += data[idx+3] as i32;
+                count += 1;
+            }
+            let bi = ((xi - x0) * 4) as usize;
+            if count > 0 {
+                row_buf[bi]   = (r / count) as u8;
+                row_buf[bi+1] = (g / count) as u8;
+                row_buf[bi+2] = (b / count) as u8;
+                row_buf[bi+3] = (a / count) as u8;
+            }
+        }
+        for xi in x0..x1 {
+            let idx = ((y * w + xi) * 4) as usize;
+            if idx + 3 >= len { continue; }
+            let bi = ((xi - x0) * 4) as usize;
+            data[idx]   = row_buf[bi];
+            data[idx+1] = row_buf[bi+1];
+            data[idx+2] = row_buf[bi+2];
+            data[idx+3] = row_buf[bi+3];
+        }
+    }
+
+    // Vertical pass
+    let mut col_buf = vec![0u8; (y1 - y0) as usize * 4];
+    for x in x0..x1 {
+        {
+            let data = pixmap.data_mut();
+            for yi in y0..y1 {
+                let mut r = 0i32; let mut g = 0i32; let mut b = 0i32; let mut a = 0i32;
+                let mut count = 0i32;
+                for dy in -radius..=radius {
+                    let sy = yi + dy;
+                    if sy < 0 || sy >= h as i32 { continue; }
+                    let idx = ((sy * w as i32 + x) * 4) as usize;
+                    if idx + 3 >= len { continue; }
+                    r += data[idx] as i32;
+                    g += data[idx+1] as i32;
+                    b += data[idx+2] as i32;
+                    a += data[idx+3] as i32;
+                    count += 1;
+                }
+                let bi = ((yi - y0) * 4) as usize;
+                if count > 0 {
+                    col_buf[bi]   = (r / count) as u8;
+                    col_buf[bi+1] = (g / count) as u8;
+                    col_buf[bi+2] = (b / count) as u8;
+                    col_buf[bi+3] = (a / count) as u8;
+                }
+            }
+        }
+        let data = pixmap.data_mut();
+        for yi in y0..y1 {
+            let idx = ((yi * w as i32 + x) * 4) as usize;
+            if idx + 3 >= len { continue; }
+            let bi = ((yi - y0) * 4) as usize;
+            data[idx]   = col_buf[bi];
+            data[idx+1] = col_buf[bi+1];
+            data[idx+2] = col_buf[bi+2];
+            data[idx+3] = col_buf[bi+3];
+        }
+    }
+}
+
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let r = r as f32 / 255.0;
+    let g = g as f32 / 255.0;
+    let b = b as f32 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min) < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if max == r {
+        (g - b) / d + if g < b { 6.0 } else { 0.0 }
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h / 6.0, s, l)
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    if s < 1e-6 {
+        let v = (l * 255.0) as u8;
+        return (v, v, v);
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let hue_to_rgb = |p: f32, q: f32, mut t: f32| -> f32 {
+        if t < 0.0 { t += 1.0; }
+        if t > 1.0 { t -= 1.0; }
+        if t < 1.0/6.0 { return p + (q - p) * 6.0 * t; }
+        if t < 1.0/2.0 { return q; }
+        if t < 2.0/3.0 { return p + (q - p) * (2.0/3.0 - t) * 6.0; }
+        p
+    };
+    let r = (hue_to_rgb(p, q, h + 1.0/3.0) * 255.0) as u8;
+    let g = (hue_to_rgb(p, q, h) * 255.0) as u8;
+    let b = (hue_to_rgb(p, q, h - 1.0/3.0) * 255.0) as u8;
+    (r, g, b)
 }

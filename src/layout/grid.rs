@@ -394,7 +394,7 @@ pub fn layout_grid(
         shift_rects(child, dx, dy);
 
         // Apply relative offset
-        if child.style.position == Position::Relative {
+        if matches!(child.style.position, Position::Relative | Position::Sticky) {
             apply_relative_offset(child, child_font, content_w, root_font_px);
         }
     }

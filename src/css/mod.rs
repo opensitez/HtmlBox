@@ -13,6 +13,14 @@ pub enum SelectorPart {
     PseudoElement(String),
     Attribute { name: String, op: AttrOp, value: String },
     Combinator(Combinator),
+    /// :not(selector)
+    Not(Box<CssSelector>),
+    /// :is(selector-list)
+    Is(Vec<CssSelector>),
+    /// :where(selector-list)  — same as Is but zero specificity
+    Where(Vec<CssSelector>),
+    /// :has(selector) — matches if any descendant matches
+    Has(Box<CssSelector>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,18 +29,33 @@ pub enum AttrOp { Exists, Eq, Contains, StartsWith, EndsWith, Includes, DashMatc
 #[derive(Clone, Debug, PartialEq)]
 pub enum Combinator { Descendant, Child, AdjacentSibling, GeneralSibling }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CssSelector {
     pub parts: Vec<SelectorPart>,
 }
 
 /// Info about one ancestor box, threaded through the cascade for selector matching.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AncestorInfo {
-    pub tag:           String,
-    pub attributes:    HashMap<String, String>,
-    pub child_index:   usize,   // 0-based position among parent's children
-    pub sibling_count: usize,   // total children of parent
+    pub tag:                String,
+    pub attributes:         HashMap<String, String>,
+    pub child_index:        usize,   // 0-based position among parent's children
+    pub sibling_count:      usize,   // total children of parent
+    pub type_child_index:   usize,   // 0-based among same-tag siblings
+    pub type_sibling_count: usize,   // count of same-tag siblings
+}
+
+/// Extra context passed down through selector matching.
+#[derive(Clone, Copy, Debug)]
+pub struct MatchContext<'a> {
+    /// Raw pointer to the focused element (null = none).
+    pub focused_box:        *const crate::types::HtmlBox,
+    /// 0-based position among same-tag siblings.
+    pub type_child_index:   usize,
+    /// Count of same-tag siblings (including this element).
+    pub type_sibling_count: usize,
+    /// Raw pointer to the HtmlBox being matched (for :has()).
+    pub html_box:           Option<&'a crate::types::HtmlBox>,
 }
 
 impl CssSelector {
@@ -48,6 +71,29 @@ impl CssSelector {
                 | SelectorPart::Attribute { .. } => classes += 1,
                 SelectorPart::Tag(t) if t != "*" => elements += 1,
                 SelectorPart::PseudoElement(_)   => elements += 1,
+                // :not() contributes the inner selector's specificity
+                SelectorPart::Not(inner)         => {
+                    let s = inner.specificity();
+                    ids     += s / 100;
+                    classes += (s % 100) / 10;
+                    elements+= s % 10;
+                }
+                // :is() contributes the most-specific inner selector
+                SelectorPart::Is(list)           => {
+                    let max_sp = list.iter().map(|s| s.specificity()).max().unwrap_or(0);
+                    ids     += max_sp / 100;
+                    classes += (max_sp % 100) / 10;
+                    elements+= max_sp % 10;
+                }
+                // :where() contributes zero specificity
+                SelectorPart::Where(_)           => {}
+                // :has() contributes the inner selector's specificity
+                SelectorPart::Has(inner)         => {
+                    let s = inner.specificity();
+                    ids     += s / 100;
+                    classes += (s % 100) / 10;
+                    elements+= s % 10;
+                }
                 _ => {}
             }
         }
@@ -56,7 +102,13 @@ impl CssSelector {
 
     /// Match against `b` without ancestor context (for tests / simple selectors).
     pub fn matches_box(&self, b: &HtmlBox) -> bool {
-        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[])
+        let ctx = MatchContext {
+            focused_box: std::ptr::null(),
+            type_child_index: 0,
+            type_sibling_count: 1,
+            html_box: Some(b),
+        };
+        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[], &ctx)
     }
 
     /// Match against `b` with full ancestor chain for combinator resolution.
@@ -67,7 +119,38 @@ impl CssSelector {
         sibling_count: usize,
         ancestors: &[AncestorInfo],
     ) -> bool {
-        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors)
+        let ctx = MatchContext {
+            focused_box: std::ptr::null(),
+            type_child_index: 0,
+            type_sibling_count: 1,
+            html_box: Some(b),
+        };
+        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, &ctx)
+    }
+
+    /// Match against `b` with full ancestor chain and extra context.
+    pub fn matches_with_ancestors_ctx(
+        &self,
+        b: &HtmlBox,
+        child_index: usize,
+        sibling_count: usize,
+        ancestors: &[AncestorInfo],
+        ctx: &MatchContext<'_>,
+    ) -> bool {
+        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, ctx)
+    }
+
+    /// Internal: match using raw tag/attrs (used from :not/:is/:where to avoid re-borrowing HtmlBox).
+    fn matches_with_ancestors_ctx_raw(
+        &self,
+        tag: &str,
+        attrs: &HashMap<String, String>,
+        child_index: usize,
+        sibling_count: usize,
+        ancestors: &[AncestorInfo],
+        ctx: &MatchContext<'_>,
+    ) -> bool {
+        matches_selector_with_ancestors(&self.parts, tag, attrs, child_index, sibling_count, ancestors, ctx)
     }
 }
 
@@ -81,6 +164,7 @@ fn matches_selector_with_ancestors(
     child_index: usize,
     sibling_count: usize,
     ancestors: &[AncestorInfo],
+    ctx: &MatchContext<'_>,
 ) -> bool {
     if parts.is_empty() { return true; }
 
@@ -90,7 +174,7 @@ fn matches_selector_with_ancestors(
     match last_comb_pos {
         None => {
             // No combinator — all parts must match the subject
-            parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count))
+            parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx))
         }
         Some(pos) => {
             let combinator = match &parts[pos] {
@@ -101,7 +185,7 @@ fn matches_selector_with_ancestors(
             let right_parts = &parts[pos + 1..];
 
             // Right parts must all match the subject
-            if !right_parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count)) {
+            if !right_parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx)) {
                 return false;
             }
 
@@ -109,11 +193,18 @@ fn matches_selector_with_ancestors(
                 Combinator::Descendant => {
                     // Left parts must match any ancestor
                     for (i, anc) in ancestors.iter().enumerate() {
+                        let anc_ctx = MatchContext {
+                            focused_box: ctx.focused_box,
+                            type_child_index: anc.type_child_index,
+                            type_sibling_count: anc.type_sibling_count,
+                            html_box: None,
+                        };
                         if matches_selector_with_ancestors(
                             left_parts,
                             &anc.tag, &anc.attributes,
                             anc.child_index, anc.sibling_count,
                             &ancestors[..i],
+                            &anc_ctx,
                         ) {
                             return true;
                         }
@@ -124,11 +215,18 @@ fn matches_selector_with_ancestors(
                     // Left parts must match the direct parent (last ancestor)
                     if let Some(parent) = ancestors.last() {
                         let parent_ancestors = &ancestors[..ancestors.len() - 1];
+                        let parent_ctx = MatchContext {
+                            focused_box: ctx.focused_box,
+                            type_child_index: parent.type_child_index,
+                            type_sibling_count: parent.type_sibling_count,
+                            html_box: None,
+                        };
                         matches_selector_with_ancestors(
                             left_parts,
                             &parent.tag, &parent.attributes,
                             parent.child_index, parent.sibling_count,
                             parent_ancestors,
+                            &parent_ctx,
                         )
                     } else {
                         false
@@ -150,6 +248,8 @@ fn matches_part_with_context(
     attrs: &HashMap<String, String>,
     child_index: usize,
     sibling_count: usize,
+    ancestors: &[AncestorInfo],
+    ctx: &MatchContext<'_>,
 ) -> bool {
     match part {
         SelectorPart::Universal => true,
@@ -172,18 +272,63 @@ fn matches_part_with_context(
                 }
             }
         }
+        SelectorPart::Not(inner) => {
+            !inner.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx)
+        }
+        SelectorPart::Is(list) => {
+            list.iter().any(|sel| sel.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx))
+        }
+        SelectorPart::Where(list) => {
+            list.iter().any(|sel| sel.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx))
+        }
+        SelectorPart::Has(inner) => {
+            // Check if any descendant of the current element matches inner
+            if let Some(b) = ctx.html_box {
+                has_descendant_matching(b, inner, ctx.focused_box)
+            } else {
+                false
+            }
+        }
         SelectorPart::PseudoClass(pc) => {
             let pc = pc.as_str();
             match pc {
                 "first-child"  => child_index == 0,
                 "last-child"   => child_index + 1 == sibling_count,
                 "only-child"   => sibling_count == 1,
-                "first-of-type" | "last-of-type" => false, // need type-tracking, skip
+                "first-of-type" => ctx.type_child_index == 0,
+                "last-of-type"  => ctx.type_child_index + 1 == ctx.type_sibling_count,
+                "only-of-type"  => ctx.type_sibling_count == 1,
                 "root"         => tag.eq_ignore_ascii_case("html"),
                 "empty"        => false, // can't tell from style alone
-                "link" | "visited" | "active" | "focus" | "checked" | "disabled" | "enabled"
-                | "placeholder-shown" | "required" | "optional" | "valid" | "invalid" => false,
-                "not(_)" => false, // would need recursive parsing, skip
+                // Focus
+                "focus" | "focus-visible" => {
+                    if !ctx.focused_box.is_null() {
+                        if let Some(b) = ctx.html_box {
+                            std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box)
+                        } else { false }
+                    } else { false }
+                }
+                "focus-within" => {
+                    if !ctx.focused_box.is_null() {
+                        if let Some(b) = ctx.html_box {
+                            // Is this box itself focused, or does it contain the focused element?
+                            std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box)
+                                || is_or_contains_focused(b, ctx.focused_box)
+                        } else { false }
+                    } else { false }
+                }
+                // Form state
+                "checked"    => attrs.contains_key("checked") || attrs.contains_key("selected"),
+                "disabled"   => attrs.contains_key("disabled"),
+                "enabled"    => !attrs.contains_key("disabled") && matches!(tag, "input" | "button" | "select" | "textarea"),
+                "read-only"  => attrs.contains_key("readonly") || !matches!(tag, "input" | "textarea" | "select" | "button"),
+                "read-write" => !attrs.contains_key("readonly") && matches!(tag, "input" | "textarea" | "select" | "button"),
+                // Link
+                "any-link" | "link" => {
+                    attrs.contains_key("href") && matches!(tag, "a" | "area" | "link")
+                }
+                "visited" | "active" | "hover" => false,
+                "placeholder-shown" | "required" | "optional" | "valid" | "invalid" => false,
                 _ => {
                     // nth-child(expr) / nth-of-type(expr)
                     if let Some(inner) = pc.strip_prefix("nth-child(").and_then(|s| s.strip_suffix(')')) {
@@ -193,13 +338,57 @@ fn matches_part_with_context(
                         let from_end = sibling_count - child_index; // 1-based from end
                         return nth_matches(inner, from_end);
                     }
-                    false
+                    if let Some(inner) = pc.strip_prefix("nth-of-type(").and_then(|s| s.strip_suffix(')')) {
+                        return nth_matches(inner, ctx.type_child_index + 1);
+                    }
+                    if let Some(inner) = pc.strip_prefix("nth-last-of-type(").and_then(|s| s.strip_suffix(')')) {
+                        let from_end = ctx.type_sibling_count - ctx.type_child_index;
+                        return nth_matches(inner, from_end);
+                    }
+                    // Unknown pseudo-class: fail-open for forward compat
+                    true
                 }
             }
         }
         SelectorPart::PseudoElement(_) => false, // pseudo-elements never match real elements
         SelectorPart::Combinator(_)    => true,
     }
+}
+
+/// Check if `b` or any of its descendants is the focused element.
+fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: *const crate::types::HtmlBox) -> bool {
+    for child in &b.children {
+        if std::ptr::eq(child as *const crate::types::HtmlBox, focused) {
+            return true;
+        }
+        if is_or_contains_focused(child, focused) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if any descendant of `node` matches `sel`.
+fn has_descendant_matching(
+    node: &crate::types::HtmlBox,
+    sel: &CssSelector,
+    focused_box: *const crate::types::HtmlBox,
+) -> bool {
+    for child in &node.children {
+        let ctx = MatchContext {
+            focused_box,
+            type_child_index: 0,
+            type_sibling_count: 1,
+            html_box: Some(child),
+        };
+        if matches_selector_with_ancestors(&sel.parts, &child.tag, &child.attributes, 0, 1, &[], &ctx) {
+            return true;
+        }
+        if has_descendant_matching(child, sel, focused_box) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Evaluate CSS An+B formula against a 1-based position.
@@ -280,12 +469,37 @@ impl Default for CssRule {
     }
 }
 
+// ─── @font-face declaration ───────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default)]
+pub struct FontFaceDecl {
+    pub family: String,
+    pub src:    String,
+    pub weight: Option<String>,
+    pub style:  Option<String>,
+}
+
+/// Extract a file path from a CSS url("...") or local("...") value.
+pub fn extract_url_path(src: &str) -> String {
+    let src = src.trim();
+    // Strip url("...") or url('...')
+    let inner = if let Some(s) = src.strip_prefix("url(") {
+        s.trim_end_matches(')').trim().trim_matches('"').trim_matches('\'')
+    } else if let Some(s) = src.strip_prefix("local(") {
+        s.trim_end_matches(')').trim().trim_matches('"').trim_matches('\'')
+    } else {
+        src.trim_matches('"').trim_matches('\'')
+    };
+    inner.to_string()
+}
+
 // ─── Stylesheet ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Default)]
 pub struct Stylesheet {
-    pub rules:     Vec<CssRule>,
-    pub variables: HashMap<String, String>,  // CSS custom properties from :root
+    pub rules:      Vec<CssRule>,
+    pub variables:  HashMap<String, String>,  // CSS custom properties from :root
+    pub font_faces: Vec<FontFaceDecl>,
 }
 
 impl Stylesheet {
@@ -297,6 +511,8 @@ impl Stylesheet {
     pub fn parse_and_add(&mut self, css: &str) {
         // Extract :root CSS variables first
         extract_root_variables(css, &mut self.variables);
+        // Extract @font-face declarations
+        extract_font_faces(css, &mut self.font_faces);
         if let Some(rules) = parse_stylesheet(css) {
             for r in rules {
                 self.rules.push(r);
@@ -332,6 +548,50 @@ fn extract_root_variables(css: &str, vars: &mut HashMap<String, String>) {
                     vars.insert(prop.to_string(), val);
                 }
             }
+        }
+    }
+}
+
+/// Extract @font-face declarations from a CSS string.
+fn extract_font_faces(css: &str, faces: &mut Vec<FontFaceDecl>) {
+    let cleaned = strip_css_comments(css);
+    let mut s = cleaned.as_str();
+    loop {
+        s = s.trim_start();
+        if s.is_empty() { break; }
+        let at_lower = s.to_ascii_lowercase();
+        let pos = match at_lower.find("@font-face") {
+            Some(p) => p,
+            None    => break,
+        };
+        s = &s[pos + 10..];
+        s = s.trim_start();
+        if !s.starts_with('{') { continue; }
+        let (block, rest) = consume_block(s);
+        s = rest;
+
+        // Parse declarations
+        let mut face = FontFaceDecl::default();
+        for decl in block.split(';') {
+            let decl = decl.trim();
+            if let Some(colon) = decl.find(':') {
+                let prop  = decl[..colon].trim().to_ascii_lowercase();
+                let value = decl[colon+1..].trim().to_string();
+                match prop.as_str() {
+                    "font-family" => {
+                        face.family = value.trim_matches('"').trim_matches('\'').to_string();
+                    }
+                    "src" => {
+                        face.src = value;
+                    }
+                    "font-weight" => { face.weight = Some(value); }
+                    "font-style"  => { face.style  = Some(value); }
+                    _ => {}
+                }
+            }
+        }
+        if !face.family.is_empty() || !face.src.is_empty() {
+            faces.push(face);
         }
     }
 }
@@ -586,18 +846,46 @@ pub fn parse_selector(s: &str) -> CssSelector {
                 let is_elem = chars.peek() == Some(&':');
                 if is_elem { chars.next(); }
                 let name = read_ident(&mut chars);
-                // consume optional (...) — keep args for nth-child etc.
-                let full_name = if chars.peek() == Some(&'(') {
-                    chars.next();
-                    let args: String = chars.by_ref().take_while(|&c| c != ')').collect();
-                    format!("{}({})", name, args)
+                // consume optional (...)
+                if chars.peek() == Some(&'(') {
+                    // Collect balanced args (respecting nested parens)
+                    chars.next(); // consume '('
+                    let args = read_balanced_parens(&mut chars);
+                    if !is_elem {
+                        match name.as_str() {
+                            "not" => {
+                                let inner_sel = parse_selector(args.trim());
+                                parts.push(SelectorPart::Not(Box::new(inner_sel)));
+                            }
+                            "is" => {
+                                let selectors: Vec<CssSelector> = args.split(',')
+                                    .map(|s| parse_selector(s.trim()))
+                                    .collect();
+                                parts.push(SelectorPart::Is(selectors));
+                            }
+                            "where" => {
+                                let selectors: Vec<CssSelector> = args.split(',')
+                                    .map(|s| parse_selector(s.trim()))
+                                    .collect();
+                                parts.push(SelectorPart::Where(selectors));
+                            }
+                            "has" => {
+                                let inner_sel = parse_selector(args.trim());
+                                parts.push(SelectorPart::Has(Box::new(inner_sel)));
+                            }
+                            _ => {
+                                let full_name = format!("{}({})", name, args);
+                                parts.push(SelectorPart::PseudoClass(full_name));
+                            }
+                        }
+                    } else {
+                        let full_name = format!("{}({})", name, args);
+                        parts.push(SelectorPart::PseudoElement(full_name));
+                    }
+                } else if is_elem {
+                    parts.push(SelectorPart::PseudoElement(name));
                 } else {
-                    name
-                };
-                if is_elem {
-                    parts.push(SelectorPart::PseudoElement(full_name));
-                } else {
-                    parts.push(SelectorPart::PseudoClass(full_name));
+                    parts.push(SelectorPart::PseudoClass(name));
                 }
             }
             '[' => {
@@ -632,6 +920,25 @@ fn read_ident(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
             chars.next();
         } else {
             break;
+        }
+    }
+    s
+}
+
+/// Consume characters until the matching `)` for an already-consumed `(`.
+/// Handles nested parens. Returns the content (without the outer parens).
+fn read_balanced_parens(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut s = String::new();
+    let mut depth = 1usize;
+    for c in chars.by_ref() {
+        match c {
+            '(' => { depth += 1; s.push(c); }
+            ')' => {
+                depth -= 1;
+                if depth == 0 { break; }
+                s.push(c);
+            }
+            _ => { s.push(c); }
         }
     }
     s
@@ -1566,6 +1873,10 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "hover-color"            => { style.hover_color            = parse_color(v); }
         "hover-background-color" => { style.hover_background_color = parse_color(v); }
 
+        // ── Active (pressed) colors ────────────────────────────────────────────
+        "active-color"            => { style.active_color            = parse_color(v); }
+        "active-background-color" => { style.active_background_color = parse_color(v); }
+
         // ── Clip path ─────────────────────────────────────────────────────────
         "clip-path" => {
             if v == "none" {
@@ -1672,8 +1983,11 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _        => TextDecorationStyle::Solid,
             };
         }
-        "text-decoration-thickness" | "text-underline-offset" => {
-            // Accepted but not yet used in renderer
+        "text-decoration-thickness" => {
+            style.text_decoration_thickness = parse_length(v);
+        }
+        "text-underline-offset" => {
+            style.text_underline_offset = parse_length(v);
         }
 
         // ── User interaction ──────────────────────────────────────────────────
@@ -1746,14 +2060,25 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "column-rule-style" => { style.column_rule_style = parse_border_style(v); }
         "column-rule-color" => { if let Some(c) = parse_color(v) { style.column_rule_color = c; } }
         "column-fill" => { style.column_fill = v == "balance"; }
-        "column-span" => {} // not yet implemented
+        "column-span" => { style.column_span_all = v == "all"; }
 
         // ── Transform / filter ────────────────────────────────────────────────
-        "transform" => { style.transform = v.to_string(); }
-        "transform-origin" | "transform-box" | "transform-style" | "perspective-origin" | "perspective" | "backface-visibility" => {
+        "transform" => {
+            style.transform = v.to_string();
+            style.css_transform = parse_css_transform(v);
+        }
+        "transform-origin" => {
+            let (ox, oy) = parse_transform_origin(v);
+            style.transform_origin_x = ox;
+            style.transform_origin_y = oy;
+        }
+        "transform-box" | "transform-style" | "perspective-origin" | "perspective" | "backface-visibility" => {
             // Accepted but not implemented
         }
-        "filter"          => { style.filter          = v.to_string(); }
+        "filter"          => {
+            style.filter = v.to_string();
+            style.css_filter = parse_css_filter(v);
+        }
         "backdrop-filter" => { style.backdrop_filter = v.to_string(); }
 
         // ── Transition / animation ────────────────────────────────────────────
@@ -1767,7 +2092,10 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         | "animation-fill-mode" | "animation-play-state" => {
             // Sub-properties — not fully implemented
         }
-        "will-change" => { style.will_change = v.to_string(); }
+        "will-change" => {
+            style.will_change = v.to_string();
+            style.will_change_transform = v.contains("transform");
+        }
 
         // ── Misc ──────────────────────────────────────────────────────────────
         "scroll-behavior" => {
@@ -1875,14 +2203,53 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "image-rendering" | "image-orientation" => {}
 
         // ── Containment ───────────────────────────────────────────────────────
-        "contain" | "content-visibility" => {}
+        "contain" => {
+            let is_strict  = v == "strict";
+            let is_content = v == "content";
+            style.contain_layout = v.contains("layout") || is_strict || is_content;
+            style.contain_paint  = v.contains("paint")  || is_strict || is_content;
+            style.contain_size   = v.contains("size")   || is_strict;
+        }
+        "content-visibility" => {}
 
         // ── Scroll snap ───────────────────────────────────────────────────────
-        "scroll-snap-type" | "scroll-snap-align" | "scroll-snap-stop"
-        | "scroll-padding" | "scroll-padding-top" | "scroll-padding-right"
-        | "scroll-padding-bottom" | "scroll-padding-left"
-        | "scroll-margin"  | "scroll-margin-top"  | "scroll-margin-right"
-        | "scroll-margin-bottom" | "scroll-margin-left" => {}
+        "scroll-snap-type" => {
+            style.scroll_snap_type = match v.split_whitespace().next().unwrap_or("none") {
+                "x"      => ScrollSnapType::X,
+                "y"      => ScrollSnapType::Y,
+                "both"   => ScrollSnapType::Both,
+                "block"  => ScrollSnapType::Block,
+                "inline" => ScrollSnapType::Inline,
+                "none"   => ScrollSnapType::None,
+                _ => ScrollSnapType::None,
+            };
+            // Optional second keyword: mandatory / proximity
+            if v.contains("mandatory") {
+                style.scroll_snap_type = ScrollSnapType::Mandatory;
+            } else if v.contains("proximity") {
+                style.scroll_snap_type = ScrollSnapType::Proximity;
+            }
+        }
+        "scroll-snap-align" => {
+            style.scroll_snap_align = match v.split_whitespace().next().unwrap_or("none") {
+                "start"  => ScrollSnapAlign::Start,
+                "end"    => ScrollSnapAlign::End,
+                "center" => ScrollSnapAlign::Center,
+                _        => ScrollSnapAlign::None,
+            };
+        }
+        "scroll-snap-stop" | "scroll-margin" | "scroll-margin-top"
+        | "scroll-margin-right" | "scroll-margin-bottom" | "scroll-margin-left" => {}
+        "scroll-padding" => {
+            apply_shorthand_4(v,
+                &mut style.scroll_padding_top, &mut style.scroll_padding_right,
+                &mut style.scroll_padding_bottom, &mut style.scroll_padding_left,
+                parse_length);
+        }
+        "scroll-padding-top"    => { style.scroll_padding_top    = parse_length(v); }
+        "scroll-padding-right"  => { style.scroll_padding_right  = parse_length(v); }
+        "scroll-padding-bottom" => { style.scroll_padding_bottom = parse_length(v); }
+        "scroll-padding-left"   => { style.scroll_padding_left   = parse_length(v); }
 
         // ── Touch / interaction ───────────────────────────────────────────────
         "touch-action" | "-webkit-touch-callout" | "-webkit-tap-highlight-color" => {}
@@ -1894,6 +2261,127 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
     }
+}
+
+/// Parse a CSS `transform` value string into a `CssTransform`.
+fn parse_css_transform(v: &str) -> crate::types::CssTransform {
+    use crate::types::{CssTransform, TransformOp};
+    let mut ops = Vec::new();
+    let v = v.trim();
+    if v == "none" { return CssTransform::default(); }
+    // Simple tokenizer: split on function calls like "translate(10px, 20px) rotate(45deg)"
+    let mut rest = v;
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if rest.is_empty() { break; }
+        // Find function name up to '('
+        let paren_pos = match rest.find('(') {
+            Some(p) => p,
+            None    => break,
+        };
+        let func = rest[..paren_pos].trim().to_ascii_lowercase();
+        let after_paren = &rest[paren_pos + 1..];
+        // Find matching closing paren
+        let close = after_paren.find(')').unwrap_or(after_paren.len());
+        let args_str = &after_paren[..close];
+        rest = if close + 1 < after_paren.len() { &after_paren[close + 1..] } else { "" };
+
+        // Parse comma/whitespace-separated float args
+        let args: Vec<f32> = args_str.split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let s = s.trim().trim_end_matches("px").trim_end_matches("deg")
+                          .trim_end_matches("rad").trim_end_matches("turn");
+                s.parse::<f32>().unwrap_or(0.0)
+            })
+            .collect();
+
+        let get = |i: usize, def: f32| -> f32 { *args.get(i).unwrap_or(&def) };
+
+        match func.as_str() {
+            "translate"  => ops.push(TransformOp::Translate(get(0, 0.0), get(1, 0.0))),
+            "translatex" => ops.push(TransformOp::TranslateX(get(0, 0.0))),
+            "translatey" => ops.push(TransformOp::TranslateY(get(0, 0.0))),
+            "scale"      => ops.push(TransformOp::Scale(get(0, 1.0), get(1, get(0, 1.0)))),
+            "scalex"     => ops.push(TransformOp::ScaleX(get(0, 1.0))),
+            "scaley"     => ops.push(TransformOp::ScaleY(get(0, 1.0))),
+            "rotate"     => ops.push(TransformOp::Rotate(get(0, 0.0))),
+            "skewx"      => ops.push(TransformOp::SkewX(get(0, 0.0))),
+            "skewy"      => ops.push(TransformOp::SkewY(get(0, 0.0))),
+            "matrix"     => ops.push(TransformOp::Matrix(
+                get(0, 1.0), get(1, 0.0), get(2, 0.0),
+                get(3, 1.0), get(4, 0.0), get(5, 0.0),
+            )),
+            _ => {}
+        }
+    }
+    CssTransform { ops }
+}
+
+/// Parse a CSS `transform-origin` value into (x, y) fractions (0.0..1.0).
+fn parse_transform_origin(v: &str) -> (f32, f32) {
+    let parts: Vec<&str> = v.split_whitespace().collect();
+    let parse_one = |s: &str| -> f32 {
+        match s {
+            "left"   | "top"    => 0.0,
+            "center"            => 0.5,
+            "right"  | "bottom" => 1.0,
+            _ if s.ends_with('%')  => s[..s.len()-1].parse::<f32>().unwrap_or(50.0) / 100.0,
+            _ if s.ends_with("px") => s[..s.len()-2].parse::<f32>().unwrap_or(0.0),
+            _ => s.parse::<f32>().unwrap_or(0.5),
+        }
+    };
+    let x = parts.first().map(|s| parse_one(s)).unwrap_or(0.5);
+    let y = parts.get(1).map(|s| parse_one(s)).unwrap_or(0.5);
+    (x, y)
+}
+
+/// Parse a CSS `filter` value string into `CssFilters`.
+fn parse_css_filter(v: &str) -> crate::types::CssFilters {
+    use crate::types::{CssFilters, FilterOp};
+    let mut ops = Vec::new();
+    if v.trim() == "none" { return CssFilters::default(); }
+    let mut rest = v.trim();
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if rest.is_empty() { break; }
+        let paren_pos = match rest.find('(') { Some(p) => p, None => break };
+        let func = rest[..paren_pos].trim().to_ascii_lowercase();
+        let after_paren = &rest[paren_pos + 1..];
+        let close = after_paren.find(')').unwrap_or(after_paren.len());
+        let arg_str = after_paren[..close].trim();
+        rest = if close + 1 < after_paren.len() { &after_paren[close + 1..] } else { "" };
+        // Parse arg as f32 (strip %, px, deg)
+        let arg: f32 = arg_str.trim_end_matches('%').trim_end_matches("px")
+                               .trim_end_matches("deg").parse().unwrap_or(0.0);
+        // Normalize percent-based args to 0..1
+        let arg_norm = if arg_str.ends_with('%') { arg / 100.0 } else { arg };
+        match func.as_str() {
+            "blur"        => ops.push(FilterOp::Blur(arg)),
+            "brightness"  => ops.push(FilterOp::Brightness(arg_norm)),
+            "contrast"    => ops.push(FilterOp::Contrast(arg_norm)),
+            "grayscale"   => ops.push(FilterOp::Grayscale(arg_norm)),
+            "hue-rotate"  => ops.push(FilterOp::HueRotate(arg)),
+            "invert"      => ops.push(FilterOp::Invert(arg_norm)),
+            "opacity"     => ops.push(FilterOp::Opacity(arg_norm)),
+            "saturate"    => ops.push(FilterOp::Saturate(arg_norm)),
+            "sepia"       => ops.push(FilterOp::Sepia(arg_norm)),
+            "drop-shadow" => {
+                // drop-shadow(dx dy blur color)
+                let parts: Vec<&str> = arg_str.split_whitespace().collect();
+                let pf = |i: usize| parts.get(i)
+                    .and_then(|s| s.trim_end_matches("px").parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                ops.push(FilterOp::DropShadow {
+                    dx: pf(0), dy: pf(1), blur: pf(2),
+                    color: parts.get(3).and_then(|s| parse_color(s))
+                        .unwrap_or(crate::types::Color::BLACK),
+                });
+            }
+            _ => {}
+        }
+    }
+    CssFilters { ops }
 }
 
 /// Resolve `var(--name)` and `var(--name, fallback)` references in a CSS value.
@@ -2652,14 +3140,174 @@ pub fn parse_grid_line(v: &str) -> i32 {
     v.parse::<i32>().unwrap_or(0)
 }
 
+// ─── Media Query Evaluator ───────────────────────────────────────────────────
+
+/// Evaluate a CSS @media condition string.
+/// Returns true if the condition matches the given viewport dimensions.
+/// `condition` is the full text after "@media" (trimmed).
+pub fn evaluate_media(condition: &str, vw: f32, vh: f32) -> bool {
+    let cond = condition.trim();
+    if cond.is_empty() { return true; }
+
+    // Handle comma-separated list at top level (OR semantics)
+    // We first split on `and`/`or` outside parens, then check named types.
+    // But comma is always OR at the top level.
+    {
+        let mut depth = 0usize;
+        let bytes = cond.as_bytes();
+        let mut comma_pos: Option<usize> = None;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => { if depth > 0 { depth -= 1; } }
+                b',' if depth == 0 => { comma_pos = Some(i); break; }
+                _ => {}
+            }
+        }
+        if let Some(pos) = comma_pos {
+            let left  = &cond[..pos];
+            let right = &cond[pos+1..];
+            return evaluate_media(left.trim(), vw, vh) || evaluate_media(right.trim(), vw, vh);
+        }
+    }
+
+    // Handle `not` prefix (before `and`/`or` splitting)
+    if let Some(rest) = cond.strip_prefix("not ") {
+        return !evaluate_media(rest.trim(), vw, vh);
+    }
+
+    // Handle `and` combinator outside parens
+    if let Some(idx) = find_keyword_outside_parens(cond, " and ") {
+        let left  = &cond[..idx];
+        let right = &cond[idx + 5..];
+        return evaluate_media(left.trim(), vw, vh) && evaluate_media(right.trim(), vw, vh);
+    }
+
+    // Handle `or` combinator outside parens
+    if let Some(idx) = find_keyword_outside_parens(cond, " or ") {
+        let left  = &cond[..idx];
+        let right = &cond[idx + 4..];
+        return evaluate_media(left.trim(), vw, vh) || evaluate_media(right.trim(), vw, vh);
+    }
+
+    // Named media types (no parens)
+    if !cond.starts_with('(') {
+        return match cond.to_ascii_lowercase().as_str() {
+            "screen" | "all" => true,
+            "print"  => false,
+            _ => true,  // unknown media type — fail-open
+        };
+    }
+
+    // Strip outer parens for feature queries
+    let inner = if cond.starts_with('(') && cond.ends_with(')') {
+        &cond[1..cond.len()-1]
+    } else {
+        cond
+    };
+    let lower = inner.to_ascii_lowercase();
+    let lower = lower.trim();
+
+    if let Some(rest) = lower.strip_prefix("min-width:") {
+        return vw >= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("max-width:") {
+        return vw <= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("min-height:") {
+        return vh >= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("max-height:") {
+        return vh <= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("orientation:") {
+        return match rest.trim() {
+            "landscape" => vw > vh,
+            "portrait"  => vh >= vw,
+            _ => true,
+        };
+    }
+    if let Some(rest) = lower.strip_prefix("prefers-color-scheme:") {
+        return match rest.trim() {
+            "light" => true,
+            "dark"  => false,
+            _ => true,
+        };
+    }
+    if let Some(rest) = lower.strip_prefix("hover:") {
+        return match rest.trim() { "hover" => true, "none" => false, _ => true };
+    }
+    if let Some(rest) = lower.strip_prefix("pointer:") {
+        return match rest.trim() { "fine" => true, "coarse" | "none" => false, _ => true };
+    }
+    if let Some(rest) = lower.strip_prefix("min-resolution:") {
+        let s = rest.trim().trim_end_matches("dpi").trim_end_matches("dpcm").trim();
+        let dpi: f32 = s.parse().unwrap_or(0.0);
+        return dpi <= 96.0;
+    }
+    if let Some(rest) = lower.strip_prefix("max-resolution:") {
+        let s = rest.trim().trim_end_matches("dpi").trim_end_matches("dpcm").trim();
+        let dpi: f32 = s.parse().unwrap_or(0.0);
+        return dpi >= 96.0;
+    }
+    // Unknown feature — fail-open
+    true
+}
+
+/// Find byte index of `keyword` in `s` where it is not inside parentheses.
+fn find_keyword_outside_parens(s: &str, keyword: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let kw = keyword.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i + kw.len() <= bytes.len() {
+        match bytes[i] {
+            b'(' => { depth += 1; i += 1; }
+            b')' => { if depth > 0 { depth -= 1; } i += 1; }
+            _ => {
+                if depth == 0 && bytes[i..].starts_with(kw) {
+                    return Some(i);
+                }
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+fn parse_media_px(s: &str) -> f32 {
+    let s = s.trim();
+    if s.ends_with("px") {
+        s[..s.len()-2].trim().parse().unwrap_or(0.0)
+    } else if s.ends_with("em") {
+        s[..s.len()-2].trim().parse::<f32>().unwrap_or(0.0) * 16.0
+    } else {
+        s.parse().unwrap_or(0.0)
+    }
+}
+
 // ─── CSS Cascade ─────────────────────────────────────────────────────────────
 
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
 pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &[], 0, 1);
+    apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null());
 }
 
+/// Apply a stylesheet with viewport size and focused element for media queries and :focus selectors.
+pub fn apply_cascade_vp(
+    root: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    parent_style: Option<&ComputedStyle>,
+    root_font_px: f32,
+    vw: f32,
+    vh: f32,
+    focused_box: *const crate::types::HtmlBox,
+) {
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &[], 0, 1, 0, 1, vw, vh, focused_box);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn apply_cascade_inner(
     root: &mut crate::types::HtmlBox,
     stylesheet: &Stylesheet,
@@ -2668,6 +3316,11 @@ fn apply_cascade_inner(
     ancestors: &[AncestorInfo],
     child_index: usize,
     sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+    vw: f32,
+    vh: f32,
+    focused_box: *const crate::types::HtmlBox,
 ) {
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
@@ -2726,15 +3379,48 @@ fn apply_cascade_inner(
         }
     }
 
+    // Build MatchContext for this element
+    let match_ctx = MatchContext {
+        focused_box,
+        type_child_index,
+        type_sibling_count,
+        html_box: Some(root),
+    };
+
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
     let mut matched:           Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut hover_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut active_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut before_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut after_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut selection_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut marker_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
     for rule in &stylesheet.rules {
+        // Skip rules whose @media condition doesn't match the viewport
+        if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
+            continue;
+        }
         for sel in &rule.selectors {
-            if sel.matches_with_ancestors(root, child_index, sibling_count, ancestors) {
+            // Detect state-pseudo-class rules (:hover, :active) and match their
+            // base selector so the style can be stored for runtime activation.
+            let has_hover  = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
+            let has_active = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
+
+            if (has_hover || has_active) && rule.pseudo_element == PseudoElement::None {
+                // Strip state pseudo-classes and match base selector.
+                let base_parts: Vec<SelectorPart> = sel.parts.iter()
+                    .filter(|p| !matches!(p, SelectorPart::PseudoClass(n) if n == "hover" || n == "active"))
+                    .cloned()
+                    .collect();
+                let base_sel = CssSelector { parts: base_parts };
+                if base_sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
+                    if has_hover  { hover_matched.push((rule.specificity, rule.declarations.clone())); }
+                    if has_active { active_matched.push((rule.specificity, rule.declarations.clone())); }
+                    break;
+                }
+                continue;
+            }
+            if sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
                 match rule.pseudo_element {
                     PseudoElement::Before     => before_matched.push((rule.specificity, rule.declarations.clone())),
                     PseudoElement::After      => after_matched.push((rule.specificity, rule.declarations.clone())),
@@ -2752,6 +3438,32 @@ fn apply_cascade_inner(
         for (prop, val) in decls {
             let resolved = resolve_var_references(val, &stylesheet.variables);
             apply_property(&mut style, prop, &resolved);
+        }
+    }
+    // Apply hover declarations — map CSS properties to their hover-specific equivalents.
+    hover_matched.sort_by_key(|(sp, _)| *sp);
+    for (_, decls) in &hover_matched {
+        for (prop, val) in decls {
+            let resolved = resolve_var_references(val, &stylesheet.variables);
+            let hover_prop = match prop.as_str() {
+                "color"                            => "hover-color",
+                "background-color" | "background"  => "hover-background-color",
+                _ => continue,
+            };
+            apply_property(&mut style, hover_prop, &resolved);
+        }
+    }
+    // Apply active declarations — map CSS properties to their active-specific equivalents.
+    active_matched.sort_by_key(|(sp, _)| *sp);
+    for (_, decls) in &active_matched {
+        for (prop, val) in decls {
+            let resolved = resolve_var_references(val, &stylesheet.variables);
+            let active_prop = match prop.as_str() {
+                "color"                            => "active-color",
+                "background-color" | "background"  => "active-background-color",
+                _ => continue,
+            };
+            apply_property(&mut style, active_prop, &resolved);
         }
     }
 
@@ -2820,17 +3532,36 @@ fn apply_cascade_inner(
 
     // Build this box's AncestorInfo for children
     let my_info = AncestorInfo {
-        tag:           root.tag.clone(),
-        attributes:    root.attributes.clone(),
+        tag:                root.tag.clone(),
+        attributes:         root.attributes.clone(),
         child_index,
         sibling_count,
+        type_child_index,
+        type_sibling_count,
     };
     let mut child_ancestors = ancestors.to_vec();
     child_ancestors.push(my_info);
 
     let n_children = root.children.len();
+
+    // Pre-compute type_child_index and type_sibling_count for each child.
+    // For each child, count how many prior siblings share the same tag,
+    // and how many total siblings share that tag.
+    let child_tags: Vec<String> = root.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+    let type_counts: Vec<usize> = child_tags.iter().enumerate().map(|(i, tag)| {
+        child_tags[..=i].iter().filter(|t| *t == tag).count() - 1  // 0-based index among same-tag
+    }).collect();
+    let type_totals: Vec<usize> = child_tags.iter().enumerate().map(|(_, tag)| {
+        child_tags.iter().filter(|t| *t == tag).count()
+    }).collect();
+
     for (i, child) in root.children.iter_mut().enumerate() {
-        apply_cascade_inner(child, stylesheet, Some(&style), root_font_px, &child_ancestors, i, n_children);
+        apply_cascade_inner(
+            child, stylesheet, Some(&style), root_font_px,
+            &child_ancestors, i, n_children,
+            type_counts[i], type_totals[i],
+            vw, vh, focused_box,
+        );
     }
 }
 
