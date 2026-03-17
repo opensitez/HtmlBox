@@ -243,3 +243,223 @@ fn ce_set_text_color_partial() {
     assert_eq!(b.inline_runs[0].style.color, Color::BLACK, "Hello should remain black");
     assert_eq!(b.inline_runs[1].style.color, Color::rgb(0, 0, 255));
 }
+
+// ============================================================
+// DOM manipulation: clone_element preserves structure
+// Equivalent of C++ ContentEditable, PreservedInClone
+// ============================================================
+
+#[test]
+fn ce_clone_element_preserves_tag_and_text() {
+    use rhtmledit::dom::clone_element;
+    let doc = parse_html("<p>Cloneable</p>");
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    let cloned = clone_element(p);
+    assert_eq!(cloned.tag, "p");
+    assert!(cloned.text_content().contains("Cloneable"),
+        "cloned element must contain original text");
+}
+
+#[test]
+fn ce_clone_element_is_independent() {
+    use rhtmledit::dom::clone_element;
+    let doc = parse_html("<div><p>Original</p></div>");
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    let cloned = clone_element(p);
+    // Cloned is a separate object (different address)
+    assert!(!std::ptr::eq(p as *const HtmlBox, &cloned as *const HtmlBox));
+}
+
+// ============================================================
+// Editor: increase/decrease_indent survives recascade
+// Equivalent of C++ ParserStyleSync, IndentSurvivesReCascade /
+// DecreaseIndentSurvives
+// ============================================================
+
+use rhtmledit::dom::{query_selector_mut, query_selector};
+use rhtmledit::layout::LayoutEngine;
+use rhtmledit::dom::Editor;
+
+fn parse_and_layout(html: &str) -> rhtmledit::types::Document {
+    let mut doc = parse_html(html);
+    LayoutEngine::new().layout(&mut doc, 800.0);
+    doc
+}
+
+fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
+    editor.caret_box   = Some(element as *const HtmlBox);
+    editor.collapse_to(offset);
+}
+
+#[test]
+fn ce_indent_survives_recascade() {
+    // ParserStyleSync, IndentSurvivesReCascade
+    let mut doc = parse_and_layout("<p>Indent me</p>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.increase_indent(&mut doc.root, 40.0);
+
+    let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => v,
+        _ => panic!("expected Px margin after indent"),
+    };
+    assert!(margin_before > 0.0, "margin-left should be positive after increase_indent");
+
+    doc.recascade();
+
+    match query_selector(&doc.root, "p").unwrap().style.margin_left {
+        rhtmledit::types::CssLength::Px(v) =>
+            assert!((v - margin_before).abs() < 0.01,
+                "margin-left must survive recascade; before={} after={}", margin_before, v),
+        other => panic!("indent must survive recascade; got {:?}", other),
+    }
+}
+
+#[test]
+fn ce_decrease_indent_survives_recascade() {
+    // ParserStyleSync, DecreaseIndentSurvives
+    let mut doc = parse_and_layout("<p>Indent me</p>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.increase_indent(&mut doc.root, 40.0);
+    doc.editor.increase_indent(&mut doc.root, 40.0);
+    doc.editor.decrease_indent(&mut doc.root, 40.0);
+
+    let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => v,
+        rhtmledit::types::CssLength::Zero  => 0.0,
+        _ => panic!("expected Px or Zero margin"),
+    };
+
+    doc.recascade();
+
+    let margin_after = match query_selector(&doc.root, "p").unwrap().style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => v,
+        rhtmledit::types::CssLength::Zero  => 0.0,
+        _ => panic!("expected Px or Zero margin after recascade"),
+    };
+    assert!((margin_after - margin_before).abs() < 0.01,
+        "margin after decrease_indent must survive recascade; before={} after={}",
+        margin_before, margin_after);
+}
+
+// ============================================================
+// Editor: toggle_bullet_list survives recascade
+// Equivalent of C++ ParserStyleSync, BulletListSurvivesReCascade /
+// BulletListToggleOffSurvives
+// ============================================================
+
+#[test]
+fn ce_bullet_list_survives_recascade() {
+    // ParserStyleSync, BulletListSurvivesReCascade
+    use rhtmledit::dom::query_selector_all;
+    let mut doc = parse_and_layout("<div><p>List item</p></div>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.toggle_bullet_list(&mut doc.root);
+
+    // Confirm bullet was created
+    assert!(query_selector(&doc.root, "li").is_some(), "<li> must exist after toggle");
+
+    doc.recascade();
+
+    // The <li> must still be there after recascade
+    assert!(query_selector(&doc.root, "li").is_some(),
+        "<li> must survive recascade");
+    let lis = query_selector_all(&doc.root, "li");
+    assert!(!lis.is_empty(), "list items must survive recascade");
+}
+
+#[test]
+fn ce_bullet_list_toggle_off_survives_recascade() {
+    // ParserStyleSync, BulletListToggleOffSurvives
+    let mut doc = parse_and_layout("<div><p>Item</p></div>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.toggle_bullet_list(&mut doc.root);  // toggle on
+    doc.editor.toggle_bullet_list(&mut doc.root);  // toggle off
+
+    // No <li> should exist
+    assert!(query_selector(&doc.root, "li").is_none(),
+        "<li> should be gone after toggle-off");
+
+    doc.recascade();
+
+    // Must still be off after recascade
+    assert!(query_selector(&doc.root, "li").is_none(),
+        "<li> must remain absent after recascade");
+}
+
+// ============================================================
+// Editor: increase_quote_level survives recascade
+// Equivalent of C++ ParserStyleSync, QuoteSurvivesReCascade /
+// UnquoteSurvivesReCascade
+// ============================================================
+
+#[test]
+fn ce_quote_survives_recascade() {
+    // ParserStyleSync, QuoteSurvivesReCascade
+    let mut doc = parse_and_layout("<div><p>Quote me</p></div>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.increase_quote_level(&mut doc.root);
+
+    assert!(query_selector(&doc.root, "blockquote").is_some(),
+        "<blockquote> must exist after increase_quote_level");
+
+    doc.recascade();
+
+    assert!(query_selector(&doc.root, "blockquote").is_some(),
+        "<blockquote> must survive recascade");
+}
+
+#[test]
+fn ce_unquote_survives_recascade() {
+    // ParserStyleSync, UnquoteSurvivesReCascade
+    let mut doc = parse_and_layout("<div><p>Quote me</p></div>");
+    {
+        let p = query_selector_mut(&mut doc.root, "p").unwrap();
+        set_caret(&mut doc.editor, p, 0);
+    }
+    doc.editor.increase_quote_level(&mut doc.root);
+    doc.editor.decrease_quote_level(&mut doc.root);
+
+    assert!(query_selector(&doc.root, "blockquote").is_none(),
+        "<blockquote> must be gone after decrease_quote_level");
+
+    doc.recascade();
+
+    assert!(query_selector(&doc.root, "blockquote").is_none(),
+        "<blockquote> must remain absent after recascade");
+
+    let p = query_selector(&doc.root, "p");
+    assert!(p.is_some(), "<p> must still be present after unquote + recascade");
+}
+
+// ============================================================
+// ParserStyle tests that require SetAlignment / SetHeading:
+// these APIs do not exist in the Rust dom module.
+// ============================================================
+// TODO: API not available — AlignmentSurvivesReCascade
+// TODO: API not available — AlignRightSurvives
+// TODO: API not available — AlignJustifySurvives
+// TODO: API not available — HeadingSurvivesReCascade
+
+// ============================================================
+// ContentEditable / ReadOnly / Selection widget tests:
+// all require wxHtmlEditWidget — no equivalent in Rust.
+// ============================================================
+// TODO: API not available — SetByElementId, SetByBoxPointer, UnsetById
+// TODO: API not available — ReadOnly (EditableWhenNotReadOnly, BlockedWhenReadOnly, etc.)
+// TODO: API not available — Selection (WorksInReadOnlyMode, WorksInLockedRegionWithContentEditable, etc.)
+// TODO: API not available — CrossRegion (DeleteBlockedWhenSelectionSpansLocked, etc.)

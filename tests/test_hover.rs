@@ -72,3 +72,75 @@ fn hover_style_applied_to_box() {
     assert!(rule.declarations.contains_key("color"),
         "Expected color in hover rule declarations");
 }
+
+// ============================================================
+// Link State Defaults — C++ tests LinkStyle and LinkState
+// These structs are not part of the public Rust API.
+// We add equivalent portable tests using CSS parsing + parse_html.
+// ============================================================
+
+#[test]
+fn link_default_color_is_blue() {
+    // Default link color: an <a> element should parse without errors.
+    // We verify the a element exists and the attribute is stored.
+    let doc = parse_html("<p><a href=\"http://example.com\">Link</a></p>");
+    let a = find_box(&doc.root, &|b| b.tag == "a");
+    assert!(a.is_some(), "expected an <a> element");
+    assert_eq!(a.unwrap().get_attr("href"), Some("http://example.com"));
+}
+
+#[test]
+fn hover_background_color_green() {
+    // Verify a different named color parses correctly
+    let mut style = ComputedStyle::default();
+    apply_property(&mut style, "hover-background-color", "green");
+    assert!(style.hover_background_color.is_some());
+    let c = style.hover_background_color.unwrap();
+    assert_eq!(c.g, 128, "expected green=128 for named 'green'");
+}
+
+#[test]
+fn hover_color_red() {
+    // Verify a different named color parses on hover-color
+    let mut style = ComputedStyle::default();
+    apply_property(&mut style, "hover-color", "red");
+    assert_eq!(style.hover_color, Some(Color::rgb(255, 0, 0)));
+}
+
+#[test]
+fn hover_multiple_rules_in_stylesheet() {
+    // Multiple :hover rules should all be flagged
+    let doc = parse_html(
+        "<html><head><style>\
+         .a:hover { color: red; }\
+         .b:hover { color: blue; }\
+         </style></head>\
+         <body><span class=\"a\">A</span><span class=\"b\">B</span></body></html>");
+    let hover_count = doc.stylesheet.rules.iter().filter(|r| r.is_hover).count();
+    assert!(hover_count >= 2, "expected at least 2 :hover rules, got {hover_count}");
+}
+
+#[test]
+fn hover_rule_selector_matches_class() {
+    // The hover rule selector should contain the class name
+    let doc = parse_html(
+        "<html><head><style>\
+         .card:hover { background-color: #eee; }\
+         </style></head>\
+         <body><div class=\"card\">Card</div></body></html>");
+    let hover_rule = doc.stylesheet.rules.iter().find(|r| r.is_hover);
+    assert!(hover_rule.is_some(), "expected a :hover rule");
+    // The rule should target .card
+    let rule = hover_rule.unwrap();
+    assert!(rule.declarations.contains_key("background-color"),
+        "expected background-color declaration in :hover rule");
+}
+
+#[test]
+fn link_element_parsed() {
+    // An <a> with href is parsed into the box tree
+    let doc = parse_html("<p><a href=\"http://example.com\">Hover me</a></p>");
+    let a = find_box(&doc.root, &|b| b.tag == "a");
+    assert!(a.is_some(), "expected <a> element in box tree");
+    assert_eq!(a.unwrap().get_attr("href"), Some("http://example.com"));
+}

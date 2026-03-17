@@ -702,3 +702,109 @@ fn css_adv_cell_spacing_parsed() {
     assert_eq!(s.border_spacing_h, CssLength::Px(3.0));
     assert_eq!(s.border_spacing_v, CssLength::Px(3.0));
 }
+
+// ============================================================
+// Border Inline / Block Width (C++ CSSAdv tests)
+// apply_property does not implement border-inline-* or border-block-* yet.
+// ============================================================
+
+// TODO: API not available — "border-inline-start-width" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderInlineStartWidth)
+
+// TODO: API not available — "border-inline-end-width" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderInlineEndWidth)
+
+// TODO: API not available — "border-block-start-width" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderBlockStartWidth)
+
+// TODO: API not available — "border-block-end-width" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderBlockEndWidth)
+
+// ============================================================
+// Border Inline / Block Color (C++ CSSAdv tests)
+// ============================================================
+
+// TODO: API not available — "border-inline-start-color" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderInlineStartColor)
+
+// TODO: API not available — "border-block-start-color" is not handled by apply_property.
+// (C++ test: CSSAdv/BorderBlockStartColor)
+
+// ============================================================
+// Colspan / Rowspan (C++ CSSAdv tests)
+// In Rust, colspan/rowspan are HTML element attributes on HtmlBox,
+// not ComputedStyle CSS properties.
+// ============================================================
+
+// TODO: API not available — colspan/rowspan are not ComputedStyle fields; they are
+// parsed from HTML attributes and stored on HtmlBox, not accessible via apply_property.
+// (C++ tests: CSSAdv/ColspanParsed, CSSAdv/RowspanParsed)
+
+// ============================================================
+// Media Query Condition Evaluation (C++ CSSAdv tests)
+// MediaContext::EvaluateCondition does not exist in the Rust public API.
+// ============================================================
+
+// TODO: API not available — MediaContext struct and EvaluateCondition are not exposed.
+// The following C++ tests have no Rust equivalent:
+//   CSSAdv/MediaEvalMaxWidthTrue, CSSAdv/MediaEvalMaxWidthFalse,
+//   CSSAdv/MediaEvalMinWidthTrue, CSSAdv/MediaEvalMinWidthFalse,
+//   CSSAdv/MediaEvalScreenAndMaxWidth, CSSAdv/MediaEvalPrint,
+//   CSSAdv/MediaEvalNot, CSSAdv/MediaEvalOrientation, CSSAdv/MediaEvalDarkMode,
+//   CSSAdv/MediaEvalOnlyScreen, CSSAdv/MediaEvalNotScreen,
+//   CSSAdv/MediaEvalMinHeightTrue, CSSAdv/MediaEvalMinHeightFalse,
+//   CSSAdv/MediaEvalMaxHeightTrue, CSSAdv/MediaEvalMaxHeightFalse,
+//   CSSAdv/MediaEvalLightMode, CSSAdv/MediaEvalAll,
+//   CSSAdv/MediaEvalScreenAndMinWidth, CSSAdv/MediaEvalEmptyCondition
+
+// ============================================================
+// Media Query Applied to Layout (C++ CSSAdv tests)
+// The Rust layout engine does not evaluate media conditions during stylesheet
+// application; media_condition is stored on CssRule but not compared to
+// a viewport context when applying cascade.
+// ============================================================
+
+// TODO: API not available — LayoutEngine does not expose a mediaContext field
+// and does not evaluate @media conditions during ApplyStylesheet/Layout.
+// (C++ tests: CSSAdv/MediaQueryAppliedToLayout, CSSAdv/MediaQueryNotAppliedWhenWide)
+
+// ============================================================
+// Container Query — @container rule parsing (C++ CSSAdv tests)
+// CssRule does not have container_condition or container_name fields.
+// The parser ignores @container block headers (strips them).
+// ============================================================
+
+// TODO: API not available — CssRule has no container_condition or container_name field.
+// @container rules are parsed as plain rules without the container context.
+// (C++ tests: CSSAdv/ContainerQueryParsed, CSSAdv/ContainerQueryNamedParsed,
+//  CSSAdv/ContainerQueryMultipleRules, CSSAdv/ContainerQueryWithNormalRules)
+
+// ============================================================
+// Container Query — Condition Evaluation (C++ CSSAdv tests)
+// ContainerContext::EvaluateCondition does not exist in the Rust public API.
+// ============================================================
+
+// TODO: API not available — ContainerContext struct and EvaluateCondition are not exposed.
+// (C++ tests: CSSAdv/ContainerEvalMinWidthTrue, CSSAdv/ContainerEvalMinWidthFalse,
+//  CSSAdv/ContainerEvalMaxWidthTrue, CSSAdv/ContainerEvalMaxWidthFalse,
+//  CSSAdv/ContainerEvalMinHeight, CSSAdv/ContainerEvalMaxHeight,
+//  CSSAdv/ContainerEvalCombinedAndCondition, CSSAdv/ContainerEvalEmptyCondition)
+
+// ============================================================
+// Container Query — FindContainer (C++ CSSAdv tests)
+// ContainerContext::FindContainer does not exist in the Rust public API.
+// ============================================================
+
+// TODO: API not available — ContainerContext::FindContainer is not exposed.
+// (C++ tests: CSSAdv/ContainerFindNearest, CSSAdv/ContainerFindNamed,
+//  CSSAdv/ContainerFindNoneWhenNoContainer)
+
+// ============================================================
+// Container Query — Integrated Layout (C++ CSSAdv tests)
+// The Rust layout engine does not evaluate @container conditions during layout.
+// ============================================================
+
+// TODO: API not available — LayoutEngine does not evaluate @container rules against
+// computed container sizes during Layout.
+// (C++ tests: CSSAdv/ContainerQueryAppliedToLayout,
+//  CSSAdv/ContainerQueryNotAppliedWhenNarrow, CSSAdv/ContainerQueryNamedApplied)

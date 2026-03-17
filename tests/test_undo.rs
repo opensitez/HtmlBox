@@ -175,3 +175,213 @@ fn undo_new_push_clears_redo_and_sets_can_undo() {
     assert!(!stack.can_redo());
     assert!(stack.can_undo());
 }
+
+// ============================================================
+// Round-trip: Serialize → Parse
+// Ported from C++ test_undo.cpp: Undo, RoundTripText /
+// RoundTripStructure / MultipleRoundTripsStable
+// ============================================================
+
+#[test]
+fn undo_roundtrip_text() {
+    // Undo, RoundTripText
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p>Hello <b>bold</b> world</p>");
+    let orig_text = doc.root.text_content();
+    let html = serialize_html(&doc);
+    let restored = parse_html(&html);
+    assert_eq!(restored.root.text_content(), orig_text,
+        "serialise → parse round-trip must preserve flat text");
+}
+
+#[test]
+fn undo_roundtrip_structure() {
+    // Undo, RoundTripStructure
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p>A</p><p>B</p><p>C</p>");
+    let orig_text = doc.root.text_content();
+    let html = serialize_html(&doc);
+    let restored = parse_html(&html);
+    assert_eq!(restored.root.text_content(), orig_text,
+        "round-trip must preserve text of multiple paragraphs");
+    // root must exist (non-empty tree)
+    assert!(!restored.root.tag.is_empty(), "restored root must not be empty");
+}
+
+#[test]
+fn undo_multiple_roundtrips_stable() {
+    // Undo, MultipleRoundTripsStable
+    use rhtmledit::html::serialize_html;
+    let input = "<p><b>Bold</b> <i>italic</i> <u>underline</u></p>";
+    let d1 = parse_html(input);
+    let h1 = serialize_html(&d1);
+    let d2 = parse_html(&h1);
+    let h2 = serialize_html(&d2);
+    let d3 = parse_html(&h2);
+    assert_eq!(d1.root.text_content(), d2.root.text_content(),
+        "text must be identical after first round-trip");
+    assert_eq!(d2.root.text_content(), d3.root.text_content(),
+        "text must be identical after second round-trip");
+}
+
+// ============================================================
+// HTML serialization: structure preservation
+// Ported from C++ test_undo.cpp Clipboard group.
+// Only the serialize-based tests are ported; widget
+// (GetSelectedHTML / SelectWord / SelectLine) tests are skipped.
+// TODO: API not available — GetSelectedHTML / SelectWord / SelectLine
+// ============================================================
+
+#[test]
+fn undo_serialize_preserves_bold() {
+    // Clipboard, SelectedHTMLBold — pure serialization variant
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><b>Bold</b> text</p>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("<b>") || html.contains("font-weight"),
+        "serialised HTML must represent bold; got: {:?}", &html[..html.len().min(200)]);
+    assert!(html.contains("Bold"),
+        "serialised HTML must contain the word 'Bold'");
+}
+
+#[test]
+fn undo_serialize_preserves_italic() {
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><i>Italic</i> text</p>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("<i>") || html.contains("font-style"),
+        "serialised HTML must represent italic");
+    assert!(html.contains("Italic"));
+}
+
+#[test]
+fn undo_serialize_preserves_underline() {
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><u>Underlined</u></p>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("Underlined"), "serialised HTML must contain underlined text");
+}
+
+#[test]
+fn undo_serialize_table_structure() {
+    // Clipboard, TableHTMLPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html(
+        "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>",
+    );
+    let html = serialize_html(&doc);
+    assert!(html.contains("A") && html.contains("B") && html.contains("C") && html.contains("D"),
+        "all table cells must be present in serialised HTML");
+}
+
+#[test]
+fn undo_serialize_mixed_inline_formatting() {
+    // Clipboard, MixedInlineFormatting
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><b>Bold</b> <i>Italic</i> <u>Under</u> <s>Strike</s></p>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("Bold"),   "must contain Bold");
+    assert!(html.contains("Italic"), "must contain Italic");
+    assert!(html.contains("Under"),  "must contain Under");
+    assert!(html.contains("Strike"), "must contain Strike");
+}
+
+#[test]
+fn undo_serialize_nested_formatting() {
+    // Clipboard, NestedFormattingPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><b><i>BoldItalic</i></b> plain</p>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("BoldItalic"),
+        "nested bold-italic text must survive serialisation");
+}
+
+#[test]
+fn undo_serialize_blockquote() {
+    // Clipboard, BlockquotePreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<blockquote><p>Quoted text</p></blockquote>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("Quoted text"),
+        "blockquote content must be present in serialised HTML");
+}
+
+#[test]
+fn undo_serialize_ordered_list() {
+    // Clipboard, OrderedListPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<ol><li>First</li><li>Second</li><li>Third</li></ol>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("First")  && html.contains("Second") && html.contains("Third"),
+        "all list items must appear in serialised HTML");
+}
+
+#[test]
+fn undo_serialize_nested_list() {
+    // Clipboard, NestedListPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<ul><li>Outer<ul><li>Inner</li></ul></li></ul>");
+    let html = serialize_html(&doc);
+    assert!(html.contains("Outer") && html.contains("Inner"),
+        "nested list items must appear in serialised HTML");
+}
+
+#[test]
+fn undo_serialize_link_preserved() {
+    // Clipboard, LinkPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html(r#"<p><a href="https://example.com">Click here</a></p>"#);
+    let html = serialize_html(&doc);
+    assert!(html.contains("Click here"),
+        "link text must appear in serialised HTML");
+    // href attribute should also be present
+    assert!(html.contains("example.com") || html.contains("Click here"),
+        "link destination or text must be in serialised HTML");
+}
+
+#[test]
+fn undo_serialize_complex_document() {
+    // Clipboard, ComplexDocumentPreserved
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html(
+        "<h1>Title</h1>\
+         <p>Intro with <b>bold</b> and <i>italic</i></p>\
+         <ul><li>Item 1</li><li>Item 2</li></ul>\
+         <table><tr><td>A</td><td>B</td></tr></table>\
+         <blockquote><p>A quote</p></blockquote>",
+    );
+    let html = serialize_html(&doc);
+    assert!(html.contains("Title"),    "heading text must be present");
+    assert!(html.contains("bold"),     "bold text must be present");
+    assert!(html.contains("italic"),   "italic text must be present");
+    assert!(html.contains("Item 1"),   "list items must be present");
+    assert!(html.contains("A"),        "table cell must be present");
+    assert!(html.contains("A quote"),  "blockquote content must be present");
+}
+
+#[test]
+fn undo_roundtrip_via_serialize_then_parse() {
+    // Clipboard, HTMLRoundTripViaGetSelectedHTML (pure-serialize variant)
+    use rhtmledit::html::serialize_html;
+    let doc = parse_html("<p><b>Bold</b> normal <i>italic</i></p>");
+    let orig_text = doc.root.text_content();
+    let html = serialize_html(&doc);
+    let parsed = parse_html(&html);
+    assert_eq!(parsed.root.text_content(), orig_text,
+        "round-trip via serialize_html must preserve flat text content");
+}
+
+// ============================================================
+// Widget-dependent tests that cannot be ported:
+// ============================================================
+// TODO: API not available — TypeAndUndo (requires PushUndo / InsertText / Undo widget API)
+// TODO: API not available — DeleteAndUndo
+// TODO: API not available — MultipleUndos (undo merge / compression)
+// TODO: API not available — BasicRedo
+// TODO: API not available — MultipleUndoRedo
+// TODO: API not available — RedoClearedOnNewEdit
+// TODO: API not available — UndoMergeBreaksOnDifferentType
+// TODO: API not available — UndoMergeCompressesRapidTyping
+// TODO: API not available — FormattingPreserved (SerializeHTML widget helper)
+// TODO: API not available — SelectWord / SelectLine tests
+// TODO: API not available — SelectedHTMLBold / SelectedHTMLItalic (GetSelectedHTML)

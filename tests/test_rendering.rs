@@ -358,7 +358,7 @@ fn render_doc(html: &str, logical_w: u32, logical_h: u32, scale: f32) -> Pixmap 
     let doc = load_html(html, logical_w as f32);
     let mut renderer = Renderer::new();
     let mut pixmap = Pixmap::new(phys_w, phys_h).expect("pixmap");
-    renderer.render(&doc, &mut pixmap, scale, 0.0, 0.0, None, None, None, false, false);
+    renderer.render(&doc, &mut pixmap, scale, 0.0, 0.0);
     pixmap
 }
 

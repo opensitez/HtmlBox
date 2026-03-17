@@ -460,3 +460,77 @@ fn margin_block_start_end() {
     assert_eq!(style.margin_top,    CssLength::Px(10.0));
     assert_eq!(style.margin_bottom, CssLength::Px(20.0));
 }
+
+// ============================================================
+// Missing tests ported from C++ test_text.cpp
+// ============================================================
+
+#[test]
+fn margin_inline_start_ltr() {
+    // LTR: inline-start → left, inline-end → right
+    let mut style = ComputedStyle::default();
+    style.direction = Direction::LTR;
+    apply_property(&mut style, "margin-inline-start", "10px");
+    apply_property(&mut style, "margin-inline-end",   "20px");
+    assert_eq!(style.margin_left,  CssLength::Px(10.0));
+    assert_eq!(style.margin_right, CssLength::Px(20.0));
+}
+
+#[test]
+fn lang_from_html() {
+    // The lang attribute should be stored in box attributes (not ComputedStyle)
+    let doc = parse_html("<p lang=\"fr\">Bonjour</p>");
+    let b = find_box(&doc.root, &|b| {
+        b.attributes.get("lang").map(|v| v == "fr").unwrap_or(false)
+    });
+    assert!(b.is_some(), "expected a box with lang=\"fr\"");
+}
+
+#[test]
+fn bdo_element_unicode_bidi_override() {
+    // <bdo dir="rtl"> should produce a box or inline run with unicode-bidi: override
+    let doc = parse_html("<p><bdo dir=\"rtl\">Override</bdo></p>");
+    // Check box-level: the bdo element itself may have the override style
+    let found_box = find_box(&doc.root, &|b| {
+        b.style.unicode_bidi == UnicodeBidi::Override
+    });
+    // Also check inline runs of any box for the override
+    fn walk_runs(root: &HtmlBox) -> bool {
+        if root.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Override) {
+            return true;
+        }
+        root.children.iter().any(walk_runs)
+    }
+    let found_run = walk_runs(&doc.root);
+    assert!(found_box.is_some() || found_run,
+        "expected unicode-bidi: override on bdo box or an inline run");
+}
+
+#[test]
+fn bdi_element_unicode_bidi_isolate() {
+    // <bdi> should produce a box or inline run with unicode-bidi: isolate
+    let doc = parse_html("<p><bdi>Isolated</bdi></p>");
+    let found_box = find_box(&doc.root, &|b| {
+        b.style.unicode_bidi == UnicodeBidi::Isolate
+    });
+    fn walk_runs(root: &HtmlBox) -> bool {
+        if root.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Isolate) {
+            return true;
+        }
+        root.children.iter().any(walk_runs)
+    }
+    let found_run = walk_runs(&doc.root);
+    assert!(found_box.is_some() || found_run,
+        "expected unicode-bidi: isolate on bdi box or an inline run");
+}
+
+#[test]
+fn font_family_monospace() {
+    // font-family: monospace should be stored in the font_family field
+    let mut style = ComputedStyle::default();
+    apply_property(&mut style, "font-family", "monospace");
+    assert!(!style.font_family.is_empty(),
+        "font_family should not be empty after setting monospace");
+    assert!(style.font_family.to_lowercase().contains("monospace"),
+        "font_family should contain 'monospace', got: {}", style.font_family);
+}

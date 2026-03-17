@@ -550,3 +550,67 @@ fn placeholder_does_not_apply_to_element() {
     let c = inp.unwrap().style.color;
     assert_ne!((c.r, c.g, c.b), (255, 105, 180), "::placeholder color leaked to <input>");
 }
+
+// ============================================================
+// Render Smoke Tests (ported from Visual::RenderComplexSmoke /
+// ClipPathRenderSmoke / ClipPathPolygonRenderSmoke)
+// ============================================================
+
+/// Helper matching test_rendering.rs: renders HTML into a Pixmap.
+fn render_doc_visual(html: &str, logical_w: u32, logical_h: u32) -> tiny_skia::Pixmap {
+    use rhtmledit::Renderer;
+    let doc = load_html(html, logical_w as f32);
+    let mut renderer = Renderer::new();
+    let mut pixmap = tiny_skia::Pixmap::new(logical_w, logical_h).expect("pixmap");
+    renderer.render(&doc, &mut pixmap, 1.0, 0.0, 0.0);
+    pixmap
+}
+
+#[test]
+fn render_complex_smoke() {
+    // Ported from Visual::RenderComplexSmoke — verifies the renderer does not
+    // panic on a document with mixed visual properties.
+    render_doc_visual(
+        "<html><body>\
+         <h1>Hello</h1>\
+         <p style=\"color: blue; opacity: 0.8;\">World</p>\
+         <div style=\"overflow: hidden; width: 100px; height: 50px;\">Clipped content here</div>\
+         <div style=\"outline: 2px solid red;\">Outlined</div>\
+         <div style=\"border-radius: 8px; background-color: #eee; padding: 10px;\">Rounded</div>\
+         </body></html>",
+        800, 600,
+    );
+    // no panic → pass
+}
+
+#[test]
+fn hit_test_smoke() {
+    // Ported from Visual::HitTestSmoke — verifies that point_to_hit returns
+    // a valid (or None) result without panicking.
+    use rhtmledit::point_to_hit;
+    let doc = load_html("<p>Hello World</p>", 800.0);
+    // Point inside the document — may or may not hit a text run, but must not panic.
+    let _hit = point_to_hit(&doc.root, (10.0, 10.0), 0);
+    // Point outside the document — must also not panic.
+    let _miss = point_to_hit(&doc.root, (9999.0, 9999.0), 0);
+}
+
+#[test]
+fn clip_path_render_smoke() {
+    // Ported from Visual::ClipPathRenderSmoke — circle clip-path renders without panic.
+    render_doc_visual(
+        "<div style='width: 200px; height: 200px; background: red; \
+         clip-path: circle(50% at 50% 50%);'>Clipped</div>",
+        800, 600,
+    );
+}
+
+#[test]
+fn clip_path_polygon_render_smoke() {
+    // Ported from Visual::ClipPathPolygonRenderSmoke — polygon clip-path renders without panic.
+    render_doc_visual(
+        "<div style='width: 200px; height: 200px; background: blue; \
+         clip-path: polygon(50% 0%, 100% 100%, 0% 100%);'>Triangle</div>",
+        800, 600,
+    );
+}

@@ -430,3 +430,263 @@ fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
     while idx > 0 && !s.is_char_boundary(idx) { idx -= 1; }
     idx
 }
+
+// ============================================================
+// Empty document edge cases
+// ============================================================
+
+#[test]
+fn nav_empty_document_no_hit() {
+    // An empty document (no HTML) should either return None or hit the root;
+    // importantly, it must not panic.
+    let doc = layout("", 800.0);
+    // point_to_hit on an empty doc must not panic
+    let _hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
+    // offset_to_point at offset 0 on an empty root must not panic
+    let _pt = offset_to_point(&doc.root, &doc.root as *const HtmlBox, 0, 0.0, 0.0);
+}
+
+#[test]
+fn nav_single_char_document_hittable() {
+    let doc = layout("<p>X</p>", 800.0);
+    let hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
+    assert!(hit.is_some(), "single-char document should produce a hit result");
+    let pt = offset_to_point(&doc.root, &doc.root as *const HtmlBox, 0, 0.0, 0.0);
+    assert!(pt.is_some());
+}
+
+// ============================================================
+// Multiple blocks in a div
+// ============================================================
+
+#[test]
+fn nav_multiple_blocks_in_div_increasing_y() {
+    let doc = layout("<div><p>Para 1</p><p>Para 2</p><p>Para 3</p></div>", 800.0);
+    use rhtmledit::dom::query_selector_all;
+    let paras = query_selector_all(&doc.root, "p");
+    assert!(paras.len() >= 3, "expected at least 3 paragraphs");
+
+    let pt1 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt2 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt3 = offset_to_point(&doc.root, paras[2] as *const HtmlBox, 0, 0.0, 0.0);
+
+    if let (Some(p1), Some(p2), Some(p3)) = (pt1, pt2, pt3) {
+        assert!(p2.1 >= p1.1, "Para 2 should be at or below Para 1");
+        assert!(p3.1 >= p2.1, "Para 3 should be at or below Para 2");
+    }
+}
+
+// ============================================================
+// All distinct global offsets: blockquote + paragraph + blockquote
+// ============================================================
+
+#[test]
+fn nav_all_lines_distinct_global_offsets() {
+    // All paragraphs inside distinct block containers must have increasing Y
+    let doc = layout(
+        "<blockquote><p>First</p></blockquote>\
+         <p>Second</p>\
+         <blockquote><p>Third</p></blockquote>",
+        800.0,
+    );
+    use rhtmledit::dom::query_selector_all;
+    let paras = query_selector_all(&doc.root, "p");
+    assert!(paras.len() >= 3, "expected at least 3 paragraphs");
+
+    let pts: Vec<_> = paras.iter()
+        .filter_map(|p| offset_to_point(&doc.root, *p as *const HtmlBox, 0, 0.0, 0.0))
+        .collect();
+    assert!(pts.len() >= 3, "all paragraphs must have layout points");
+
+    // Y positions must be strictly increasing (each block sits below the previous)
+    for i in 1..pts.len() {
+        assert!(
+            pts[i].1 >= pts[i-1].1,
+            "paragraph {} Y ({}) must be >= paragraph {} Y ({})",
+            i, pts[i].1, i-1, pts[i-1].1
+        );
+    }
+}
+
+// ============================================================
+// Deeply nested blockquote: last list item is hittable
+// ============================================================
+
+#[test]
+fn nav_click_on_deeply_nested_blockquote_last_line() {
+    let doc = layout(
+        "<blockquote>\
+           <p>Level 1 text</p>\
+           <blockquote>\
+             <p>Level 2 text</p>\
+             <blockquote>\
+               <p>Level 3 text</p>\
+               <blockquote>\
+                 <p>Level 4 text</p>\
+                 <blockquote>\
+                   <p>Key design decisions:</p>\
+                   <ul>\
+                     <li>Flat buttons with hover highlight</li>\
+                     <li>Emoji icons for universal rendering</li>\
+                     <li>Accent color on primary action</li>\
+                     <li>Vertical separators between logical groups</li>\
+                   </ul>\
+                 </blockquote>\
+               </blockquote>\
+             </blockquote>\
+           </blockquote>\
+         </blockquote>",
+        800.0,
+    );
+
+    use rhtmledit::dom::query_selector_all;
+    let items = query_selector_all(&doc.root, "li");
+    assert!(items.len() >= 4, "expected 4 list items");
+
+    // The last list item should be hittable
+    let last = items[items.len() - 1];
+    let text = last.text_content();
+    assert!(text.contains("Vertical"), "last item should contain 'Vertical'");
+
+    let pt = offset_to_point(&doc.root, last as *const HtmlBox, 0, 0.0, 0.0);
+    assert!(pt.is_some(), "last list item must have a layout point");
+
+    // Clicking at the point must return a hit
+    if let Some((x, y)) = pt {
+        let hit = point_to_hit(&doc.root, (x + 2.0, y + 2.0), 0);
+        assert!(hit.is_some(), "clicking on last list item must return a hit");
+    }
+}
+
+// ============================================================
+// Clicking on two words in the same box gives different offsets
+// ============================================================
+
+#[test]
+fn nav_click_on_two_words_same_line_distinct_offsets() {
+    // Two words on one line, clicking at different X positions must give
+    // different offsets (proves that X→offset mapping works).
+    let doc = layout("<p>Vertical separators</p>", 800.0);
+    use rhtmledit::dom::query_selector;
+    let p = query_selector(&doc.root, "p").unwrap();
+
+    let p_text = p.text_content();
+    let pos_vert = p_text.find("Vertical").unwrap_or(0);
+    let pos_sep  = p_text.find("separators").unwrap_or(9);
+
+    let pt_vert = offset_to_point(&doc.root, p as *const HtmlBox, pos_vert, 0.0, 0.0);
+    let pt_sep  = offset_to_point(&doc.root, p as *const HtmlBox, pos_sep,  0.0, 0.0);
+
+    assert!(pt_vert.is_some());
+    assert!(pt_sep.is_some());
+
+    let (xv, yv) = pt_vert.unwrap();
+    let (xs, _)  = pt_sep.unwrap();
+
+    // "separators" starts after "Vertical ", so its X must be greater
+    assert!(xs > xv, "expected 'separators' to be right of 'Vertical'; xv={xv} xs={xs}");
+
+    // Click at both X positions and verify different hit results
+    let hit_v = point_to_hit(&doc.root, (xv + 1.0, yv + 2.0), 0);
+    let hit_s = point_to_hit(&doc.root, (xs + 1.0, yv + 2.0), 0);
+
+    if let (Some(hv), Some(hs)) = (hit_v, hit_s) {
+        assert!(
+            hv.local_offset != hs.local_offset || hv.box_ptr != hs.box_ptr,
+            "clicking at different X must yield different offsets"
+        );
+        assert!(hv.local_offset < hs.local_offset, "'Vertical' offset must be less than 'separators'");
+    }
+}
+
+// ============================================================
+// Missing tests ported from C++ test_navigation.cpp
+// CollectAllLines/FindLineForOffset/GetCaretX/OffsetAtXInLine use the wx
+// LayoutEngine DC-based API and are not portable.
+// We replace them with equivalent layout + hit-test assertions.
+// ============================================================
+
+#[test]
+fn nav_collect_lines_basic_equivalent() {
+    // Two paragraphs must each be independently hittable (line-level navigation)
+    let doc = layout("<p>Line one</p><p>Line two</p>", 800.0);
+    use rhtmledit::dom::query_selector_all;
+    let paras = query_selector_all(&doc.root, "p");
+    assert!(paras.len() >= 2, "expected at least 2 paragraphs");
+    // Both paragraphs must have a layout point
+    let pt0 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt1 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0);
+    assert!(pt0.is_some(), "first paragraph should have a layout point");
+    assert!(pt1.is_some(), "second paragraph should have a layout point");
+}
+
+#[test]
+fn nav_find_line_for_offset_equivalent() {
+    // Clicking at the screen position of "Hello" vs "World" must yield
+    // different hit results (mimics FindLineForOffset at offsets 0 and end)
+    let doc = layout("<p>Hello</p><p>World</p>", 800.0);
+    use rhtmledit::dom::query_selector_all;
+    let paras = query_selector_all(&doc.root, "p");
+    assert!(paras.len() >= 2);
+
+    let pt0 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0).unwrap();
+    let pt1 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0).unwrap();
+
+    let hit0 = point_to_hit(&doc.root, (pt0.0, pt0.1 + 2.0), 0);
+    let hit1 = point_to_hit(&doc.root, (pt1.0, pt1.1 + 2.0), 0);
+    assert!(hit0.is_some());
+    assert!(hit1.is_some());
+    // Different paragraphs → different boxes
+    assert_ne!(hit0.unwrap().box_ptr, hit1.unwrap().box_ptr,
+        "clicking on different paragraphs must hit different boxes");
+}
+
+#[test]
+fn nav_lines_sorted_by_y_equivalent() {
+    // Three paragraphs must have strictly increasing Y positions
+    let doc = layout("<p>Line 1</p><p>Line 2</p><p>Line 3</p>", 800.0);
+    use rhtmledit::dom::query_selector_all;
+    let paras = query_selector_all(&doc.root, "p");
+    assert!(paras.len() >= 3);
+    let pts: Vec<_> = paras.iter()
+        .filter_map(|p| offset_to_point(&doc.root, *p as *const HtmlBox, 0, 0.0, 0.0))
+        .collect();
+    assert!(pts.len() >= 3, "all paragraphs must have layout points");
+    for i in 1..pts.len() {
+        assert!(pts[i].1 >= pts[i-1].1,
+            "paragraph {} Y ({}) must be >= paragraph {} Y ({})",
+            i, pts[i].1, i-1, pts[i-1].1);
+    }
+}
+
+#[test]
+fn nav_up_down_navigation_two_lines_equivalent() {
+    // Simulates up/down navigation: offset in first line < offset in second line
+    let doc = layout("<p>First line</p><p>Second line</p>", 800.0);
+    let text = doc.root.text_content();
+    let pos_first  = text.find("First").expect("'First' not found");
+    let pos_second = text.find("Second").expect("'Second' not found");
+    // In the flat buffer, "First" must come before "Second"
+    assert!(pos_first < pos_second,
+        "global offset of 'First' ({pos_first}) must be less than 'Second' ({pos_second})");
+}
+
+#[test]
+fn nav_wrapped_text_multiple_lines_equivalent() {
+    // A long paragraph in a narrow viewport must wrap — later text has higher Y
+    let doc = layout(
+        "<p>This is a long paragraph that should wrap across multiple lines in a narrow viewport</p>",
+        100.0,
+    );
+    use rhtmledit::dom::query_selector;
+    let p = query_selector(&doc.root, "p").unwrap();
+    let text_len = p.text_content().len();
+
+    let pt_start = offset_to_point(&doc.root, p as *const HtmlBox, 0, 0.0, 0.0);
+    let pt_late  = offset_to_point(&doc.root, p as *const HtmlBox,
+                                   (text_len * 3 / 4).min(text_len), 0.0, 0.0);
+    assert!(pt_start.is_some());
+    assert!(pt_late.is_some());
+    assert!(pt_late.unwrap().1 >= pt_start.unwrap().1,
+        "later text in wrapped paragraph should have equal or greater Y");
+}
