@@ -936,6 +936,13 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String) {
     }
     if matches!(node.style.display, Display::None) { return; }
     if node.tag == "br" { return; }
+    // Floats are emitted as Float items in collect_items and their text is not
+    // counted in text_offset — skip them here to keep byte offsets in sync.
+    if !matches!(node.style.float, crate::types::Float::None) { return; }
+    // Atomic inline-blocks are emitted as Atomic items; their internal text is
+    // not part of the parent's flat-text string.
+    if matches!(node.style.display,
+        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) { return; }
     if !node.text.is_empty() {
         out.push_str(&node.text);
     }

@@ -1419,26 +1419,62 @@ pub use crate::css::Stylesheet;
 use crate::dom::{Editor, EventListeners};
 use crate::layout::LayoutEngine;
 
+/// Active scrollbar drag state (set by `process_scrollbar_event`).
+#[derive(Debug, Clone)]
+pub struct ScrollbarDrag {
+    /// Kind of scrollbar being dragged.
+    pub kind:           ScrollbarDragKind,
+    /// Screen Y at the start of the drag.
+    pub start_mouse_y:  f32,
+    /// Scroll position at the start of the drag.
+    pub start_scroll:   f32,
+    /// Pixels of scroll per pixel of mouse movement.
+    pub scroll_per_px:  f32,
+}
+
+/// Which scrollbar is being dragged.
+#[derive(Debug, Clone)]
+pub enum ScrollbarDragKind {
+    /// The viewport (document-level) vertical scrollbar.
+    Viewport,
+    /// A per-element scrollbar; the element is identified by a raw pointer.
+    /// The pointer is valid as long as the document tree has not been rebuilt.
+    Element(*mut HtmlBox),
+}
+
+// Safety: we never share these across threads; the pointer is only used when
+// the Document is exclusively borrowed.
+unsafe impl Send for ScrollbarDragKind {}
+unsafe impl Sync for ScrollbarDragKind {}
+
 /// The root document: box tree + stylesheet + metadata.
 #[derive(Debug, Clone)]
 pub struct Document {
-    pub root:       HtmlBox,
-    pub stylesheet: Stylesheet,
-    pub title:      String,
-    pub base_url:   String,
-    pub editor:     Editor,
-    pub events:     EventListeners,
+    pub root:            HtmlBox,
+    pub stylesheet:      Stylesheet,
+    pub title:           String,
+    pub base_url:        String,
+    pub editor:          Editor,
+    pub events:          EventListeners,
+    /// Viewport scroll position in logical pixels (managed by Renderer::render).
+    pub scroll_x:        f32,
+    pub scroll_y:        f32,
+    /// Active scrollbar drag state (None when not dragging).
+    pub scrollbar_drag:  Option<ScrollbarDrag>,
 }
 
 impl Document {
     pub fn new() -> Self {
         Self {
-            root:       HtmlBox::new("html"),
-            stylesheet: Stylesheet::default(),
-            title:      String::new(),
-            base_url:   String::new(),
-            editor:     Editor::new(),
-            events:     EventListeners::new(),
+            root:            HtmlBox::new("html"),
+            stylesheet:      Stylesheet::default(),
+            title:           String::new(),
+            base_url:        String::new(),
+            editor:          Editor::new(),
+            events:          EventListeners::new(),
+            scroll_x:        0.0,
+            scroll_y:        0.0,
+            scrollbar_drag:  None,
         }
     }
 
@@ -1531,8 +1567,249 @@ impl Document {
             Self::walk_all_mut(child, f);
         }
     }
+
+    /// Handle a mouse event for scrollbars (click, drag, release).
+    ///
+    /// Call this **before** `process_mouse_event` on every mouse down/move/up.
+    /// Coordinates are in **screen-space logical pixels** (physical / scale),
+    /// i.e. *without* any scroll offset added — the same values you get from
+    /// `(position.x as f32 / scale, position.y as f32 / scale)`.
+    ///
+    /// `viewport_w` and `viewport_h` are the logical viewport dimensions.
+    /// Returns `true` if the event was consumed by a scrollbar (no further
+    /// processing needed).
+    pub fn process_scrollbar_event(
+        &mut self,
+        etype:      crate::dom::HtmlEventType,
+        screen_x:   f32,
+        screen_y:   f32,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> bool {
+        use crate::dom::HtmlEventType::*;
+        const SBW: f32 = 10.0; // must match renderer::SCROLLBAR_WIDTH
+
+        match etype {
+            // ── MouseMove: continue drag ──────────────────────────────────────
+            MouseMove => {
+                if let Some(ref drag) = self.scrollbar_drag {
+                    let dy = screen_y - drag.start_mouse_y;
+                    let new_scroll = (drag.start_scroll + dy * drag.scroll_per_px).max(0.0);
+                    match drag.kind {
+                        ScrollbarDragKind::Viewport => {
+                            let doc_h = self.root.margin_rect.h;
+                            let max_s = (doc_h - viewport_h).max(0.0);
+                            self.scroll_y = new_scroll.min(max_s);
+                        }
+                        ScrollbarDragKind::Element(ptr) => {
+                            let node = unsafe { &mut *ptr };
+                            let max_s = (node.scroll_height - node.content_rect.h).max(0.0);
+                            node.scroll_top = new_scroll.min(max_s);
+                        }
+                    }
+                    return true;
+                }
+                false
+            }
+
+            // ── MouseUp: end drag ─────────────────────────────────────────────
+            MouseUp => {
+                let was_dragging = self.scrollbar_drag.is_some();
+                self.scrollbar_drag = None;
+                was_dragging
+            }
+
+            // ── MouseDown: hit-test scrollbars, start drag ────────────────────
+            MouseDown => {
+                // Viewport scrollbar — right edge of window.
+                let doc_h = self.root.margin_rect.h;
+                if doc_h > viewport_h && screen_x >= viewport_w - SBW {
+                    let track_h = viewport_h;
+                    let thumb_h = (track_h * track_h / doc_h).max(20.0);
+                    let max_s   = (doc_h - viewport_h).max(0.0);
+                    let scale   = if track_h - thumb_h > 0.0 { max_s / (track_h - thumb_h) } else { 0.0 };
+                    let thumb_y = if max_s > 0.0 { self.scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
+
+                    // Click in track but outside thumb → jump to that position.
+                    if !(screen_y >= thumb_y && screen_y < thumb_y + thumb_h) {
+                        let new_thumb_y = (screen_y - thumb_h * 0.5).max(0.0).min(track_h - thumb_h);
+                        self.scroll_y = (new_thumb_y * scale).min(max_s).max(0.0);
+                    }
+                    let thumb_y = if max_s > 0.0 { self.scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
+                    self.scrollbar_drag = Some(ScrollbarDrag {
+                        kind:          ScrollbarDragKind::Viewport,
+                        start_mouse_y: screen_y,
+                        start_scroll:  self.scroll_y,
+                        scroll_per_px: scale,
+                    });
+                    let _ = thumb_y;
+                    return true;
+                }
+
+                // Per-element scrollbars — walk tree looking for scrollbar hit.
+                // We pass accumulated offsets (sx, sy) matching the renderer.
+                let sy = self.scroll_y;
+                let sx = self.scroll_x;
+                if scrollbar_hit_test(
+                    &mut self.root, screen_x, screen_y, sx, sy,
+                    SBW, &mut self.scrollbar_drag,
+                ) {
+                    return true;
+                }
+
+                false
+            }
+
+            _ => false,
+        }
+    }
+
+    /// Handle a wheel/scroll event.
+    ///
+    /// `doc_pt` is the cursor position in document coordinates
+    /// (`(mouse_x / scale, mouse_y / scale + doc.scroll_y)`).
+    /// `delta_y` is the scroll amount in logical pixels (positive = scroll down).
+    ///
+    /// Finds the innermost scrollable box under the cursor and scrolls it.
+    /// If no scrollable box is found, falls through to the viewport (`self.scroll_y`).
+    /// Returns `true` if any scroll position changed (caller should request a redraw).
+    pub fn process_wheel_event(&mut self, doc_pt: (f32, f32), delta_y: f32) -> bool {
+        if scroll_box_at(&mut self.root, doc_pt, delta_y) {
+            return true;
+        }
+        // Viewport fallback — renderer will clamp on next render.
+        let old = self.scroll_y;
+        self.scroll_y -= delta_y;
+        // Detect a change (renderer clamps, so just signal redraw whenever delta != 0)
+        self.scroll_y != old || delta_y != 0.0
+    }
 }
 
 impl Default for Document {
     fn default() -> Self { Self::new() }
+}
+
+// ─── Wheel-event scroll dispatch ──────────────────────────────────────────────
+
+/// Walk the box tree and scroll the *innermost* scrollable box that contains
+/// `pt` (in accumulated-scroll document coordinates).  Returns `true` if a box
+/// was scrolled.
+///
+/// `pt` on entry is already adjusted for all ancestor scroll offsets so that it
+/// can be compared directly against children's `margin_rect` (layout-space) positions.
+fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_y: f32) -> bool {
+    if matches!(node.style.display, Display::None) { return false; }
+
+    // Adjust pt for this node's own scroll so we can test its children,
+    // whose margin_rect positions are in layout space (scroll = 0 reference).
+    let local_pt = (pt.0 + node.scroll_left, pt.1 + node.scroll_top);
+
+    // Recurse depth-first; innermost hit wins.
+    for child in &mut node.children {
+        if matches!(child.style.display, Display::None) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            // Out-of-flow boxes use the viewport coordinate rather than parent scroll.
+            let mr = child.margin_rect;
+            if pt.0 >= mr.x && pt.0 < mr.x + mr.w && pt.1 >= mr.y && pt.1 < mr.y + mr.h {
+                if scroll_box_at(child, pt, delta_y) { return true; }
+            }
+            continue;
+        }
+        let mr = child.margin_rect;
+        if local_pt.0 >= mr.x && local_pt.0 < mr.x + mr.w
+            && local_pt.1 >= mr.y && local_pt.1 < mr.y + mr.h
+        {
+            if scroll_box_at(child, local_pt, delta_y) { return true; }
+        }
+    }
+
+    // Check whether *this* node is scrollable and the cursor is inside it.
+    let can_v = matches!(node.style.overflow_y, Overflow::Scroll | Overflow::Auto)
+        && node.scroll_height > node.content_rect.h;
+    if can_v {
+        let max_scroll = (node.scroll_height - node.content_rect.h).max(0.0);
+        let before = node.scroll_top;
+        // Same sign as the viewport: delta_y < 0 = scroll down, so subtract.
+        node.scroll_top = (node.scroll_top - delta_y).clamp(0.0, max_scroll);
+        if (node.scroll_top - before).abs() > 1e-3 { return true; }
+    }
+
+    let can_h = matches!(node.style.overflow_x, Overflow::Scroll | Overflow::Auto)
+        && node.scroll_width > node.content_rect.w;
+    if can_h {
+        // Horizontal scroll not triggered by vertical wheel; include for completeness.
+        let _ = can_h;
+    }
+
+    false
+}
+
+// ─── Per-element scrollbar hit-test ──────────────────────────────────────────
+
+/// Walk the box tree and hit-test per-element scrollbars.
+///
+/// `sx`/`sy` are the accumulated scroll offsets for this node's ancestors,
+/// matching the renderer's coordinate system (`draw_scrollbars(node, pixmap, sx, sy)`).
+/// Screen-space position of a node's content area: `cx = cr.x - sx`, `cy = cr.y - sy`.
+///
+/// Recurses depth-first (children first) so the innermost scrollable element wins.
+/// On hit: optionally jump-scrolls to the click position, then writes a
+/// `ScrollbarDrag` with `kind = Element(raw ptr)` into `drag_out`.
+fn scrollbar_hit_test(
+    node:      &mut HtmlBox,
+    screen_x:  f32,
+    screen_y:  f32,
+    sx:        f32,
+    sy:        f32,
+    sbw:       f32,
+    drag_out:  &mut Option<ScrollbarDrag>,
+) -> bool {
+    if matches!(node.style.display, Display::None) { return false; }
+
+    // Children are rendered with the parent's scroll added.
+    let child_sx = sx + node.scroll_left;
+    let child_sy = sy + node.scroll_top;
+
+    for child in node.children.iter_mut() {
+        if scrollbar_hit_test(child, screen_x, screen_y, child_sx, child_sy, sbw, drag_out) {
+            return true;
+        }
+    }
+
+    let cr = node.content_rect;
+    let cx = cr.x - sx;
+    let cy = cr.y - sy;
+
+    let show_v = node.style.overflow_y == Overflow::Scroll
+        || (node.style.overflow_y == Overflow::Auto && node.scroll_height > cr.h);
+
+    if show_v && node.scroll_height > cr.h {
+        let track_x = cx + cr.w - sbw;
+        if screen_x >= track_x && screen_x < cx + cr.w
+            && screen_y >= cy && screen_y < cy + cr.h
+        {
+            let track_h     = cr.h;
+            let thumb_h     = (track_h * track_h / node.scroll_height).max(20.0);
+            let max_s       = node.scroll_height - cr.h;
+            let scroll_per_px = if track_h - thumb_h > 0.0 { max_s / (track_h - thumb_h) } else { 0.0 };
+            let thumb_y     = if max_s > 0.0 { node.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
+            let local_y     = screen_y - cy;
+
+            // Jump-scroll if click is outside the thumb.
+            if !(local_y >= thumb_y && local_y < thumb_y + thumb_h) {
+                let new_thumb_y = (local_y - thumb_h * 0.5).clamp(0.0, track_h - thumb_h);
+                node.scroll_top = (new_thumb_y * scroll_per_px).clamp(0.0, max_s);
+            }
+
+            *drag_out = Some(ScrollbarDrag {
+                kind:          ScrollbarDragKind::Element(node as *mut HtmlBox),
+                start_mouse_y: screen_y,
+                start_scroll:  node.scroll_top,
+                scroll_per_px,
+            });
+            return true;
+        }
+    }
+
+    false
 }

@@ -1290,6 +1290,9 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
         base_url: base_url.to_string(),
         editor: crate::dom::Editor::new(),
         events: crate::dom::EventListeners::new(),
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        scrollbar_drag: None,
     };
 
     // Apply cascade

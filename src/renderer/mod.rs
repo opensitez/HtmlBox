@@ -49,11 +49,9 @@ impl Renderer {
     /// that box's flat text.  Mirrors C++ `Render(... caretPos, caretVisible, hasFocus)`.
     pub fn render(
         &mut self,
-        doc:          &Document,
+        doc:          &mut Document,
         pixmap:       &mut Pixmap,
         scale:        f32,
-        scroll_x:     f32,
-        scroll_y:     f32,
     ) {
         let (sel_start, sel_end) = doc.editor.sel_args();
         let caret_info = doc.editor.caret_info();
@@ -68,6 +66,13 @@ impl Renderer {
         let w = pixmap.width()  as f32 / self.scale;
         let h = pixmap.height() as f32 / self.scale;
         let clip = Rect::new(0.0, 0.0, w, h);
+
+        // Clamp scroll so the document never scrolls past its own end; write back.
+        let doc_h = doc.root.margin_rect.h;
+        doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - h).max(0.0));
+        doc.scroll_x = doc.scroll_x.max(0.0);
+        let scroll_x = doc.scroll_x;
+        let scroll_y = doc.scroll_y;
 
         self.render_box(
             &doc.root, pixmap,
@@ -87,6 +92,30 @@ impl Renderer {
                     scroll_x, scroll_y,
                     caret_box_ptr, caret_local,
                 );
+            }
+        }
+
+        // ── Viewport scrollbar (auto — visible whenever content overflows) ────
+        if doc_h > h {
+            let thumb_col = doc.root.style.scrollbar_thumb_color
+                .unwrap_or(Color::rgba(128, 128, 128, 160));
+            let track_col = doc.root.style.scrollbar_track_color
+                .unwrap_or(Color::rgba(128, 128, 128, 40));
+            let track_h = h;
+            let thumb_h = (track_h * track_h / doc_h).max(20.0);
+            let max_s   = doc_h - h;
+            let thumb_y = if max_s > 0.0 { scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
+            let track_x = w - SCROLLBAR_WIDTH;
+            let ts = Transform::from_scale(self.scale, self.scale);
+            let mut paint = Paint::default();
+            paint.set_color(track_col.to_tiny_skia());
+            if let Some(r) = SkRect::from_xywh(track_x, 0.0, SCROLLBAR_WIDTH, track_h) {
+                pixmap.fill_rect(r, &paint, ts, None);
+            }
+            paint.set_color(thumb_col.to_tiny_skia());
+            if let Some(path) = rounded_rect_path(track_x + 1.0, thumb_y + 1.0,
+                    SCROLLBAR_WIDTH - 2.0, thumb_h - 2.0, 3.0) {
+                pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
     }
@@ -998,7 +1027,7 @@ impl Renderer {
         let mut buf = Buffer::new(&mut self.font_system, metrics);
         buf.set_size(
             &mut self.font_system,
-            Some((approx_text_width(text, phys_px) + 4.0).max(1.0)),
+            None,                           // no width constraint — layout already broke lines
             Some((phys_lh + 4.0).max(1.0)),
         );
         buf.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);

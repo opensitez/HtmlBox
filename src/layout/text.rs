@@ -41,6 +41,10 @@ pub fn resolve_bidi_line(text: &str, line: &mut LayoutLine, para_dir: Direction)
         line.visual_segments.clear();
         return;
     }
+    if !text.is_char_boundary(byte_start) || !text.is_char_boundary(byte_end) {
+        line.visual_segments.clear();
+        return;
+    }
     let line_text = &text[byte_start..byte_end];
     let para_level = Some(match para_dir {
         Direction::LTR => Level::ltr(),

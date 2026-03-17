@@ -559,10 +559,10 @@ fn placeholder_does_not_apply_to_element() {
 /// Helper matching test_rendering.rs: renders HTML into a Pixmap.
 fn render_doc_visual(html: &str, logical_w: u32, logical_h: u32) -> tiny_skia::Pixmap {
     use rhtmledit::Renderer;
-    let doc = load_html(html, logical_w as f32);
+    let mut doc = load_html(html, logical_w as f32);
     let mut renderer = Renderer::new();
     let mut pixmap = tiny_skia::Pixmap::new(logical_w, logical_h).expect("pixmap");
-    renderer.render(&doc, &mut pixmap, 1.0, 0.0, 0.0);
+    renderer.render(&mut doc, &mut pixmap, 1.0);
     pixmap
 }
 

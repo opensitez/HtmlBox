@@ -97,7 +97,6 @@ struct App {
     platform:  Option<Platform>,
     renderer:  Renderer,
     doc:       Option<Document>,
-    scroll_y:  f32,
     width:     f32,
     height:    f32,
     scale:     f32,
@@ -107,7 +106,6 @@ struct App {
 
 impl App {
     fn request_redraw(&self) { if let Some(w) = self.window.as_ref() { w.request_redraw(); } }
-    fn doc_pt(&self) -> (f32, f32) { (self.mouse_x / self.scale, (self.mouse_y / self.scale) + self.scroll_y) }
 }
 
 impl ApplicationHandler for App {
@@ -163,30 +161,53 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y * 20.0,
                     winit::event::MouseScrollDelta::PixelDelta(p)   => p.y as f32 / platform.scale_factor(),
                 };
-                self.scroll_y = (self.scroll_y - dy).max(0.0);
+                let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
+                if let Some(doc) = self.doc.as_mut() {
+                    let doc_pt = (mx / sc, my / sc + doc.scroll_y);
+                    doc.process_wheel_event(doc_pt, dy);
+                }
                 self.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_x = position.x as f32;
                 self.mouse_y = position.y as f32;
-                let pt = self.doc_pt();
+                let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
+                let (sx, sy) = (mx / sc, my / sc);
                 if let Some(doc) = self.doc.as_mut() {
-                    if doc.process_mouse_event(HtmlEventType::MouseMove, pt, 0) {
+                    let sb = doc.process_scrollbar_event(HtmlEventType::MouseMove, sx, sy, self.width, self.height);
+                    if sb {
                         self.request_redraw();
+                    } else {
+                        let pt = (sx, sy + doc.scroll_y);
+                        if doc.process_mouse_event(HtmlEventType::MouseMove, pt, 0) {
+                            self.request_redraw();
+                        }
                     }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let etype = if state == ElementState::Pressed { HtmlEventType::MouseDown } else { HtmlEventType::MouseUp };
                 let bt = match button {
                     MouseButton::Left   => 0,
                     MouseButton::Middle => 1,
                     MouseButton::Right  => 2,
                     _ => 0,
                 };
-                let pt = self.doc_pt();
-                if let Some(doc) = self.doc.as_mut() {
-                    if doc.process_mouse_event(etype, pt, bt) {
+                let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
+                let (sx, sy) = (mx / sc, my / sc);
+                if state == ElementState::Pressed {
+                    if let Some(doc) = self.doc.as_mut() {
+                        let sb = doc.process_scrollbar_event(HtmlEventType::MouseDown, sx, sy, self.width, self.height);
+                        if !sb {
+                            let pt = (sx, sy + doc.scroll_y);
+                            doc.process_mouse_event(HtmlEventType::MouseDown, pt, bt);
+                        }
+                        self.request_redraw();
+                    }
+                } else {
+                    if let Some(doc) = self.doc.as_mut() {
+                        doc.process_scrollbar_event(HtmlEventType::MouseUp, sx, sy, self.width, self.height);
+                        let pt = (sx, sy + doc.scroll_y);
+                        doc.process_mouse_event(HtmlEventType::MouseUp, pt, bt);
                         self.request_redraw();
                     }
                 }
@@ -205,11 +226,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                let doc = match self.doc.as_ref() { Some(d) => d, None => return };
-                let scroll_y = self.scroll_y;
+                let doc = match self.doc.as_mut() { Some(d) => d, None => return };
                 let renderer = &mut self.renderer;
                 platform.render(|scale, pixmap| {
-                    renderer.render(doc, pixmap, scale, 0.0, scroll_y);
+                    renderer.render(doc, pixmap, scale);
                 });
                 event_loop.set_control_flow(ControlFlow::WaitUntil(doc.editor.next_blink_deadline()));
             }
@@ -244,7 +264,7 @@ fn main() {
     let mut app = App {
         window: None, platform: None,
         renderer: Renderer::new(),
-        doc: None, scroll_y: 0.0, width: 900.0, height: 700.0,
+        doc: None, width: 900.0, height: 700.0,
         scale: 1.0, mouse_x: 0.0, mouse_y: 0.0,
     };
     event_loop.run_app(&mut app).expect("Failed to run app");
