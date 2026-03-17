@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 use std::sync::{Arc, RwLock};
-use crate::types::{HtmlBox, Document, Color, Display, FontWeight, FontStyle, CssLength};
+use crate::types::{HtmlBox, Document, Color, Display, FontWeight, FontStyle, CssLength, Position};
 use crate::css::apply_property;
 use crate::layout::hit_test::point_to_hit;
 
@@ -1349,6 +1349,7 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
     }
 
     for child in &mut node.children {
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         match find_node_offset_mut(child, offset) {
             Ok(res) => return Ok(res),
             Err(rem) => offset = rem,
@@ -1395,6 +1396,7 @@ fn delete_flat_range(node: &mut HtmlBox, pos: &mut usize, start: usize, end: usi
 
     for child in &mut node.children {
         if *pos >= end { break; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         delete_flat_range(child, pos, start, end);
     }
 }

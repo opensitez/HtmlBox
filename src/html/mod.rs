@@ -846,6 +846,8 @@ impl HtmlParser {
         children: &mut Vec<HtmlBox>,
         ol_counter: &mut i32,
     ) {
+        // Elements that require literal whitespace preservation (CSS white-space: pre).
+        let preserve_ws = matches!(parent_tag, "pre" | "textarea" | "listing" | "xmp" | "plaintext");
         loop {
             match self.tokens.get(self.pos).cloned() {
                 None => break,
@@ -860,10 +862,17 @@ impl HtmlParser {
                 }
                 Some(Token::Text(t)) => {
                     self.pos += 1;
-                    let collapsed = collapse_whitespace(&t);
-                    if !collapsed.trim().is_empty() || collapsed == " " {
+                    let text_val = if preserve_ws {
+                        // Preserve literal text including newlines.
+                        // Per the HTML spec, a single newline immediately after the
+                        // opening tag of a pre element is stripped.
+                        if t.starts_with('\n') { t[1..].to_string() } else { t }
+                    } else {
+                        collapse_whitespace(&t)
+                    };
+                    if !text_val.trim().is_empty() || text_val == " " {
                         let mut node = HtmlBox::new("#text");
-                        node.text = collapsed;
+                        node.text = text_val;
                         children.push(node);
                     }
                 }

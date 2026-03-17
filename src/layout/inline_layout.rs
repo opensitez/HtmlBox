@@ -1,6 +1,6 @@
 use crate::types::*;
 use cosmic_text::{Attrs, Buffer, Metrics, Shaping};
-use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide};
+use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
 use crate::layout::block::{collapse_two, compute_intrinsic_width};
 use crate::layout::text::resolve_bidi_line;
 
@@ -150,6 +150,14 @@ pub fn layout_inline_block(
         set_box_rects(node, content_x, content_y, content_w, content_h,
                       rbox, margin_left, margin_right);
         node.inline_runs = runs;
+        // Still need to lay out absolutely/fixed positioned children.
+        let containing_rect = node.padding_rect;
+        let abs_indices: Vec<usize> = (0..node.children.len())
+            .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
+            .collect();
+        for i in abs_indices {
+            layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+        }
         return node.margin_rect.h;
     }
 
@@ -433,6 +441,18 @@ pub fn layout_inline_block(
         }
     }
 
+    // ── 7. Absolutely/fixed positioned children ────────────────────────────────
+    //    Inline containers can still be containing blocks for absolutely-positioned
+    //    children (e.g. a `position:relative` div whose only visible in-flow content
+    //    is text while its absolutely-placed children are out-of-flow).
+    let containing_rect = node.padding_rect;
+    let abs_indices: Vec<usize> = (0..node.children.len())
+        .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
+        .collect();
+    for i in abs_indices {
+        layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+    }
+
     node.margin_rect.h
 }
 
@@ -555,7 +575,11 @@ pub fn collect_items(
     box_idx:        usize,
 ) {
     if matches!(node.style.display, Display::None) { return; }
-    
+
+    // Absolutely/fixed positioned elements are out of flow — skip them here;
+    // they are laid out separately by layout_positioned.
+    if matches!(node.style.position, Position::Absolute | Position::Fixed) { return; }
+
     // ── Float ─────────────────────────────────────────────────────────────
     if !matches!(node.style.float, crate::types::Float::None) {
         items.push(InlineItem {
@@ -576,7 +600,7 @@ pub fn collect_items(
     if node.is_text_node() {
         if !node.text.is_empty() {
             let start = *text_offset;
-            tokenize_text(engine, &node.text, start, font_px, ascent, descent, line_h, box_idx, items);
+            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items);
             runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
             *text_offset += node.text.len();
         }
@@ -613,7 +637,7 @@ pub fn collect_items(
     // ── Own text ──────────────────────────────────────────────────────────
     if !node.text.is_empty() {
         let start = *text_offset;
-        tokenize_text(engine, &node.text, start, font_px, ascent, descent, line_h, box_idx, items);
+        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items);
         runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
         *text_offset += node.text.len();
     }
@@ -625,9 +649,12 @@ pub fn collect_items(
 }
 
 /// Split `text` at whitespace boundaries and emit word/space InlineItems.
+/// For `white-space: pre`, `pre-wrap`, and `pre-line`, newlines (`\n`) produce
+/// a forced `Break` item rather than being treated as a collapsible space.
 fn tokenize_text(
     engine:      &LayoutEngine,
     text:        &str,
+    white_space: WhiteSpace,
     base_offset: usize,
     font_px:     f32,
     ascent:      f32,
@@ -637,15 +664,19 @@ fn tokenize_text(
     items:       &mut Vec<InlineItem>,
 ) {
     if text.is_empty() { return; }
+
+    let preserve_newlines = matches!(white_space, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine);
+
     let bytes = text.as_bytes();
     let mut word_start = 0usize;
     let mut i = 0usize;
 
     while i <= bytes.len() {
         let at_end   = i == bytes.len();
-        let is_space = !at_end && bytes[i].is_ascii_whitespace();
+        let is_nl    = !at_end && bytes[i] == b'\n' && preserve_newlines;
+        let is_space = !at_end && !is_nl && bytes[i].is_ascii_whitespace();
 
-        if (at_end || is_space) && i > word_start {
+        if (at_end || is_space || is_nl) && i > word_start {
             // Emit word
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
             let w = measure_text_width(&text[word_start..i], font_px, font_system);
@@ -662,6 +693,33 @@ fn tokenize_text(
                 is_space:  false,
                 breakable: word_start > 0,
             });
+        }
+
+        if is_nl {
+            // Newline in a pre-like context: forced line break.
+            // The newline byte itself is represented as a 1-byte Text item with
+            // zero advance so caret offsets stay in sync.
+            items.push(InlineItem {
+                kind:      InlineItemKind::Text {
+                    text_start: base_offset + i,
+                    text_len:   1,
+                    box_idx,
+                },
+                advance:   0.0,
+                ascent,
+                descent,
+                height:    line_h,
+                is_space:  false,
+                breakable: false,
+            });
+            items.push(InlineItem {
+                kind:      InlineItemKind::Break,
+                advance:   0.0, ascent, descent, height: line_h,
+                is_space:  false, breakable: false,
+            });
+            i += 1;
+            word_start = i;
+            continue;
         }
 
         if is_space {
@@ -882,6 +940,9 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String) {
         out.push_str(&node.text);
     }
     for child in &node.children {
+        // Skip out-of-flow children — they don't contribute to this box's flat text.
+        // (collect_flat_text is called separately on each positioned box for its own content.)
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         collect_flat_text_inner(child, out);
     }
 }

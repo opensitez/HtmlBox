@@ -21,21 +21,32 @@ mod tests {
     #[test]
     fn test_float_left_no_overlap() {
         let html = r#"
-            <div style="width: 200px; font-size: 10px;">
+            <div id="wrap" style="width: 200px; font-size: 10px;">
                 <span id="dot" style="float: left; width: 10px; height: 10px;"></span>
                 <span id="text">Text</span>
             </div>
         "#;
         let doc = parse_and_layout(html, 200.0);
-        
-        let dot_box = crate::tests::test_grid::find_by_id(&doc.root, "dot").expect("dot box not found");
-        let text_box = crate::tests::test_grid::find_by_id(&doc.root, "text").expect("text box not found");
-        
-        println!("Dot rect: {:?}", dot_box.border_rect);
-        println!("Text rect: {:?}", text_box.border_rect);
 
-        // Text should start after the dot (x >= 10)
-        assert!(text_box.border_rect.x >= 10.0, "Text should not overlap float: left");
+        let dot_box  = crate::tests::test_grid::find_by_id(&doc.root, "dot") .expect("dot box not found");
+        let wrap_box = crate::tests::test_grid::find_by_id(&doc.root, "wrap").expect("wrap box not found");
+
+        println!("Dot rect: {:?}", dot_box.border_rect);
+
+        // The float occupies x=0..10 on the first line.
+        // The parent's first line_cache entry must start at x >= 10 so
+        // the inline text doesn't overlap the float.
+        assert!(
+            !wrap_box.line_cache.is_empty(),
+            "wrap div must have at least one layout line"
+        );
+        let first_line = &wrap_box.line_cache[0];
+        println!("First line x: {}", first_line.x);
+        assert!(
+            first_line.x >= 10.0,
+            "First text line must start after the 10px float (x >= 10); got x={}",
+            first_line.x
+        );
     }
 
     #[test]

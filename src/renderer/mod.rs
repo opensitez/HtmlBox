@@ -59,6 +59,9 @@ impl Renderer {
         let caret_info = doc.editor.caret_info();
         let caret_visible = doc.editor.caret_visible;
         let _has_focus = doc.editor.has_focus;
+        let sel_box_ptr: *const HtmlBox = caret_info
+            .map(|(ptr, _)| ptr)
+            .unwrap_or(std::ptr::null());
         self.scale = scale;
         pixmap.fill(tiny_skia::Color::WHITE);
         // Clip rect in logical pixels (layout coordinates).
@@ -72,6 +75,7 @@ impl Renderer {
             &clip,
             /* parent_mask */ None,
             sel_start, sel_end,
+            sel_box_ptr,
             std::ptr::null(),
         );
 
@@ -101,6 +105,7 @@ impl Renderer {
         parent_mask:  Option<&Mask>,
         sel_start:    Option<usize>,
         sel_end:      Option<usize>,
+        sel_box_ptr:  *const HtmlBox,
         hovered_ptr:  *const HtmlBox,
     ) {
         if matches!(node.style.display, Display::None) { return; }
@@ -340,7 +345,7 @@ impl Renderer {
             let flat = collect_flat_text(node);
             self.draw_inline_content(
                 node, &flat, pixmap, sx, sy,
-                sel_start, sel_end,
+                sel_start, sel_end, sel_box_ptr,
                 is_hovered, eff_mask,
             );
         }
@@ -379,10 +384,6 @@ impl Renderer {
 
         // ── Image placeholder for <img> ─────────────────────────────────────
         if node.tag == "img" {
-            let cr = node.content_rect;
-            eprintln!("[RENDER img] content_rect=({},{},{},{}) has_data={} iw={} ih={}",
-                      cr.x, cr.y, cr.w, cr.h,
-                      node.image_data.is_some(), node.image_width, node.image_height);
             self.draw_image_placeholder(node, pixmap, sx, sy, eff_mask);
         }
 
@@ -396,7 +397,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, hovered_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr,
                     );
                 }
             }
@@ -407,7 +408,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, hovered_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr,
                     );
                 }
             }
@@ -417,10 +418,6 @@ impl Renderer {
                 .collect();
             positioned.sort_by_key(|c| c.style.z_index);
             for child in positioned {
-                let cr = child.content_rect;
-                eprintln!("[POS CHILD] tag={} pos={:?} z={} rect=({},{} {}x{}) opacity={}",
-                          child.tag, child.style.position, child.style.z_index,
-                          cr.x, cr.y, cr.w, cr.h, child.style.opacity);
                 let (csx, csy) = if child.style.position == Position::Fixed {
                     (0.0, 0.0)
                 } else {
@@ -430,7 +427,7 @@ impl Renderer {
                 self.render_box(
                     child, pixmap, csx, csy,
                     clip, eff_mask,
-                    sel_start, sel_end, hovered_ptr,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr,
                 );
             }
         }
@@ -660,15 +657,16 @@ impl Renderer {
 
     fn draw_inline_content(
         &mut self,
-        node:      &HtmlBox,
-        flat:      &str,
-        pixmap:    &mut Pixmap,
-        sx:        f32,
-        sy:        f32,
-        sel_start: Option<usize>,
-        sel_end:   Option<usize>,
-        is_hovered: bool,
-        mask:      Option<&Mask>,
+        node:        &HtmlBox,
+        flat:        &str,
+        pixmap:      &mut Pixmap,
+        sx:          f32,
+        sy:          f32,
+        sel_start:   Option<usize>,
+        sel_end:     Option<usize>,
+        sel_box_ptr: *const HtmlBox,
+        is_hovered:  bool,
+        mask:        Option<&Mask>,
     ) {
         if node.line_cache.is_empty() || flat.is_empty() { return; }
 
@@ -685,9 +683,15 @@ impl Renderer {
             ((fallback_color.a as f32) * opacity) as u8,
         );
 
-        let (sel_min, sel_max) = match (sel_start, sel_end) {
-            (Some(s), Some(e)) => (s.min(e), s.max(e)),
-            _ => (0, 0),
+        let is_sel_box = !sel_box_ptr.is_null()
+            && std::ptr::eq(node as *const HtmlBox, sel_box_ptr);
+        let (sel_min, sel_max) = if is_sel_box {
+            match (sel_start, sel_end) {
+                (Some(s), Some(e)) => (s.min(e), s.max(e)),
+                _ => (0, 0),
+            }
+        } else {
+            (0, 0)
         };
 
         let use_ellipsis = node.style.text_overflow == TextOverflow::Ellipsis

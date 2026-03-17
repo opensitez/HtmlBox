@@ -5,11 +5,13 @@ pub mod layout;
 pub mod renderer;
 pub mod platform;
 pub mod dom;
+pub mod markdown;
 
 #[cfg(test)]
 pub mod tests;
 
 pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color};
+pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
