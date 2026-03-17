@@ -1442,6 +1442,14 @@ impl Document {
         }
     }
 
+    /// Re-apply the CSS cascade to the entire document tree.
+    /// Call this after mutating class attributes (e.g. toggling dark mode) so
+    /// that `ComputedStyle` on every box is updated before the next layout pass.
+    pub fn recascade(&mut self) {
+        let ss = self.stylesheet.clone();
+        crate::css::apply_cascade(&mut self.root, &ss, None, 16.0);
+    }
+
     /// High-level mouse event entry point.
     pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
         // First dispatch to listeners so they can `prevent_default()`.
@@ -1464,10 +1472,12 @@ impl Document {
         }
 
         // If handlers or default behavior indicated a redraw is needed, run
-        // a layout pass now so the renderer sees updated line caches/inline
-        // runs immediately. Use the root's last known containing width.
+        // a cascade + layout pass so the renderer sees updated styles and geometry.
+        // Cascade must run first because event handlers may have toggled classes
+        // (e.g. dark mode) that change which CSS rules apply.
         if redraw {
             let width = self.root.last_containing_width.max(0.0);
+            self.recascade();
             LayoutEngine::new().layout(self, width);
         }
 

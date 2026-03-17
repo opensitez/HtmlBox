@@ -1336,9 +1336,8 @@ impl Renderer {
     ) -> bool {
         if std::ptr::eq(node as *const HtmlBox, caret_box_ptr) {
             // Found the box; find its line
-            let flat     = collect_flat_text(node);
-            let font_px  = node.style.font_size_px(16.0, 16.0);
-            let letter_s = node.style.letter_spacing.resolve(font_px, 0.0, 16.0);
+            let flat    = collect_flat_text(node);
+            let font_px = node.style.font_size_px(16.0, 16.0);
 
             let mut caret_x    = node.border_rect.x - sx;
             let mut caret_y    = node.border_rect.y - sy;
@@ -1350,12 +1349,12 @@ impl Renderer {
                 if caret_local >= line.text_start && caret_local <= line_end {
                     caret_y = line.y - sy;
                     caret_h = line.height.max(font_px * 1.0);
-                    // Measure from line start to caret_local
-                    let from = floor_char_boundary(&flat, line.text_start.min(flat.len()));
-                    let to   = floor_char_boundary(&flat, caret_local.min(flat.len()));
-                    let pre  = if to > from { &flat[from..to] } else { "" };
-                    let pre_w = approx_text_width_ls(pre, font_px, letter_s);
-                    caret_x = line.x - sx + pre_w;
+                    // Use the same measurement as the hit test (get_caret_x) so
+                    // that click position and rendered caret position agree.
+                    let cx = crate::layout::hit_test::get_caret_x(
+                        &flat, &node.inline_runs, line, caret_local,
+                    );
+                    caret_x = cx - sx;
                     found_line = true;
                     break;
                 }

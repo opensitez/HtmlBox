@@ -390,11 +390,44 @@ pub fn is_visible(b: &HtmlBox) -> bool {
 // ─── Inline style property ───────────────────────────────────────────────────
 
 /// Apply a single CSS property to a box's computed style.
+/// Also persists the value in the `style` attribute so that a CSS re-cascade
+/// (e.g. after class toggling) does not overwrite the change.
 pub fn set_style_property(b: &mut HtmlBox, prop: &str, value: &str) {
     apply_property(&mut b.style, prop, value);
+    let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+    upsert_style_attr_prop(style_str, prop, value);
+}
+
+/// Upsert a single `prop: value` declaration inside an inline style string.
+fn upsert_style_attr_prop(style_str: &mut String, prop: &str, value: &str) {
+    let prop_lc = prop.trim().to_ascii_lowercase();
+    let mut replaced = false;
+    let rebuilt: String = style_str
+        .split(';')
+        .filter_map(|decl| {
+            let t = decl.trim();
+            if t.is_empty() { return None; }
+            if let Some(colon) = t.find(':') {
+                if t[..colon].trim().to_ascii_lowercase() == prop_lc {
+                    replaced = true;
+                    return Some(format!("{}: {}", prop, value));
+                }
+            }
+            Some(t.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if replaced {
+        *style_str = rebuilt;
+    } else if style_str.is_empty() {
+        *style_str = format!("{}: {}", prop, value);
+    } else {
+        style_str.push_str(&format!("; {}: {}", prop, value));
+    }
 }
 
 /// Apply a `key: val; key: val` style string to a box.
+/// Also persists each property in the `style` attribute so re-cascade is lossless.
 pub fn apply_inline_style_str(b: &mut HtmlBox, css: &str) {
     for decl in css.split(';') {
         let decl = decl.trim();
@@ -404,6 +437,8 @@ pub fn apply_inline_style_str(b: &mut HtmlBox, css: &str) {
             let val  = decl[colon+1..].trim();
             if !prop.is_empty() && !val.is_empty() {
                 apply_property(&mut b.style, prop, val);
+                let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+                upsert_style_attr_prop(style_str, prop, val);
             }
         }
     }
@@ -919,8 +954,8 @@ impl Editor {
                 self.delete_selection_or_at(root);
                 return true;
             }
-            13 => { // Enter
-                self.insert_char(root, '\n');
+            13 => { // Enter — split the current block into two siblings
+                self.insert_newline(root);
                 return true;
             }
             _ => {
@@ -941,7 +976,7 @@ impl Editor {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
-                delete_range(container, s, e);
+                delete_range_full(container, s, e);
                 self.collapse_to(s);
             }
             match find_node_offset_mut(container, self.caret_local) {
@@ -968,15 +1003,13 @@ impl Editor {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
-                delete_range(node, s, e);
+                delete_range_full(node, s, e);
                 self.collapse_to(s);
-            } else {
-                if self.caret_local > 0 {
-                    let flat = crate::layout::inline_layout::collect_flat_text(node);
-                    let new_off = prev_char_boundary(&flat, self.caret_local);
-                    delete_range(node, new_off, self.caret_local);
-                    self.collapse_to(new_off);
-                }
+            } else if self.caret_local > 0 {
+                let flat = crate::layout::inline_layout::collect_flat_text(node);
+                let new_off = prev_char_boundary(&flat, self.caret_local);
+                delete_range_full(node, new_off, self.caret_local);
+                self.collapse_to(new_off);
             }
         }
     }
@@ -987,14 +1020,257 @@ impl Editor {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
-                delete_range(node, s, e);
+                delete_range_full(node, s, e);
                 self.collapse_to(s);
             } else {
                 let flat = crate::layout::inline_layout::collect_flat_text(node);
                 if self.caret_local < flat.len() {
                     let next_off = next_char_boundary(&flat, self.caret_local);
-                    delete_range(node, self.caret_local, next_off);
+                    delete_range_full(node, self.caret_local, next_off);
                     self.collapse_to(self.caret_local);
+                }
+            }
+        }
+    }
+
+    /// Split the current block element at the caret position, creating a new sibling block.
+    /// This is what the Enter key triggers.
+    ///
+    /// Only "prose" tags (`<p>`, `<h1>`–`<h6>`, `<li>`, `<dt>`, `<dd>`, `<pre>`) are
+    /// split into two siblings. Structural containers (`<div>`, `<td>`, flex/grid
+    /// children, `<blockquote>`, sectioning elements, …) receive a `<br>` instead,
+    /// so that pressing Enter inside a flex cell does not spawn a new cell.
+    pub fn insert_newline(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+
+        // Delete selection first (before we look at the tag).
+        if self.has_selection() {
+            let (s, e) = (self.sel_start, self.sel_end);
+            if let Some(b) = find_box_mut(root, box_ptr) { delete_range_full(b, s, e); }
+            self.collapse_to(s);
+        }
+
+        // Peek at the tag — do NOT mutate yet.
+        let block_tag = match find_box_mut(root, box_ptr) {
+            Some(b) => b.tag.clone(),
+            None    => return,
+        };
+
+        // Non-prose containers fall back to inserting a <br> line break.
+        if !is_prose_tag(&block_tag) {
+            self.insert_br(root);
+            return;
+        }
+
+        let split_at = self.caret_local;
+
+        // Gather info and trim text after the split point from the current block.
+        // The borrow of `root` ends when this block exits.
+        let (block_tag, after_text) = match find_box_mut(root, box_ptr) {
+            Some(b) => {
+                let flat = crate::layout::inline_layout::collect_flat_text(b);
+                let split = split_at.min(flat.len());
+                let after = flat[split..].to_string();
+                let flen  = flat.len();
+                delete_range_full(b, split, flen);
+                (b.tag.clone(), after)
+            }
+            None => return,
+        };
+
+        // Find parent, insert new sibling, then update the caret.
+        let parent_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
+        if let Some(par_ptr) = parent_raw {
+            let parent = unsafe { &mut *par_ptr };
+            let idx_opt = parent.children.iter()
+                .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr));
+            if let Some(idx) = idx_opt {
+                let new_tag = if is_block_tag(&block_tag) { block_tag.as_str() } else { "p" };
+                let mut new_block = HtmlBox::new(new_tag);
+                apply_property(&mut new_block.style, "display", "block");
+                if !after_text.is_empty() {
+                    let mut tn = HtmlBox::new("#text");
+                    tn.text = after_text;
+                    new_block.children.push(tn);
+                }
+                parent.children.insert(idx + 1, new_block);
+                let new_ptr = &parent.children[idx + 1] as *const HtmlBox;
+                self.caret_box = Some(new_ptr);
+                self.collapse_to(0);
+            }
+        }
+    }
+
+    /// Insert a `<br>` at the caret position (soft line break within the current block).
+    pub fn insert_br(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+
+        if self.has_selection() {
+            let (s, e) = (self.sel_start, self.sel_end);
+            if let Some(b) = find_box_mut(root, box_ptr) { delete_range_full(b, s, e); }
+            self.collapse_to(s);
+        }
+
+        let caret = self.caret_local;
+
+        // Find the leaf text node and its local offset.
+        let (leaf_ptr, local_off) = {
+            let container = match find_box_mut(root, box_ptr) { Some(c) => c, None => return };
+            match find_node_offset_mut(container, caret) {
+                Ok((leaf, local)) => (leaf as *const HtmlBox, local),
+                Err(_) => {
+                    // Caret is past end — append a <br> as last child of container
+                    container.children.push(HtmlBox::new("br"));
+                    self.collapse_to(caret);
+                    return;
+                }
+            }
+        };
+
+        // Walk the tree to find the leaf's parent and split.
+        split_node_with_br(root, leaf_ptr, local_off);
+        // Caret offset in flat text is unchanged (<br> is transparent to flat-text).
+        self.collapse_to(caret);
+    }
+
+    /// Toggle the current block between a plain block (`<p>`) and a list item (`<ul><li>`).
+    pub fn toggle_bullet_list(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+
+        let is_li = find_box_mut(root, box_ptr).map(|b| b.tag == "li").unwrap_or(false);
+
+        if is_li {
+            // Unwrap: convert <li> back to <p>, remove <ul> wrapper if now empty.
+            let ul_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
+            if let Some(ul_ptr) = ul_raw {
+                let ul = unsafe { &mut *ul_ptr };
+                if ul.tag == "ul" || ul.tag == "ol" {
+                    if let Some(li_idx) = ul.children.iter()
+                        .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+                    {
+                        ul.children[li_idx].tag = "p".to_string();
+                        apply_property(&mut ul.children[li_idx].style, "display", "block");
+                        let new_ptr = &ul.children[li_idx] as *const HtmlBox;
+                        self.caret_box = Some(new_ptr);
+
+                        // If the list now has only this one element, unwrap the <ul>
+                        if ul.children.len() == 1 {
+                            let ul_ptr_const = ul_ptr as *const HtmlBox;
+                            let gp_raw = find_parent_mut(root, ul_ptr_const)
+                                .map(|p| p as *mut HtmlBox);
+                            if let Some(gp_ptr) = gp_raw {
+                                let gp = unsafe { &mut *gp_ptr };
+                                if let Some(ul_idx) = gp.children.iter()
+                                    .position(|c| std::ptr::eq(c as *const HtmlBox, ul_ptr_const))
+                                {
+                                    let mut ul_box = gp.children.remove(ul_idx);
+                                    let p_box = ul_box.children.remove(0);
+                                    gp.children.insert(ul_idx, p_box);
+                                    let new_ptr2 = &gp.children[ul_idx] as *const HtmlBox;
+                                    self.caret_box = Some(new_ptr2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Wrap block in <ul><li>.
+            let par_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
+            if let Some(par_ptr) = par_raw {
+                let parent = unsafe { &mut *par_ptr };
+                if let Some(idx) = parent.children.iter()
+                    .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+                {
+                    let block = parent.children.remove(idx);
+                    let mut li = HtmlBox::new("li");
+                    apply_property(&mut li.style, "display", "list-item");
+                    li.text       = block.text;
+                    li.children   = block.children;
+                    li.inline_runs = block.inline_runs;
+                    let mut ul = HtmlBox::new("ul");
+                    apply_property(&mut ul.style, "display", "block");
+                    ul.children.push(li);
+                    parent.children.insert(idx, ul);
+                    let li_ptr = &parent.children[idx].children[0] as *const HtmlBox;
+                    self.caret_box = Some(li_ptr);
+                }
+            }
+        }
+    }
+
+    /// Increase the left indent of the current block by `step_px` pixels.
+    pub fn increase_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        if let Some(b) = find_box_mut(root, box_ptr) {
+            let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
+            let new_val = format!("{}px", current + step_px);
+            apply_property(&mut b.style, "margin-left", &new_val);
+            let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+            upsert_style_attr_prop(style_str, "margin-left", &new_val);
+        }
+    }
+
+    /// Decrease the left indent of the current block by `step_px` pixels (minimum 0).
+    pub fn decrease_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        if let Some(b) = find_box_mut(root, box_ptr) {
+            let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
+            let new_val = format!("{}px", (current - step_px).max(0.0));
+            apply_property(&mut b.style, "margin-left", &new_val);
+            let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+            upsert_style_attr_prop(style_str, "margin-left", &new_val);
+        }
+    }
+
+    /// Wrap the current block in a `<blockquote>`.
+    pub fn increase_quote_level(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let par_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
+        if let Some(par_ptr) = par_raw {
+            let parent = unsafe { &mut *par_ptr };
+            if let Some(idx) = parent.children.iter()
+                .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+            {
+                let block = parent.children.remove(idx);
+                let mut bq = HtmlBox::new("blockquote");
+                apply_property(&mut bq.style, "display", "block");
+                apply_property(&mut bq.style, "margin-left", "40px");
+                bq.children.push(block);
+                parent.children.insert(idx, bq);
+                let inner_ptr = &parent.children[idx].children[0] as *const HtmlBox;
+                self.caret_box = Some(inner_ptr);
+            }
+        }
+    }
+
+    /// Unwrap one level of `<blockquote>` around the current block.
+    pub fn decrease_quote_level(&mut self, root: &mut HtmlBox) {
+        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+
+        // Confirm the immediate parent is a <blockquote>.
+        let bq_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
+        let bq_ptr = match bq_raw {
+            Some(p) if unsafe { (*p).tag == "blockquote" } => p,
+            _ => return,
+        };
+
+        let bq_ptr_const = bq_ptr as *const HtmlBox;
+        let gp_raw = find_parent_mut(root, bq_ptr_const).map(|p| p as *mut HtmlBox);
+        if let Some(gp_ptr) = gp_raw {
+            let gp = unsafe { &mut *gp_ptr };
+            if let Some(bq_idx) = gp.children.iter()
+                .position(|c| std::ptr::eq(c as *const HtmlBox, bq_ptr_const))
+            {
+                let bq_box = gp.children.remove(bq_idx);
+                let n = bq_box.children.len();
+                for (i, child) in bq_box.children.into_iter().enumerate() {
+                    gp.children.insert(bq_idx + i, child);
+                }
+                if n > 0 {
+                    // Point to the first extracted child (closest to original caret position).
+                    let ptr = &gp.children[bq_idx] as *const HtmlBox;
+                    self.caret_box = Some(ptr);
                 }
             }
         }
@@ -1017,11 +1293,37 @@ fn next_char_boundary(s: &str, idx: usize) -> usize {
     i
 }
 
+/// Returns true if `tag` is a block-level element that the editor treats as a paragraph unit.
+fn is_block_tag(tag: &str) -> bool {
+    matches!(tag, "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+               | "li" | "blockquote" | "pre" | "address" | "article" | "aside"
+               | "section" | "header" | "footer" | "main" | "figure" | "figcaption"
+               | "dt" | "dd")
+}
+
+/// Tags where Enter creates a new sibling of the same type (paragraph splitting).
+/// Structural containers — `div`, table cells, flex/grid children, `blockquote`,
+/// sectioning elements, etc. — are intentionally excluded: Enter inserts `<br>` there.
+fn is_prose_tag(tag: &str) -> bool {
+    matches!(tag, "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+               | "li" | "dt" | "dd" | "pre")
+}
 
 pub fn find_box_mut<'a>(root: &'a mut HtmlBox, ptr: *const HtmlBox) -> Option<&'a mut HtmlBox> {
     if std::ptr::eq(root as *const HtmlBox, ptr) { return Some(root); }
     for child in &mut root.children {
         if let Some(b) = find_box_mut(child, ptr) { return Some(b); }
+    }
+    None
+}
+
+/// Find the direct parent of `child_ptr` in the tree rooted at `root`.
+pub fn find_parent_mut<'a>(root: &'a mut HtmlBox, child_ptr: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+    if root.children.iter().any(|c| std::ptr::eq(c as *const HtmlBox, child_ptr)) {
+        return Some(root);
+    }
+    for child in &mut root.children {
+        if let Some(p) = find_parent_mut(child, child_ptr) { return Some(p); }
     }
     None
 }
@@ -1055,13 +1357,107 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
     Err(offset)
 }
 
-fn delete_range(node: &mut HtmlBox, start: usize, end: usize) -> (usize, usize) {
-    // This is a simplified range deletion that only works within a single node for now.
-    // In a real editor, this needs to handle multi-node spans.
-    if let Ok((leaf, local_s)) = find_node_offset_mut(node, start) {
-        let len = (end - start).min(leaf.text.len() - local_s);
-        leaf.text.drain(local_s..local_s + len);
-        return (len, 0); // (deleted_count, remaining)
+/// Delete bytes `[start, end)` from the flat text of `container`.
+/// Handles ranges that span multiple child text nodes (fixes the single-node bug).
+fn delete_range_full(container: &mut HtmlBox, start: usize, end: usize) {
+    if start >= end { return; }
+    let mut pos = 0usize;
+    delete_flat_range(container, &mut pos, start, end);
+}
+
+fn delete_flat_range(node: &mut HtmlBox, pos: &mut usize, start: usize, end: usize) {
+    if *pos >= end { return; }
+
+    if node.is_text_node() {
+        let orig_len = node.text.len();
+        let node_end = *pos + orig_len;
+        if *pos < end && node_end > start {
+            let local_s = if start > *pos { start - *pos } else { 0 };
+            let local_e = if end < node_end { end - *pos } else { orig_len };
+            if local_s < local_e { node.text.drain(local_s..local_e); }
+        }
+        *pos = node_end;
+        return;
     }
-    (0, end - start)
+
+    if matches!(node.style.display, Display::None) || node.tag == "br" { return; }
+
+    if !node.text.is_empty() {
+        let orig_len = node.text.len();
+        let node_end = *pos + orig_len;
+        if *pos < end && node_end > start {
+            let local_s = if start > *pos { start - *pos } else { 0 };
+            let local_e = if end < node_end { end - *pos } else { orig_len };
+            if local_s < local_e { node.text.drain(local_s..local_e); }
+        }
+        *pos = node_end;
+    }
+
+    for child in &mut node.children {
+        if *pos >= end { break; }
+        delete_flat_range(child, pos, start, end);
+    }
+}
+
+/// Split the text node at `leaf_ptr` at `local_off`, inserting a `<br>` between the halves.
+fn split_node_with_br(root: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: usize) {
+    split_node_with_br_impl(root, leaf_ptr, local_off);
+}
+
+fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: usize) -> bool {
+    // Case A: the leaf is a direct child of this node
+    if let Some(idx) = node.children.iter()
+        .position(|c| std::ptr::eq(c as *const HtmlBox, leaf_ptr))
+    {
+        let text = node.children[idx].text.clone();
+        let split = local_off.min(text.len());
+        let before = text[..split].to_string();
+        let after  = text[split..].to_string();
+
+        // Remove the original leaf, then insert [before, br, after] in order.
+        node.children.remove(idx);
+        if !after.is_empty() {
+            let mut an = HtmlBox::new("#text"); an.text = after;
+            node.children.insert(idx, an);
+        }
+        node.children.insert(idx, HtmlBox::new("br"));
+        if !before.is_empty() {
+            let mut bn = HtmlBox::new("#text"); bn.text = before;
+            node.children.insert(idx, bn);
+        }
+        return true;
+    }
+
+    // Case B: the leaf is this node itself (has its own .text, no children)
+    if std::ptr::eq(node as *const HtmlBox, leaf_ptr) && !node.text.is_empty() {
+        let split = local_off.min(node.text.len());
+        let after  = node.text[split..].to_string();
+        node.text  = node.text[..split].to_string();
+        let mut after_node = HtmlBox::new("#text"); after_node.text = after;
+        node.children.insert(0, after_node);
+        node.children.insert(0, HtmlBox::new("br"));
+        return true;
+    }
+
+    // Recurse
+    for child in &mut node.children {
+        if split_node_with_br_impl(child, leaf_ptr, local_off) { return true; }
+    }
+    false
+}
+
+// ─── Block-level insertion helpers ────────────────────────────────────────────
+
+/// Insert a `<hr>` element after the block that currently contains the caret.
+pub fn insert_hr(editor: &Editor, root: &mut HtmlBox) {
+    let box_ptr = match editor.caret_box { Some(p) => p, None => return };
+    if let Some(parent) = find_parent_mut(root, box_ptr) {
+        if let Some(idx) = parent.children.iter()
+            .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+        {
+            let mut hr = HtmlBox::new("hr");
+            apply_property(&mut hr.style, "display", "block");
+            parent.children.insert(idx + 1, hr);
+        }
+    }
 }

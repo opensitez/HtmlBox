@@ -665,7 +665,9 @@ fn tokenize_text(
         }
 
         if is_space {
-            // Emit one space item, collapse all consecutive spaces
+            // Emit one space item per space character so caret byte offsets stay in sync.
+            // (Previously all consecutive spaces were collapsed to one rendered item,
+            //  causing the caret to drift right while text stayed left.)
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
             let space_w = measure_text_width(" ", font_px, font_system);
             items.push(InlineItem {
@@ -681,8 +683,7 @@ fn tokenize_text(
                 is_space:  true,
                 breakable: true,
             });
-            // Skip all consecutive whitespace
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+            i += 1;       // consume exactly one space byte
             word_start = i;
             continue;
         }
