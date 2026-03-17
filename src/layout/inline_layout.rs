@@ -332,13 +332,14 @@ pub fn layout_inline_block(
             } else { None }
         }).max().unwrap_or(text_s);
 
-        // Early-stop: if matching an old cached line with same breaks at same Y
-        // (only when no floats involved)
+        // Early-stop: if matching an old cached line with same breaks at same X and Y
+        // (only when no floats involved; check x so different column positions don't reuse cache)
         if float_ctx.is_none() && old_line_idx > 0 && old_line_idx < old_lines.len() {
             let ol = &old_lines[old_line_idx];
             if ol.text_start == text_s
                 && ol.text_length == text_e.saturating_sub(text_s)
                 && ol.y == cursor_y
+                && (ol.x - line_x).abs() < 0.5
             {
                 // Rest of lines unchanged — copy them
                 for j in old_line_idx..old_lines.len() {
