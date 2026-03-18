@@ -2,6 +2,8 @@ pub mod serializer;
 
 use std::collections::HashMap;
 use crate::types::*;
+use crate::css::ua_stylesheet;
+use crate::html::load_image_from_src;
 
 // ============================================================
 // Markdown Parser — produces Document (Box tree)
@@ -209,6 +211,7 @@ fn parse_ref_def(line: &str) -> Option<(String, RefLink)> {
         if i < bytes.len() {
             i += 1; // skip >
         }
+        let _ = i; // value not used further; url was already captured
     } else {
         let url_start = i;
         while i < bytes.len() && bytes[i] != b' ' {
@@ -282,7 +285,7 @@ impl<'a> InlineParser<'a> {
             // Inline code: `...`
             if c == b'`' {
                 let mut ticks = 0usize;
-                let tick_start = pos;
+                let _tick_start = pos;
                 while pos < len && bytes[pos] == b'`' {
                     ticks += 1;
                     pos += 1;
@@ -363,6 +366,18 @@ impl<'a> InlineParser<'a> {
                             let mut img = make_box("img");
                             img.attributes.insert("src".to_string(), url.to_string());
                             img.data.insert("md-alt".to_string(), alt.to_string());
+                            // Load image pixel data (file path or data URL)
+                            if let Some((data, w, h)) = load_image_from_src(url, "") {
+                                if img.style.width.is_auto() {
+                                    crate::css::apply_property(&mut img.style, "width", &format!("{}px", w));
+                                }
+                                if img.style.height.is_auto() {
+                                    crate::css::apply_property(&mut img.style, "height", &format!("{}px", h));
+                                }
+                                img.image_data   = Some(data);
+                                img.image_width  = w;
+                                img.image_height = h;
+                            }
                             block.children.push(img);
                             pos = url_end + 1;
                             continue;
@@ -1441,6 +1456,10 @@ impl<'a> BlockParser<'a> {
 /// Parse Markdown text and produce a Document with a Box tree.
 pub fn parse_markdown(markdown: &str) -> Document {
     let mut doc = Document::new();
+    // Include the UA stylesheet so the CSS cascade applies proper display, margins,
+    // and font sizes to h1-h6, p, ul, ol, li, pre, blockquote, table, etc.
+    // Without this, layout() wipes every style set by make_box() with ComputedStyle::default().
+    doc.stylesheet = ua_stylesheet();
     doc.root.tag = "body".to_string();
     doc.root.style.display = Display::Block;
     doc.root.children.clear();

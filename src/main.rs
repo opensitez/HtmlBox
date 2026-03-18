@@ -122,6 +122,7 @@ impl ApplicationHandler for App {
         self.scale  = platform.scale_factor();
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
+        self.renderer.set_scale(self.scale);
         let mut doc = load_html(DEMO_HTML, self.width);
         self.renderer.layout_engine().layout(&mut doc, self.width);
         self.doc   = Some(doc);
@@ -159,6 +160,7 @@ impl ApplicationHandler for App {
                 self.scale  = platform.scale_factor();
                 self.width  = platform.logical_width();
                 self.height = platform.logical_height();
+                self.renderer.set_scale(self.scale);
                 if let Some(doc) = self.doc.as_mut() {
                     self.renderer.layout_engine().layout(doc, self.width);
                 }

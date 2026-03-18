@@ -2,7 +2,7 @@ pub mod serializer;
 
 use std::collections::HashMap;
 use crate::types::{HtmlBox, Document, Display, ListStyleType};
-use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet, SelectorPart};
+use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
 // ─── SVG extraction ────────────────────────────────────────────────────────
 
@@ -322,7 +322,7 @@ pub fn parse_html_bytes_with_base(data: &[u8], base_url: &str) -> Document {
 
 /// Try to load an image from a file path or data URL.
 /// Returns (rgba_bytes, width, height) or None on failure.
-fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>, u32, u32)> {
+pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>, u32, u32)> {
     // Data URL: data:image/xxx;base64,...
     if src.starts_with("data:") {
         return load_image_data_url(src);
@@ -1311,67 +1311,4 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
 
 pub fn serialize_html(doc: &Document) -> String {
     serializer::serialize_html(doc)
-}
-
-fn serialize_box(node: &HtmlBox, out: &mut String, indent: usize) {
-    if node.tag == "#text" {
-        out.push_str(&escape_html(&node.text));
-        return;
-    }
-
-    let pad = "  ".repeat(indent);
-    out.push_str(&pad);
-    out.push('<');
-    out.push_str(&node.tag);
-
-    // Emit attributes in stable order
-    let mut attr_keys: Vec<&String> = node.attributes.keys().collect();
-    attr_keys.sort();
-    for k in attr_keys {
-        let v = &node.attributes[k];
-        out.push(' ');
-        out.push_str(k);
-        if !v.is_empty() {
-            out.push_str("=\"");
-            out.push_str(&escape_html(v));
-            out.push('"');
-        }
-    }
-
-    if node.is_void() {
-        out.push_str(" />\n");
-        return;
-    }
-
-    out.push('>');
-
-    let block_level = node.style.is_block_level();
-    if block_level {
-        out.push('\n');
-        if !node.text.is_empty() {
-            out.push_str(&"  ".repeat(indent + 1));
-            out.push_str(&escape_html(&node.text));
-            out.push('\n');
-        }
-        for child in &node.children {
-            serialize_box(child, out, indent + 1);
-        }
-        out.push_str(&pad);
-    } else {
-        out.push_str(&escape_html(&node.text));
-        for child in &node.children {
-            serialize_box(child, out, 0);
-        }
-    }
-
-    out.push_str("</");
-    out.push_str(&node.tag);
-    out.push_str(">\n");
-}
-
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
 }

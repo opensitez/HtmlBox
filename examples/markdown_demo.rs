@@ -11,7 +11,7 @@ use winit::window::Window;
 use winit::application::ApplicationHandler;
 use tiny_skia::Pixmap;
 
-use rhtmledit::{parse_markdown, load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use rhtmledit::{parse_markdown, load_html, Document, Renderer, HtmlEventType};
 use rhtmledit::platform::Platform;
 
 // ── Sample markdown ──────────────────────────────────────────────────────────
@@ -207,6 +207,11 @@ impl ApplicationHandler for App {
         self.scale  = platform.scale_factor();
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
+        // Sync renderer DPI scale so fill_char_x_for_line shapes at the same
+        // physical-pixel size as draw_text_run.  Without this, on HiDPI displays
+        // char_x positions are computed at scale=1.0 but text is rendered at 2.0,
+        // causing click-to-caret mapping to be off by several characters.
+        self.renderer.set_scale(self.scale);
 
         // Source pane
         let src_html = make_source_html(SAMPLE_MD);
@@ -253,6 +258,7 @@ impl ApplicationHandler for App {
                 self.scale  = new_scale;
                 self.width  = new_w;
                 self.height = new_h;
+                self.renderer.set_scale(new_scale);
 
                 let src_w  = self.split_x();
                 let prev_w = self.width - src_w;

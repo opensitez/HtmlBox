@@ -2,7 +2,7 @@ use tiny_skia::{
     FillRule, LineCap, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform,
 };
 use cosmic_text::{
-    Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache,
+    Attrs, Buffer, Color as CTextColor, Family, FontSystem, Metrics, Shaping, SwashCache,
     Style as CTextStyle, Weight,
 };
 use winit::event::{TouchPhase, WindowEvent};
@@ -195,6 +195,17 @@ impl Renderer {
         self.component_registry.register(tag, measure, paint);
     }
 
+    /// Set the DPI / device-pixel scale that will be used for layout and rendering.
+    ///
+    /// Call this with `platform.scale_factor()` **before** the first
+    /// `layout_engine().layout()` call so that `fill_char_x_for_line` shapes text
+    /// at the same physical-pixel size as `draw_text_run`.  Without this, on HiDPI
+    /// (Retina) displays the two shape at different sizes, font hinting produces
+    /// different advances, and click-to-caret mapping is off by several characters.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
+
     /// Create a [`LayoutEngine`] that shares this renderer's font system so that
     /// line-breaking metrics match the actual rendered glyph widths.
     pub fn layout_engine(&mut self) -> crate::layout::LayoutEngine {
@@ -219,12 +230,6 @@ impl Renderer {
         engine.viewport_h = viewport_height;
         engine.layout(&mut doc, viewport_width);
         doc
-    }
-
-    /// Returns a transform that upscales logical-pixel coordinates to physical pixels.
-    #[inline]
-    fn ts(&self) -> Transform {
-        Transform::from_scale(self.scale, self.scale)
     }
 
     /// Render the full document onto a pixmap.
@@ -640,7 +645,7 @@ impl Renderer {
             let ct_col = CTextColor::rgba(fc.r, fc.g, fc.b, ((fc.a as f32) * ps.opacity) as u8);
             self.draw_text_run(
                 &node.style.before_content.clone(), tx, ty, ps_font_px, line_h,
-                ps.font_weight, ps.font_style, ct_col, pixmap, eff_mask,
+                ps.font_weight, ps.font_style, &ps.font_family, ct_col, pixmap, eff_mask,
             );
         }
 
@@ -666,7 +671,7 @@ impl Renderer {
             let ct_col = CTextColor::rgba(fc.r, fc.g, fc.b, ((fc.a as f32) * ps.opacity) as u8);
             self.draw_text_run(
                 &node.style.after_content.clone(), tx, ty, ps_font_px, line_h,
-                ps.font_weight, ps.font_style, ct_col, pixmap, eff_mask,
+                ps.font_weight, ps.font_style, &ps.font_family, ct_col, pixmap, eff_mask,
             );
         }
 
@@ -1236,7 +1241,7 @@ impl Renderer {
                         cursor_x + ts.offset_x, ly + ts.offset_y,
                         run_font_px, run_line_h,
                         style_ref.font_weight, effective_font_style,
-                        sh, pixmap, mask,
+                        &style_ref.font_family, sh, pixmap, mask,
                     );
                 }
 
@@ -1245,7 +1250,7 @@ impl Renderer {
                     &final_text, cursor_x, ly,
                     run_font_px, run_line_h,
                     style_ref.font_weight, effective_font_style,
-                    ct_color, pixmap, mask,
+                    &style_ref.font_family, ct_color, pixmap, mask,
                 );
 
                 // Use actual rendered width for decorations and cursor advance.
@@ -1455,16 +1460,17 @@ impl Renderer {
     /// (the true rendered width, used by callers to advance the cursor).
     fn draw_text_run(
         &mut self,
-        text:       &str,
-        x:          f32,
-        y:          f32,
-        font_px:    f32,
-        line_h:     f32,
-        weight:     FontWeight,
-        font_style: FontStyle,
-        color:      CTextColor,
-        pixmap:     &mut Pixmap,
-        mask:       Option<&Mask>,
+        text:        &str,
+        x:           f32,
+        y:           f32,
+        font_px:     f32,
+        line_h:      f32,
+        weight:      FontWeight,
+        font_style:  FontStyle,
+        font_family: &str,
+        color:       CTextColor,
+        pixmap:      &mut Pixmap,
+        mask:        Option<&Mask>,
     ) -> f32 {
         if text.is_empty() { return 0.0; }
         // Cosmic-text shapes at physical pixel sizes for correct sub-pixel rendering.
@@ -1472,13 +1478,22 @@ impl Renderer {
         let phys_px  = font_px  * sc;
         let phys_lh  = line_h   * sc;
         let metrics = Metrics::new(phys_px, phys_lh);
+        let family = match font_family {
+            "serif"      => Family::Serif,
+            "monospace"  => Family::Monospace,
+            "cursive"    => Family::Cursive,
+            "fantasy"    => Family::Fantasy,
+            name if name.is_empty() => Family::SansSerif,
+            name         => Family::Name(name),
+        };
         let attrs = Attrs::new()
             .weight(if weight.is_bold() { Weight::BOLD } else { Weight::NORMAL })
             .style(match font_style {
                 FontStyle::Italic  => CTextStyle::Italic,
                 FontStyle::Oblique => CTextStyle::Oblique,
                 FontStyle::Normal  => CTextStyle::Normal,
-            });
+            })
+            .family(family);
 
         // Reuse a single Buffer across calls to avoid per-run allocation.
         // take() lets us hold a mutable ref to font_system at the same time.
@@ -1492,10 +1507,12 @@ impl Renderer {
             None,                           // no width constraint — layout already broke lines
             Some((phys_lh + 4.0).max(1.0)),
         );
-        // Adaptive shaping: Basic (no HarfBuzz) for ASCII-only runs (~5× faster);
-        // Advanced (full HarfBuzz) for any non-ASCII text so that Arabic joins,
-        // Hebrew vowels, Devanagari conjuncts, CJK, etc. all render correctly.
-        let shaping = if text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
+        // Always use Advanced (HarfBuzz) shaping so that glyph advances match the
+        // positions computed by fill_char_x_for_line (which must use Advanced because
+        // Shaping::Basic reports word-relative, not buffer-relative, byte offsets).
+        // Using different shaping here vs. layout causes kerning differences that
+        // shift click-to-caret mapping by 1-3 px per kerned pair.
+        let shaping = Shaping::Advanced;
         buf.set_text(&mut self.font_system, text, &attrs, shaping, None);
         buf.shape_until_scroll(&mut self.font_system, false);
 
@@ -1668,7 +1685,7 @@ impl Renderer {
                 let my = first_line.y - sy;
                 let ct_color = CTextColor::rgba(c.r, c.g, c.b, c.a);
                 self.draw_text_run(&marker, mx, my, font_px, line_h,
-                    node.style.font_weight, node.style.font_style, ct_color, pixmap, mask);
+                    node.style.font_weight, node.style.font_style, &node.style.font_family, ct_color, pixmap, mask);
             }
             ListStyleType::Disclosure => {
                 let marker = "▸";
@@ -1679,7 +1696,7 @@ impl Renderer {
                 let my = first_line.y - sy;
                 let ct_color = CTextColor::rgba(c.r, c.g, c.b, c.a);
                 self.draw_text_run(marker, mx, my, font_px, line_h,
-                    node.style.font_weight, node.style.font_style, ct_color, pixmap, mask);
+                    node.style.font_weight, node.style.font_style, &node.style.font_family, ct_color, pixmap, mask);
             }
             ListStyleType::None => {}
         }
@@ -2289,11 +2306,6 @@ fn capitalize_words(s: &str) -> String {
     result
 }
 
-/// Approximate text width (no letter-spacing).
-fn approx_text_width(text: &str, font_px: f32) -> f32 {
-    approx_text_width_ls(text, font_px, 0.0)
-}
-
 /// Approximate text width with letter-spacing.
 fn approx_text_width_ls(text: &str, font_px: f32, letter_spacing: f32) -> f32 {
     let base = font_px * 0.55;
@@ -2305,29 +2317,6 @@ fn approx_text_width_ls(text: &str, font_px: f32, letter_spacing: f32) -> f32 {
                  else if ch.is_ascii()              { base }
                  else                               { font_px * 1.0 };  // emoji / CJK: full square
         w += cw + letter_spacing;
-    }
-    w
-}
-
-/// Advance cursor by text width accounting for letter/word spacing and justify extra.
-fn advance_with_spacing(
-    text: &str,
-    font_px: f32,
-    letter_spacing: f32,
-    word_spacing: f32,
-    extra_per_word: f32,
-) -> f32 {
-    let base = font_px * 0.55;
-    let mut w = 0.0f32;
-    for ch in text.chars() {
-        let cw = if "iIlj1!|:;,.'`".contains(ch) { base * 0.45 }
-                 else if "mwMW".contains(ch)       { base * 1.20 }
-                 else if ch == ' '                  { base * 0.35 }
-                 else                               { base };
-        w += cw + letter_spacing;
-        if ch == ' ' {
-            w += word_spacing + extra_per_word;
-        }
     }
     w
 }

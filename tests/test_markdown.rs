@@ -1058,3 +1058,280 @@ fn md_ul_padding_matches_ua() {
         "ul padding_left should be 40px, got: {:?}", ul.style.padding_left
     );
 }
+
+// ============================================================
+// Layout geometry tests — verify blocks are laid out as blocks
+// (not inline). These tests catch the cascade-wipe bug where
+// parse_markdown without a UA stylesheet causes layout() to
+// strip all display:block styles, collapsing everything to y=0.
+// ============================================================
+
+fn parse_and_layout(md: &str) -> Document {
+    let mut doc = parse_markdown(md);
+    LayoutEngine::new().layout(&mut doc, 800.0);
+    doc
+}
+
+#[test]
+fn md_layout_blocks_have_nonzero_height() {
+    let doc = parse_and_layout("# Heading\n\nParagraph text here.");
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    let p  = find_tag(&doc, "p").expect("p not found");
+    assert!(h1.margin_rect.h > 0.0, "h1 should have nonzero height, got {}", h1.margin_rect.h);
+    assert!(p.margin_rect.h  > 0.0, "p should have nonzero height, got {}",  p.margin_rect.h);
+}
+
+#[test]
+fn md_layout_blocks_stacked_vertically() {
+    // If cascade wipes display:block, everything lands at y=0.
+    // Use padding_rect (the visual box) because adjacent margin_rects collapse and overlap.
+    let doc = parse_and_layout("# Heading\n\nParagraph text here.");
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    let p  = find_tag(&doc, "p").expect("p not found");
+    let h1_bottom = h1.padding_rect.y + h1.padding_rect.h;
+    assert!(
+        p.padding_rect.y >= h1_bottom,
+        "paragraph padding (y={}) should be below heading padding (bottom={})",
+        p.padding_rect.y, h1_bottom
+    );
+}
+
+#[test]
+fn md_layout_heading_display_is_block() {
+    // After layout (which runs the cascade), h1 must still have display:block.
+    let doc = parse_and_layout("# Heading");
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    assert_eq!(h1.style.display, Display::Block, "h1 display should be Block after layout");
+}
+
+#[test]
+fn md_layout_heading_font_px_larger_than_body() {
+    // After layout, h1 font size resolves to 32px at 16px root.
+    let doc = parse_and_layout("# Heading\n\nParagraph.");
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    let p  = find_tag(&doc, "p").expect("p not found");
+    let h1_px = h1.style.font_size_px(16.0, 16.0);
+    let p_px  = p.style.font_size_px(16.0, 16.0);
+    assert!(h1_px > p_px, "h1 font ({} px) should be larger than p font ({} px)", h1_px, p_px);
+    assert!((h1_px - 32.0).abs() < 0.5, "h1 should be ~32px, got {}", h1_px);
+}
+
+#[test]
+fn md_layout_list_items_stacked() {
+    let doc = parse_and_layout("- Alpha\n- Beta\n- Gamma");
+    let ul = find_tag(&doc, "ul").expect("ul not found");
+    let items: Vec<&HtmlBox> = ul.children.iter().filter(|c| c.tag == "li").collect();
+    assert_eq!(items.len(), 3, "should have 3 li items");
+    for i in 1..items.len() {
+        let prev_bottom = items[i-1].margin_rect.y + items[i-1].margin_rect.h;
+        assert!(
+            items[i].margin_rect.y >= prev_bottom,
+            "li[{}] (y={}) should be below li[{}] (bottom={})",
+            i, items[i].margin_rect.y, i-1, prev_bottom
+        );
+    }
+}
+
+#[test]
+fn md_layout_ul_display_is_block() {
+    let doc = parse_and_layout("- item");
+    let ul = find_tag(&doc, "ul").expect("ul not found");
+    assert_eq!(ul.style.display, Display::Block, "ul display should be Block after layout");
+}
+
+#[test]
+fn md_layout_pre_display_is_block() {
+    let doc = parse_and_layout("```\ncode\n```");
+    let pre = find_tag(&doc, "pre").expect("pre not found");
+    assert_eq!(pre.style.display, Display::Block, "pre display should be Block after layout");
+}
+
+#[test]
+fn md_layout_blockquote_display_is_block() {
+    let doc = parse_and_layout("> quote");
+    let bq = find_tag(&doc, "blockquote").expect("blockquote not found");
+    assert_eq!(bq.style.display, Display::Block, "blockquote display should be Block after layout");
+}
+
+#[test]
+fn md_layout_multiple_headings_stacked() {
+    // Use padding_rect: adjacent margin_rects collapse so their y-ranges overlap.
+    let doc = parse_and_layout("# H1\n\n## H2\n\n### H3");
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    let h2 = find_tag(&doc, "h2").expect("h2 not found");
+    let h3 = find_tag(&doc, "h3").expect("h3 not found");
+    assert!(h2.padding_rect.y >= h1.padding_rect.y + h1.padding_rect.h,
+        "h2 (y={}) should be below h1 (bottom={})", h2.padding_rect.y, h1.padding_rect.y + h1.padding_rect.h);
+    assert!(h3.padding_rect.y >= h2.padding_rect.y + h2.padding_rect.h,
+        "h3 (y={}) should be below h2 (bottom={})", h3.padding_rect.y, h2.padding_rect.y + h2.padding_rect.h);
+}
+
+#[test]
+fn md_layout_table_display_is_table() {
+    let doc = parse_and_layout("| A | B |\n|---|---|\n| 1 | 2 |");
+    let table = find_tag(&doc, "table").expect("table not found");
+    assert_eq!(table.style.display, Display::Table, "table display should be Table after layout");
+}
+
+#[test]
+fn md_roundtrip_complex_document() {
+    // A complex markdown document should survive a full roundtrip without losing structure.
+    let md = concat!(
+        "# Title\n\n",
+        "A paragraph with **bold** and *italic* text.\n\n",
+        "## Section\n\n",
+        "- First item\n",
+        "- Second item\n",
+        "- Third item\n\n",
+        "```rust\nfn main() {}\n```\n\n",
+        "> A blockquote\n\n",
+        "| Col A | Col B |\n",
+        "|-------|-------|\n",
+        "| a     | b     |\n",
+    );
+    let doc1 = parse_markdown(md);
+    let md2 = serialize_markdown(&doc1);
+    let doc2 = parse_markdown(&md2);
+
+    // Structure must survive roundtrip
+    assert!(find_tag(&doc2, "h1").is_some(), "h1 lost in roundtrip");
+    assert!(find_tag(&doc2, "h2").is_some(), "h2 lost in roundtrip");
+    assert!(find_tag(&doc2, "ul").is_some(), "ul lost in roundtrip");
+    assert!(find_tag(&doc2, "pre").is_some(), "pre lost in roundtrip");
+    assert!(find_tag(&doc2, "blockquote").is_some(), "blockquote lost in roundtrip");
+    assert!(find_tag(&doc2, "table").is_some(), "table lost in roundtrip");
+    // Text content preserved
+    assert_eq!(get_text(find_tag(&doc2, "h1").unwrap()), "Title");
+}
+
+#[test]
+fn md_roundtrip_inline_formatting() {
+    let md = "Text with **bold**, *italic*, ~~strike~~, and `code` inline.";
+    let doc = parse_markdown(md);
+    let md2 = serialize_markdown(&doc);
+    let doc2 = parse_markdown(&md2);
+    let p = find_tag(&doc2, "p").expect("p not found in roundtrip");
+    // Bold run present
+    let has_bold = p.inline_runs.iter().any(|r| r.style.font_weight == FontWeight::Bold);
+    assert!(has_bold, "bold lost in roundtrip; serialized: {}", md2);
+    // Italic run present
+    let has_italic = p.inline_runs.iter().any(|r| r.style.font_style == FontStyle::Italic);
+    assert!(has_italic, "italic lost in roundtrip; serialized: {}", md2);
+    // Strikethrough run present
+    let has_strike = p.inline_runs.iter().any(|r| r.style.text_decoration.strikethrough);
+    assert!(has_strike, "strikethrough lost in roundtrip; serialized: {}", md2);
+    // Code run present (monospace)
+    let has_code = p.inline_runs.iter().any(|r| r.style.font_family == "monospace");
+    assert!(has_code, "code lost in roundtrip; serialized: {}", md2);
+}
+
+#[test]
+fn md_roundtrip_nested_list() {
+    let md = "- Parent\n  - Child 1\n  - Child 2\n- Another parent\n";
+    let doc = parse_markdown(md);
+    let md2 = serialize_markdown(&doc);
+    let doc2 = parse_markdown(&md2);
+    // Should have an outer ul
+    let ul = find_tag(&doc2, "ul").expect("ul lost in nested list roundtrip");
+    // Should have at least 2 li children at top level
+    let top_items: Vec<_> = ul.children.iter().filter(|c| c.tag == "li").collect();
+    assert!(top_items.len() >= 2, "should have at least 2 top-level li items; got {}", top_items.len());
+}
+
+#[test]
+fn md_layout_demo_sample() {
+    // Smoke test: the full SAMPLE_MD from the demo must parse and layout without panic,
+    // and produce distinct vertical positions for major blocks.
+    let sample = concat!(
+        "# Markdown Editor\n\n",
+        "This is a **live preview** of your Markdown content.\n\n",
+        "## Features\n\n",
+        "- **Bold**, *italic*, and ~~strikethrough~~\n",
+        "- `Inline code` and code blocks\n\n",
+        "## Code Block\n\n",
+        "```cpp\nint main() {}\n```\n\n",
+        "## Table\n\n",
+        "| Feature | Status |\n",
+        "|---------|--------|\n",
+        "| Parsing | Done   |\n\n",
+        "> The best way to predict the future\n\n",
+        "---\n\n",
+        "### Ordered List\n\n",
+        "1. First item\n",
+        "2. Second item\n",
+    );
+    let doc = parse_and_layout(sample);
+    let h1 = find_tag(&doc, "h1").expect("h1 not found");
+    let h2 = find_tag(&doc, "h2").expect("h2 not found");
+    // h1 and h2 must be at different vertical positions
+    assert!(h1.margin_rect.h > 0.0, "h1 height is 0");
+    assert!(h2.margin_rect.y > h1.margin_rect.y, "h2 not below h1");
+    // Table must have block geometry
+    let table = find_tag(&doc, "table").expect("table not found");
+    assert!(table.margin_rect.h > 0.0, "table height is 0");
+}
+
+// ============================================================
+// Inline formatting survives layout (the inline_runs bug)
+// Before the fix, layout_inline_block collapsed all inline runs
+// into a single #text with the block's base style, silently
+// dropping bold, italic, link color, strikethrough, code font.
+// ============================================================
+
+fn parse_layout_find<'a>(doc: &'a Document, tag: &str) -> &'a HtmlBox {
+    find_tag(doc, tag).unwrap_or_else(|| panic!("{} not found", tag))
+}
+
+#[test]
+fn md_layout_preserves_bold() {
+    let doc = parse_and_layout("A **bold** word.");
+    let p = parse_layout_find(&doc, "p");
+    let bold_run = p.inline_runs.iter().find(|r| r.style.font_weight == FontWeight::Bold);
+    assert!(bold_run.is_some(), "bold run missing after layout; runs: {:?}",
+        p.inline_runs.iter().map(|r| (&p.text[r.text_offset..r.text_offset+r.length], r.style.font_weight)).collect::<Vec<_>>());
+}
+
+#[test]
+fn md_layout_preserves_italic() {
+    let doc = parse_and_layout("A *italic* word.");
+    let p = parse_layout_find(&doc, "p");
+    let run = p.inline_runs.iter().find(|r| r.style.font_style == FontStyle::Italic);
+    assert!(run.is_some(), "italic run missing after layout");
+}
+
+#[test]
+fn md_layout_preserves_strikethrough() {
+    let doc = parse_and_layout("A ~~struck~~ word.");
+    let p = parse_layout_find(&doc, "p");
+    let run = p.inline_runs.iter().find(|r| r.style.text_decoration.strikethrough);
+    assert!(run.is_some(), "strikethrough run missing after layout");
+}
+
+#[test]
+fn md_layout_preserves_code_font() {
+    let doc = parse_and_layout("Use `code` here.");
+    let p = parse_layout_find(&doc, "p");
+    let run = p.inline_runs.iter().find(|r| r.style.font_family == "monospace");
+    assert!(run.is_some(), "code (monospace) run missing after layout");
+}
+
+#[test]
+fn md_layout_preserves_link_color() {
+    let doc = parse_and_layout("See [link](https://example.com) here.");
+    let p = parse_layout_find(&doc, "p");
+    let run = p.inline_runs.iter().find(|r| !r.style.href.is_empty());
+    assert!(run.is_some(), "link run (href) missing after layout");
+    let run = run.unwrap();
+    assert_eq!(run.style.href, "https://example.com");
+    assert!(run.style.text_decoration.underline, "link should be underlined");
+}
+
+#[test]
+fn md_layout_heading_preserves_bold_italic() {
+    // Heading text is itself bold, but also supports nested italic
+    let doc = parse_and_layout("# Heading with *italic* word");
+    let h1 = parse_layout_find(&doc, "h1");
+    let italic_run = h1.inline_runs.iter().find(|r| r.style.font_style == FontStyle::Italic);
+    assert!(italic_run.is_some(), "italic inside h1 missing after layout; runs: {:?}",
+        h1.inline_runs.iter().map(|r| (&h1.text[r.text_offset..r.text_offset+r.length], r.style.font_style)).collect::<Vec<_>>());
+}

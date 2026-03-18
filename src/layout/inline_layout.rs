@@ -163,6 +163,20 @@ pub fn layout_inline_block(
             if !node.text.chars().all(|c| c.is_ascii_whitespace()) {
                 collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
             }
+        } else if !node.inline_runs.is_empty() {
+            // Block has pre-built inline runs (e.g. from the markdown parser).
+            // Emit one #text item per run to preserve bold, italic, link color, etc.
+            // The plain "node.style" path below would silently drop all inline formatting.
+            let saved_runs = node.inline_runs.clone();
+            for run in &saved_runs {
+                let end = (run.text_offset + run.length).min(node.text.len());
+                if run.text_offset >= end { continue; }
+                let run_text = node.text[run.text_offset..end].to_string();
+                let mut tmp = HtmlBox::new("#text");
+                tmp.text = run_text;
+                tmp.style = run.style.clone();
+                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+            }
         } else {
             let mut tmp_node = HtmlBox::new("#text");
             tmp_node.text = node.text.clone();
