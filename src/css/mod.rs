@@ -2656,16 +2656,32 @@ fn apply_gradient(style: &mut ComputedStyle, v: &str) {
         }
     } else if lower.contains("radial-gradient") {
         style.gradient_type = GradientType::Radial;
-        // Simplified: just parse color stops
         if let Some(paren) = v.find('(') {
             let inner = &v[paren + 1..];
             let inner = inner.trim_end_matches(')');
             style.gradient_stops.clear();
-            let n_stops = inner.split(',').count().max(1) as f32;
-            for (i, stop) in inner.split(',').enumerate() {
+            // Skip the optional shape/size/position descriptor before the first comma
+            // (e.g. "circle at 50% 50%", "ellipse farthest-corner", "closest-side").
+            // If the first comma-delimited segment doesn't parse as a color, treat it as a descriptor.
+            let first_comma = inner.find(',').unwrap_or(inner.len());
+            let first_token = inner[..first_comma].trim();
+            let stops_str = if parse_color(first_token).is_none() && first_comma < inner.len() {
+                &inner[first_comma + 1..]
+            } else {
+                inner
+            };
+            let stops: Vec<&str> = stops_str.split(',').collect();
+            let n_stops = stops.len() as f32;
+            for (i, stop) in stops.iter().enumerate() {
                 let stop = stop.trim();
-                if let Some(c) = parse_color(stop) {
-                    let pos = i as f32 / (n_stops - 1.0).max(1.0);
+                // Each stop is "color" or "color position%"
+                let mut parts = stop.splitn(2, ' ');
+                let color_str = parts.next().unwrap_or(stop);
+                if let Some(c) = parse_color(color_str) {
+                    let pos = parts.next()
+                        .and_then(|p| p.trim().trim_end_matches('%').parse::<f32>().ok())
+                        .map(|p| p / 100.0)
+                        .unwrap_or(i as f32 / (n_stops - 1.0).max(1.0));
                     style.gradient_stops.push(GradientStop { color: c, position: pos });
                 }
             }

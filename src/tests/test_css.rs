@@ -372,3 +372,56 @@ fn css_word_spacing_property() {
     apply_property(&mut style, "word-spacing", "5px");
     assert_eq!(style.word_spacing, CssLength::Px(5.0));
 }
+
+#[test]
+fn css_mix_blend_mode_via_descendant_combinator() {
+    // ".parent .child { mix-blend-mode: multiply }" must cascade to the child.
+    use super::harness::parse_and_layout;
+    use super::harness::find_box;
+    use crate::types::MixBlendMode;
+    let doc = parse_and_layout(r#"
+        <style>
+            .parent .overlay { mix-blend-mode: multiply; }
+        </style>
+        <div class="parent">
+            <div class="overlay"></div>
+        </div>
+    "#, 800.0);
+    let overlay = find_box(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "overlay").unwrap_or(false)
+    });
+    assert!(overlay.is_some(), "overlay box not found");
+    assert_eq!(overlay.unwrap().style.mix_blend_mode, MixBlendMode::Multiply,
+        "mix-blend-mode: multiply must be applied via descendant combinator");
+}
+
+#[test]
+fn css_radial_gradient_with_position_stops() {
+    // radial-gradient(circle at 50% 50%, #fbbf24 0%, #f97316 60%, transparent 100%)
+    // must parse 3 stops with correct colors and positions.
+    let mut style = ComputedStyle::default();
+    apply_property(&mut style, "background",
+        "radial-gradient(circle at 50% 50%, #fbbf24 0%, #f97316 60%, transparent 100%)");
+    assert_eq!(style.gradient_type, GradientType::Radial, "should be radial gradient");
+    assert_eq!(style.gradient_stops.len(), 3, "should have 3 stops, not {}", style.gradient_stops.len());
+    assert_eq!(style.gradient_stops[0].color, Color::rgba(0xfb, 0xbf, 0x24, 0xff));
+    assert!((style.gradient_stops[0].position - 0.0).abs() < 0.01);
+    assert_eq!(style.gradient_stops[1].color, Color::rgba(0xf9, 0x73, 0x16, 0xff));
+    assert!((style.gradient_stops[1].position - 0.60).abs() < 0.01);
+    assert_eq!(style.gradient_stops[2].color, Color::TRANSPARENT);
+    assert!((style.gradient_stops[2].position - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn css_radial_gradient_bare_colors() {
+    // radial-gradient without descriptor and without explicit positions
+    let mut style = ComputedStyle::default();
+    apply_property(&mut style, "background",
+        "radial-gradient(#ff0000, #0000ff)");
+    assert_eq!(style.gradient_type, GradientType::Radial);
+    assert_eq!(style.gradient_stops.len(), 2, "should have 2 stops");
+    assert_eq!(style.gradient_stops[0].color, Color::rgb(255, 0, 0));
+    assert!((style.gradient_stops[0].position - 0.0).abs() < 0.01);
+    assert_eq!(style.gradient_stops[1].color, Color::rgb(0, 0, 255));
+    assert!((style.gradient_stops[1].position - 1.0).abs() < 0.01);
+}

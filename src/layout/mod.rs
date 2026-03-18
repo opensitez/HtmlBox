@@ -415,7 +415,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
         None
     };
 
-    let _constrained_h = if !top_auto && !bot_auto {
+    let constrained_h = if !top_auto && !bot_auto {
         let t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
         let b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
         let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
@@ -475,6 +475,19 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     if let Some(cw) = constrained_w {
         if node.content_rect.w != cw {
             engine.layout_box(node, layout_w, x, y, font_px, root_font_px);
+        }
+    }
+
+    // Apply constrained height when both top and bottom are set and height is auto.
+    // Without this, inset:0 (top:0 bottom:0) leaves height at 0 because layout_box
+    // has no content to fill the space.
+    if let Some(ch) = constrained_h {
+        if node.style.height.is_auto() && (node.content_rect.h - ch).abs() > 0.5 {
+            let diff = ch - node.content_rect.h;
+            node.content_rect.h += diff;
+            node.padding_rect.h += diff;
+            node.border_rect.h  += diff;
+            node.margin_rect.h  += diff;
         }
     }
 }

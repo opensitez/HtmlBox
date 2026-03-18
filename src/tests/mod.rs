@@ -8,3 +8,4 @@ pub mod test_inheritance;
 pub mod test_grid;
 mod test_floats;
 pub mod test_dom_events;
+pub mod test_render;
