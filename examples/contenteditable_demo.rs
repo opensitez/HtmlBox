@@ -10,7 +10,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use rhtmledit::{Document, Renderer, HtmlEventType};
 use rhtmledit::platform::Platform;
 
 const HTML: &str = include_str!("html/contenteditable.html");
@@ -40,7 +40,7 @@ impl ApplicationHandler for App {
         self.scale  = platform.scale_factor();
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
-        let mut doc = load_html(HTML, self.width);
+        let mut doc = self.renderer.load_html(HTML, self.width);
         // The document is read-only by default; individual fields have
         // contenteditable="true" which the HTML parser marks as editable.
         doc.editor.read_only = true;
@@ -72,8 +72,9 @@ impl ApplicationHandler for App {
                 self.scale  = platform.scale_factor();
                 self.width  = platform.logical_width();
                 self.height = platform.logical_height();
+                let mut engine = self.renderer.layout_engine();
                 if let Some(doc) = self.doc.as_mut() {
-                    LayoutEngine::new().layout(doc, self.width);
+                    engine.layout(doc, self.width);
                 }
                 self.request_redraw();
             }
@@ -127,9 +128,14 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::Space) => Some(' '),
                     _ => None,
                 };
+                let mut engine = self.renderer.layout_engine();
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        LayoutEngine::new().layout(doc, self.width);
+                        if ch.is_some() && key_code >= 32 {
+                            engine.layout_no_cascade(doc, self.width);
+                        } else {
+                            engine.layout(doc, self.width);
+                        }
                         self.request_redraw();
                     }
                 }

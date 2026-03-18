@@ -175,17 +175,56 @@ pub fn layout_inline_block(
     let old_lines: Vec<LayoutLine> = std::mem::take(&mut node.line_cache);
 
     if items.is_empty() {
-        // Nothing to lay out
+        // Nothing to lay out.
+        // For non-void blocks with no children (e.g. empty <p> after Enter), add a
+        // placeholder line so the caret has a home and the block has visible height.
+        const VOID_TAGS: &[&str] = &[
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr",
+        ];
+        let is_void = VOID_TAGS.contains(&node.tag.as_str());
+        // Only add a placeholder line for elements that can hold inline/prose content
+        // and need a visible cursor when empty. Generic structural divs/sections must
+        // NOT get one — it would break margin collapsing for empty blocks.
+        let is_prose_tag = matches!(node.tag.as_str(),
+            "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+            | "li" | "dt" | "dd" | "pre" | "blockquote"
+            | "td" | "th" | "caption"
+        );
+        let is_contenteditable = node.attributes.get("contenteditable")
+            .map(|v| v == "true").unwrap_or(false);
+        let add_placeholder = !is_void
+            && node.children.is_empty()
+            && rbox.content_height.is_none()
+            && (is_prose_tag || is_contenteditable);
+        if add_placeholder {
+            let line_h = font_px * 1.2;
+            node.line_cache = vec![LayoutLine {
+                text_start: text_offset,
+                text_length: 0,
+                x: content_x,
+                y: content_y,
+                width: 0.0,
+                height: line_h,
+                ascent: font_px,
+                descent: font_px * 0.2,
+                extra_space_per_word: 0.0,
+                visual_segments: Vec::new(),
+                char_x: Vec::new(),
+            }];
+        }
+        let placeholder_h = if add_placeholder { font_px * 1.2 } else { 0.0 };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
         let max_h = if node.style.max_height.is_none() { f32::MAX }
                     else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
         let content_h = if let Some(h) = rbox.content_height {
             h
         } else if let Some(ratio) = node.style.aspect_ratio {
-            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { 0.0 }
+            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { placeholder_h }
         } else {
-            0.0
+            placeholder_h
         };
+        let content_h = content_h.max(min_h).min(max_h);
         set_box_rects(node, content_x, content_y, content_w, content_h,
                       rbox, margin_left, margin_right);
         node.inline_runs = runs;
@@ -451,16 +490,35 @@ pub fn layout_inline_block(
         let flat_text = collect_flat_text(node);
         resolve_bidi_line(&flat_text, &mut ll, para_dir);
 
-        // Fill per-character x positions using real glyph metrics.
+        // Fill per-character x positions using real glyph metrics, shaped at
+        // physical pixel size so positions match the renderer exactly.
         if let Some(fs_ptr) = engine.font_system {
             let fs = unsafe { &mut *fs_ptr };
-            fill_char_x_for_line(fs, &flat_text, &runs, &mut ll);
+            fill_char_x_for_line(fs, &flat_text, &runs, &mut ll, engine.scale);
         }
 
         line_cache.push(ll);
         cursor_y += line_h;
         item_idx = next_start;
         old_line_idx += 1;
+    }
+
+    // Empty block with no content: add one empty line so the caret has a home.
+    if line_cache.is_empty() && items.is_empty() {
+        line_cache.push(LayoutLine {
+            text_start:  text_offset,
+            text_length: 0,
+            x:      content_x,
+            y:      cursor_y,
+            width:  0.0,
+            height: font_px * 1.2,
+            ascent: font_px * 1.2,
+            descent: 0.0,
+            extra_space_per_word: 0.0,
+            visual_segments: Vec::new(),
+            char_x: Vec::new(),
+        });
+        cursor_y += font_px * 1.2;
     }
 
     // Trailing empty line after <br> (for caret positioning after Enter)
@@ -1043,10 +1101,11 @@ pub fn approx_font_metrics(font_px: f32, _fs: Option<&mut cosmic_text::FontSyste
 /// (Basic for ASCII, Advanced otherwise) so click-to-caret and caret rendering
 /// agree exactly with the rendered text positions.
 pub fn fill_char_x_for_line(
-    fs:   &mut cosmic_text::FontSystem,
-    flat: &str,
-    runs: &[InlineRun],
-    line: &mut LayoutLine,
+    fs:    &mut cosmic_text::FontSystem,
+    flat:  &str,
+    runs:  &[InlineRun],
+    line:  &mut LayoutLine,
+    scale: f32,
 ) {
     let line_start = line.text_start;
     let line_end   = (line.text_start + line.text_length).min(flat.len());
@@ -1079,7 +1138,11 @@ pub fn fill_char_x_for_line(
             FontStyle::Normal  => CTextStyle::Normal,
         };
 
-        let metrics = Metrics::new(font_px, font_px * 1.2);
+        // Shape at physical pixel size (matching the renderer) so that char_x
+        // positions agree with what is actually drawn on screen. Positions are
+        // then converted back to logical pixels by dividing by scale.
+        let phys_px  = font_px * scale;
+        let metrics = Metrics::new(phys_px, phys_px * 1.2);
         let mut buf = Buffer::new(fs, metrics);
         let family  = match run.style.font_family.as_str() {
             "serif"      => Family::Serif,
@@ -1090,10 +1153,15 @@ pub fn fill_char_x_for_line(
             name         => Family::Name(name),
         };
         let attrs   = Attrs::new().weight(ct_w).style(ct_s).family(family);
-        let shaping = if seg_text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
+        // Always use Advanced shaping: Basic reports word-relative byte offsets
+        // (glyph.start=0..4 for "world" in "Hello world") rather than buffer-relative
+        // (6..10). Only Advanced gives correct offsets needed to populate char_x.
+        let shaping = Shaping::Advanced;
         buf.set_text(fs, seg_text, attrs, shaping);
         buf.shape_until_scroll(fs, false);
 
+        // Glyphs are in physical pixels; divide by scale to get logical pixels.
+        let inv_scale = if scale > 0.0 { 1.0 / scale } else { 1.0 };
         let mut seg_advance = 0.0f32;
         for lr in buf.layout_runs() {
             for glyph in lr.glyphs {
@@ -1101,19 +1169,27 @@ pub fn fill_char_x_for_line(
                 let abs_s = s + glyph.start;
                 let abs_e = s + glyph.end;
                 let i_s   = abs_s.saturating_sub(line_start);
-                let i_e   = abs_e.saturating_sub(line_start);
-                // Leading edge of this glyph.
-                if i_s < positions.len() && positions[i_s].is_nan() {
-                    positions[i_s] = cursor_x + glyph.x;
+                let i_e   = abs_e.saturating_sub(line_start).min(positions.len() - 1);
+                let x0    = cursor_x + glyph.x * inv_scale;
+                let x1    = cursor_x + (glyph.x + glyph.w) * inv_scale;
+                // Distribute position linearly across all byte boundaries in this glyph.
+                // Single-char glyphs: sets positions[i_s] and positions[i_e] exactly.
+                // Multi-char glyphs (Shaping::Basic word glyphs, ligatures): interpolates
+                // so that each character boundary gets a proportional x position rather
+                // than leaving intermediate bytes as NaN and forward-filling them all to
+                // the same value (which would make the whole word appear zero-width).
+                let span = (i_e.saturating_sub(i_s)).max(1);
+                for k in 0..=span {
+                    let idx = i_s + k;
+                    if idx < positions.len() && positions[idx].is_nan() {
+                        positions[idx] = x0 + (x1 - x0) * k as f32 / span as f32;
+                    }
                 }
-                // Trailing edge (= leading edge of next char / end of last char).
-                if i_e < positions.len() && positions[i_e].is_nan() {
-                    positions[i_e] = cursor_x + glyph.x + glyph.w;
-                }
-                let right = glyph.x + glyph.w;
+                let right = x1 - cursor_x;
                 if right > seg_advance { seg_advance = right; }
             }
-            if lr.line_w > seg_advance { seg_advance = lr.line_w; }
+            let lw = lr.line_w * inv_scale;
+            if lw > seg_advance { seg_advance = lw; }
         }
 
         // Advance cursor_x by the segment's actual advance + extra word spacing.

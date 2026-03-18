@@ -222,8 +222,14 @@ impl ApplicationHandler for App {
                 };
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        // Keystroke changed text only — skip CSS cascade, just re-layout.
-                        self.renderer.layout_engine().layout_no_cascade(doc, self.width);
+                        let mut engine = self.renderer.layout_engine();
+                        // Enter/Backspace/Delete can modify DOM structure → need full cascade.
+                        // Plain character keys only change text → skip cascade for speed.
+                        if ch.is_some() && key_code >= 32 {
+                            engine.layout_no_cascade(doc, self.width);
+                        } else {
+                            engine.layout(doc, self.width);
+                        }
                         self.request_redraw();
                     }
                 }

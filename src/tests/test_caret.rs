@@ -6,6 +6,7 @@
 /// - get_offset_from_x correctly identifies character boundaries
 /// - Thin characters like 'i', 'l', '1' are measured correctly (not approximated)
 
+use crate::dom::HtmlEventType;
 use crate::layout::hit_test::{get_caret_x, get_offset_from_x};
 use crate::layout::inline_layout::collect_flat_text;
 use crate::types::*;
@@ -209,17 +210,15 @@ fn offset_from_x_midpoint_selects_correct_char() {
 
 #[test]
 fn monospace_chars_equal_width() {
-    // In monospace font, 'i' and 'm' should have the same width
+    // In monospace font, 'i' and 'm' should have the same width.
+    // Use char_x directly (populated by fill_char_x_for_line) rather than
+    // get_caret_x, which uses the width approximation (not font-exact).
     let doc = load_with_fonts(r#"<p contenteditable="true"><code>im</code></p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    let flat = collect_flat_text(node);
     let line = &node.line_cache[0];
-    if line.char_x.is_empty() { return; } // skip if no font system
-    let x0 = get_caret_x(&flat, &node.inline_runs, line, line.text_start);
-    let x1 = get_caret_x(&flat, &node.inline_runs, line, line.text_start + 1);
-    let x2 = get_caret_x(&flat, &node.inline_runs, line, line.text_start + 2);
-    let w_i = x1 - x0;
-    let w_m = x2 - x1;
+    if line.char_x.len() < 3 { return; } // skip if no font system
+    let w_i = line.char_x[1] - line.char_x[0];
+    let w_m = line.char_x[2] - line.char_x[1];
     // In monospace, both chars should have the same advance (within 1px)
     assert!((w_i - w_m).abs() < 1.5,
         "in monospace font 'i' width ({}) should ≈ 'm' width ({})", w_i, w_m);
@@ -241,4 +240,327 @@ fn bold_text_wider_than_normal() {
     let w_bold   = line_width(&doc_b);
     assert!(w_bold > w_normal,
         "bold text width ({}) should exceed normal text width ({})", w_bold, w_normal);
+}
+
+// ─── Caret / click self-consistency ──────────────────────────────────────────
+// get_caret_x and get_offset_from_x must agree: clicking at the x returned by
+// get_caret_x for offset O must produce offset O (or the adjacent char boundary).
+
+#[test]
+fn caret_click_roundtrip_consistent() {
+    let doc = load_with_fonts(r#"<p contenteditable="true">Hello world</p>"#);
+    let node = find_editable_box(&doc.root).expect("editable box");
+    let flat = collect_flat_text(node);
+    let line = &node.line_cache[0];
+
+    let text_slice = &flat[line.text_start..line.text_start + line.text_length];
+    let mut byte_off = line.text_start;
+    for ch in text_slice.chars() {
+        let caret_x = get_caret_x(&flat, &node.inline_runs, line, byte_off);
+        // Clicking at the caret x should return this offset or the adjacent one.
+        let recovered = get_offset_from_x(&flat, &node.inline_runs, line, caret_x);
+        let next = byte_off + ch.len_utf8();
+        assert!(recovered == byte_off || recovered == next,
+            "roundtrip failed at offset {}: caret_x={:.1}, recovered={}", byte_off, caret_x, recovered);
+        byte_off = next;
+    }
+}
+
+#[test]
+fn caret_click_roundtrip_flex_item() {
+    // Flex items are shifted by shift_rects after layout; verify the caret
+    // coordinates are consistent (click → offset → caret → same position).
+    let doc = load_with_fonts(r#"
+        <div style="display:flex">
+          <div id="a">Left</div>
+          <div id="b">Right side</div>
+        </div>"#);
+    let find_by_id = |root: &HtmlBox, id: &str| -> Option<*const HtmlBox> {
+        fn search(node: &HtmlBox, id: &str) -> Option<*const HtmlBox> {
+            if node.attributes.get("id").map(|v| v == id).unwrap_or(false) {
+                return Some(node as *const HtmlBox);
+            }
+            for child in &node.children {
+                if let Some(r) = search(child, id) { return Some(r); }
+            }
+            None
+        }
+        search(root, id)
+    };
+
+    // Verify both flex items have valid line_cache with correct line.x (absolute).
+    for id in &["a", "b"] {
+        let ptr = find_by_id(&doc.root, id).expect("flex item not found");
+        let node = unsafe { &*ptr };
+        assert!(!node.line_cache.is_empty(), "flex item '{}' has no line_cache", id);
+        let line = &node.line_cache[0];
+        // line.x must be non-negative (absolute document coordinate).
+        assert!(line.x >= 0.0, "flex item '{}' line.x={} must be ≥ 0", id, line.x);
+    }
+
+    // For the second flex item: clicking at midline should give a valid offset.
+    let ptr_b = find_by_id(&doc.root, "b").expect("flex item b");
+    let node_b = unsafe { &*ptr_b };
+    let flat = collect_flat_text(node_b);
+    let line = &node_b.line_cache[0];
+    let mid_x = line.x + line.width / 2.0;
+    let off = get_offset_from_x(&flat, &node_b.inline_runs, line, mid_x);
+    // Offset must be within the line's text range.
+    assert!(off >= line.text_start && off <= line.text_start + line.text_length,
+        "offset {} out of range [{}, {}] for mid-click in flex item b",
+        off, line.text_start, line.text_start + line.text_length);
+    // Caret x for this offset must be <= mid_x + one char width.
+    let caret_x = get_caret_x(&flat, &node_b.inline_runs, line, off);
+    assert!(caret_x <= mid_x + 20.0,
+        "caret_x={:.1} is far past mid_x={:.1}", caret_x, mid_x);
+}
+
+// ─── Empty block after Enter ──────────────────────────────────────────────────
+
+#[test]
+fn empty_paragraph_has_line_cache() {
+    // An empty <p> (no children, no text) must get a placeholder line so the
+    // caret can be positioned inside it (e.g. after pressing Enter).
+    let doc = load_with_fonts(r#"<p contenteditable="true"></p>"#);
+    let node = find_editable_box(&doc.root).expect("editable box");
+    assert!(!node.line_cache.is_empty(),
+        "empty <p> must have a placeholder line for caret positioning");
+    let line = &node.line_cache[0];
+    assert!(line.height > 0.0, "placeholder line must have positive height");
+}
+
+#[test]
+fn empty_paragraph_has_nonzero_height() {
+    let doc = load_with_fonts(r#"<p contenteditable="true"></p>"#);
+    let node = find_editable_box(&doc.root).expect("editable box");
+    assert!(node.border_rect.h > 0.0,
+        "empty <p> must have non-zero height so it's visible and clickable");
+}
+
+#[test]
+fn hr_unaffected_by_empty_block_fix() {
+    // <hr> is a void element — the empty-block placeholder must NOT be added.
+    let doc = load_with_fonts(r#"<div><hr/><p>text</p></div>"#);
+    // Find the <hr> box — it must have an empty line_cache (no text placeholder).
+    fn find_hr(node: &HtmlBox) -> Option<&HtmlBox> {
+        if node.tag == "hr" { return Some(node); }
+        for child in &node.children { if let Some(r) = find_hr(child) { return Some(r); } }
+        None
+    }
+    let hr = find_hr(&doc.root).expect("<hr> not found");
+    assert!(hr.line_cache.is_empty(), "<hr> must NOT have a placeholder line_cache");
+}
+
+// ─── Enter key: caret moves to new line ──────────────────────────────────────
+//
+// Scenario: text is present in an editable element; the user clicks in the
+// middle, presses Enter, then types a character.  The character must appear on
+// the second line (below the original text), not on the first.
+
+/// Run the click→Enter→type scenario for the given HTML.
+///
+/// `find_edit_box` locates the editable box within the document.
+/// Returns `(original_line_y, inserted_line_y)` (absolute document coords).
+fn enter_creates_new_line_scenario(
+    html: &str,
+    find_edit_box: fn(&HtmlBox) -> Option<*const HtmlBox>,
+) -> (f32, f32) {
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(html, 900.0);
+
+    // Locate the editable box and find the click point (center of line 0).
+    let (click_x, click_y, orig_line_y) = {
+        let node = unsafe { &*find_edit_box(&doc.root).expect("editable box not found") };
+        assert!(!node.line_cache.is_empty(), "editable box has no lines after layout");
+        let line = &node.line_cache[0];
+        // Click in the middle of the text horizontally, vertically centered on line.
+        let cx = line.x + line.width / 2.0;
+        let cy = line.y + line.height / 2.0;
+        (cx, cy, line.y)
+    };
+
+    // Simulate mouse click to place the caret.
+    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (click_x, click_y), 0);
+    assert!(doc.editor.caret_box.is_some(), "click did not place a caret");
+
+    // Press Enter.
+    doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+
+    // Re-layout so the new DOM structure gets coordinates.
+    renderer.layout_engine().layout(&mut doc, 900.0);
+
+    // The caret box must still be set and have lines.
+    let caret_ptr = doc.editor.caret_box.expect("caret_box lost after Enter");
+    let caret_node = unsafe { &*caret_ptr };
+    assert!(!caret_node.line_cache.is_empty(),
+        "caret box '{}' has no lines after Enter + relayout", caret_node.tag);
+
+    // Type a character so we can see where it lands.
+    doc.editor.insert_char(&mut doc.root, 'X');
+    renderer.layout_engine().layout(&mut doc, 900.0);
+
+    // Re-locate the caret box (pointer unchanged, layout has been refreshed).
+    let caret_local = doc.editor.caret_local;
+    let caret_node = unsafe { &*doc.editor.caret_box.expect("caret_box lost after insert") };
+    assert!(!caret_node.line_cache.is_empty(),
+        "caret box has no lines after inserting 'X'");
+
+    // Find the line that contains the caret (last line whose text_start ≤ caret_local).
+    // For <p>-split: caret is in the new paragraph at line_cache[0].
+    // For <br> in <td>: caret is after the <br>, so on the second line.
+    let inserted_line_y = caret_node.line_cache.iter()
+        .filter(|l| l.text_start <= caret_local)
+        .last()
+        .map(|l| l.y)
+        .unwrap_or(caret_node.line_cache[0].y);
+    (orig_line_y, inserted_line_y)
+}
+
+#[test]
+fn enter_at_midtext_moves_caret_to_new_line_in_root() {
+    // <p> directly inside root → Enter splits into two <p> blocks.
+    let html = r#"<p contenteditable="true">Hello world</p>"#;
+    let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
+        find_editable_box(root).map(|b| b as *const HtmlBox)
+    });
+    assert!(new_y > orig_y,
+        "after Enter in root <p>: inserted text line y ({}) must be below original line y ({})",
+        new_y, orig_y);
+}
+
+#[test]
+fn enter_at_midtext_moves_caret_to_new_line_inside_div() {
+    // <p> inside a <div> → same splitting behaviour.
+    let html = r#"<div><p contenteditable="true">Hello world</p></div>"#;
+    let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
+        find_editable_box(root).map(|b| b as *const HtmlBox)
+    });
+    assert!(new_y > orig_y,
+        "after Enter in <div><p>: inserted text line y ({}) must be below original line y ({})",
+        new_y, orig_y);
+}
+
+#[test]
+fn enter_at_midtext_moves_caret_to_new_line_in_table_cell() {
+    // <td contenteditable> → Enter inserts <br> (non-prose tag), creating a second
+    // line within the same cell.
+    let html = r#"<table><tr><td contenteditable="true">Hello world</td></tr></table>"#;
+    let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
+        fn find_td(node: &HtmlBox) -> Option<*const HtmlBox> {
+            if node.tag == "td" { return Some(node as *const HtmlBox); }
+            for c in &node.children { if let Some(r) = find_td(c) { return Some(r); } }
+            None
+        }
+        find_td(root)
+    });
+    assert!(new_y > orig_y,
+        "after Enter in <td>: inserted text line y ({}) must be below original line y ({})",
+        new_y, orig_y);
+}
+
+// ─── insert_br caret placement (the bug that caused "same-line insertion") ────
+//
+// After pressing Enter inside a non-prose container (e.g. <div>, <td>), a <br>
+// is inserted and the caret stays in the same box.  The caret must be at the
+// START of the new visual line, NOT at the end of the previous one.
+// Specifically:
+//  (a) the typed character lands in the text node AFTER the <br>, not before;
+//  (b) the renderer's line selection must pick the second line, not the first.
+
+#[test]
+fn enter_in_div_typed_char_goes_to_new_line() {
+    // <div contenteditable> gets a <br> on Enter (not a new block).
+    // After Enter at midpoint of "Hello world", typing 'X' must NOT produce
+    // "HelloX world" on line 1; it must produce "X world" (or similar) on line 2.
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(
+        r#"<div contenteditable="true">Hello world</div>"#,
+        900.0,
+    );
+
+    // Locate the editable div and click in the middle of its text.
+    let (click_x, click_y, _) = {
+        let node = find_editable_box(&doc.root).expect("editable div");
+        let line = &node.line_cache[0];
+        (line.x + line.width / 2.0, line.y + line.height / 2.0, line.y)
+    };
+
+    // Click → Enter → relayout.
+    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (click_x, click_y), 0);
+    let split_offset = doc.editor.caret_local;
+    doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+    renderer.layout_engine().layout(&mut doc, 900.0);
+
+    // The flag must be set (caret is at the start of a new line after <br>).
+    assert!(doc.editor.caret_at_line_start,
+        "caret_at_line_start must be true after insert_br");
+
+    // Type 'X' — it must go into the segment AFTER the <br>.
+    doc.editor.insert_char(&mut doc.root, 'X');
+
+    // The flag is consumed by insert_char.
+    assert!(!doc.editor.caret_at_line_start,
+        "caret_at_line_start must be cleared after insert_char");
+
+    // Re-layout and inspect the flat text of the editable div.
+    renderer.layout_engine().layout(&mut doc, 900.0);
+    let node = find_editable_box(&doc.root).expect("editable div");
+    let flat = collect_flat_text(node);
+
+    // "Hello world" was split at split_offset.  'X' must appear AFTER the split
+    // (i.e. in the second segment), not inside the first segment.
+    let first_half = &flat[..split_offset];
+    assert!(!first_half.contains('X'),
+        "typed 'X' must NOT appear in the first segment (before the <br>), flat={:?}",
+        flat);
+    assert!(flat[split_offset..].contains('X'),
+        "typed 'X' must appear in the second segment (after the <br>), flat={:?}",
+        flat);
+}
+
+#[test]
+fn enter_in_cell_caret_renders_on_new_line() {
+    // After Enter in a <td>, the caret must visually appear on the second line.
+    // We verify by checking that the line selected by the renderer for the caret
+    // (the last line whose text_start <= caret_local, with line-start preference)
+    // is the second line, not the first.
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(
+        r#"<table><tr><td contenteditable="true">Hello world</td></tr></table>"#,
+        900.0,
+    );
+
+    // Find the <td> and click in the middle.
+    fn find_td(node: &HtmlBox) -> Option<*const HtmlBox> {
+        if node.tag == "td" { return Some(node as *const HtmlBox); }
+        for c in &node.children { if let Some(r) = find_td(c) { return Some(r); } }
+        None
+    }
+    let td_ptr = find_td(&doc.root).expect("<td>");
+    let (click_x, click_y, line0_y) = {
+        let td = unsafe { &*td_ptr };
+        let line = &td.line_cache[0];
+        (line.x + line.width / 2.0, line.y + line.height / 2.0, line.y)
+    };
+
+    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (click_x, click_y), 0);
+    doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+    renderer.layout_engine().layout(&mut doc, 900.0);
+
+    // After relayout the <td> must have two lines.
+    let td = unsafe { &*td_ptr };
+    assert!(td.line_cache.len() >= 2,
+        "<td> must have ≥ 2 lines after Enter (has {})", td.line_cache.len());
+
+    let caret_local = doc.editor.caret_local;
+    // The renderer prefers the line where caret_local == line.text_start.
+    // That must be line 1 (the second line), not line 0.
+    let preferred_line = td.line_cache.iter()
+        .filter(|l| l.text_start <= caret_local && caret_local <= l.text_start + l.text_length)
+        .max_by_key(|l| if l.text_start == caret_local { 1usize } else { 0 })
+        .expect("no matching line for caret_local");
+
+    assert!(preferred_line.y > line0_y,
+        "caret must be rendered on a line below the original (line0_y={}, preferred.y={})",
+        line0_y, preferred_line.y);
 }

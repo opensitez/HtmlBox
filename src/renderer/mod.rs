@@ -42,6 +42,7 @@ impl Renderer {
         let mut engine = crate::layout::LayoutEngine::new();
         engine.font_system = Some(&mut self.font_system as *mut _);
         engine.component_registry = self.component_registry.clone();
+        engine.scale = self.scale;
         engine
     }
 
@@ -1638,6 +1639,11 @@ impl Renderer {
             let mut caret_h    = font_px * 1.2;
             let mut found_line = false;
 
+            // When caret_local sits at the boundary between two lines
+            // (end of line N == start of line N+1), prefer the line where
+            // caret_local == line.text_start (i.e. the caret is at the
+            // *beginning* of that line).  This is the correct position after
+            // pressing Enter or being at the start of a wrapped/br line.
             for line in &node.line_cache {
                 let line_end = line.text_start + line.text_length;
                 if caret_local >= line.text_start && caret_local <= line_end {
@@ -1650,7 +1656,12 @@ impl Renderer {
                     );
                     caret_x = cx - sx;
                     found_line = true;
-                    break;
+                    // A line-start match is unambiguous — no need to search further.
+                    if caret_local == line.text_start {
+                        break;
+                    }
+                    // Otherwise keep going: a later line might have text_start ==
+                    // caret_local (the current match was an end-of-previous-line).
                 }
             }
             if !found_line && !node.line_cache.is_empty() {

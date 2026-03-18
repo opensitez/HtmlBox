@@ -8,7 +8,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use rhtmledit::{Document, Renderer, HtmlEventType};
 use rhtmledit::platform::Platform;
 
 const HTML: &str = include_str!("html/edit_demo.html");
@@ -38,7 +38,7 @@ impl ApplicationHandler for App {
         self.scale  = platform.scale_factor();
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
-        self.doc    = Some(load_html(HTML, self.width));
+        self.doc    = Some(self.renderer.load_html(HTML, self.width));
         self.window   = Some(window);
         self.platform = Some(platform);
     }
@@ -66,8 +66,9 @@ impl ApplicationHandler for App {
                 self.scale  = platform.scale_factor();
                 self.width  = platform.logical_width();
                 self.height = platform.logical_height();
+                let mut engine = self.renderer.layout_engine();
                 if let Some(doc) = self.doc.as_mut() {
-                    LayoutEngine::new().layout(doc, self.width);
+                    engine.layout(doc, self.width);
                 }
                 self.request_redraw();
             }
@@ -118,10 +119,16 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::Space) => Some(' '),
                     _ => None,
                 };
+                let mut engine = self.renderer.layout_engine();
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        // After change, we need to relayout because text changed
-                        LayoutEngine::new().layout(doc, self.width);
+                        // Enter/Backspace/Delete can modify DOM structure → need full cascade.
+                        // Plain character keys only change text → skip cascade for speed.
+                        if ch.is_some() && key_code >= 32 {
+                            engine.layout_no_cascade(doc, self.width);
+                        } else {
+                            engine.layout(doc, self.width);
+                        }
                         self.request_redraw();
                     }
                 }

@@ -785,6 +785,13 @@ pub struct Editor {
     pub mouse_down:   bool,
     pub has_focus:    bool,
     pub read_only:    bool,
+    /// Set to `true` immediately after `insert_br` so that:
+    /// (a) rendering prefers the start of the next line over the end of
+    ///     the previous one when the caret sits at an exact line boundary,
+    /// (b) `insert_char` skips past the pre-`<br>` text node and inserts
+    ///     into the text node that follows the `<br>`.
+    /// Cleared by any other caret movement or character insertion.
+    pub caret_at_line_start: bool,
 }
 
 impl Default for Editor {
@@ -800,6 +807,7 @@ impl Default for Editor {
             mouse_down:   false,
             has_focus:    false,
             read_only:    false,
+            caret_at_line_start: false,
         }
     }
 }
@@ -880,6 +888,7 @@ impl Editor {
         self.sel_end     = pos;
         self.caret_visible = true;
         self.last_blink    = Instant::now();
+        self.caret_at_line_start = false;
     }
 
     pub fn blink_update(&mut self) -> bool {
@@ -972,6 +981,8 @@ impl Editor {
 
     pub fn insert_char(&mut self, root: &mut HtmlBox, ch: char) {
         let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        // Consume the line-start flag before any mutation (collapse_to will clear it too).
+        let at_line_start = self.caret_at_line_start;
         if let Some(container) = find_box_mut(root, box_ptr) {
             if self.has_selection() {
                 let s = self.sel_start;
@@ -979,7 +990,15 @@ impl Editor {
                 delete_range_full(container, s, e);
                 self.collapse_to(s);
             }
-            match find_node_offset_mut(container, self.caret_local) {
+            // When the caret was placed at the start of a new visual line (right after
+            // a <br>), use strict mode: text nodes at their exact end are skipped so
+            // that the character lands in the node *after* the <br>, not before it.
+            let result = if at_line_start {
+                find_node_offset_after_br(container, self.caret_local)
+            } else {
+                find_node_offset_mut(container, self.caret_local)
+            };
+            match result {
                 Ok((leaf, local)) => {
                     let mut buf = [0u8; 4];
                     let s = ch.encode_utf8(&mut buf);
@@ -1129,8 +1148,11 @@ impl Editor {
 
         // Walk the tree to find the leaf's parent and split.
         split_node_with_br(root, leaf_ptr, local_off);
-        // Caret offset in flat text is unchanged (<br> is transparent to flat-text).
+        // Caret offset in flat text is unchanged (<br> is transparent to flat-text),
+        // but we mark that the caret is now at the START of the next visual line so
+        // that rendering and insertion prefer the node after the <br>.
         self.collapse_to(caret);
+        self.caret_at_line_start = true;
     }
 
     /// Toggle the current block between a plain block (`<p>`) and a list item (`<ul><li>`).
@@ -1351,6 +1373,42 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
     for child in &mut node.children {
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         match find_node_offset_mut(child, offset) {
+            Ok(res) => return Ok(res),
+            Err(rem) => offset = rem,
+        }
+    }
+    Err(offset)
+}
+
+/// Like `find_node_offset_mut` but uses strict `<` for text nodes so that a
+/// caret sitting exactly at the end of a text node (e.g. just before a `<br>`)
+/// falls through to the next sibling.  Used by `insert_char` when
+/// `caret_at_line_start` is true — i.e. after `insert_br` placed the caret at
+/// the logical start of the new visual line.
+fn find_node_offset_after_br(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut HtmlBox, usize), usize> {
+    if node.is_text_node() {
+        // Strict: offset must be *inside* the text (< not <=).
+        // offset == text.len() falls through so the caller can try the next sibling.
+        if offset < node.text.len() {
+            return Ok((node, offset));
+        } else {
+            return Err(offset - node.text.len());
+        }
+    }
+    if matches!(node.style.display, Display::None) { return Err(offset); }
+    if node.tag == "br" { return Err(offset); }
+
+    if !node.text.is_empty() {
+        if offset < node.text.len() {
+            return Ok((node, offset));
+        } else {
+            offset -= node.text.len();
+        }
+    }
+
+    for child in &mut node.children {
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        match find_node_offset_after_br(child, offset) {
             Ok(res) => return Ok(res),
             Err(rem) => offset = rem,
         }

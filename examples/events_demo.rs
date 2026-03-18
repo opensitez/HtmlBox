@@ -141,20 +141,25 @@ impl ApplicationHandler for App {
                             let new_target = find_target_body(&doc.root, mx, doc_y);
 
                             if new_target != self.drag.target_body {
-                                // Update column highlights
+                                // Update column highlights — needs full re-cascade+layout
                                 update_drop_highlights(doc, &new_target);
                                 self.drag.target_body = new_target;
                                 doc.recascade();
                                 LayoutEngine::new().layout(doc, self.width);
                             }
 
-                            // Update ghost position (always, even without recascade)
+                            // Update ghost position by directly patching the box rects —
+                            // avoids a full document re-layout on every mouse move.
+                            let gx = mx + 12.0;
+                            let gy = doc_y + 8.0;
                             if let Some(ghost) = dom::query_selector_mut(&mut doc.root, "#drag-ghost") {
-                                dom::set_style_property(ghost, "left", &format!("{}px", mx + 12.0));
-                                dom::set_style_property(ghost, "top",  &format!("{}px", doc_y + 8.0));
+                                let w = ghost.border_rect.w;
+                                let h = ghost.border_rect.h;
+                                ghost.border_rect  = rhtmledit::Rect::new(gx, gy, w, h);
+                                ghost.padding_rect = ghost.border_rect;
+                                ghost.content_rect = ghost.border_rect;
+                                ghost.margin_rect  = ghost.border_rect;
                             }
-                            // Re-layout only for ghost position
-                            LayoutEngine::new().layout(doc, self.width);
                         }
                         window.request_redraw();
                     }

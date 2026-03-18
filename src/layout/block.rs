@@ -493,7 +493,11 @@ pub fn layout_block_with_fc(
             // In the Rust architecture these appear as children when inline content
             // is processed; simply skip them here as in C++ isAtomicInlineRun check.
             // (If there is no inline content, lay them out as block-like items.)
-            if node.line_cache.is_empty() {
+            // Skip whitespace-only text nodes — they appear between block tags in HTML
+            // source but contribute no visual output and must not advance child_y.
+            let is_whitespace_only_text = node.children[i].is_text_node()
+                && node.children[i].text.chars().all(|c| c.is_ascii_whitespace());
+            if node.line_cache.is_empty() && !is_whitespace_only_text {
                 engine.layout_box(
                     &mut node.children[i], content_w, content_x, content_y + child_y,
                     font_px, root_font_px

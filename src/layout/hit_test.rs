@@ -66,7 +66,8 @@ pub fn get_caret_x(
     let line_end = line.text_start + line.text_length;
     let offset   = offset.min(line_end);
 
-    // Fast path: use pre-computed per-character positions (accurate, no approximation).
+    // Fast path: use pre-computed char_x positions (shaped at the same physical
+    // pixel size as the renderer, giving pixel-accurate caret placement).
     if !line.char_x.is_empty() {
         let idx = offset.saturating_sub(line.text_start).min(line.char_x.len() - 1);
         return line.x + line.char_x[idx];
@@ -114,34 +115,29 @@ pub fn get_offset_from_x(
 
     let line_end = line.text_start + line.text_length;
 
-    // Fast path: use pre-computed per-character positions (accurate, no approximation).
+    // Fast path: use pre-computed char_x positions for pixel-accurate click mapping.
+    // char_x[i] is the x position (relative to line.x) at byte offset line.text_start+i.
     if !line.char_x.is_empty() {
         let rel_x = x - line.x;
-        // Strip trailing newline from consideration
-        let measure_end = if line_end > line.text_start
-            && line_end <= text.len()
-            && text.as_bytes().get(line_end - 1) == Some(&b'\n')
-        { line_end - 1 } else { line_end };
-
-        // Walk char boundaries in char_x and find closest split point.
-        let mut best_off  = line.text_start;
-        let mut best_dist = f32::MAX;
-        let range_len = measure_end.saturating_sub(line.text_start);
-
-        // Check each char boundary (char_x[i] is the x at byte line.text_start+i)
-        for (i, &cx) in line.char_x[..=range_len.min(line.char_x.len() - 1)].iter().enumerate() {
-            let dist = (rel_x - cx).abs();
-            if dist < best_dist {
-                best_dist = dist;
-                best_off  = line.text_start + i;
-            }
+        let range_end = line.char_x.len() - 1; // last entry is end-of-line position
+        let line_start = line.text_start;
+        let measure_end = line_start + range_end;
+        // Walk character boundaries, return where rel_x falls before the midpoint.
+        let flat_slice_s = floor_char_boundary(text, line_start.min(text.len()));
+        let flat_slice_e = floor_char_boundary(text, measure_end.min(text.len()));
+        let mut byte_off = line_start;
+        for ch in text[flat_slice_s..flat_slice_e].chars() {
+            let i     = byte_off - line_start;
+            let next  = byte_off + ch.len_utf8();
+            let ni    = (next - line_start).min(line.char_x.len() - 1);
+            let x0 = line.char_x[i];
+            let x1 = line.char_x[ni];
+            if rel_x < x0 + (x1 - x0) / 2.0 { return byte_off; }
+            byte_off = next;
         }
-        // Clamp to a valid char boundary
-        while best_off > line.text_start && !text.is_char_boundary(best_off) {
-            best_off -= 1;
-        }
-        return best_off.min(measure_end);
+        return measure_end;
     }
+
     // Strip trailing newline from measurement
     let measure_end = if line_end > line.text_start
         && line_end <= text.len()

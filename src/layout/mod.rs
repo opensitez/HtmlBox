@@ -216,6 +216,10 @@ pub struct LayoutEngine {
     pub font_system: Option<*mut cosmic_text::FontSystem>,
     /// Custom component registry for custom tags
     pub component_registry: ComponentRegistry,
+    /// Device pixel ratio (e.g. 2.0 on HiDPI/Retina). Used so that char_x
+    /// positions are shaped at physical pixel size — matching the renderer —
+    /// giving accurate click↔caret mapping on every display density.
+    pub scale: f32,
 }
 
 impl LayoutEngine {
@@ -226,6 +230,7 @@ impl LayoutEngine {
             viewport_h: 700.0,
             font_system: None,
             component_registry: ComponentRegistry::default(),
+            scale: 1.0,
         }
     }
 
