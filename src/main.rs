@@ -222,7 +222,8 @@ impl ApplicationHandler for App {
                 };
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        self.renderer.layout_engine().layout(doc, self.width);
+                        // Keystroke changed text only — skip CSS cascade, just re-layout.
+                        self.renderer.layout_engine().layout_no_cascade(doc, self.width);
                         self.request_redraw();
                     }
                 }

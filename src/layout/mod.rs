@@ -267,6 +267,21 @@ impl LayoutEngine {
             self.viewport_w, self.viewport_h, doc.focused_box,
         );
 
+        self.layout_geometry(doc, viewport_width, root_font_px);
+    }
+
+    /// Layout without re-running the CSS cascade.
+    ///
+    /// Use this when only text content changed (e.g. keystrokes in an editable
+    /// element).  Skipping the cascade saves CSS selector matching across every
+    /// element in the tree; the line-cache early-stop then skips unchanged lines.
+    pub fn layout_no_cascade(&mut self, doc: &mut Document, viewport_width: f32) {
+        self.viewport_w = viewport_width;
+        let root_font_px = self.root_font_px;
+        self.layout_geometry(doc, viewport_width, root_font_px);
+    }
+
+    fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
         // Set up root geometry
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);

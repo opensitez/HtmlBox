@@ -17,6 +17,8 @@ pub struct Renderer {
     pub swash_cache: SwashCache,
     pub component_registry: ComponentRegistry,
     scale: f32,
+    /// Reused across draw_text_run calls to avoid per-chunk Buffer allocation.
+    shape_buf: Option<Buffer>,
 }
 
 impl Renderer {
@@ -26,6 +28,7 @@ impl Renderer {
             swash_cache: SwashCache::new(),
             component_registry: ComponentRegistry::default(),
             scale: 1.0,
+            shape_buf: None,
         }
     }
 
@@ -1229,13 +1232,23 @@ impl Renderer {
                 FontStyle::Normal  => CTextStyle::Normal,
             });
 
-        let mut buf = Buffer::new(&mut self.font_system, metrics);
+        // Reuse a single Buffer across calls to avoid per-run allocation.
+        // take() lets us hold a mutable ref to font_system at the same time.
+        if self.shape_buf.is_none() {
+            self.shape_buf = Some(Buffer::new(&mut self.font_system, metrics));
+        }
+        let mut buf = self.shape_buf.take().unwrap();
+        buf.set_metrics(&mut self.font_system, metrics);
         buf.set_size(
             &mut self.font_system,
             None,                           // no width constraint — layout already broke lines
             Some((phys_lh + 4.0).max(1.0)),
         );
-        buf.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);
+        // Adaptive shaping: Basic (no HarfBuzz) for ASCII-only runs (~5× faster);
+        // Advanced (full HarfBuzz) for any non-ASCII text so that Arabic joins,
+        // Hebrew vowels, Devanagari conjuncts, CJK, etc. all render correctly.
+        let shaping = if text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
+        buf.set_text(&mut self.font_system, text, attrs, shaping);
         buf.shape_until_scroll(&mut self.font_system, false);
 
         // Measure the actual advance from the shaped run (physical pixels → logical).
@@ -1246,33 +1259,67 @@ impl Renderer {
         let logical_advance = phys_advance / sc;
 
         // Glyph positions from cosmic-text are in physical pixels.
-        // Draw them directly without a scale transform.
         let phys_x = x * sc;
         let phys_y = y * sc;
 
-        #[derive(Clone)]
-        struct G { x: f32, y: f32, w: f32, h: f32, r: u8, g: u8, b: u8, a: u8 }
-        let mut glyphs: Vec<G> = Vec::new();
-
-        buf.draw(&mut self.font_system, &mut self.swash_cache, color, |gx, gy, gw, gh, gc| {
-            if gc.a() == 0 { return; }
-            glyphs.push(G {
-                x: phys_x + gx as f32, y: phys_y + gy as f32,
-                w: gw as f32, h: gh as f32,
-                r: gc.r(), g: gc.g(), b: gc.b(), a: gc.a(),
+        if mask.is_none() {
+            // ── Fast path ────────────────────────────────────────────────────
+            // Write glyph coverage directly into the pixmap's pixel buffer.
+            // This avoids per-pixel fill_rect overhead (~1 μs/call → ~10 ns/pixel),
+            // which was the dominant render cost for text-heavy documents.
+            let pix_w  = pixmap.width()  as i32;
+            let pix_h  = pixmap.height() as i32;
+            let stride = pix_w as usize;
+            let pixels = pixmap.pixels_mut();
+            buf.draw(&mut self.font_system, &mut self.swash_cache, color, |gx, gy, gw, gh, gc| {
+                let ga = gc.a();
+                if ga == 0 { return; }
+                let bx = phys_x as i32 + gx;
+                let by = phys_y as i32 + gy;
+                let sa = ga as u32;
+                let ia = 255 - sa;
+                // Premultiply source color.
+                let pr = gc.r() as u32 * sa / 255;
+                let pg = gc.g() as u32 * sa / 255;
+                let pb = gc.b() as u32 * sa / 255;
+                for dy in 0..gh as i32 {
+                    let py = by + dy;
+                    if py < 0 || py >= pix_h { continue; }
+                    let row = py as usize * stride;
+                    for dx in 0..gw as i32 {
+                        let px = bx + dx;
+                        if px < 0 || px >= pix_w { continue; }
+                        let dst = &mut pixels[row + px as usize];
+                        // Porter-Duff "over" (premultiplied src over premultiplied dst).
+                        let r = (pr + dst.red()   as u32 * ia / 255) as u8;
+                        let g = (pg + dst.green() as u32 * ia / 255) as u8;
+                        let b = (pb + dst.blue()  as u32 * ia / 255) as u8;
+                        let a = (sa + dst.alpha() as u32 * ia / 255) as u8;
+                        // r <= a is guaranteed by valid premultiplied math, so unwrap is safe.
+                        if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
+                            *dst = p;
+                        }
+                    }
+                }
             });
-        });
-
-        for g in &glyphs {
-            if let Some(r) = SkRect::from_xywh(g.x, g.y, g.w, g.h) {
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(g.r, g.g, g.b, g.a);
-                paint.anti_alias = true;
-                // Glyphs are already in physical pixels; use identity transform.
-                pixmap.fill_rect(r, &paint, Transform::identity(), mask);
-            }
+        } else {
+            // ── Slow path ────────────────────────────────────────────────────
+            // Only reached for rounded-corner overflow clips (rare). Uses fill_rect
+            // so the pixel-level mask is respected.
+            buf.draw(&mut self.font_system, &mut self.swash_cache, color, |gx, gy, gw, gh, gc| {
+                if gc.a() == 0 { return; }
+                if let Some(rect) = SkRect::from_xywh(
+                    phys_x + gx as f32, phys_y + gy as f32, gw as f32, gh as f32,
+                ) {
+                    let mut paint = Paint::default();
+                    paint.set_color_rgba8(gc.r(), gc.g(), gc.b(), gc.a());
+                    paint.anti_alias = true;
+                    pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+                }
+            });
         }
 
+        self.shape_buf = Some(buf);
         logical_advance
     }
 
@@ -1692,11 +1739,11 @@ fn make_overflow_clip_mask(
     scale: f32,
 ) -> Option<Mask> {
     if pw <= 0.0 || ph <= 0.0 { return None; }
-    let path = if radius > 0.0 {
-        rounded_rect_path(px, py, pw, ph, radius)?
-    } else {
-        rect_path(px, py, pw, ph)?
-    };
+    // For rectangular clips (no border-radius) we skip the full-viewport Mask allocation
+    // (~2-10 MB per element) and rely on the child_clip rect for culling instead.
+    // Only rounded corners genuinely need a pixel-level mask.
+    if radius <= 0.0 { return None; }
+    let path = rounded_rect_path(px, py, pw, ph, radius)?;
     let ts = Transform::from_scale(scale, scale);
     let mut mask = Mask::new(pixmap.width(), pixmap.height())?;
     mask.fill_path(&path, FillRule::Winding, true, ts);
