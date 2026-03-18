@@ -945,7 +945,7 @@ impl Renderer {
                 // Radius = distance from centre to corner, matching the old implementation.
                 let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
                 let center = SkPoint::from_xy(cx, cy);
-                RadialGradient::new(center, center, r, sk_stops, SpreadMode::Pad, Transform::identity())
+                RadialGradient::new(center, 0.0, center, r, sk_stops, SpreadMode::Pad, Transform::identity())
             }
             GradientType::None => return,
         };
