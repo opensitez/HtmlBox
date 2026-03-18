@@ -90,6 +90,27 @@ pub fn layout_inline_block(
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
             engine.layout_box(&mut node.children[ci], content_w,
                                0.0, 0.0, font_px, root_font_px);
+            // Shrink-to-fit for auto-width inline-block (CSS §10.3.9):
+            // InlineBlock with width:auto should size to content, not expand to fill container.
+            if node.children[ci].style.width.is_auto() {
+                // Use line.width (raw text content width) not line.x + line.width - origin,
+                // because line.x includes the text-align centering offset which inflates
+                // the result when text-align:center is inherited.
+                let max_line_w = node.children[ci].line_cache.iter()
+                    .map(|l| l.width)
+                    .fold(0.0_f32, f32::max);
+                if max_line_w > 0.0 {
+                    let irb = &node.children[ci];
+                    let shrink_w = max_line_w
+                        + irb.resolved_pad_left + irb.resolved_pad_right
+                        + irb.resolved_border_left + irb.resolved_border_right
+                        + irb.resolved_margin_left + irb.resolved_margin_right;
+                    if shrink_w < content_w {
+                        engine.layout_box(&mut node.children[ci], shrink_w,
+                                           0.0, 0.0, font_px, root_font_px);
+                    }
+                }
+            }
         } else if !matches!(node.children[ci].style.float, crate::types::Float::None) {
             // Float children need to be laid out to get valid dimensions.
             engine.layout_box(&mut node.children[ci], content_w,

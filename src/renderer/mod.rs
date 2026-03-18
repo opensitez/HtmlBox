@@ -86,7 +86,19 @@ impl Renderer {
             .map(|(ptr, _)| ptr)
             .unwrap_or(std::ptr::null());
         self.scale = scale;
-        pixmap.fill(tiny_skia::Color::WHITE);
+        // CSS canvas background: use the body element's background if set,
+        // otherwise fall back to the root (html) element's background, then white.
+        let canvas_color = doc.root.children.iter()
+            .find(|c| c.tag == "body")
+            .map(|body| body.style.background_color)
+            .filter(|c| c.a > 0)
+            .or_else(|| {
+                let c = doc.root.style.background_color;
+                if c.a > 0 { Some(c) } else { None }
+            })
+            .map(|c| c.to_tiny_skia())
+            .unwrap_or(tiny_skia::Color::WHITE);
+        pixmap.fill(canvas_color);
         // Clip rect in logical pixels (layout coordinates).
         let w = pixmap.width()  as f32 / self.scale;
         let h = pixmap.height() as f32 / self.scale;

@@ -796,6 +796,21 @@ fn finish_grid(
         node.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
     );
     node.baseline = node.content_rect.y + ch;
+
+    node.resolved_margin_top    = rbox.margin_top;
+    node.resolved_margin_right  = rbox.margin_right;
+    node.resolved_margin_bottom = rbox.margin_bottom;
+    node.resolved_margin_left   = rbox.margin_left;
+    node.resolved_border_top    = rbox.border_top;
+    node.resolved_border_right  = rbox.border_right;
+    node.resolved_border_bottom = rbox.border_bottom;
+    node.resolved_border_left   = rbox.border_left;
+    node.resolved_pad_top       = rbox.padding_top;
+    node.resolved_pad_right     = rbox.padding_right;
+    node.resolved_pad_bottom    = rbox.padding_bottom;
+    node.resolved_pad_left      = rbox.padding_left;
+    node.resolved_content_width = content_w;
+
     node.margin_rect.h
 }
 
