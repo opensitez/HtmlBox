@@ -678,7 +678,8 @@ fn finish_flex(
 }
 
 fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, root_font_px: f32) {
-    let containing_rect = node.content_rect;
+    // CSS spec: containing block for absolutely positioned children is the padding box.
+    let containing_rect = node.padding_rect;
     let indices: Vec<usize> = node.children.iter().enumerate()
         .filter(|(_, c)| matches!(c.style.position, Position::Absolute | Position::Fixed))
         .map(|(i, _)| i)
