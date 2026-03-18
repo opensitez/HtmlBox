@@ -93,15 +93,15 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
 "##;
 
 struct App {
-    window:    Option<Arc<Window>>,
-    platform:  Option<Platform>,
-    renderer:  Renderer,
-    doc:       Option<Document>,
-    width:     f32,
-    height:    f32,
-    scale:     f32,
-    mouse_x:   f32,
-    mouse_y:   f32,
+    window:   Option<Arc<Window>>,
+    platform: Option<Platform>,
+    renderer: Renderer,
+    doc:      Option<Document>,
+    width:    f32,
+    height:   f32,
+    scale:    f32,
+    mouse_x:  f32,
+    mouse_y:  f32,
 }
 
 impl App {
@@ -140,6 +140,12 @@ impl ApplicationHandler for App {
             (Some(w), Some(p)) => (w, p),
             _ => return,
         };
+        // Built-in zoom: pinch, Ctrl+Wheel, Ctrl+=/−/0.
+        if self.renderer.handle_window_event(&event) {
+            self.request_redraw();
+            return;
+        }
+
         match event {
             WindowEvent::CloseRequested => { event_loop.exit(); }
             WindowEvent::Focused(focused) => {
@@ -163,9 +169,10 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y * 20.0,
                     winit::event::MouseScrollDelta::PixelDelta(p)   => p.y as f32 / platform.scale_factor(),
                 };
+                let zoom = self.renderer.zoom;
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
                 if let Some(doc) = self.doc.as_mut() {
-                    let doc_pt = (mx / sc, my / sc + doc.scroll_y);
+                    let doc_pt = (mx / sc / zoom, my / sc / zoom + doc.scroll_y);
                     doc.process_wheel_event(doc_pt, dy);
                 }
                 self.request_redraw();
@@ -173,6 +180,7 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_x = position.x as f32;
                 self.mouse_y = position.y as f32;
+                let zoom = self.renderer.zoom;
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
                 let (sx, sy) = (mx / sc, my / sc);
                 if let Some(doc) = self.doc.as_mut() {
@@ -180,7 +188,7 @@ impl ApplicationHandler for App {
                     if sb {
                         self.request_redraw();
                     } else {
-                        let pt = (sx, sy + doc.scroll_y);
+                        let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                         if doc.process_mouse_event(HtmlEventType::MouseMove, pt, 0) {
                             self.request_redraw();
                         }
@@ -194,13 +202,14 @@ impl ApplicationHandler for App {
                     MouseButton::Right  => 2,
                     _ => 0,
                 };
+                let zoom = self.renderer.zoom;
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
                 let (sx, sy) = (mx / sc, my / sc);
                 if state == ElementState::Pressed {
                     if let Some(doc) = self.doc.as_mut() {
                         let sb = doc.process_scrollbar_event(HtmlEventType::MouseDown, sx, sy, self.width, self.height);
                         if !sb {
-                            let pt = (sx, sy + doc.scroll_y);
+                            let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                             doc.process_mouse_event(HtmlEventType::MouseDown, pt, bt);
                         }
                         self.request_redraw();
@@ -208,7 +217,7 @@ impl ApplicationHandler for App {
                 } else {
                     if let Some(doc) = self.doc.as_mut() {
                         doc.process_scrollbar_event(HtmlEventType::MouseUp, sx, sy, self.width, self.height);
-                        let pt = (sx, sy + doc.scroll_y);
+                        let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                         doc.process_mouse_event(HtmlEventType::MouseUp, pt, bt);
                         self.request_redraw();
                     }
@@ -223,8 +232,6 @@ impl ApplicationHandler for App {
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
                         let mut engine = self.renderer.layout_engine();
-                        // Enter/Backspace/Delete can modify DOM structure → need full cascade.
-                        // Plain character keys only change text → skip cascade for speed.
                         if ch.is_some() && key_code >= 32 {
                             engine.layout_no_cascade(doc, self.width);
                         } else {

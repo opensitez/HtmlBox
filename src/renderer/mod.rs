@@ -5,6 +5,8 @@ use cosmic_text::{
     Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache,
     Style as CTextStyle, Weight,
 };
+use winit::event::{TouchPhase, WindowEvent};
+use winit::keyboard::Key;
 use crate::types::*;
 use crate::layout::inline_layout::collect_flat_text;
 
@@ -16,9 +18,17 @@ pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
     pub component_registry: ComponentRegistry,
+    /// Zoom level: 1.0 = 100%, 2.0 = 200%, 0.5 = 50%.
+    /// Updated automatically by `handle_window_event` (pinch, Ctrl+Wheel, Ctrl+=/−/0).
+    /// Can also be set directly by the host.
+    pub zoom: f32,
     scale: f32,
     /// Reused across draw_text_run calls to avoid per-chunk Buffer allocation.
     shape_buf: Option<Buffer>,
+    // ── Internal state for handle_window_event ────────────────────────────────
+    ctrl_held:  bool,
+    touches:    std::collections::HashMap<u64, (f64, f64)>,
+    pinch_dist: Option<f32>,
 }
 
 impl Renderer {
@@ -27,8 +37,99 @@ impl Renderer {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             component_registry: ComponentRegistry::default(),
+            zoom: 1.0,
             scale: 1.0,
             shape_buf: None,
+            ctrl_held:  false,
+            touches:    std::collections::HashMap::new(),
+            pinch_dist: None,
+        }
+    }
+
+    /// Handle a winit `WindowEvent` for built-in zoom behaviour.
+    ///
+    /// Call this from your event loop **before** your own event handling.
+    /// Returns `true` if `zoom` changed and a redraw should be requested.
+    ///
+    /// Events handled:
+    /// - `PinchGesture`        — two-finger trackpad pinch (macOS / iOS)
+    /// - `Touch`               — two-finger pinch on a touchscreen
+    /// - `ModifiersChanged`    — tracks the Ctrl key for the shortcuts below
+    /// - `MouseWheel`+Ctrl     — zoom in/out with the scroll wheel
+    /// - `KeyboardInput`+Ctrl  — `=`/`+` zoom in, `-` zoom out, `0` reset
+    pub fn handle_window_event(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::ModifiersChanged(mods) => {
+                self.ctrl_held = mods.state().control_key();
+                false
+            }
+            // macOS / iOS trackpad pinch — delta is a fractional scale per event.
+            WindowEvent::PinchGesture { delta, .. } => {
+                self.zoom = (self.zoom * (1.0 + *delta as f32)).clamp(0.1, 8.0);
+                true
+            }
+            // Touchscreen two-finger pinch.
+            WindowEvent::Touch(winit::event::Touch { phase, location, id, .. }) => {
+                match phase {
+                    TouchPhase::Started => {
+                        self.touches.insert(*id, (location.x, location.y));
+                        false
+                    }
+                    TouchPhase::Moved => {
+                        self.touches.insert(*id, (location.x, location.y));
+                        if self.touches.len() == 2 {
+                            let pts: Vec<(f64, f64)> = self.touches.values().copied().collect();
+                            let dx = pts[0].0 - pts[1].0;
+                            let dy = pts[0].1 - pts[1].1;
+                            let new_dist = ((dx * dx + dy * dy) as f32).sqrt();
+                            let changed = if let Some(prev) = self.pinch_dist {
+                                if prev > 1.0 {
+                                    self.zoom = (self.zoom * new_dist / prev).clamp(0.1, 8.0);
+                                    true
+                                } else { false }
+                            } else { false };
+                            self.pinch_dist = Some(new_dist);
+                            changed
+                        } else { false }
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        self.touches.remove(id);
+                        if self.touches.len() < 2 { self.pinch_dist = None; }
+                        false
+                    }
+                }
+            }
+            // Ctrl+Wheel zooms; plain wheel is left for the app to handle (scrolling).
+            WindowEvent::MouseWheel { delta, .. } if self.ctrl_held => {
+                let dy = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
+                    winit::event::MouseScrollDelta::PixelDelta(p)   => p.y as f32 / 20.0,
+                };
+                let factor = 1.1f32.powf(dy);
+                self.zoom = (self.zoom * factor).clamp(0.1, 8.0);
+                true
+            }
+            // Ctrl+=/+/−/0 keyboard shortcuts.
+            WindowEvent::KeyboardInput { event, .. }
+                if self.ctrl_held && event.state == winit::event::ElementState::Pressed =>
+            {
+                match &event.logical_key {
+                    Key::Character(s) if s == "=" || s == "+" => {
+                        self.zoom = (self.zoom * 1.2).clamp(0.1, 8.0);
+                        true
+                    }
+                    Key::Character(s) if s == "-" => {
+                        self.zoom = (self.zoom / 1.2).clamp(0.1, 8.0);
+                        true
+                    }
+                    Key::Character(s) if s == "0" => {
+                        self.zoom = 1.0;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 
@@ -90,6 +191,7 @@ impl Renderer {
             .map(|(ptr, _)| ptr)
             .unwrap_or(std::ptr::null());
         self.scale = scale;
+        let zoom = self.zoom.clamp(0.1, 8.0);
         // CSS canvas background: use the body element's background if set,
         // otherwise fall back to the root (html) element's background, then white.
         let canvas_color = doc.root.children.iter()
@@ -103,17 +205,28 @@ impl Renderer {
             .map(|c| c.to_tiny_skia())
             .unwrap_or(tiny_skia::Color::WHITE);
         pixmap.fill(canvas_color);
-        // Clip rect in logical pixels (layout coordinates).
+        // Logical viewport dimensions (physical pixels / DPI scale).
         let w = pixmap.width()  as f32 / self.scale;
         let h = pixmap.height() as f32 / self.scale;
-        let clip = Rect::new(0.0, 0.0, w, h);
+        // Visible portion of the document (in layout/logical coordinates).
+        // At zoom=1 this equals the full viewport; at zoom=2 it's half as large.
+        let view_w = w / zoom;
+        let view_h = h / zoom;
+        // Culling clip uses the visible document area, not the full viewport.
+        let clip = Rect::new(0.0, 0.0, view_w, view_h);
 
         // Clamp scroll so the document never scrolls past its own end; write back.
         let doc_h = doc.root.margin_rect.h;
-        doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - h).max(0.0));
+        doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
         doc.scroll_x = doc.scroll_x.max(0.0);
         let scroll_x = doc.scroll_x;
         let scroll_y = doc.scroll_y;
+
+        // Bake zoom into self.scale for all content drawing this frame.
+        // draw_text_run shapes text at font_px * self.scale physical pixels, so
+        // including zoom here gives sharper glyph rasterization at higher zoom levels.
+        // Restored to DPI-only scale after content is drawn (before scrollbar).
+        self.scale = scale * zoom;
 
         let hovered_ptr = doc.hovered_box;
         let active_ptr  = doc.active_box;
@@ -139,15 +252,18 @@ impl Renderer {
             }
         }
 
+        // Restore DPI-only scale: the scrollbar is viewport UI, not document content.
+        self.scale = scale;
+
         // ── Viewport scrollbar (auto — visible whenever content overflows) ────
-        if doc_h > h {
+        if doc_h > view_h {
             let thumb_col = doc.root.style.scrollbar_thumb_color
                 .unwrap_or(Color::rgba(128, 128, 128, 160));
             let track_col = doc.root.style.scrollbar_track_color
                 .unwrap_or(Color::rgba(128, 128, 128, 40));
             let track_h = h;
-            let thumb_h = (track_h * track_h / doc_h).max(20.0);
-            let max_s   = doc_h - h;
+            let thumb_h = (track_h * view_h / doc_h).max(20.0);
+            let max_s   = doc_h - view_h;
             let thumb_y = if max_s > 0.0 { scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
             let track_x = w - SCROLLBAR_WIDTH;
             let ts = Transform::from_scale(self.scale, self.scale);
