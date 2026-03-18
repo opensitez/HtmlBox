@@ -315,11 +315,17 @@ pub fn layout_inline_block(
             }
         }
 
-        // Measure content width (omit trailing forced-break item width)
-        let content_line_w: f32 = line_items.iter()
-            .filter(|it| !matches!(it.kind, InlineItemKind::Break))
-            .map(|it| it.advance)
-            .sum();
+        // Measure content width: CSS requires stripping leading/trailing
+        // collapsible whitespace from each line before alignment.
+        // Find the first and last non-space, non-break items.
+        let first_content = line_items.iter()
+            .position(|it| !it.is_space && !matches!(it.kind, InlineItemKind::Break));
+        let last_content = line_items.iter()
+            .rposition(|it| !it.is_space && !matches!(it.kind, InlineItemKind::Break));
+        let content_line_w: f32 = match (first_content, last_content) {
+            (Some(f), Some(l)) => line_items[f..=l].iter().map(|it| it.advance).sum(),
+            _ => 0.0,
+        };
 
         // Resolve text-align Start/End based on direction
         let effective_align = match node.style.text_align {
@@ -352,15 +358,31 @@ pub fn layout_inline_block(
             + if is_first_line { before_w } else { 0.0 }
             + if is_last_line  { after_w  } else { 0.0 };
 
-        // Compute text range for this line (needed for early-stop and LayoutLine)
-        let text_s = line_items.iter().filter_map(|it| {
+        // Compute text range for this line, stripping leading/trailing collapsible
+        // whitespace per CSS §16.6.1. Use first_content/last_content from above.
+        let content_items = match (first_content, last_content) {
+            (Some(f), Some(l)) => &line_items[f..=l],
+            _ => &line_items[0..0],
+        };
+        let text_s = content_items.iter().filter_map(|it| {
             if let InlineItemKind::Text { text_start, .. } = &it.kind { Some(*text_start) } else { None }
-        }).min().unwrap_or(0);
-        let text_e = line_items.iter().filter_map(|it| {
+        }).min().unwrap_or_else(|| {
+            // Fallback: use any item if all are spaces
+            line_items.iter().filter_map(|it| {
+                if let InlineItemKind::Text { text_start, .. } = &it.kind { Some(*text_start) } else { None }
+            }).min().unwrap_or(0)
+        });
+        let text_e = content_items.iter().filter_map(|it| {
             if let InlineItemKind::Text { text_start, text_len, .. } = &it.kind {
                 Some(text_start + text_len)
             } else { None }
-        }).max().unwrap_or(text_s);
+        }).max().unwrap_or_else(|| {
+            line_items.iter().filter_map(|it| {
+                if let InlineItemKind::Text { text_start, text_len, .. } = &it.kind {
+                    Some(text_start + text_len)
+                } else { None }
+            }).max().unwrap_or(text_s)
+        });
 
         // Early-stop: if matching an old cached line with same breaks at same X and Y
         // (only when no floats involved; check x so different column positions don't reuse cache)
