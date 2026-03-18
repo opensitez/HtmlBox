@@ -260,6 +260,13 @@ impl LayoutEngine {
         self.viewport_w = viewport_width;
         let root_font_px = self.root_font_px;
 
+        // Re-run CSS cascade with current viewport so @media queries reflect the real window size.
+        let ss = doc.stylesheet.clone();
+        crate::css::apply_cascade_vp(
+            &mut doc.root, &ss, None, root_font_px,
+            self.viewport_w, self.viewport_h, doc.focused_box,
+        );
+
         // Set up root geometry
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);

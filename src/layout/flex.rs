@@ -185,7 +185,13 @@ pub fn layout_flex(
     }
 
     if items.is_empty() {
-        let ch = rbox.content_height.unwrap_or(0.0);
+        let ch = if let Some(h) = rbox.content_height {
+            h
+        } else if let Some(ratio) = node.style.aspect_ratio {
+            if ratio > 0.0 { (content_w / ratio).max(0.0) } else { 0.0 }
+        } else {
+            0.0
+        };
         finish_flex(node, rbox, content_x, content_y, content_w, ch);
         node.collapsed_margin_top    = rbox.margin_top;
         node.collapsed_margin_bottom = rbox.margin_bottom;

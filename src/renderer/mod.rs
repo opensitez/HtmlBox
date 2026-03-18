@@ -298,7 +298,7 @@ impl Renderer {
         if node.style.gradient_type != GradientType::None
             && node.style.gradient_stops.len() >= 2
         {
-            self.draw_gradient(node, pixmap, sx, sy, radius);
+            self.draw_gradient(node, pixmap, sx, sy, radius, eff_mask);
         }
 
         // ── Inset box-shadow (after background, before borders) ───────────────
@@ -642,7 +642,7 @@ impl Renderer {
 
     // ─── Gradient ────────────────────────────────────────────────────────────
 
-    fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, radius: f32) {
+    fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, radius: f32, clip_mask: Option<&Mask>) {
         let pr = node.padding_rect;
         let sc = self.scale;
         // Work in physical pixels: scale logical coords/sizes to match the pixmap.
@@ -679,6 +679,22 @@ impl Renderer {
             if near_right && near_bottom {
                 let dx = x - (w - r_px); let dy = y - (h - r_px);
                 return dx * dx + dy * dy <= r_px * r_px;
+            }
+            true
+        };
+
+        // Check whether a physical-pixel screen coordinate is inside the clip mask.
+        let pix_w_u = pixmap.width()  as usize;
+        let pix_h_u = pixmap.height() as usize;
+        let mask_data: Option<(&[u8], usize)> = clip_mask.map(|m| (m.data(), pix_w_u));
+        let in_clip_mask = |screen_x: i32, screen_y: i32| -> bool {
+            if let Some((data, w)) = mask_data {
+                let x = screen_x as usize;
+                let y = screen_y as usize;
+                if x < w && y < pix_h_u {
+                    return data[y * w + x] > 0;
+                }
+                return false;
             }
             true
         };
@@ -730,6 +746,7 @@ impl Renderer {
                         let c  = interp_color(t);
                         let screen_x = ox + px2;
                         let screen_y = oy + py2;
+                        if !in_clip_mask(screen_x, screen_y) { continue; }
                         if screen_x >= 0 && screen_x < pix_w && screen_y >= 0 && screen_y < pix_h {
                             let idx = (screen_y * pix_w + screen_x) as usize;
                             let af  = c.a as f32 / 255.0;
@@ -756,6 +773,7 @@ impl Renderer {
                         let c    = interp_color(t);
                         let screen_x = ox + px2;
                         let screen_y = oy + py2;
+                        if !in_clip_mask(screen_x, screen_y) { continue; }
                         if screen_x >= 0 && screen_x < pix_w && screen_y >= 0 && screen_y < pix_h {
                             let idx = (screen_y * pix_w + screen_x) as usize;
                             if let Some(pv) = tiny_skia::PremultipliedColorU8::from_rgba(c.r, c.g, c.b, c.a) {
