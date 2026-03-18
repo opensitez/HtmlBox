@@ -818,14 +818,36 @@ pub fn parse_selector(s: &str) -> CssSelector {
     while let Some(&ch) = chars.peek() {
         match ch {
             ' ' | '\t' | '\n' => {
-                chars.next();
-                // Check for combinators
+                // Consume all leading whitespace
+                while matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n')) {
+                    chars.next();
+                }
+                // Determine combinator based on the next non-whitespace character
                 let next_non_ws = chars.peek().copied();
                 match next_non_ws {
-                    Some('>') => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::Child)); }
-                    Some('+') => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::AdjacentSibling)); }
-                    Some('~') => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::GeneralSibling)); }
-                    _         => { parts.push(SelectorPart::Combinator(Combinator::Descendant)); }
+                    Some('>') => {
+                        chars.next();
+                        // Skip any whitespace after the '>'
+                        while matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n')) {
+                            chars.next();
+                        }
+                        parts.push(SelectorPart::Combinator(Combinator::Child));
+                    }
+                    Some('+') => {
+                        chars.next();
+                        while matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n')) {
+                            chars.next();
+                        }
+                        parts.push(SelectorPart::Combinator(Combinator::AdjacentSibling));
+                    }
+                    Some('~') => {
+                        chars.next();
+                        while matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n')) {
+                            chars.next();
+                        }
+                        parts.push(SelectorPart::Combinator(Combinator::GeneralSibling));
+                    }
+                    _ => { parts.push(SelectorPart::Combinator(Combinator::Descendant)); }
                 }
             }
             '>' => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::Child)); }

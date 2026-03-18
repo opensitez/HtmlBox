@@ -128,8 +128,20 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                 + ch.resolved_margin_left + ch.resolved_margin_right;
             if total > w { w = total; }
         } else {
-            // Use origin-relative position for non-block children (e.g. fixed-width blocks, images)
-            let rw = (ch.margin_rect.x - origin) + ch.margin_rect.w;
+            // Fixed-width or non-block child. Avoid counting auto margins (e.g. `margin: 0 auto`
+            // on a centered image): those expand to the container width during layout but are
+            // not part of the element's intrinsic size.
+            let has_auto_h_margin = ch.style.margin_left.is_auto() || ch.style.margin_right.is_auto();
+            let rw = if has_auto_h_margin {
+                // Content + padding + border + any non-auto margins.
+                ch.content_rect.w
+                    + ch.resolved_pad_left   + ch.resolved_pad_right
+                    + ch.resolved_border_left + ch.resolved_border_right
+                    + (if ch.style.margin_left.is_auto()  { 0.0 } else { ch.resolved_margin_left  })
+                    + (if ch.style.margin_right.is_auto() { 0.0 } else { ch.resolved_margin_right })
+            } else {
+                (ch.margin_rect.x - origin) + ch.margin_rect.w
+            };
             if rw > w { w = rw; }
         }
     }

@@ -298,7 +298,7 @@ impl Renderer {
         if node.style.gradient_type != GradientType::None
             && node.style.gradient_stops.len() >= 2
         {
-            self.draw_gradient(node, pixmap, sx, sy, radius, eff_mask);
+            self.draw_gradient(node, pixmap, px, py, pw, ph, radius, elem_ts, eff_mask);
         }
 
         // ── Inset box-shadow (after background, before borders) ───────────────
@@ -642,148 +642,72 @@ impl Renderer {
 
     // ─── Gradient ────────────────────────────────────────────────────────────
 
-    fn draw_gradient(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, radius: f32, clip_mask: Option<&Mask>) {
-        let pr = node.padding_rect;
-        let sc = self.scale;
-        // Work in physical pixels: scale logical coords/sizes to match the pixmap.
-        let pw = (pr.w * sc) as i32;
-        let ph = (pr.h * sc) as i32;
-        if pw <= 0 || ph <= 0 { return; }
-        let ox = ((pr.x - sx) * sc) as i32;
-        let oy = ((pr.y - sy) * sc) as i32;
-
-        // Pre-compute corner-clipping radius in physical pixels.
-        let r_px = (radius * sc).min(pw as f32 / 2.0).min(ph as f32 / 2.0);
-        let in_rounded_rect = |px2: i32, py2: i32| -> bool {
-            if r_px <= 0.0 { return true; }
-            let x = px2 as f32 + 0.5;
-            let y = py2 as f32 + 0.5;
-            let w = pw as f32;
-            let h = ph as f32;
-            let near_left   = x < r_px;
-            let near_right  = x > w - r_px;
-            let near_top    = y < r_px;
-            let near_bottom = y > h - r_px;
-            if near_left && near_top {
-                let dx = x - r_px; let dy = y - r_px;
-                return dx * dx + dy * dy <= r_px * r_px;
-            }
-            if near_right && near_top {
-                let dx = x - (w - r_px); let dy = y - r_px;
-                return dx * dx + dy * dy <= r_px * r_px;
-            }
-            if near_left && near_bottom {
-                let dx = x - r_px; let dy = y - (h - r_px);
-                return dx * dx + dy * dy <= r_px * r_px;
-            }
-            if near_right && near_bottom {
-                let dx = x - (w - r_px); let dy = y - (h - r_px);
-                return dx * dx + dy * dy <= r_px * r_px;
-            }
-            true
+    fn draw_gradient(
+        &self,
+        node: &HtmlBox,
+        pixmap: &mut Pixmap,
+        px: f32, py: f32, pw: f32, ph: f32,
+        radius: f32,
+        elem_ts: Transform,
+        mask: Option<&Mask>,
+    ) {
+        use tiny_skia::{
+            LinearGradient, RadialGradient,
+            GradientStop as SkStop, SpreadMode, Point as SkPoint,
         };
 
-        // Check whether a physical-pixel screen coordinate is inside the clip mask.
-        let pix_w_u = pixmap.width()  as usize;
-        let pix_h_u = pixmap.height() as usize;
-        let mask_data: Option<(&[u8], usize)> = clip_mask.map(|m| (m.data(), pix_w_u));
-        let in_clip_mask = |screen_x: i32, screen_y: i32| -> bool {
-            if let Some((data, w)) = mask_data {
-                let x = screen_x as usize;
-                let y = screen_y as usize;
-                if x < w && y < pix_h_u {
-                    return data[y * w + x] > 0;
-                }
-                return false;
-            }
-            true
-        };
+        if pw <= 0.0 || ph <= 0.0 { return; }
 
-        let stops = &node.style.gradient_stops;
+        // Convert our gradient stops to tiny-skia's format.
+        let sk_stops: Vec<SkStop> = node.style.gradient_stops.iter()
+            .map(|s| SkStop::new(
+                s.position,
+                tiny_skia::Color::from_rgba8(s.color.r, s.color.g, s.color.b, s.color.a),
+            ))
+            .collect();
+        if sk_stops.len() < 2 { return; }
 
-        let interp_color = |t: f32| -> Color {
-            let t = t.max(0.0).min(1.0);
-            if t <= stops.first().unwrap().position { return stops.first().unwrap().color; }
-            if t >= stops.last().unwrap().position  { return stops.last().unwrap().color;  }
-            for i in 0..stops.len() - 1 {
-                if t >= stops[i].position && t <= stops[i+1].position {
-                    let range = stops[i+1].position - stops[i].position;
-                    let f = if range > 0.0 { (t - stops[i].position) / range } else { 0.0 };
-                    let c1 = stops[i].color;
-                    let c2 = stops[i+1].color;
-                    return Color::rgba(
-                        (c1.r as f32 + (c2.r as f32 - c1.r as f32) * f) as u8,
-                        (c1.g as f32 + (c2.g as f32 - c1.g as f32) * f) as u8,
-                        (c1.b as f32 + (c2.b as f32 - c1.b as f32) * f) as u8,
-                        (c1.a as f32 + (c2.a as f32 - c1.a as f32) * f) as u8,
-                    );
-                }
-            }
-            stops.last().unwrap().color
-        };
+        let mut paint = Paint::default();
+        paint.anti_alias = true;
 
-        let pix_w = pixmap.width()  as i32;
-        let pix_h = pixmap.height() as i32;
-        let data  = pixmap.pixels_mut();
-
-        match node.style.gradient_type {
+        let shader = match node.style.gradient_type {
             GradientType::Linear => {
                 let angle = node.style.gradient_angle;
-                let rad   = angle * std::f32::consts::PI / 180.0;
-                let dx    = rad.sin();
-                let dy    = -rad.cos();
-                let corners  = [0.0f32, dx, dy, dx + dy];
-                let t_min    = corners.iter().cloned().fold(f32::MAX, f32::min);
-                let t_max    = corners.iter().cloned().fold(f32::MIN, f32::max);
-                let t_range  = if (t_max - t_min) < 0.001 { 1.0 } else { t_max - t_min };
-
-                for py2 in 0..ph {
-                    let ny = py2 as f32 / (ph - 1).max(1) as f32;
-                    for px2 in 0..pw {
-                        if !in_rounded_rect(px2, py2) { continue; }
-                        let nx = px2 as f32 / (pw - 1).max(1) as f32;
-                        let t  = (nx * dx + ny * dy - t_min) / t_range;
-                        let c  = interp_color(t);
-                        let screen_x = ox + px2;
-                        let screen_y = oy + py2;
-                        if !in_clip_mask(screen_x, screen_y) { continue; }
-                        if screen_x >= 0 && screen_x < pix_w && screen_y >= 0 && screen_y < pix_h {
-                            let idx = (screen_y * pix_w + screen_x) as usize;
-                            let af  = c.a as f32 / 255.0;
-                            let ex  = data[idx];
-                            let nr  = (c.r as f32 * af + ex.red()   as f32 * (1.0 - af)) as u8;
-                            let ng  = (c.g as f32 * af + ex.green() as f32 * (1.0 - af)) as u8;
-                            let nb  = (c.b as f32 * af + ex.blue()  as f32 * (1.0 - af)) as u8;
-                            if let Some(pv) = tiny_skia::PremultipliedColorU8::from_rgba(nr, ng, nb, 255) {
-                                data[idx] = pv;
-                            }
-                        }
-                    }
-                }
+                let rad = angle * std::f32::consts::PI / 180.0;
+                let dx = rad.sin();
+                let dy = -rad.cos();
+                // Find the corners (in normalised [0,1] box space) where the
+                // gradient projection is minimal (t=0) and maximal (t=1).
+                let start_nx: f32 = if dx >= 0.0 { 0.0 } else { 1.0 };
+                let start_ny: f32 = if dy >= 0.0 { 0.0 } else { 1.0 };
+                let start = SkPoint::from_xy(px + start_nx * pw, py + start_ny * ph);
+                let end   = SkPoint::from_xy(px + (1.0 - start_nx) * pw, py + (1.0 - start_ny) * ph);
+                LinearGradient::new(start, end, sk_stops, SpreadMode::Pad, Transform::identity())
             }
             GradientType::Radial => {
-                let cx    = pw as f32 / 2.0;
-                let cy    = ph as f32 / 2.0;
-                let max_r = (cx * cx + cy * cy).sqrt().max(1.0);
-                for py2 in 0..ph {
-                    for px2 in 0..pw {
-                        if !in_rounded_rect(px2, py2) { continue; }
-                        let dist = ((px2 as f32 - cx).powi(2) + (py2 as f32 - cy).powi(2)).sqrt();
-                        let t    = dist / max_r;
-                        let c    = interp_color(t);
-                        let screen_x = ox + px2;
-                        let screen_y = oy + py2;
-                        if !in_clip_mask(screen_x, screen_y) { continue; }
-                        if screen_x >= 0 && screen_x < pix_w && screen_y >= 0 && screen_y < pix_h {
-                            let idx = (screen_y * pix_w + screen_x) as usize;
-                            if let Some(pv) = tiny_skia::PremultipliedColorU8::from_rgba(c.r, c.g, c.b, c.a) {
-                                data[idx] = pv;
-                            }
-                        }
-                    }
-                }
+                let cx = px + pw / 2.0;
+                let cy = py + ph / 2.0;
+                // Radius = distance from centre to corner, matching the old implementation.
+                let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
+                let center = SkPoint::from_xy(cx, cy);
+                RadialGradient::new(center, center, r, sk_stops, SpreadMode::Pad, Transform::identity())
             }
-            GradientType::None => {}
+            GradientType::None => return,
+        };
+
+        paint.shader = match shader {
+            Some(s) => s,
+            None => return,
+        };
+
+        // Draw via fill_path / fill_rect so elem_ts (CSS transform + DPI scale)
+        // is applied automatically — gradients now transform correctly.
+        if radius > 0.0 {
+            if let Some(path) = rounded_rect_path(px, py, pw, ph, radius) {
+                pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, mask);
+            }
+        } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
+            pixmap.fill_rect(r, &paint, elem_ts, mask);
         }
     }
 
