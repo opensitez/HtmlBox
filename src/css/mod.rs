@@ -3424,17 +3424,48 @@ fn apply_cascade_inner(
                     apply_property(&mut style, "height", &format!("{}px", val));
                 }
             }
-            "border" => {
+            "border" if root.tag == "table" => {
+                // HTML border attr on <table>: sets a solid frame and collapses borders
+                // so the table frame and cell borders merge into a single grid (like browsers).
                 if let Ok(w) = val.parse::<f32>() {
-                    let s = format!("{}px solid", w);
-                    apply_property(&mut style, "border", &s);
+                    if w > 0.0 {
+                        apply_property(&mut style, "border", &format!("{}px solid", w));
+                        apply_property(&mut style, "border-collapse", "collapse");
+                    } else {
+                        apply_property(&mut style, "border", "0px solid transparent");
+                    }
                 }
+            }
+            "cellspacing" => {
+                // Maps to CSS border-spacing.
+                if let Ok(n) = val.parse::<f32>() {
+                    apply_property(&mut style, "border-spacing", &format!("{}px", n));
+                } else if val.ends_with("px") {
+                    apply_property(&mut style, "border-spacing", val);
+                }
+            }
+            "cellpadding" => {
+                apply_property(&mut style, "cellpadding", val);
             }
             "dir" => match val.to_ascii_lowercase().as_str() {
                 "rtl" => apply_property(&mut style, "direction", "rtl"),
                 _     => apply_property(&mut style, "direction", "ltr"),
             },
             _ => {}
+        }
+    }
+
+    // HTML: td/th inside a table with border="N" (N>0) get a 1px inset border,
+    // matching browser UA behaviour. Applied at presentational-attribute specificity
+    // so author CSS can override.
+    if matches!(root.tag.as_str(), "td" | "th") {
+        let has_table_border = ancestors.iter().rev().any(|a| {
+            a.tag == "table" && a.attributes.get("border")
+                .and_then(|v| v.parse::<f32>().ok())
+                .map_or(false, |n| n > 0.0)
+        });
+        if has_table_border {
+            apply_property(&mut style, "border", "1px solid");
         }
     }
 
@@ -3532,6 +3563,27 @@ fn apply_cascade_inner(
         for (prop, val) in &decls {
             let resolved = resolve_var_references(val, &stylesheet.variables);
             apply_property(&mut style, prop, &resolved);
+        }
+    }
+
+    // Re-apply table layout HTML attributes after CSS rules so UA/author stylesheets
+    // cannot silently override them (e.g. UA "border-spacing: 2px" must not win over
+    // cellspacing="0").  These are still below inline style priority.
+    if root.tag == "table" {
+        if let Some(v) = root.attributes.get("cellspacing").cloned() {
+            if let Ok(n) = v.parse::<f32>() {
+                apply_property(&mut style, "border-spacing", &format!("{}px", n));
+            }
+        }
+        if let Some(v) = root.attributes.get("cellpadding").cloned() {
+            apply_property(&mut style, "cellpadding", &v);
+        }
+        if let Some(v) = root.attributes.get("border").cloned() {
+            if let Ok(n) = v.parse::<f32>() {
+                if n > 0.0 {
+                    apply_property(&mut style, "border-collapse", "collapse");
+                }
+            }
         }
     }
 

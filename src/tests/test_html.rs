@@ -1229,3 +1229,110 @@ fn nested_ol_list_index_independent() {
     }).collect();
     assert!(inner.len() >= 2, "expected inner list items with index 1 and 2");
 }
+
+// ============================================================
+// Table border / cellspacing HTML attribute tests
+// ============================================================
+
+#[test]
+fn table_border_attr_sets_collapse() {
+    // border="1" on <table> should enable border-collapse.
+    let doc = parse(r#"<table border="1"><tr><td>A</td></tr></table>"#);
+    let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
+    assert!(table.style.border_collapse,
+        "table with border=\"1\" must have border-collapse: collapse");
+}
+
+#[test]
+fn table_border_attr_sets_table_border_width() {
+    let doc = parse(r#"<table border="1"><tr><td>A</td></tr></table>"#);
+    let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
+    let w = match table.style.border_top_width {
+        crate::types::CssLength::Px(v) => v,
+        _ => -1.0,
+    };
+    assert_eq!(w, 1.0, "table border-top-width should be 1px, got {:?}", table.style.border_top_width);
+}
+
+#[test]
+fn table_border_attr_propagates_to_cells() {
+    let doc = parse(r#"<table border="1"><tr><td>A</td><td>B</td></tr></table>"#);
+    let cells: Vec<_> = find_all_boxes(&doc.root, &|b| b.tag == "td");
+    assert!(!cells.is_empty(), "no td found");
+    for cell in &cells {
+        let w = match cell.style.border_top_width {
+            crate::types::CssLength::Px(v) => v,
+            _ => -1.0,
+        };
+        assert!(w > 0.0,
+            "td in table with border=\"1\" should have border-top-width > 0, got {:?}",
+            cell.style.border_top_width);
+    }
+}
+
+#[test]
+fn table_cellspacing_zero_sets_border_spacing() {
+    let doc = parse(r#"<table border="1" cellspacing="0"><tr><td>A</td></tr></table>"#);
+    let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
+    let sp = match table.style.border_spacing_h {
+        crate::types::CssLength::Px(v) => v,
+        crate::types::CssLength::Zero => 0.0,
+        other => panic!("unexpected border_spacing_h: {:?}", other),
+    };
+    assert_eq!(sp, 0.0,
+        "cellspacing=\"0\" must set border-spacing to 0, got {:?}", table.style.border_spacing_h);
+}
+
+#[test]
+fn table_cellspacing_nonzero() {
+    let doc = parse(r#"<table cellspacing="4"><tr><td>A</td></tr></table>"#);
+    let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
+    let sp = match table.style.border_spacing_h {
+        crate::types::CssLength::Px(v) => v,
+        crate::types::CssLength::Zero => 0.0,
+        other => panic!("unexpected border_spacing_h: {:?}", other),
+    };
+    assert_eq!(sp, 4.0,
+        "cellspacing=\"4\" must set border-spacing to 4px, got {:?}", table.style.border_spacing_h);
+}
+
+#[test]
+fn table_no_border_attr_no_cell_borders() {
+    // Without border attr, td should not get a border from HTML attribute propagation.
+    let doc = parse(r#"<table><tr><td>A</td></tr></table>"#);
+    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
+    let w = match cell.style.border_top_width {
+        crate::types::CssLength::Px(v) => v,
+        crate::types::CssLength::Zero => 0.0,
+        _ => -1.0,
+    };
+    assert_eq!(w, 0.0,
+        "td without table border attr should have 0 border, got {:?}", cell.style.border_top_width);
+}
+
+#[test]
+fn table_border_zero_no_cell_borders() {
+    let doc = parse(r#"<table border="0"><tr><td>A</td></tr></table>"#);
+    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
+    let w = match cell.style.border_top_width {
+        crate::types::CssLength::Px(v) => v,
+        crate::types::CssLength::Zero => 0.0,
+        _ => -1.0,
+    };
+    assert_eq!(w, 0.0,
+        "td in table with border=\"0\" should have no border, got {:?}", cell.style.border_top_width);
+}
+
+#[test]
+fn css_border_overrides_html_border_attr() {
+    // Author CSS on td should win over the HTML border attribute propagation.
+    let doc = parse(r#"<style>td { border: 3px solid red; }</style>
+<table border="1"><tr><td>A</td></tr></table>"#);
+    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
+    let w = match cell.style.border_top_width {
+        crate::types::CssLength::Px(v) => v,
+        _ => -1.0,
+    };
+    assert_eq!(w, 3.0,
+        "author CSS border 3px should override HTML attr 1px, got {:?}", cell.style.border_top_width);
+}
