@@ -825,7 +825,9 @@ impl Renderer {
         let use_ellipsis = node.style.text_overflow == TextOverflow::Ellipsis
             && (node.style.overflow_x == Overflow::Hidden
                 || node.style.overflow_x == Overflow::Scroll);
-        let max_content_w = node.padding_rect.w;
+        // Right edge of the padding box in screen coordinates.
+        // cursor_x is also in screen coords (line.x - sx), so we compare against this.
+        let max_content_right = (node.padding_rect.x - sx) + node.padding_rect.w;
 
         for line in node.line_cache.clone() {
             let line_start = floor_char_boundary(flat, line.text_start.min(flat.len()));
@@ -964,8 +966,8 @@ impl Renderer {
                 );
 
                 // text-overflow: ellipsis check
-                let final_text = if use_ellipsis && cursor_x + approx_seg_w > max_content_w {
-                    let avail = max_content_w - cursor_x;
+                let final_text = if use_ellipsis && cursor_x + approx_seg_w > max_content_right {
+                    let avail = max_content_right - cursor_x;
                     if avail > 0.0 {
                         truncate_with_ellipsis(&draw_text, run_font_px, run_letter_spc, avail)
                     } else {

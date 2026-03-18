@@ -250,7 +250,7 @@ pub fn layout_inline_block(
             fc_left += before_w;
         }
 
-        let mut avail_w = (fc_right - fc_left).max(20.0);
+        let mut avail_w = (fc_right - fc_left).max(0.0);
 
         // Break items for this line
         let (mut line_end, mut next_start, mut was_break) =
@@ -275,7 +275,7 @@ pub fn layout_inline_block(
                     // Width might have changed
                     fc.available_width(cursor_y - fc.origin_y, est_line_h, content_w, &mut fc_left, &mut fc_right);
                     let temp_fc_left = if is_first_line { fc_left + text_indent + before_w } else { fc_left };
-                    avail_w = (fc_right - temp_fc_left).max(20.0);
+                    avail_w = (fc_right - temp_fc_left).max(0.0);
                     
                     // Re-evaluate line break from THIS point forward
                     let (new_end, new_next, new_break) = break_one_line(&items, i + 1, avail_w);

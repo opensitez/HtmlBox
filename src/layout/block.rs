@@ -83,14 +83,14 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
         if px >= 0.0 { return px; }
     }
 
-    // Line positions are absolute; subtract the box's own content origin so we
-    // measure content-relative width (avoids double-counting padding/border).
     let origin = node.content_rect.x;
     let mut w = 0.0f32;
-    // Inline line widths
+    // Inline line widths — use line.width (raw content width) directly.
+    // line.x includes the text-align offset (e.g. centred text shifts line.x right by
+    // (avail_w − text_w) / 2), so line.x + line.width − origin would over-report the
+    // intrinsic width for centred/right-aligned content.
     for line in &node.line_cache {
-        let rw = line.x + line.width - origin;
-        if rw > w { w = rw; }
+        if line.width > w { w = line.width; }
     }
     // In a flex/grid formatting context, children are positioned by flex/grid layout
     // (not stacked vertically), so use their actual margin_rect extents for all children.
