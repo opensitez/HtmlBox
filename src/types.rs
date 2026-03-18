@@ -1253,8 +1253,12 @@ impl ComputedStyle {
         self.letter_spacing  = parent.letter_spacing;
         self.word_spacing    = parent.word_spacing;
         self.text_align      = parent.text_align;
-        self.text_decoration = parent.text_decoration;
-        self.text_indent     = parent.text_indent;
+        self.text_decoration           = parent.text_decoration;
+        self.text_decoration_color     = parent.text_decoration_color;
+        self.text_decoration_style     = parent.text_decoration_style;
+        self.text_decoration_thickness = parent.text_decoration_thickness;
+        self.text_underline_offset     = parent.text_underline_offset;
+        self.text_indent               = parent.text_indent;
         self.white_space     = parent.white_space;
         self.text_transform  = parent.text_transform;
         self.word_break      = parent.word_break;

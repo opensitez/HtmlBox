@@ -1067,7 +1067,8 @@ impl Renderer {
             draw_deco_line(pixmap, x, uy, width, line_thick);
         }
         if dec.strikethrough {
-            let sy2 = y + ascent * 0.55;
+            // Strike-through at ~30% of em above the baseline (center of x-height).
+            let sy2 = y + ascent - font_px * 0.30;
             draw_deco_line(pixmap, x, sy2, width, line_thick);
         }
         if dec.overline {
@@ -1156,7 +1157,7 @@ impl Renderer {
             draw_line_seg(pixmap, ox, uy, ox + lw, uy);
         }
         if dec.strikethrough {
-            let sy2 = oy + line.ascent * 0.55;
+            let sy2 = oy + line.ascent - font_px * 0.30;
             draw_line_seg(pixmap, ox, sy2, ox + lw, sy2);
         }
         if dec.overline {

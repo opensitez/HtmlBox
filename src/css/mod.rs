@@ -1257,9 +1257,30 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
         "text-decoration" => {
-            style.text_decoration.underline      = v.contains("underline");
-            style.text_decoration.overline       = v.contains("overline");
-            style.text_decoration.strikethrough  = v.contains("line-through");
+            // Shorthand: <line> || <style> || <color> in any order.
+            // e.g. "underline solid #ef4444" or "underline wavy #ec4899"
+            style.text_decoration.underline     = v.contains("underline");
+            style.text_decoration.overline      = v.contains("overline");
+            style.text_decoration.strikethrough = v.contains("line-through");
+            // Parse style keyword
+            style.text_decoration_style = if v.contains("double") {
+                TextDecorationStyle::Double
+            } else if v.contains("dotted") {
+                TextDecorationStyle::Dotted
+            } else if v.contains("dashed") {
+                TextDecorationStyle::Dashed
+            } else if v.contains("wavy") {
+                TextDecorationStyle::Wavy
+            } else {
+                TextDecorationStyle::Solid
+            };
+            // Parse color: any token that parses as a color
+            for token in v.split_whitespace() {
+                if let Some(c) = parse_color(token) {
+                    style.text_decoration_color = Some(c);
+                    break;
+                }
+            }
         }
         "text-indent"    => { style.text_indent   = parse_length(v); }
         "white-space"    => {

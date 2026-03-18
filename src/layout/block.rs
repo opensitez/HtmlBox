@@ -136,6 +136,14 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                 + ch.resolved_margin_left + ch.resolved_margin_right;
             if total > w { w = total; }
         } else {
+            // Skip whitespace-only text nodes in flex/grid containers — they are not
+            // laid out as flex items and their margin_rect accumulates stale position
+            // offsets across re-renders (via shift_rects), producing spuriously large widths.
+            if is_flex_or_grid && ch.is_text_node()
+                && ch.text.chars().all(|c| c.is_ascii_whitespace())
+            {
+                continue;
+            }
             // Fixed-width or non-block child. Avoid counting auto margins (e.g. `margin: 0 auto`
             // on a centered image): those expand to the container width during layout but are
             // not part of the element's intrinsic size.
