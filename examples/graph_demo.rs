@@ -4,8 +4,8 @@ use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{load_html_with_registry, Document, Renderer, LayoutEngine, HtmlBox};
-use rhtmledit::types::{ComponentMeasureFn, ComponentPaintFn, ComponentRegistry};
+use rhtmledit::{Document, Renderer, HtmlBox};
+use rhtmledit::types::{ComponentMeasureFn, ComponentPaintFn};
 use rhtmledit::platform::Platform;
 use rhtmledit::dom::{self, HtmlEventType};
 use std::sync::Mutex;
@@ -294,7 +294,6 @@ struct App {
     platform:   Option<Platform>,
     renderer:   Renderer,
     doc:        Option<Document>,
-    registry:   ComponentRegistry,
     state:      Arc<Mutex<AppState>>,
     width:      f32,
     mouse_pos:  (f32, f32),
@@ -308,9 +307,7 @@ impl ApplicationHandler for App {
 
         let (measure, paint) = create_graph_component();
         self.renderer.register_component("graph", measure, paint);
-        self.registry = self.renderer.component_registry.clone();
-        
-        let doc = load_html_with_registry(HTML, self.width, 860.0, self.registry.clone());
+        let doc = self.renderer.load_html_vp(HTML, self.width, 860.0);
         
         let state = self.state.clone();
         
@@ -438,8 +435,7 @@ impl ApplicationHandler for App {
                 platform.resize(size.width, size.height);
                 self.width = platform.logical_width();
                 if let Some(doc) = self.doc.as_mut() {
-                    let mut engine = LayoutEngine::new();
-                    engine.component_registry = self.registry.clone();
+                    let mut engine = self.renderer.layout_engine();
                     engine.layout(doc, self.width);
                 }
                 window.request_redraw();
@@ -450,8 +446,7 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_mouse_event(HtmlEventType::Click, (self.mouse_pos.0, self.mouse_pos.1 + doc.scroll_y), 0) {
-                        let mut engine = LayoutEngine::new();
-                        engine.component_registry = self.registry.clone();
+                        let mut engine = self.renderer.layout_engine();
                         engine.layout(doc, self.width);
                         window.request_redraw();
                     }
@@ -484,7 +479,6 @@ fn main() {
         window: None, platform: None,
         renderer: Renderer::new(),
         doc: None, width: 1100.0,
-        registry: ComponentRegistry::default(),
         state: Arc::new(Mutex::new(AppState {
             interaction_count: 0,
             cycle_count: 0,

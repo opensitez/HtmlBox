@@ -73,7 +73,7 @@ fn best_ai_move(board: &mut [Option<char>;9]) -> Option<usize> {
     }
     best_move
 }
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
+use rhtmledit::{Document, Renderer, HtmlBox};
 use rhtmledit::platform::Platform;
 use rhtmledit::dom::{self, HtmlEventType};
 
@@ -108,7 +108,7 @@ impl ApplicationHandler for App {
         );
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
-        self.doc = Some(load_html(HTML, self.width));
+        self.doc = Some(self.renderer.load_html_vp(HTML, self.width, 700.0));
         // Register simple click handlers for cells and controls
         if let Some(doc) = self.doc.as_mut() {
             let state = self.state.clone();
@@ -202,7 +202,7 @@ impl ApplicationHandler for App {
                 platform.resize(size.width, size.height);
                 self.width = platform.logical_width();
                 if let Some(doc) = self.doc.as_mut() {
-                    LayoutEngine::new().layout(doc, self.width);
+                    self.renderer.layout_engine().layout(doc, self.width);
                 }
                 window.request_redraw();
             }
@@ -224,7 +224,7 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: winit::event::ElementState::Pressed, button: winit::event::MouseButton::Left, .. } => {
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_mouse_event(HtmlEventType::Click, (self.mouse_pos.0, self.mouse_pos.1 + doc.scroll_y), 0) {
-                        LayoutEngine::new().layout(doc, self.width);
+                        self.renderer.layout_engine().layout(doc, self.width);
                         window.request_redraw();
                     }
                 }
