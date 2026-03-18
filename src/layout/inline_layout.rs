@@ -973,11 +973,11 @@ pub fn approx_font_metrics(font_px: f32, _fs: Option<&mut cosmic_text::FontSyste
 /// Used by the renderer to map text_start offsets back to characters.
 pub fn collect_flat_text(node: &HtmlBox) -> String {
     let mut out = String::new();
-    collect_flat_text_inner(node, &mut out);
+    collect_flat_text_inner(node, &mut out, true);
     out
 }
 
-fn collect_flat_text_inner(node: &HtmlBox, out: &mut String) {
+fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
     if node.is_text_node() {
         out.push_str(&node.text);
         return;
@@ -987,9 +987,10 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String) {
     // Floats are emitted as Float items in collect_items and their text is not
     // counted in text_offset — skip them here to keep byte offsets in sync.
     if !matches!(node.style.float, crate::types::Float::None) { return; }
-    // Atomic inline-blocks are emitted as Atomic items; their internal text is
-    // not part of the parent's flat-text string.
-    if matches!(node.style.display,
+    // Atomic inline-blocks are emitted as Atomic items by the parent; their internal
+    // text is NOT part of the parent's flat-text string. However when we are rendering
+    // the inline-block itself (is_root=true) we DO want its own text content.
+    if !is_root && matches!(node.style.display,
         Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) { return; }
     if !node.text.is_empty() {
         out.push_str(&node.text);
@@ -998,6 +999,6 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String) {
         // Skip out-of-flow children — they don't contribute to this box's flat text.
         // (collect_flat_text is called separately on each positioned box for its own content.)
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
-        collect_flat_text_inner(child, out);
+        collect_flat_text_inner(child, out, false);
     }
 }
