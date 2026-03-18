@@ -45,7 +45,19 @@ pub fn resolve_bidi_line(text: &str, line: &mut LayoutLine, para_dir: Direction)
         line.visual_segments.clear();
         return;
     }
-    let line_text = &text[byte_start..byte_end];
+    let line_text_raw = &text[byte_start..byte_end];
+    // Normalize raw newlines (from HTML source formatting) to spaces so that
+    // unicode-bidi doesn't treat them as paragraph separators (bidi type B),
+    // which would produce incorrect embedding levels for subsequent RTL characters.
+    let line_text_owned: String;
+    let line_text: &str = if line_text_raw.contains('\n') || line_text_raw.contains('\r') {
+        line_text_owned = line_text_raw.chars()
+            .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+            .collect();
+        &line_text_owned
+    } else {
+        line_text_raw
+    };
     let para_level = Some(match para_dir {
         Direction::LTR => Level::ltr(),
         Direction::RTL => Level::rtl(),

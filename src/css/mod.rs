@@ -3712,7 +3712,7 @@ figcaption { display: block; }
 details { display: block; }
 summary { display: list-item; list-style-type: disclosure-closed; }
 pre, listing, plaintext, xmp { display: block; font-family: monospace; white-space: pre; margin-top: 1em; margin-bottom: 1em; }
-hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; border-style: inset; border-width: 1px; overflow: hidden; color: gray; }
+hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; height: 0; border-top-width: 1px; border-top-style: solid; border-top-color: silver; overflow: hidden; }
 dl, ol, ul, menu, dir { display: block; margin-top: 1em; margin-bottom: 1em; }
 ol, ul, menu { padding-left: 40px; }
 menu { list-style-type: disc; }

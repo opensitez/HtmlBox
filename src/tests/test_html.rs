@@ -527,8 +527,8 @@ fn html_ua_body_margin() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.style.margin_top.resolve(16.0, 0.0, 16.0), 0.0);
-    assert_eq!(body.style.margin_left.resolve(16.0, 0.0, 16.0), 0.0);
+    assert_eq!(body.style.margin_top.resolve(16.0, 0.0, 16.0), 8.0);
+    assert_eq!(body.style.margin_left.resolve(16.0, 0.0, 16.0), 8.0);
 }
 
 #[test]
@@ -538,8 +538,8 @@ fn html_body_layout_position() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.content_rect.x, 8.0);
+    assert_eq!(body.content_rect.w, 784.0);
 }
 
 #[test]
@@ -559,7 +559,7 @@ fn html_body_layout_with_explicit_margin() {
 #[test]
 fn html_body_layout_with_box_sizing() {
     let doc = parse_and_layout(
-        r#"<style>* { box-sizing: border-box; }</style><p>Text</p>"#,
+        r#"<style>* { box-sizing: border-box; } body { margin: 0; }</style><p>Text</p>"#,
         800.0,
     );
     let body = get_body(&doc);
@@ -572,7 +572,7 @@ fn html_body_layout_with_box_sizing() {
 #[test]
 fn html_body_layout_demo_pattern() {
     let doc = parse_and_layout(
-        r##"<body text="#2c3e50"><style>* { box-sizing: border-box; }</style><div style="position: fixed; top: 0; left: 0; width: 100%;"><a>Home</a><a>Features</a></div><h1 style="margin-top: 44px;">Title</h1><p>Text</p><div style="position: fixed; bottom: 16px; right: 16px; width: 48px; height: 48px;">+</div></body>"##,
+        r##"<body text="#2c3e50"><style>* { box-sizing: border-box; } body { margin: 0; }</style><div style="position: fixed; top: 0; left: 0; width: 100%;"><a>Home</a><a>Features</a></div><h1 style="margin-top: 44px;">Title</h1><p>Text</p><div style="position: fixed; bottom: 16px; right: 16px; width: 48px; height: 48px;">+</div></body>"##,
         685.0,
     );
     let body = get_body(&doc);
@@ -587,7 +587,7 @@ fn html_body_layout_demo_pattern() {
 #[test]
 fn html_body_layout_with_floats() {
     let doc = parse_and_layout(
-        r#"<style>* { box-sizing: border-box; }</style><div style="width: 50%; float: left;">Left</div><div style="width: 50%; float: right;">Right</div><div style="clear: both;"></div><p>After floats</p>"#,
+        r#"<style>* { box-sizing: border-box; } body { margin: 0; }</style><div style="width: 50%; float: left;">Left</div><div style="width: 50%; float: right;">Right</div><div style="clear: both;"></div><p>After floats</p>"#,
         800.0,
     );
     let body = get_body(&doc);
@@ -600,7 +600,7 @@ fn html_body_layout_with_floats() {
 #[test]
 fn html_body_bfc_isolation() {
     let doc = parse_and_layout(
-        r#"<body><div style="width: 300px; float: left;">Float</div><p>Text alongside float</p></body>"#,
+        r#"<body style="margin: 0;"><div style="width: 300px; float: left;">Float</div><p>Text alongside float</p></body>"#,
         800.0,
     );
     let body = get_body(&doc);
@@ -653,7 +653,7 @@ fn html_body_explicit_width_with_margin() {
 
 #[test]
 fn html_body_no_margin_full_viewport() {
-    let doc = parse_and_layout("<p>Hello</p>", 1024.0);
+    let doc = parse_and_layout("<style>body { margin: 0; }</style><p>Hello</p>", 1024.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
@@ -669,7 +669,7 @@ fn html_body_no_margin_full_viewport() {
 #[test]
 fn html_table_full_width_in_body_with_padding() {
     let doc = parse_and_layout(
-        r#"<body style="padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>Long description text</td></tr></table></body>"#,
+        r#"<body style="margin: 0; padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>Long description text</td></tr></table></body>"#,
         800.0,
     );
     let body = get_body(&doc);
@@ -687,7 +687,7 @@ fn html_table_full_width_in_body_with_padding() {
 #[test]
 fn html_table_full_width_in_body_with_padding_and_box_sizing() {
     let doc = parse_and_layout(
-        r#"<style>* { box-sizing: border-box; }</style><body style="padding: 16px;"><table style="width: 100%; border-collapse: collapse;"><tr><td style="padding: 8px; border: 1px solid #ccc;">Name</td><td style="padding: 8px; border: 1px solid #ccc;">Type</td><td style="padding: 8px; border: 1px solid #ccc;">Load an HTML string into the editor</td></tr></table></body>"#,
+        r#"<style>* { box-sizing: border-box; } body { margin: 0; }</style><body style="padding: 16px;"><table style="width: 100%; border-collapse: collapse;"><tr><td style="padding: 8px; border: 1px solid #ccc;">Name</td><td style="padding: 8px; border: 1px solid #ccc;">Type</td><td style="padding: 8px; border: 1px solid #ccc;">Load an HTML string into the editor</td></tr></table></body>"#,
         800.0,
     );
     let body = get_body(&doc);
@@ -772,7 +772,7 @@ fn html_canvas_bg_neither_set() {
 #[test]
 fn html_double_layout_preserves_body_position() {
     // First layout at 800
-    let doc = parse_and_layout("<p>Text</p>", 800.0);
+    let doc = parse_and_layout("<style>body { margin: 0; }</style><p>Text</p>", 800.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
@@ -780,7 +780,7 @@ fn html_double_layout_preserves_body_position() {
     assert_eq!(body.content_rect.w, 800.0);
 
     // Second layout at 700
-    let doc2 = parse_and_layout("<p>Text</p>", 700.0);
+    let doc2 = parse_and_layout("<style>body { margin: 0; }</style><p>Text</p>", 700.0);
     let body2 = get_body(&doc2);
     assert!(body2.is_some());
     let body2 = body2.unwrap();
@@ -790,7 +790,7 @@ fn html_double_layout_preserves_body_position() {
 
 #[test]
 fn html_double_layout_with_floats_preserves_body() {
-    let html = r#"<style>* { box-sizing: border-box; }</style><div style="width: 50%; float: left;">Left</div><div style="width: 50%; float: right;">Right</div><div style="clear: both;"></div><p>After</p>"#;
+    let html = r#"<style>* { box-sizing: border-box; } body { margin: 0; }</style><div style="width: 50%; float: left;">Left</div><div style="width: 50%; float: right;">Right</div><div style="clear: both;"></div><p>After</p>"#;
 
     let doc = parse_and_layout(html, 800.0);
     let body = get_body(&doc);
@@ -827,7 +827,7 @@ fn html_double_layout_same_width_stable() {
 
 #[test]
 fn html_double_layout_table_in_body_with_padding() {
-    let html = r#"<body style="padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>C</td></tr></table></body>"#;
+    let html = r#"<body style="margin: 0; padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>C</td></tr></table></body>"#;
 
     let doc1 = parse_and_layout(html, 800.0);
     let table1 = find_box(&doc1.root, &|b: &HtmlBox| b.style.display == Display::Table);

@@ -112,12 +112,12 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                     + ch.resolved_border_left + ch.resolved_border_right
                     + ch.resolved_margin_left + ch.resolved_margin_right;
                 if total > w { w = total; }
-            } else if !ch.is_text_node() {
-                // Non-text inline element (e.g. <a>) laid out as a flex/grid item —
-                // use its margin_rect extent, same as other non-block children.
-                let rw = (ch.margin_rect.x - origin) + ch.margin_rect.w;
-                if rw > w { w = rw; }
             }
+            // Non-text inline elements (e.g. <b>, <span>, <a>) inside block containers
+            // are part of the parent's inline flow and already captured in the parent's
+            // line_cache. Their margin_rect.x is stale after shift_rects moves the
+            // parent box to its final position, so using it produces spuriously large
+            // values that grow on each layout pass. Skip them.
             continue;
         }
         // Block children with auto width: their marginRect is inflated to containing width.

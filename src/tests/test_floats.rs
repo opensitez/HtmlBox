@@ -6,12 +6,13 @@ mod tests {
     #[test]
     fn test_float_right_on_same_line() {
         let html = r#"
+            <style>body { margin: 0; }</style>
             <div style="width: 200px; font-size: 10px;">
                 Text <span id="float" style="float: right; width: 50px; height: 10px;"></span>
             </div>
         "#;
         let doc = parse_and_layout(html, 200.0);
-        
+
         let float_box = crate::tests::test_grid::find_by_id(&doc.root, "float").expect("float box not found");
         // Float should be at Y=0 (same as text)
         assert_eq!(float_box.border_rect.y, 0.0, "Float should be on the same line as text");

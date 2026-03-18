@@ -289,7 +289,16 @@ pub fn layout_inline_block(
             fc_left += before_w;
         }
 
-        let mut avail_w = (fc_right - fc_left).max(0.0);
+        // white-space:pre and nowrap never wrap at word boundaries.
+        // avail_w controls line-breaking; align_w is used for text alignment
+        // (always finite so right/center alignment doesn't overflow).
+        let finite_w = (fc_right - fc_left).max(0.0);
+        let mut avail_w = if matches!(node.style.white_space, WhiteSpace::Pre | WhiteSpace::Nowrap) {
+            f32::MAX
+        } else {
+            finite_w
+        };
+        let align_w = finite_w;
 
         // Break items for this line
         let (mut line_end, mut next_start, mut was_break) =
@@ -373,16 +382,16 @@ pub fn layout_inline_block(
             a => a,
         };
 
-        // Justify: compute extra space per word gap
+        // Justify: compute extra space per word gap (use align_w, never f32::MAX)
         let extra_per_gap = if effective_align == TextAlign::Justify && !was_break && next_start < items.len() {
             let gaps = line_items.iter().filter(|it| it.is_space).count() as f32;
-            if gaps > 0.0 { ((avail_w - content_line_w) / gaps).max(0.0) } else { 0.0 }
+            if gaps > 0.0 { ((align_w - content_line_w) / gaps).max(0.0) } else { 0.0 }
         } else { 0.0 };
 
-        // X offset for text alignment
+        // X offset for text alignment (use align_w, never f32::MAX)
         let mut line_x = content_x + fc_left + match effective_align {
-            TextAlign::Right  => (avail_w - content_line_w).max(0.0),
-            TextAlign::Center => ((avail_w - content_line_w) / 2.0).max(0.0),
+            TextAlign::Right  => (align_w - content_line_w).max(0.0),
+            TextAlign::Center => ((align_w - content_line_w) / 2.0).max(0.0),
             _                 => 0.0,
         };
         if line_x < content_x { line_x = content_x; }
@@ -542,8 +551,9 @@ pub fn layout_inline_block(
     // ── 5. Compute content height ──────────────────────────────────────────────
     let inline_h = (cursor_y - content_y).max(0.0);
     // Include float bottom so the container encloses its floats
+    // f.clear is stored relative to fc.origin_y (same convention as layout_block_with_fc).
     let float_bottom = if let Some(ref fc) = float_ctx {
-        fc.floats.iter().map(|f| f.clear - fc.origin_y).fold(0.0f32, f32::max)
+        fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
     } else {
         0.0
     };
@@ -779,8 +789,19 @@ pub fn collect_items(
     }
 
     // ── Recurse into children ─────────────────────────────────────────────
+    let runs_before = runs.len();
     for (i, child) in node.children.iter().enumerate() {
         collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i);
+    }
+    // CSS background-color is not inherited, but an inline element's background
+    // must visually paint behind its descendant text runs.  Propagate this
+    // element's background-color down to any child run that has none of its own.
+    if node.style.background_color.a > 0 && !node.is_text_node() {
+        for run in &mut runs[runs_before..] {
+            if run.style.background_color.a == 0 {
+                run.style.background_color = node.style.background_color;
+            }
+        }
     }
 }
 
@@ -866,6 +887,10 @@ fn tokenize_text(
             //  causing the caret to drift right while text stayed left.)
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
             let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style);
+            // In white-space:pre / pre-wrap, spaces are significant (not collapsible).
+            // Mark them as non-space so break_one_line doesn't strip leading whitespace,
+            // and non-breakable in pre mode (only \n breaks lines).
+            let preserve_spaces = matches!(white_space, WhiteSpace::Pre | WhiteSpace::PreWrap);
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + i,
@@ -876,8 +901,8 @@ fn tokenize_text(
                 ascent,
                 descent,
                 height:    line_h,
-                is_space:  true,
-                breakable: true,
+                is_space:  !preserve_spaces,
+                breakable: !matches!(white_space, WhiteSpace::Pre),
             });
             i += 1;       // consume exactly one space byte
             word_start = i;

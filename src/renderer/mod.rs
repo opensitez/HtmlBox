@@ -274,7 +274,16 @@ impl Renderer {
         let clip = Rect::new(0.0, 0.0, view_w, view_h);
 
         // Clamp scroll so the document never scrolls past its own end; write back.
-        let doc_h = doc.root.margin_rect.h;
+        // When <html>'s bottom margin collapses with <body>'s (via CSS margin-collapse),
+        // doc.root.margin_rect.h can be shorter than body's actual content bottom by the
+        // amount of the collapsed margin.  Use the body's padding-box bottom if it is larger.
+        let doc_h = {
+            let root_h = doc.root.margin_rect.h;
+            doc.root.children.iter()
+                .find(|c| c.tag == "body")
+                .map(|b| root_h.max(b.padding_rect.y + b.padding_rect.h))
+                .unwrap_or(root_h)
+        };
         let doc_w = doc.root.margin_rect.w;
         doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
         doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));
@@ -1090,7 +1099,29 @@ impl Renderer {
                             seg_chunks.push(Chunk { s: cs, e: ce, run_idx: Some(ri), rtl: is_rtl });
                         }
                     }
-                    if is_rtl { seg_chunks.reverse(); }
+                    if is_rtl {
+                        // Before reversing, trim any leading ASCII spaces from the
+                        // last chunk in logical order.  After reversal it becomes the
+                        // visual-first (leftmost) chunk; a leading space there creates
+                        // an unwanted gap at the left edge of RTL lines (e.g. the " ."
+                        // produced by whitespace-collapsing "\n." at the end of an Arabic
+                        // sentence would otherwise render as "[ ][.] مائلة و").
+                        if let Some(last) = seg_chunks.last_mut() {
+                            // Trim any ASCII whitespace (space, tab, newline, CR) from the
+                            // start of the last chunk.  In the flat text, whitespace-collapsing
+                            // of e.g. "\n." produces a raw '\n' byte followed by '.'.
+                            // After RTL reversal this chunk becomes the visual-first (leftmost)
+                            // one; a leading whitespace byte is rendered as a space by
+                            // cosmic-text, creating an unwanted gap at the left edge.
+                            while last.s < last.e
+                                && last.s < flat.len()
+                                && matches!(flat.as_bytes()[last.s], b' ' | b'\t' | b'\n' | b'\r')
+                            {
+                                last.s += 1;
+                            }
+                        }
+                        seg_chunks.reverse();
+                    }
                     chunks.extend(seg_chunks);
                 }
             } else if node.inline_runs.is_empty() {
@@ -1124,8 +1155,30 @@ impl Renderer {
                     };
 
                 let style_ref: &ComputedStyle = run_style.unwrap_or(&node.style);
+                // Arabic and other RTL scripts have no italic variant in most fonts.
+                // Requesting italic for RTL text causes cosmic-text to select a Latin
+                // italic font that cannot render Arabic glyphs (→ tofu / "weird lines").
+                // Suppress italic for RTL chunks so the Arabic font is always used.
+                let effective_font_style = if chunk.rtl {
+                    FontStyle::Normal
+                } else {
+                    style_ref.font_style
+                };
                 let seg_text = &flat[s..e];
-                let draw_text = apply_text_transform(seg_text, style_ref.text_transform);
+                // Normalize raw newlines (HTML source formatting) to spaces so
+                // cosmic-text doesn't split the run into two lines, displacing
+                // subsequent characters (visible as "horizontal line" artifacts
+                // in RTL/Arabic text).
+                let seg_text_clean: String;
+                let seg_text_for_draw: &str = if seg_text.contains('\n') || seg_text.contains('\r') {
+                    seg_text_clean = seg_text.chars()
+                        .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+                        .collect();
+                    &seg_text_clean
+                } else {
+                    seg_text
+                };
+                let draw_text = apply_text_transform(seg_text_for_draw, style_ref.text_transform);
 
                 let run_line_h = style_ref.line_height.resolve(run_font_px, 0.0, 16.0)
                     .max(run_font_px * 1.2);
@@ -1134,11 +1187,18 @@ impl Renderer {
                 // The true advance is returned by draw_text_run after shaping.
                 let approx_seg_w = approx_text_width_ls(&draw_text, run_font_px, run_letter_spc);
 
-                // Run background color
+                // Run background color — use the actual shaped advance so that
+                // Arabic / complex-script text (where approx_seg_w overestimates
+                // because it uses 1× font_px per char) doesn't produce an oversized
+                // background rectangle that covers adjacent chunks.
                 if style_ref.background_color.a > 0 {
+                    let bg_w = self.measure_text_run(
+                        &draw_text, run_font_px, run_line_h,
+                        style_ref.font_weight, effective_font_style,
+                    );
                     let mut bp = Paint::default();
                     bp.set_color(style_ref.background_color.to_tiny_skia());
-                    if let Some(r) = SkRect::from_xywh(cursor_x, ly, approx_seg_w, line.height) {
+                    if let Some(r) = SkRect::from_xywh(cursor_x, ly, bg_w, line.height) {
                         pixmap.fill_rect(r, &bp, Transform::from_scale(self.scale, self.scale), mask);
                     }
                 }
@@ -1175,7 +1235,7 @@ impl Renderer {
                         &final_text,
                         cursor_x + ts.offset_x, ly + ts.offset_y,
                         run_font_px, run_line_h,
-                        style_ref.font_weight, style_ref.font_style,
+                        style_ref.font_weight, effective_font_style,
                         sh, pixmap, mask,
                     );
                 }
@@ -1184,7 +1244,7 @@ impl Renderer {
                 let actual_advance = self.draw_text_run(
                     &final_text, cursor_x, ly,
                     run_font_px, run_line_h,
-                    style_ref.font_weight, style_ref.font_style,
+                    style_ref.font_weight, effective_font_style,
                     ct_color, pixmap, mask,
                 );
 
