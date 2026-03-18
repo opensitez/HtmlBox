@@ -36,6 +36,10 @@ pub fn load_html_with_registry(
     registry: types::ComponentRegistry,
 ) -> Document {
     let mut doc = parse_html(html);
+    // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
+    // are evaluated against the actual window size rather than the default vw=0, vh=0.
+    let ss = doc.stylesheet.clone();
+    css::apply_cascade_vp(&mut doc.root, &ss, None, 16.0, viewport_width, viewport_height, std::ptr::null());
     let mut engine = LayoutEngine::new();
     engine.viewport_w = viewport_width;
     engine.viewport_h = viewport_height;

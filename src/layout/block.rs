@@ -96,8 +96,8 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
     for ch in &node.children {
         if matches!(ch.style.display, Display::None) { continue; }
         if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
-        // Inline-display children: only measure text nodes that have been laid out
-        // as standalone items (e.g. flex children). Regular inline content is in line_cache.
+        // Inline-display children: measure text nodes and inline elements that were
+        // laid out as standalone flex/grid items. Regular inline content is in line_cache.
         if matches!(ch.style.display, Display::Inline) {
             if ch.is_text_node() && !ch.line_cache.is_empty() {
                 // Text node flex child: its intrinsic width is its own line widths
@@ -107,6 +107,11 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                     + ch.resolved_border_left + ch.resolved_border_right
                     + ch.resolved_margin_left + ch.resolved_margin_right;
                 if total > w { w = total; }
+            } else if !ch.is_text_node() {
+                // Non-text inline element (e.g. <a>) laid out as a flex/grid item —
+                // use its margin_rect extent, same as other non-block children.
+                let rw = (ch.margin_rect.x - origin) + ch.margin_rect.w;
+                if rw > w { w = rw; }
             }
             continue;
         }
