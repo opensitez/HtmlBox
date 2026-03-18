@@ -442,14 +442,35 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_pos = (position.x as f32 / platform.scale_factor(), position.y as f32 / platform.scale_factor());
-            }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                let zoom = self.renderer.zoom;
                 if let Some(doc) = self.doc.as_mut() {
-                    if doc.process_mouse_event(HtmlEventType::Click, (self.mouse_pos.0, self.mouse_pos.1 + doc.scroll_y), 0) {
-                        let mut engine = self.renderer.layout_engine();
-                        engine.layout(doc, self.width);
+                    let (sx, sy) = self.mouse_pos;
+                    let pt = (sx / zoom, sy / zoom + doc.scroll_y);
+                    if doc.process_mouse_event(HtmlEventType::MouseMove, pt, 0) {
                         window.request_redraw();
                     }
+                }
+            }
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                let zoom = self.renderer.zoom;
+                let (sx, sy) = self.mouse_pos;
+                let pt = (sx / zoom, sy / zoom);
+                if let Some(doc) = self.doc.as_mut() {
+                    let doc_pt = (pt.0, pt.1 + doc.scroll_y);
+                    match state {
+                        ElementState::Pressed => {
+                            doc.process_mouse_event(HtmlEventType::MouseDown, doc_pt, 0);
+                        }
+                        ElementState::Released => {
+                            doc.process_mouse_event(HtmlEventType::MouseUp, doc_pt, 0);
+                            if doc.process_mouse_event(HtmlEventType::Click, doc_pt, 0) {
+                                let mut engine = self.renderer.layout_engine();
+                                engine.layout(doc, self.width);
+                            }
+                        }
+                        _ => {}
+                    }
+                    window.request_redraw();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
