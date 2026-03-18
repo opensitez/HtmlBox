@@ -232,3 +232,82 @@ fn layoutadv_mixed_flow_layout() {
     // Just verify it doesn't panic
     let _ = &doc.root;
 }
+
+// ── Child combinator + flex-basis applied via "> *" ──────────────────────────
+
+#[test]
+fn layoutadv_child_combinator_flex_basis_applied() {
+    // ".grid > *" with "flex: 1 1 260px" must apply flex-basis to direct children
+    // so they are laid out side by side, not one per row.
+    let doc = parse_and_layout(r#"
+        <style>
+            .grid { display: flex; flex-wrap: wrap; gap: 20px; }
+            .grid > * { flex: 1 1 260px; }
+            .card { padding: 20px; }
+        </style>
+        <div class="grid">
+            <div class="card">A</div>
+            <div class="card">B</div>
+            <div class="card">C</div>
+        </div>
+    "#, 1024.0);
+
+    let cards: Vec<_> = find_all_boxes(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "card").unwrap_or(false)
+    });
+    assert_eq!(cards.len(), 3);
+
+    // All three cards should be on the same row (same y position).
+    let y0 = cards[0].margin_rect.y;
+    assert!((cards[1].margin_rect.y - y0).abs() < 2.0,
+        "card B should be on the same row as card A (child combinator not applying flex-basis)");
+    assert!((cards[2].margin_rect.y - y0).abs() < 2.0,
+        "card C should be on the same row as card A");
+
+    // They should be side-by-side (x positions increasing).
+    assert!(cards[1].margin_rect.x > cards[0].margin_rect.x + 50.0,
+        "card B should be to the right of card A");
+    assert!(cards[2].margin_rect.x > cards[1].margin_rect.x + 50.0,
+        "card C should be to the right of card B");
+}
+
+// ── compute_intrinsic_width: auto margins must not inflate parent width ────────
+
+#[test]
+fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
+    // An element with "margin: 0 auto" inside a flex container should not
+    // cause its parent's intrinsic width to be the full container width.
+    // Before the fix, flex items defaulting to auto flex-basis would call
+    // compute_intrinsic_width, which used margin_rect.x + margin_rect.w
+    // even for auto-margin elements, giving a ~container-width result.
+    let doc = parse_and_layout(r#"
+        <style>
+            .flex { display: flex; gap: 10px; }
+            .box { padding: 10px; }
+            .inner { width: 80px; height: 80px; margin: 0 auto; }
+        </style>
+        <div class="flex">
+            <div class="box"><div class="inner"></div><p>A</p></div>
+            <div class="box"><div class="inner"></div><p>B</p></div>
+            <div class="box"><div class="inner"></div><p>C</p></div>
+        </div>
+    "#, 900.0);
+
+    let boxes: Vec<_> = find_all_boxes(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "box").unwrap_or(false)
+    });
+    assert_eq!(boxes.len(), 3);
+
+    // All three flex items should be on the same row.
+    let y0 = boxes[0].margin_rect.y;
+    assert!((boxes[1].margin_rect.y - y0).abs() < 2.0,
+        "box B on same row as A — auto margin in child should not inflate intrinsic width");
+    assert!((boxes[2].margin_rect.y - y0).abs() < 2.0,
+        "box C on same row as A");
+
+    // Each box should be much narrower than the full container.
+    for b in &boxes {
+        assert!(b.margin_rect.w < 400.0,
+            "auto-margin child must not inflate flex item intrinsic width to container width");
+    }
+}

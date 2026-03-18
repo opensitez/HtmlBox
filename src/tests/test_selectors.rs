@@ -159,6 +159,71 @@ fn selectors_general_sibling() {
     assert!(sel.parts.iter().any(|p| matches!(p, SelectorPart::Combinator(Combinator::GeneralSibling))));
 }
 
+// ── Child combinator with surrounding whitespace ──────────────────────────────
+
+#[test]
+fn selectors_child_combinator_no_spurious_descendant() {
+    // "div > p" must parse to exactly [Tag("div"), Child, Tag("p")] — no extra Descendant.
+    let sel = parse_selector("div > p");
+    let combinators: Vec<_> = sel.parts.iter()
+        .filter(|p| matches!(p, SelectorPart::Combinator(_)))
+        .collect();
+    assert_eq!(combinators.len(), 1, "expected exactly 1 combinator");
+    assert!(matches!(combinators[0], SelectorPart::Combinator(Combinator::Child)));
+}
+
+#[test]
+fn selectors_child_universal_no_spurious_descendant() {
+    // ".grid-3 > *" must have exactly one combinator (Child), not Child + Descendant.
+    let sel = parse_selector(".grid-3 > *");
+    let combinators: Vec<_> = sel.parts.iter()
+        .filter(|p| matches!(p, SelectorPart::Combinator(_)))
+        .collect();
+    assert_eq!(combinators.len(), 1, "expected exactly 1 combinator, got extra from trailing space after '>'");
+    assert!(matches!(combinators[0], SelectorPart::Combinator(Combinator::Child)));
+    // Should end with Universal
+    assert!(matches!(sel.parts.last(), Some(SelectorPart::Universal)));
+}
+
+#[test]
+fn selectors_child_universal_matches_direct_child() {
+    // ".grid-3 > *" must match a direct child of .grid-3, not a grandchild.
+    use crate::css::AncestorInfo;
+    let sel = parse_selector(".grid-3 > *");
+    let child = HtmlBox::new("div");
+
+    // Direct child: parent is .grid-3
+    let direct_ancestors = vec![AncestorInfo {
+        tag: "div".into(),
+        attributes: [("class".to_string(), "grid-3".to_string())].into(),
+        child_index: 0,
+        sibling_count: 3,
+        ..Default::default()
+    }];
+    assert!(sel.matches_with_ancestors(&child, 0, 3, &direct_ancestors),
+        "should match a direct child of .grid-3");
+
+    // Grandchild: parent is a plain div inside .grid-3
+    let grandchild_ancestors = vec![
+        AncestorInfo {
+            tag: "div".into(),
+            attributes: [("class".to_string(), "grid-3".to_string())].into(),
+            child_index: 0,
+            sibling_count: 1,
+            ..Default::default()
+        },
+        AncestorInfo {
+            tag: "div".into(),
+            attributes: Default::default(),
+            child_index: 0,
+            sibling_count: 1,
+            ..Default::default()
+        },
+    ];
+    assert!(!sel.matches_with_ancestors(&child, 0, 1, &grandchild_ancestors),
+        "should NOT match a grandchild of .grid-3");
+}
+
 // ── nth-child keyword shorthands ──────────────────────────────────────────────
 
 #[test]

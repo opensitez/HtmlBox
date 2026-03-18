@@ -515,7 +515,7 @@ impl Renderer {
         // ── CSS Filters ───────────────────────────────────────────────────────
         // Apply pixel-level filter ops (blur, brightness, etc.) to the element region.
         if !node.style.css_filter.ops.is_empty() {
-            apply_css_filters(pixmap, &node.style.css_filter, px, py, pw, ph, self.scale);
+            apply_css_filters(pixmap, &node.style.css_filter, px, py, pw, ph, radius, self.scale);
         }
     }
 
@@ -669,6 +669,7 @@ impl Renderer {
 
         let mut paint = Paint::default();
         paint.anti_alias = true;
+        paint.blend_mode = css_blend_mode(node.style.mix_blend_mode);
 
         let shader = match node.style.gradient_type {
             GradientType::Linear => {
@@ -676,13 +677,40 @@ impl Renderer {
                 let rad = angle * std::f32::consts::PI / 180.0;
                 let dx = rad.sin();
                 let dy = -rad.cos();
-                // Find the corners (in normalised [0,1] box space) where the
-                // gradient projection is minimal (t=0) and maximal (t=1).
+
+                // The old per-pixel code computed t from normalised (nx, ny) in [0,1]:
+                //   t = (nx*dx + ny*dy - t_min) / t_range
+                // In physical coords (x = px + nx*pw, y = py + ny*ph) that is:
+                //   t = (x-px)*dx/(pw*t_range) + (y-py)*dy/(ph*t_range) - t_min/t_range
+                //
+                // tiny-skia's LinearGradient computes:
+                //   t = dot(P - start, end - start) / |end - start|^2
+                //
+                // Matching the two: the end-start vector must equal
+                //   (dx * pw * ph^2 * t_range, dy * ph * pw^2 * t_range) / (dx^2*ph^2 + dy^2*pw^2)
+                // Start = corner of physical box that achieves t_min.
+                let corners = [0.0f32, dx, dy, dx + dy];
+                let t_min = corners.iter().cloned().fold(f32::MAX, f32::min);
+                let t_max = corners.iter().cloned().fold(f32::MIN, f32::max);
+                let t_range = (t_max - t_min).max(0.001);
+
                 let start_nx: f32 = if dx >= 0.0 { 0.0 } else { 1.0 };
                 let start_ny: f32 = if dy >= 0.0 { 0.0 } else { 1.0 };
-                let start = SkPoint::from_xy(px + start_nx * pw, py + start_ny * ph);
-                let end   = SkPoint::from_xy(px + (1.0 - start_nx) * pw, py + (1.0 - start_ny) * ph);
-                LinearGradient::new(start, end, sk_stops, SpreadMode::Pad, Transform::identity())
+                let sx = px + start_nx * pw;
+                let sy = py + start_ny * ph;
+
+                let denom = dx * dx * ph * ph + dy * dy * pw * pw;
+                let (ex, ey) = if denom > 1e-6 {
+                    (sx + dx * pw * ph * ph * t_range / denom,
+                     sy + dy * ph * pw * pw * t_range / denom)
+                } else {
+                    (sx + pw, sy)  // degenerate: horizontal fallback
+                };
+
+                LinearGradient::new(
+                    SkPoint::from_xy(sx, sy), SkPoint::from_xy(ex, ey),
+                    sk_stops, SpreadMode::Pad, Transform::identity(),
+                )
             }
             GradientType::Radial => {
                 let cx = px + pw / 2.0;
@@ -2041,10 +2069,12 @@ fn css_blend_mode(mode: MixBlendMode) -> tiny_skia::BlendMode {
 
 /// Apply CSS filter operations to a rectangular region of the pixmap.
 /// `rx`, `ry` are in logical pixels. `scale` converts to physical pixels.
+/// `radius` is the border-radius in logical pixels; corners outside it are skipped.
 fn apply_css_filters(
     pixmap: &mut Pixmap,
     filters: &CssFilters,
     rx: f32, ry: f32, rw: f32, rh: f32,
+    radius: f32,
     scale: f32,
 ) {
     if filters.ops.is_empty() || rw <= 0.0 || rh <= 0.0 { return; }
@@ -2064,6 +2094,26 @@ fn apply_css_filters(
     let region_w = (x1 - x0) as usize;
     let region_h = (y1 - y0) as usize;
 
+    // Pre-compute rounded-rect corner radius in physical pixels.
+    let r_px = (radius * scale).min(pix_w as f32 / 2.0).min(pix_h as f32 / 2.0);
+    let in_rounded_rect = |screen_x: i32, screen_y: i32| -> bool {
+        if r_px <= 0.0 { return true; }
+        // Coords relative to element's physical top-left
+        let lx = (screen_x - pix_x) as f32 + 0.5;
+        let ly = (screen_y - pix_y) as f32 + 0.5;
+        let w = pix_w as f32;
+        let h = pix_h as f32;
+        let near_left   = lx < r_px;
+        let near_right  = lx > w - r_px;
+        let near_top    = ly < r_px;
+        let near_bottom = ly > h - r_px;
+        if near_left  && near_top    { let dx = lx - r_px; let dy = ly - r_px; return dx*dx+dy*dy <= r_px*r_px; }
+        if near_right && near_top    { let dx = lx-(w-r_px); let dy = ly-r_px; return dx*dx+dy*dy <= r_px*r_px; }
+        if near_left  && near_bottom { let dx = lx-r_px; let dy = ly-(h-r_px); return dx*dx+dy*dy <= r_px*r_px; }
+        if near_right && near_bottom { let dx = lx-(w-r_px); let dy = ly-(h-r_px); return dx*dx+dy*dy <= r_px*r_px; }
+        true
+    };
+
     for filter_op in &filters.ops {
         match filter_op {
             FilterOp::Blur(blur_px) => {
@@ -2072,7 +2122,8 @@ fn apply_css_filters(
             }
             FilterOp::Brightness(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let r2 = ((r as f32 * f).min(255.0)) as u8;
                     let g2 = ((g as f32 * f).min(255.0)) as u8;
                     let b2 = ((b as f32 * f).min(255.0)) as u8;
@@ -2081,7 +2132,8 @@ fn apply_css_filters(
             }
             FilterOp::Contrast(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let adj = |c: u8| -> u8 {
                         let c2 = (c as f32 - 128.0) * f + 128.0;
                         c2.max(0.0).min(255.0) as u8
@@ -2091,7 +2143,8 @@ fn apply_css_filters(
             }
             FilterOp::Grayscale(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let lum = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
                     let r2 = lerp_u8(r, lum as u8, f);
                     let g2 = lerp_u8(g, lum as u8, f);
@@ -2101,7 +2154,8 @@ fn apply_css_filters(
             }
             FilterOp::HueRotate(deg) => {
                 let deg = *deg;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let (h, s, l) = rgb_to_hsl(r, g, b);
                     let h2 = (h + deg / 360.0).rem_euclid(1.0);
                     let (r2, g2, b2) = hsl_to_rgb(h2, s, l);
@@ -2110,7 +2164,8 @@ fn apply_css_filters(
             }
             FilterOp::Invert(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let r2 = lerp_u8(r, 255 - r, f);
                     let g2 = lerp_u8(g, 255 - g, f);
                     let b2 = lerp_u8(b, 255 - b, f);
@@ -2119,13 +2174,15 @@ fn apply_css_filters(
             }
             FilterOp::Opacity(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     (r, g, b, ((a as f32) * f) as u8)
                 });
             }
             FilterOp::Saturate(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let (h, s, l) = rgb_to_hsl(r, g, b);
                     let s2 = (s * f).min(1.0);
                     let (r2, g2, b2) = hsl_to_rgb(h, s2, l);
@@ -2134,7 +2191,8 @@ fn apply_css_filters(
             }
             FilterOp::Sepia(f) => {
                 let f = *f;
-                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |r, g, b, a| {
+                apply_pixel_op(pixmap, pw, x0, y0, x1, y1, |x, y, r, g, b, a| {
+                    if !in_rounded_rect(x, y) { return (r, g, b, a); }
                     let rf = r as f32; let gf = g as f32; let bf = b as f32;
                     let sr = (rf * 0.393 + gf * 0.769 + bf * 0.189).min(255.0) as u8;
                     let sg = (rf * 0.349 + gf * 0.686 + bf * 0.168).min(255.0) as u8;
@@ -2158,7 +2216,7 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 }
 
 fn apply_pixel_op<F>(pixmap: &mut Pixmap, pw: i32, x0: i32, y0: i32, x1: i32, y1: i32, mut f: F)
-where F: FnMut(u8, u8, u8, u8) -> (u8, u8, u8, u8)
+where F: FnMut(i32, i32, u8, u8, u8, u8) -> (u8, u8, u8, u8)
 {
     let data = pixmap.data_mut();
     for y in y0..y1 {
@@ -2166,7 +2224,7 @@ where F: FnMut(u8, u8, u8, u8) -> (u8, u8, u8, u8)
             let idx = ((y * pw + x) * 4) as usize;
             if idx + 3 >= data.len() { continue; }
             let (r, g, b, a) = (data[idx], data[idx+1], data[idx+2], data[idx+3]);
-            let (r2, g2, b2, a2) = f(r, g, b, a);
+            let (r2, g2, b2, a2) = f(x, y, r, g, b, a);
             data[idx] = r2; data[idx+1] = g2; data[idx+2] = b2; data[idx+3] = a2;
         }
     }
