@@ -140,8 +140,8 @@ impl ApplicationHandler for App {
             (Some(w), Some(p)) => (w, p),
             _ => return,
         };
-        // Built-in zoom: pinch, Ctrl+Wheel, Ctrl+=/−/0.
-        if self.renderer.handle_window_event(&event) {
+        // Built-in zoom + pan: pinch, PanGesture, Ctrl+Wheel, Ctrl+=/−/0.
+        if self.renderer.handle_window_event(&event, self.doc.as_mut()) {
             self.request_redraw();
             return;
         }

@@ -26,9 +26,10 @@ pub struct Renderer {
     /// Reused across draw_text_run calls to avoid per-chunk Buffer allocation.
     shape_buf: Option<Buffer>,
     // ── Internal state for handle_window_event ────────────────────────────────
-    ctrl_held:  bool,
-    touches:    std::collections::HashMap<u64, (f64, f64)>,
-    pinch_dist: Option<f32>,
+    ctrl_held:       bool,
+    touches:         std::collections::HashMap<u64, (f64, f64)>,
+    pinch_dist:      Option<f32>,
+    touch_centroid:  Option<(f32, f32)>,
 }
 
 impl Renderer {
@@ -40,95 +41,152 @@ impl Renderer {
             zoom: 1.0,
             scale: 1.0,
             shape_buf: None,
-            ctrl_held:  false,
-            touches:    std::collections::HashMap::new(),
-            pinch_dist: None,
+            ctrl_held:      false,
+            touches:        std::collections::HashMap::new(),
+            pinch_dist:     None,
+            touch_centroid: None,
         }
     }
 
-    /// Handle a winit `WindowEvent` for built-in zoom behaviour.
+    /// Handle a winit `WindowEvent` for built-in zoom and pan.
     ///
     /// Call this from your event loop **before** your own event handling.
-    /// Returns `true` if `zoom` changed and a redraw should be requested.
+    /// Pass `doc` so scroll positions can be updated directly.
+    /// Returns `true` if zoom or scroll changed and a redraw should be requested.
     ///
-    /// Events handled:
-    /// - `PinchGesture`        — two-finger trackpad pinch (macOS / iOS)
-    /// - `Touch`               — two-finger pinch on a touchscreen
-    /// - `ModifiersChanged`    — tracks the Ctrl key for the shortcuts below
-    /// - `MouseWheel`+Ctrl     — zoom in/out with the scroll wheel
+    /// Events consumed (caller should skip its own handling when true is returned):
+    /// - `PinchGesture`        — trackpad pinch zoom (macOS / iOS)
+    /// - `PanGesture`          — two-finger trackpad pan, all directions (macOS)
+    /// - `Touch`               — two-finger pinch+pan on touchscreens (all platforms)
+    /// - `ModifiersChanged`    — internal Ctrl tracking (always returns false)
+    /// - `MouseWheel`+Ctrl     — zoom in/out
+    /// - `MouseWheel` plain    — scroll x+y; returns false so the app can also
+    ///                           call `process_wheel_event` for inner-box scrolling
     /// - `KeyboardInput`+Ctrl  — `=`/`+` zoom in, `-` zoom out, `0` reset
-    pub fn handle_window_event(&mut self, event: &WindowEvent) -> bool {
+    pub fn handle_window_event(&mut self, event: &WindowEvent, mut doc: Option<&mut crate::types::Document>) -> bool {
         match event {
             WindowEvent::ModifiersChanged(mods) => {
                 self.ctrl_held = mods.state().control_key();
                 false
             }
-            // macOS / iOS trackpad pinch — delta is a fractional scale per event.
+
+            // ── macOS/iOS trackpad pinch ──────────────────────────────────────
             WindowEvent::PinchGesture { delta, .. } => {
                 self.zoom = (self.zoom * (1.0 + *delta as f32)).clamp(0.1, 8.0);
                 true
             }
-            // Touchscreen two-finger pinch.
+
+            // ── macOS two-finger pan (all directions) ─────────────────────────
+            WindowEvent::PanGesture { delta, .. } => {
+                if let Some(doc) = doc {
+                    let zoom = self.zoom;
+                    // delta is in logical (point) units on macOS; divide by zoom to
+                    // convert from screen-space movement to document-space scroll.
+                    doc.scroll_x = (doc.scroll_x - delta.x / zoom).max(0.0);
+                    doc.scroll_y -= delta.y / zoom; // renderer clamps max
+                }
+                true
+            }
+
+            // ── Touchscreen two-finger pinch + pan ───────────────────────────
             WindowEvent::Touch(winit::event::Touch { phase, location, id, .. }) => {
                 match phase {
                     TouchPhase::Started => {
                         self.touches.insert(*id, (location.x, location.y));
+                        // Reset gesture state on any new finger.
+                        if self.touches.len() < 2 {
+                            self.pinch_dist     = None;
+                            self.touch_centroid = None;
+                        }
                         false
                     }
                     TouchPhase::Moved => {
                         self.touches.insert(*id, (location.x, location.y));
                         if self.touches.len() == 2 {
                             let pts: Vec<(f64, f64)> = self.touches.values().copied().collect();
+                            // Centroid for pan.
+                            let cx = ((pts[0].0 + pts[1].0) / 2.0) as f32;
+                            let cy = ((pts[0].1 + pts[1].1) / 2.0) as f32;
+                            // Distance for pinch zoom.
                             let dx = pts[0].0 - pts[1].0;
                             let dy = pts[0].1 - pts[1].1;
                             let new_dist = ((dx * dx + dy * dy) as f32).sqrt();
-                            let changed = if let Some(prev) = self.pinch_dist {
-                                if prev > 1.0 {
-                                    self.zoom = (self.zoom * new_dist / prev).clamp(0.1, 8.0);
-                                    true
-                                } else { false }
-                            } else { false };
-                            self.pinch_dist = Some(new_dist);
-                            changed
+
+                            if let Some(prev_dist) = self.pinch_dist {
+                                if prev_dist > 1.0 {
+                                    self.zoom = (self.zoom * new_dist / prev_dist).clamp(0.1, 8.0);
+                                }
+                            }
+                            if let (Some((px, py)), Some(doc)) = (self.touch_centroid, doc.as_deref_mut()) {
+                                // Physical px delta → divide by DPI scale and zoom.
+                                let sc   = self.scale.max(1.0);
+                                let zoom = self.zoom;
+                                doc.scroll_x = (doc.scroll_x - (cx - px) / sc / zoom).max(0.0);
+                                doc.scroll_y -= (cy - py) / sc / zoom;
+                            }
+                            self.pinch_dist     = Some(new_dist);
+                            self.touch_centroid = Some((cx, cy));
+                            true
                         } else { false }
                     }
                     TouchPhase::Ended | TouchPhase::Cancelled => {
                         self.touches.remove(id);
-                        if self.touches.len() < 2 { self.pinch_dist = None; }
+                        if self.touches.len() < 2 {
+                            self.pinch_dist     = None;
+                            self.touch_centroid = None;
+                        }
                         false
                     }
                 }
             }
-            // Ctrl+Wheel zooms; plain wheel is left for the app to handle (scrolling).
+
+            // ── Ctrl+Wheel → zoom ─────────────────────────────────────────────
             WindowEvent::MouseWheel { delta, .. } if self.ctrl_held => {
                 let dy = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
                     winit::event::MouseScrollDelta::PixelDelta(p)   => p.y as f32 / 20.0,
                 };
-                let factor = 1.1f32.powf(dy);
-                self.zoom = (self.zoom * factor).clamp(0.1, 8.0);
+                self.zoom = (self.zoom * 1.1f32.powf(dy)).clamp(0.1, 8.0);
                 true
             }
-            // Ctrl+=/+/−/0 keyboard shortcuts.
+
+            // ── Plain wheel → horizontal scroll (vertical left to app) ────────
+            // Returns false so the caller can still call process_wheel_event for
+            // inner-box vertical scrolling.  Horizontal pan is always viewport-level.
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dx = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(x, _) => *x * 20.0,
+                    winit::event::MouseScrollDelta::PixelDelta(p)   => {
+                        p.x as f32 / self.scale.max(1.0)
+                    }
+                };
+                if dx.abs() > 0.5 {
+                    if let Some(doc) = doc {
+                        doc.scroll_x = (doc.scroll_x - dx / self.zoom).max(0.0);
+                        return true;
+                    }
+                }
+                false
+            }
+
+            // ── Ctrl+=/+/−/0 keyboard shortcuts ──────────────────────────────
             WindowEvent::KeyboardInput { event, .. }
                 if self.ctrl_held && event.state == winit::event::ElementState::Pressed =>
             {
                 match &event.logical_key {
                     Key::Character(s) if s == "=" || s == "+" => {
-                        self.zoom = (self.zoom * 1.2).clamp(0.1, 8.0);
-                        true
+                        self.zoom = (self.zoom * 1.2).clamp(0.1, 8.0); true
                     }
                     Key::Character(s) if s == "-" => {
-                        self.zoom = (self.zoom / 1.2).clamp(0.1, 8.0);
-                        true
+                        self.zoom = (self.zoom / 1.2).clamp(0.1, 8.0); true
                     }
                     Key::Character(s) if s == "0" => {
-                        self.zoom = 1.0;
-                        true
+                        self.zoom = 1.0; true
                     }
                     _ => false,
                 }
             }
+
             _ => false,
         }
     }
@@ -217,8 +275,9 @@ impl Renderer {
 
         // Clamp scroll so the document never scrolls past its own end; write back.
         let doc_h = doc.root.margin_rect.h;
+        let doc_w = doc.root.margin_rect.w;
         doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
-        doc.scroll_x = doc.scroll_x.max(0.0);
+        doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));
         let scroll_x = doc.scroll_x;
         let scroll_y = doc.scroll_y;
 
