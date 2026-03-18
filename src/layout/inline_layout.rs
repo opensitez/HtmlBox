@@ -213,7 +213,11 @@ pub fn layout_inline_block(
                 char_x: Vec::new(),
             }];
         }
-        let placeholder_h = if add_placeholder { font_px * 1.2 } else { 0.0 };
+        // <br> in block context (no inline siblings collected it as a Break item)
+        // must still produce a line-height of vertical space, just like it would
+        // inside a paragraph.
+        let br_h = if node.tag == "br" { font_px * 1.2 } else { 0.0 };
+        let placeholder_h = if add_placeholder { font_px * 1.2 } else { br_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
         let max_h = if node.style.max_height.is_none() { f32::MAX }
                     else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
