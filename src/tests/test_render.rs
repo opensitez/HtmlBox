@@ -25,6 +25,46 @@ fn pixel(pm: &Pixmap, x: u32, y: u32) -> (u8, u8, u8, u8) {
     (r, g, b, a)
 }
 
+// ── Flex nav: li items inside a flex ul must not overlap ──────────────────────
+
+#[test]
+fn layout_flex_nav_li_items_no_overlap() {
+    // A flex <ul> with <li> items: each li must start after the previous one ends.
+    // Historically, compute_intrinsic_width treated list-item children as block children
+    // (taking max width), which caused the outer flex to assign too-small a width to the
+    // ul, which then squished all li items to near-zero causing visual overlap.
+    use super::harness::find_box;
+    let doc = parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .nav { display: flex; width: 600px; }
+        .links { display: flex; gap: 20px; list-style: none; }
+        </style>
+        <nav class="nav">
+          <ul class="links">
+            <li>World</li>
+            <li>Politics</li>
+            <li>Science</li>
+          </ul>
+        </nav>
+    "#, 600.0);
+
+    // Collect li border_rect x positions
+    let mut li_boxes: Vec<f32> = Vec::new();
+    fn collect_li(node: &crate::types::HtmlBox, out: &mut Vec<f32>) {
+        if node.tag == "li" { out.push(node.border_rect.x); }
+        for ch in &node.children { collect_li(ch, out); }
+    }
+    collect_li(&doc.root, &mut li_boxes);
+
+    assert_eq!(li_boxes.len(), 3, "expected 3 li boxes, got {}", li_boxes.len());
+    // Each li must start strictly after the previous one (no overlap)
+    assert!(li_boxes[1] > li_boxes[0] + 5.0,
+        "Politics li should start after World li; World.x={} Politics.x={}", li_boxes[0], li_boxes[1]);
+    assert!(li_boxes[2] > li_boxes[1] + 5.0,
+        "Science li should start after Politics li; Politics.x={} Science.x={}", li_boxes[1], li_boxes[2]);
+}
+
 // ── Absolute positioned child height from inset: 0 ───────────────────────────
 
 #[test]

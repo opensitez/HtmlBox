@@ -1274,7 +1274,11 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
             rule.declarations.remove("margin-left");
         }
     }
-    for rule in parser.stylesheet.rules {
+    // Author rules must always win over UA rules regardless of selector specificity.
+    // Boost every author rule's specificity by a large constant so that even
+    // `* { padding: 0 }` (sp=0+100_000) beats `ul { padding-left: 40px }` (sp=1).
+    for mut rule in parser.stylesheet.rules {
+        rule.specificity = rule.specificity.saturating_add(100_000);
         stylesheet.rules.push(rule);
     }
     for (k, v) in parser.stylesheet.variables {

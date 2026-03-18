@@ -92,13 +92,18 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
         let rw = line.x + line.width - origin;
         if rw > w { w = rw; }
     }
+    // In a flex/grid formatting context, children are positioned by flex/grid layout
+    // (not stacked vertically), so use their actual margin_rect extents for all children.
+    let is_flex_or_grid = matches!(node.style.display,
+        Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid);
+
     // Children
     for ch in &node.children {
         if matches!(ch.style.display, Display::None) { continue; }
         if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
         // Inline-display children: measure text nodes and inline elements that were
         // laid out as standalone flex/grid items. Regular inline content is in line_cache.
-        if matches!(ch.style.display, Display::Inline) {
+        if !is_flex_or_grid && matches!(ch.style.display, Display::Inline) {
             if ch.is_text_node() && !ch.line_cache.is_empty() {
                 // Text node flex child: its intrinsic width is its own line widths
                 let cw = compute_intrinsic_width(ch);
@@ -117,7 +122,10 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
         }
         // Block children with auto width: their marginRect is inflated to containing width.
         // Recurse to get real content width.
-        let is_auto_width_block = ch.style.width.is_auto()
+        // Skip this for flex/grid containers — their children are already correctly positioned
+        // by the flex/grid algorithm and margin_rect reflects the final layout.
+        let is_auto_width_block = !is_flex_or_grid
+            && ch.style.width.is_auto()
             && matches!(ch.style.display,
                 Display::Block | Display::ListItem);
         if is_auto_width_block {
