@@ -274,10 +274,19 @@ pub fn layout_block_with_fc(
         None => (containing_w - rbox.h_space()).max(0.0),
     };
 
-    // Apply min/max-width constraints
-    let min_w = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
-    let max_w = if node.style.max_width.is_none() { f32::MAX }
-                else { engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px) };
+    // Apply min/max-width constraints, converting from border-box to content-box when needed.
+    // CSS: with box-sizing:border-box, min/max-width refer to the border box, not the content box.
+    let bb_extra = if node.style.box_sizing == crate::types::BoxSizing::BorderBox {
+        rbox.padding_left + rbox.padding_right + rbox.border_left + rbox.border_right
+    } else { 0.0 };
+    let min_w = {
+        let v = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
+        (v - bb_extra).max(0.0)
+    };
+    let max_w = if node.style.max_width.is_none() { f32::MAX } else {
+        let v = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
+        (v - bb_extra).max(0.0)
+    };
     let content_w = raw_w.max(min_w).min(max_w);
 
     // Auto margin centering (CSS 2.1 §10.3.3)

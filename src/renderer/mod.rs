@@ -38,7 +38,24 @@ impl Renderer {
     pub fn layout_engine(&mut self) -> crate::layout::LayoutEngine {
         let mut engine = crate::layout::LayoutEngine::new();
         engine.font_system = Some(&mut self.font_system as *mut _);
+        engine.component_registry = self.component_registry.clone();
         engine
+    }
+
+    /// Parse HTML and run layout using the renderer's font system, so that text
+    /// measurement during layout matches the actual rendered glyph widths.
+    /// Prefer this over the top-level `load_html` when rendering with this renderer.
+    pub fn load_html(&mut self, html: &str, viewport_width: f32) -> crate::Document {
+        self.load_html_vp(html, viewport_width, 700.0)
+    }
+
+    /// Like [`load_html`] but with explicit viewport height (for `vh`/`100vh` layouts).
+    pub fn load_html_vp(&mut self, html: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
+        let mut doc = crate::html::parse_html(html);
+        let mut engine = self.layout_engine();
+        engine.viewport_h = viewport_height;
+        engine.layout(&mut doc, viewport_width);
+        doc
     }
 
     /// Returns a transform that upscales logical-pixel coordinates to physical pixels.

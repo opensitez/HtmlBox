@@ -135,23 +135,35 @@ pub fn layout_flex(
             }
         };
 
-        // Apply min/max constraints on main axis
+        // Apply min/max constraints on main axis.
+        // For border-box items, min/max refer to the border box; convert to content-box.
+        let bb_main = if child.style.box_sizing == BoxSizing::BorderBox {
+            if is_row {
+                irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
+            } else {
+                irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
+            }
+        } else { 0.0 };
         let min_main: f32 = if is_row {
             if !child.style.min_width.is_auto() {
-                child.style.min_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
+                let v = child.style.min_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h);
+                (v - bb_main).max(0.0)
             } else { 0.0 }
         } else {
             if !child.style.min_height.is_auto() {
-                child.style.min_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h)
+                let v = child.style.min_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
+                (v - bb_main).max(0.0)
             } else { 0.0 }
         };
         let max_main: f32 = if is_row {
             if !child.style.max_width.is_none() {
-                child.style.max_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h)
+                let v = child.style.max_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h);
+                (v - bb_main).max(0.0)
             } else { f32::MAX }
         } else {
             if !child.style.max_height.is_none() {
-                child.style.max_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h)
+                let v = child.style.max_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
+                (v - bb_main).max(0.0)
             } else { f32::MAX }
         };
         let hyp = basis_main.max(min_main).min(max_main);
