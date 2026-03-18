@@ -870,7 +870,19 @@ impl Renderer {
                                 pixmap.fill_rect(r, &sel_paint, Transform::from_scale(self.scale, self.scale), mask);
                             }
                         }
+                    } else if !line.char_x.is_empty() {
+                        // Use shaped per-character x positions for pixel-accurate highlights.
+                        let i_s = (h_start - line_start).min(line.char_x.len() - 1);
+                        let i_e = (h_end   - line_start).min(line.char_x.len() - 1);
+                        let xs = lx + line.char_x[i_s];
+                        let xe = lx + line.char_x[i_e];
+                        if xe > xs {
+                            if let Some(r) = SkRect::from_xywh(xs, ly, xe - xs, line.height) {
+                                pixmap.fill_rect(r, &sel_paint, Transform::from_scale(self.scale, self.scale), mask);
+                            }
+                        }
                     } else {
+                        // Fallback (no char_x): byte-ratio approximation.
                         let len     = line_end - line_start;
                         let ratio_s = if len > 0 { (h_start - line_start) as f32 / len as f32 } else { 0.0 };
                         let ratio_e = if len > 0 { (h_end   - line_start) as f32 / len as f32 } else { 1.0 };

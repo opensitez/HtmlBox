@@ -939,7 +939,14 @@ impl Editor {
 
     /// Primary keyboard event handler. Returns true if redraw needed.
     pub fn handle_key_event(&mut self, root: &mut HtmlBox, etype: HtmlEventType, key_code: u32, ch: Option<char>, _ctrl: bool) -> bool {
-        if self.read_only { return false; }
+        if self.read_only {
+            // Allow editing inside contenteditable="true" elements even when the document is read-only.
+            // The caret_box may be a child text node, so we walk the tree from root to check ancestry.
+            let is_editable = self.caret_box
+                .map(|p| is_in_contenteditable(root, p))
+                .unwrap_or(false);
+            if !is_editable { return false; }
+        }
         if etype != HtmlEventType::KeyDown && etype != HtmlEventType::KeyPress { return false; }
 
         let box_ptr = match self.caret_box { Some(p) => p, None => return false };
@@ -1378,6 +1385,37 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
         }
     }
     Err(offset)
+}
+
+/// Returns true if `target` is `node` or a descendant of a node that has
+/// `contenteditable="true"`.  Used to allow key events inside contenteditable
+/// elements when the document-level editor is otherwise read-only.
+fn is_in_contenteditable(node: &HtmlBox, target: *const HtmlBox) -> bool {
+    let self_ptr = node as *const HtmlBox;
+    if std::ptr::eq(self_ptr, target) {
+        // The target itself: check its own attribute.
+        return node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
+    }
+    // If this node is contenteditable, all descendants are editable.
+    let editable_root = node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
+    if editable_root && node_contains(node, target) {
+        return true;
+    }
+    // Recurse into children without the editable_root shortcut so we can find
+    // a deeper contenteditable ancestor.
+    for child in &node.children {
+        if is_in_contenteditable(child, target) { return true; }
+    }
+    false
+}
+
+/// Returns true if `ancestor` is a strict ancestor of `target` (not the same node).
+fn node_contains(ancestor: &HtmlBox, target: *const HtmlBox) -> bool {
+    for child in &ancestor.children {
+        if std::ptr::eq(child as *const HtmlBox, target) { return true; }
+        if node_contains(child, target) { return true; }
+    }
+    false
 }
 
 /// Like `find_node_offset_mut` but uses strict `<` for text nodes so that a
