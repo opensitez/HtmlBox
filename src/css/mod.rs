@@ -1912,14 +1912,6 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
 
-        // ── Hover colors ──────────────────────────────────────────────────────
-        "hover-color"            => { style.hover_color            = parse_color(v); }
-        "hover-background-color" => { style.hover_background_color = parse_color(v); }
-
-        // ── Active (pressed) colors ────────────────────────────────────────────
-        "active-color"            => { style.active_color            = parse_color(v); }
-        "active-background-color" => { style.active_background_color = parse_color(v); }
-
         // ── Clip path ─────────────────────────────────────────────────────────
         "clip-path" => {
             if v == "none" {
@@ -3479,8 +3471,9 @@ fn apply_cascade_inner(
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
     let mut matched:           Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut hover_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut active_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut hover_matched:   Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut active_matched:  Vec<(u32, HashMap<String, String>)> = Vec::new();
+    let mut visited_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut before_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut after_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut selection_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
@@ -3493,19 +3486,22 @@ fn apply_cascade_inner(
         for sel in &rule.selectors {
             // Detect state-pseudo-class rules (:hover, :active) and match their
             // base selector so the style can be stored for runtime activation.
-            let has_hover  = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
-            let has_active = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
+            let has_hover   = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
+            let has_active  = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
+            let has_visited = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
 
-            if (has_hover || has_active) && rule.pseudo_element == PseudoElement::None {
+            if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
                 // Strip state pseudo-classes and match base selector.
                 let base_parts: Vec<SelectorPart> = sel.parts.iter()
-                    .filter(|p| !matches!(p, SelectorPart::PseudoClass(n) if n == "hover" || n == "active"))
+                    .filter(|p| !matches!(p, SelectorPart::PseudoClass(n)
+                        if matches!(n.as_str(), "hover" | "active" | "visited")))
                     .cloned()
                     .collect();
                 let base_sel = CssSelector { parts: base_parts };
                 if base_sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
-                    if has_hover  { hover_matched.push((rule.specificity, rule.declarations.clone())); }
-                    if has_active { active_matched.push((rule.specificity, rule.declarations.clone())); }
+                    if has_hover   { hover_matched.push((rule.specificity, rule.declarations.clone())); }
+                    if has_active  { active_matched.push((rule.specificity, rule.declarations.clone())); }
+                    if has_visited { visited_matched.push((rule.specificity, rule.declarations.clone())); }
                     break;
                 }
                 continue;
@@ -3530,31 +3526,45 @@ fn apply_cascade_inner(
             apply_property(&mut style, prop, &resolved);
         }
     }
-    // Apply hover declarations — map CSS properties to their hover-specific equivalents.
-    hover_matched.sort_by_key(|(sp, _)| *sp);
-    for (_, decls) in &hover_matched {
-        for (prop, val) in decls {
-            let resolved = resolve_var_references(val, &stylesheet.variables);
-            let hover_prop = match prop.as_str() {
-                "color"                            => "hover-color",
-                "background-color" | "background"  => "hover-background-color",
-                _ => continue,
-            };
-            apply_property(&mut style, hover_prop, &resolved);
+    // Hover style — clone the base style and overlay all matched hover declarations.
+    if !hover_matched.is_empty() {
+        hover_matched.sort_by_key(|(sp, _)| *sp);
+        let mut hs = style.clone();
+        for (_, decls) in &hover_matched {
+            for (prop, val) in decls {
+                let resolved = resolve_var_references(val, &stylesheet.variables);
+                apply_property(&mut hs, prop, &resolved);
+            }
         }
+        // Prevent infinite nesting: state styles don't carry their own state overrides.
+        hs.hover_style = None; hs.active_style = None; hs.visited_style = None;
+        style.hover_style = Some(Box::new(hs));
     }
-    // Apply active declarations — map CSS properties to their active-specific equivalents.
-    active_matched.sort_by_key(|(sp, _)| *sp);
-    for (_, decls) in &active_matched {
-        for (prop, val) in decls {
-            let resolved = resolve_var_references(val, &stylesheet.variables);
-            let active_prop = match prop.as_str() {
-                "color"                            => "active-color",
-                "background-color" | "background"  => "active-background-color",
-                _ => continue,
-            };
-            apply_property(&mut style, active_prop, &resolved);
+    // Active style — clone the base style and overlay all matched active declarations.
+    if !active_matched.is_empty() {
+        active_matched.sort_by_key(|(sp, _)| *sp);
+        let mut as_ = style.clone();
+        for (_, decls) in &active_matched {
+            for (prop, val) in decls {
+                let resolved = resolve_var_references(val, &stylesheet.variables);
+                apply_property(&mut as_, prop, &resolved);
+            }
         }
+        as_.hover_style = None; as_.active_style = None; as_.visited_style = None;
+        style.active_style = Some(Box::new(as_));
+    }
+    // Visited style — clone the base style and overlay all matched visited declarations.
+    if !visited_matched.is_empty() {
+        visited_matched.sort_by_key(|(sp, _)| *sp);
+        let mut vs = style.clone();
+        for (_, decls) in &visited_matched {
+            for (prop, val) in decls {
+                let resolved = resolve_var_references(val, &stylesheet.variables);
+                apply_property(&mut vs, prop, &resolved);
+            }
+        }
+        vs.hover_style = None; vs.active_style = None; vs.visited_style = None;
+        style.visited_style = Some(Box::new(vs));
     }
 
     // Apply inline style attribute

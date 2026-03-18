@@ -301,8 +301,9 @@ impl Renderer {
         // Restored to DPI-only scale after content is drawn (before scrollbar).
         self.scale = scale * zoom;
 
-        let hovered_ptr = doc.hovered_box;
-        let active_ptr  = doc.active_box;
+        let hovered_ptr   = doc.hovered_box;
+        let active_ptr    = doc.active_box;
+        let visited_hrefs = &doc.visited_urls;
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -312,6 +313,7 @@ impl Renderer {
             sel_box_ptr,
             hovered_ptr,
             active_ptr,
+            visited_hrefs,
         );
 
         // ── Caret ─────────────────────────────────────────────────────────────
@@ -359,17 +361,18 @@ impl Renderer {
 
     fn render_box(
         &mut self,
-        node:         &HtmlBox,
-        pixmap:       &mut Pixmap,
-        scroll_x:     f32,
-        scroll_y:     f32,
-        clip:         &Rect,
-        parent_mask:  Option<&Mask>,
-        sel_start:    Option<usize>,
-        sel_end:      Option<usize>,
-        sel_box_ptr:  *const HtmlBox,
-        hovered_ptr:  *const HtmlBox,
-        active_ptr:   *const HtmlBox,
+        node:          &HtmlBox,
+        pixmap:        &mut Pixmap,
+        scroll_x:      f32,
+        scroll_y:      f32,
+        clip:          &Rect,
+        parent_mask:   Option<&Mask>,
+        sel_start:     Option<usize>,
+        sel_end:       Option<usize>,
+        sel_box_ptr:   *const HtmlBox,
+        hovered_ptr:   *const HtmlBox,
+        active_ptr:    *const HtmlBox,
+        visited_hrefs: &std::collections::HashSet<String>,
     ) {
         if matches!(node.style.display, Display::None) { return; }
         if !node.style.visibility { return; }
@@ -407,15 +410,28 @@ impl Renderer {
             }
         };
 
-        // ── Hover / active check ──────────────────────────────────────────────
+        // ── Hover / active / visited check ───────────────────────────────────
+        // CSS :hover/:active apply to an element whenever the pointer is over
+        // it OR any of its descendants, so we check the whole subtree.
         let is_hovered = !hovered_ptr.is_null()
-            && (node.style.hover_background_color.is_some()
-                || node.style.hover_color.is_some())
-            && std::ptr::eq(node as *const HtmlBox, hovered_ptr);
+            && node.style.hover_style.is_some()
+            && Self::subtree_contains(node, hovered_ptr);
         let is_active = !active_ptr.is_null()
-            && (node.style.active_background_color.is_some()
-                || node.style.active_color.is_some())
-            && std::ptr::eq(node as *const HtmlBox, active_ptr);
+            && node.style.active_style.is_some()
+            && Self::subtree_contains(node, active_ptr);
+        let is_visited = node.style.visited_style.is_some()
+            && !node.style.href.is_empty()
+            && visited_hrefs.contains(&node.style.href);
+        // Effective style: active beats visited beats hover (most specific first).
+        let eff_style: &ComputedStyle = if is_active {
+            node.style.active_style.as_deref().unwrap_or(&node.style)
+        } else if is_visited {
+            node.style.visited_style.as_deref().unwrap_or(&node.style)
+        } else if is_hovered {
+            node.style.hover_style.as_deref().unwrap_or(&node.style)
+        } else {
+            &node.style
+        };
 
         // ── Sticky positioning ────────────────────────────────────────────────
         // For position:sticky, clamp the element's scroll offset so it stays
@@ -467,7 +483,7 @@ impl Renderer {
         };
 
         // ── Outer box-shadow (before background) ─────────────────────────────
-        if let Some(ref bs) = node.style.box_shadow {
+        if let Some(ref bs) = eff_style.box_shadow {
             if !bs.inset {
                 let shadow_x = px + bs.offset_x - bs.spread;
                 let shadow_y = py + bs.offset_y - bs.spread;
@@ -499,14 +515,8 @@ impl Renderer {
 
         // ── Background ───────────────────────────────────────────────────────
         {
-            let raw_bg = if is_active && node.style.active_background_color.is_some() {
-                node.style.active_background_color.unwrap()
-            } else if is_hovered && node.style.hover_background_color.is_some() {
-                node.style.hover_background_color.unwrap()
-            } else {
-                node.style.background_color
-            };
-            let opacity = node.style.opacity;
+            let raw_bg  = eff_style.background_color;
+            let opacity = eff_style.opacity;
             if raw_bg.a > 0 {
                 let alpha = ((raw_bg.a as f32) * opacity) as u8;
                 let bg = Color::rgba(raw_bg.r, raw_bg.g, raw_bg.b, alpha);
@@ -559,23 +569,23 @@ impl Renderer {
         }
 
         // ── Borders ──────────────────────────────────────────────────────────
-        self.draw_borders_masked(node, pixmap, eff_sx, eff_sy, eff_mask);
+        self.draw_borders_masked(node, eff_style, pixmap, eff_sx, eff_sy, eff_mask);
 
         // ── Outline ──────────────────────────────────────────────────────────
-        if node.style.outline_width > 0.0 && node.style.outline_style != BorderStyle::None {
+        if eff_style.outline_width > 0.0 && eff_style.outline_style != BorderStyle::None {
             let br2 = node.border_rect;
-            let ofs = node.style.outline_offset;
-            let ow  = node.style.outline_width;
+            let ofs = eff_style.outline_offset;
+            let ow  = eff_style.outline_width;
             let rx  = br2.x - eff_sx - ofs - ow;
             let ry  = br2.y - eff_sy - ofs - ow;
             let rw  = br2.w + 2.0 * (ofs + ow);
             let rh  = br2.h + 2.0 * (ofs + ow);
             let mut paint = Paint::default();
-            paint.set_color(node.style.outline_color.to_tiny_skia());
+            paint.set_color(eff_style.outline_color.to_tiny_skia());
             paint.anti_alias = true;
             let mut stroke = Stroke::default();
             stroke.width = ow;
-            match node.style.outline_style {
+            match eff_style.outline_style {
                 BorderStyle::Dashed => {
                     draw_dashed_line(pixmap, &paint, ow, rx, ry, rx + rw, ry, self.scale);
                     draw_dashed_line(pixmap, &paint, ow, rx + rw, ry, rx + rw, ry + rh, self.scale);
@@ -653,9 +663,9 @@ impl Renderer {
         if !node.line_cache.is_empty() {
             let flat = collect_flat_text(node);
             self.draw_inline_content(
-                node, &flat, pixmap, eff_sx, eff_sy,
+                node, eff_style, &flat, pixmap, eff_sx, eff_sy,
                 sel_start, sel_end, sel_box_ptr,
-                is_hovered, is_active, eff_mask,
+                eff_mask,
             );
         }
 
@@ -706,7 +716,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
                     );
                 }
             }
@@ -717,7 +727,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
                     );
                 }
             }
@@ -736,7 +746,7 @@ impl Renderer {
                 self.render_box(
                     child, pixmap, csx, csy,
                     clip, eff_mask,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
                 );
             }
         }
@@ -751,34 +761,50 @@ impl Renderer {
         }
     }
 
+    // ─── State helpers ────────────────────────────────────────────────────────
+
+    /// True when `target` is `node` itself or any descendant of `node`.
+    /// Used so that CSS `:hover`/`:active` activate on a parent element whenever
+    /// the cursor is over any child — matching CSS cascade semantics.
+    /// Only called for nodes that actually have a state style, so the cost is
+    /// bounded to the small subset of nodes with hover/active rules.
+    fn subtree_contains(node: &HtmlBox, target: *const HtmlBox) -> bool {
+        if std::ptr::eq(node as *const HtmlBox, target) { return true; }
+        for child in &node.children {
+            if Self::subtree_contains(child, target) { return true; }
+        }
+        false
+    }
+
     // ─── Borders (mask-aware) ────────────────────────────────────────────────
 
     fn draw_borders_masked(
         &self,
         node:   &HtmlBox,
+        style:  &ComputedStyle,
         pixmap: &mut Pixmap,
         sx:     f32,
         sy:     f32,
         mask:   Option<&Mask>,
     ) {
         let br      = node.border_rect;
-        let font_px = node.style.font_size_px(16.0, 16.0);
-        let radius  = node.style.border_radius.resolve(font_px, br.w, 16.0);
+        let font_px = style.font_size_px(16.0, 16.0);
+        let radius  = style.border_radius.resolve(font_px, br.w, 16.0);
         let rx      = br.x - sx;
         let ry      = br.y - sy;
 
-        let all_same = node.style.border_top_style    == node.style.border_right_style
-            && node.style.border_right_style  == node.style.border_bottom_style
-            && node.style.border_bottom_style == node.style.border_left_style
-            && node.style.border_top_color    == node.style.border_right_color
-            && node.style.border_right_color  == node.style.border_bottom_color
-            && node.style.border_bottom_color == node.style.border_left_color;
+        let all_same = style.border_top_style    == style.border_right_style
+            && style.border_right_style  == style.border_bottom_style
+            && style.border_bottom_style == style.border_left_style
+            && style.border_top_color    == style.border_right_color
+            && style.border_right_color  == style.border_bottom_color
+            && style.border_bottom_color == style.border_left_color;
 
-        let opacity = node.style.opacity;
+        let opacity = style.opacity;
 
-        if all_same && node.style.border_top_style != BorderStyle::None {
-            let tw = node.style.border_top_width.resolve(font_px, br.w, 16.0).max(1.0);
-            let c  = node.style.border_top_color;
+        if all_same && style.border_top_style != BorderStyle::None {
+            let tw = style.border_top_width.resolve(font_px, br.w, 16.0).max(1.0);
+            let c  = style.border_top_color;
             let ca = ((c.a as f32) * opacity) as u8;
             let mut paint = Paint::default();
             paint.set_color(Color::rgba(c.r, c.g, c.b, ca).to_tiny_skia());
@@ -796,31 +822,32 @@ impl Renderer {
                 pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
             }
         } else {
-            self.draw_border_side_masked(pixmap, sx, sy, node, Side::Top,    opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, Side::Right,  opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, Side::Bottom, opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, Side::Left,   opacity, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Top,    opacity, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Right,  opacity, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Bottom, opacity, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Left,   opacity, mask);
         }
     }
 
     fn draw_border_side_masked(
         &self,
-        pixmap: &mut Pixmap,
-        sx:     f32,
-        sy:     f32,
-        node:   &HtmlBox,
-        side:   Side,
+        pixmap:  &mut Pixmap,
+        sx:      f32,
+        sy:      f32,
+        node:    &HtmlBox,
+        style:   &ComputedStyle,
+        side:    Side,
         opacity: f32,
-        mask:   Option<&Mask>,
+        mask:    Option<&Mask>,
     ) {
-        let (style, color, width_l) = match side {
-            Side::Top    => (node.style.border_top_style,    node.style.border_top_color,    &node.style.border_top_width),
-            Side::Right  => (node.style.border_right_style,  node.style.border_right_color,  &node.style.border_right_width),
-            Side::Bottom => (node.style.border_bottom_style, node.style.border_bottom_color, &node.style.border_bottom_width),
-            Side::Left   => (node.style.border_left_style,   node.style.border_left_color,   &node.style.border_left_width),
+        let (bstyle, color, width_l) = match side {
+            Side::Top    => (style.border_top_style,    style.border_top_color,    &style.border_top_width),
+            Side::Right  => (style.border_right_style,  style.border_right_color,  &style.border_right_width),
+            Side::Bottom => (style.border_bottom_style, style.border_bottom_color, &style.border_bottom_width),
+            Side::Left   => (style.border_left_style,   style.border_left_color,   &style.border_left_width),
         };
-        if style == BorderStyle::None || style == BorderStyle::Hidden { return; }
-        let font_px = node.style.font_size_px(16.0, 16.0);
+        if bstyle == BorderStyle::None || bstyle == BorderStyle::Hidden { return; }
+        let font_px = style.font_size_px(16.0, 16.0);
         let w = width_l.resolve(font_px, node.border_rect.w, 16.0);
         if w < 0.5 { return; }
 
@@ -844,7 +871,7 @@ impl Renderer {
         stroke.width = w;
         stroke.line_cap = LineCap::Square;
 
-        match style {
+        match bstyle {
             BorderStyle::Dashed => draw_dashed_line(pixmap, &paint, w, x1, y1, x2, y2, self.scale),
             BorderStyle::Dotted => draw_dotted_line(pixmap, &paint, w, x1, y1, x2, y2, self.scale),
             BorderStyle::Double => {
@@ -975,30 +1002,23 @@ impl Renderer {
 
     fn draw_inline_content(
         &mut self,
-        node:        &HtmlBox,
-        flat:        &str,
-        pixmap:      &mut Pixmap,
-        sx:          f32,
-        sy:          f32,
-        sel_start:   Option<usize>,
-        sel_end:     Option<usize>,
+        node:       &HtmlBox,
+        eff_style:  &ComputedStyle,
+        flat:       &str,
+        pixmap:     &mut Pixmap,
+        sx:         f32,
+        sy:         f32,
+        sel_start:  Option<usize>,
+        sel_end:    Option<usize>,
         sel_box_ptr: *const HtmlBox,
-        is_hovered:  bool,
-        is_active:   bool,
-        mask:        Option<&Mask>,
+        mask:       Option<&Mask>,
     ) {
         if node.line_cache.is_empty() || flat.is_empty() { return; }
 
-        let opacity             = node.style.opacity;
+        let opacity             = eff_style.opacity;
         let fallback_font_px    = node.style.font_size_px(16.0, 16.0);
         let fallback_letter_spc = node.style.letter_spacing.resolve(fallback_font_px, 0.0, 16.0);
-        let fallback_color      = if is_active && node.style.active_color.is_some() {
-            node.style.active_color.unwrap()
-        } else if is_hovered && node.style.hover_color.is_some() {
-            node.style.hover_color.unwrap()
-        } else {
-            node.style.color
-        };
+        let fallback_color      = eff_style.color;
         let _fallback_ct_color = CTextColor::rgba(
             fallback_color.r, fallback_color.g, fallback_color.b,
             ((fallback_color.a as f32) * opacity) as u8,
@@ -1208,11 +1228,10 @@ impl Renderer {
                     }
                 }
 
-                // Text color (active > hover > normal)
-                let run_color = if is_active && node.style.active_color.is_some() {
-                    node.style.active_color.unwrap()
-                } else if is_hovered && node.style.hover_color.is_some() {
-                    node.style.hover_color.unwrap()
+                // Text color: use effective state style's color if run-level style
+                // matches the node's base style; otherwise trust the run's own style.
+                let run_color = if std::ptr::eq(style_ref as *const _, &node.style as *const _) {
+                    eff_style.color
                 } else {
                     style_ref.color
                 };

@@ -548,20 +548,42 @@ fn css_adv_inset_block_end() {
 }
 
 // ============================================================
-// Hover Colors
+// Hover Colors (now stored as full hover_style overlay)
 // ============================================================
 
 #[test]
 fn css_adv_hover_background_color() {
-    let s = style_with("hover-background-color", "yellow");
-    assert_eq!(s.hover_background_color, Some(Color::rgb(255, 255, 0)));
+    // hover-background-color was removed; hover styles are now stored as a
+    // full ComputedStyle clone in hover_style. Test via cascade instead.
+    use rhtmledit::parse_html;
+    let doc = parse_html(
+        "<html><head><style>div:hover { background-color: yellow; }</style></head>\
+         <body><div>x</div></body></html>");
+    fn find<'a>(b: &'a rhtmledit::types::HtmlBox, tag: &str) -> Option<&'a rhtmledit::types::HtmlBox> {
+        if b.tag == tag { return Some(b); }
+        for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
+        None
+    }
+    let div = find(&doc.root, "div").expect("div");
+    let hs = div.style.hover_style.as_ref().expect("hover_style");
+    assert_eq!(hs.background_color, Color::rgb(255, 255, 0));
 }
 
 #[test]
 fn css_adv_hover_color() {
-    let s = style_with("hover-color", "green");
+    use rhtmledit::parse_html;
+    let doc = parse_html(
+        "<html><head><style>div:hover { color: green; }</style></head>\
+         <body><div>x</div></body></html>");
+    fn find<'a>(b: &'a rhtmledit::types::HtmlBox, tag: &str) -> Option<&'a rhtmledit::types::HtmlBox> {
+        if b.tag == tag { return Some(b); }
+        for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
+        None
+    }
+    let div = find(&doc.root, "div").expect("div");
+    let hs = div.style.hover_style.as_ref().expect("hover_style");
     // CSS "green" is #008000
-    assert_eq!(s.hover_color, Some(Color::rgb(0, 128, 0)));
+    assert_eq!(hs.color, Color::rgb(0, 128, 0));
 }
 
 // ============================================================

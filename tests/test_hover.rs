@@ -1,26 +1,7 @@
 // Hover tests – ported from cpptests/test_hover.cpp
 // Only CSS property parsing tests are portable; hover state/render tests skipped.
 use rhtmledit::types::*;
-use rhtmledit::css::apply_property;
 use rhtmledit::parse_html;
-
-#[test]
-fn hover_background_color_parsed() {
-    let mut style = ComputedStyle::default();
-    apply_property(&mut style, "hover-background-color", "red");
-    assert_eq!(style.hover_background_color, Some(Color::rgb(255, 0, 0)));
-}
-
-#[test]
-fn hover_color_parsed() {
-    let mut style = ComputedStyle::default();
-    apply_property(&mut style, "hover-color", "blue");
-    assert_eq!(style.hover_color, Some(Color::rgb(0, 0, 255)));
-}
-
-// ============================================================
-// Missing tests ported from C++ test_hover.cpp
-// ============================================================
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }
@@ -29,6 +10,35 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     }
     None
 }
+
+#[test]
+fn hover_background_color_parsed() {
+    // Hover background-color is now stored in hover_style, not as a separate field.
+    let doc = parse_html(
+        "<html><head><style>\
+         div:hover { background-color: red; }\
+         </style></head><body><div>x</div></body></html>");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some());
+    let hs = div.unwrap().style.hover_style.as_ref().expect("expected hover_style");
+    assert_eq!(hs.background_color, Color::rgb(255, 0, 0));
+}
+
+#[test]
+fn hover_color_parsed() {
+    let doc = parse_html(
+        "<html><head><style>\
+         div:hover { color: blue; }\
+         </style></head><body><div>x</div></body></html>");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some());
+    let hs = div.unwrap().style.hover_style.as_ref().expect("expected hover_style");
+    assert_eq!(hs.color, Color::rgb(0, 0, 255));
+}
+
+// ============================================================
+// Missing tests ported from C++ test_hover.cpp
+// ============================================================
 
 #[test]
 fn hover_rule_flagged() {
@@ -56,21 +66,18 @@ fn hover_rule_has_declarations() {
 
 #[test]
 fn hover_style_applied_to_box() {
-    // Verify that a :hover rule with background-color and color
-    // is parsed correctly with its declarations preserved.
+    // Verify that a :hover rule stores a full hover_style on the matched element.
     let doc = parse_html(
         "<html><head><style>\
          .box:hover { background-color: yellow; color: green; }\
          </style></head>\
          <body><div class=\"box\">Hoverable</div></body></html>");
-    // The hover rule should exist with the correct declarations
-    let hover_rule = doc.stylesheet.rules.iter().find(|r| r.is_hover);
-    assert!(hover_rule.is_some(), "Expected a :hover rule in stylesheet");
-    let rule = hover_rule.unwrap();
-    assert!(rule.declarations.contains_key("background-color"),
-        "Expected background-color in hover rule declarations");
-    assert!(rule.declarations.contains_key("color"),
-        "Expected color in hover rule declarations");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some(), "Expected a .box div");
+    let hs = div.unwrap().style.hover_style.as_ref()
+        .expect("Expected hover_style on .box element");
+    assert_eq!(hs.background_color, Color::rgb(255, 255, 0), "Expected yellow background");
+    assert_eq!(hs.color, Color::rgb(0, 128, 0), "Expected green text");
 }
 
 // ============================================================
@@ -91,20 +98,26 @@ fn link_default_color_is_blue() {
 
 #[test]
 fn hover_background_color_green() {
-    // Verify a different named color parses correctly
-    let mut style = ComputedStyle::default();
-    apply_property(&mut style, "hover-background-color", "green");
-    assert!(style.hover_background_color.is_some());
-    let c = style.hover_background_color.unwrap();
-    assert_eq!(c.g, 128, "expected green=128 for named 'green'");
+    let doc = parse_html(
+        "<html><head><style>\
+         div:hover { background-color: green; }\
+         </style></head><body><div>x</div></body></html>");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some());
+    let hs = div.unwrap().style.hover_style.as_ref().expect("expected hover_style");
+    assert_eq!(hs.background_color.g, 128, "expected green=128 for named 'green'");
 }
 
 #[test]
 fn hover_color_red() {
-    // Verify a different named color parses on hover-color
-    let mut style = ComputedStyle::default();
-    apply_property(&mut style, "hover-color", "red");
-    assert_eq!(style.hover_color, Some(Color::rgb(255, 0, 0)));
+    let doc = parse_html(
+        "<html><head><style>\
+         div:hover { color: red; }\
+         </style></head><body><div>x</div></body></html>");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some());
+    let hs = div.unwrap().style.hover_style.as_ref().expect("expected hover_style");
+    assert_eq!(hs.color, Color::rgb(255, 0, 0));
 }
 
 #[test]
@@ -143,4 +156,34 @@ fn link_element_parsed() {
     let a = find_box(&doc.root, &|b| b.tag == "a");
     assert!(a.is_some(), "expected <a> element in box tree");
     assert_eq!(a.unwrap().get_attr("href"), Some("http://example.com"));
+}
+
+#[test]
+fn hover_border_color_stored_in_hover_style() {
+    // New: border-color in :hover rules is now fully supported.
+    let doc = parse_html(
+        "<html><head><style>\
+         .card:hover { border-color: #58a6ff; }\
+         </style></head>\
+         <body><div class=\"card\">Card</div></body></html>");
+    let div = find_box(&doc.root, &|b| b.tag == "div");
+    assert!(div.is_some());
+    let hs = div.unwrap().style.hover_style.as_ref()
+        .expect("expected hover_style with border-color");
+    assert_eq!(hs.border_top_color, Color::rgb(0x58, 0xa6, 0xff));
+}
+
+#[test]
+fn visited_style_stored_in_visited_style() {
+    // :visited rules are stored as visited_style.
+    let doc = parse_html(
+        "<html><head><style>\
+         a:visited { color: purple; }\
+         </style></head>\
+         <body><a href=\"http://example.com\">Link</a></body></html>");
+    let a = find_box(&doc.root, &|b| b.tag == "a");
+    assert!(a.is_some());
+    let vs = a.unwrap().style.visited_style.as_ref()
+        .expect("expected visited_style on <a>");
+    assert_eq!(vs.color, Color::rgb(128, 0, 128));
 }

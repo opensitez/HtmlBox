@@ -743,13 +743,11 @@ pub struct ComputedStyle {
     pub container_name: String,
     pub container_type: ContainerType,
 
-    // Hover colors
-    pub hover_color:            Option<Color>,
-    pub hover_background_color: Option<Color>,
-
-    // Active (pressed) colors
-    pub active_color:            Option<Color>,
-    pub active_background_color: Option<Color>,
+    // State styles — full computed-style overlays applied at render time (not layout time).
+    // None means the element has no rule for that state.
+    pub hover_style:   Option<Box<ComputedStyle>>,
+    pub active_style:  Option<Box<ComputedStyle>>,
+    pub visited_style: Option<Box<ComputedStyle>>,
 
     // List style image
     pub list_style_image: String,
@@ -1164,11 +1162,9 @@ impl Default for ComputedStyle {
             container_name: String::new(),
             container_type: ContainerType::Normal,
 
-            hover_color:            None,
-            hover_background_color: None,
-
-            active_color:            None,
-            active_background_color: None,
+            hover_style:   None,
+            active_style:  None,
+            visited_style: None,
 
             list_style_image: String::new(),
 
@@ -1587,6 +1583,8 @@ pub struct Document {
     pub active_box:      *const HtmlBox,
     /// Currently focused element (raw pointer, null if none).
     pub focused_box:     *const HtmlBox,
+    /// Set of link hrefs the user has clicked (for :visited pseudo-class).
+    pub visited_urls:    std::collections::HashSet<String>,
 }
 
 impl Document {
@@ -1604,6 +1602,7 @@ impl Document {
             hovered_box:     std::ptr::null(),
             active_box:      std::ptr::null(),
             focused_box:     std::ptr::null(),
+            visited_urls:    std::collections::HashSet::new(),
         }
     }
 
@@ -1662,6 +1661,12 @@ impl Document {
                 if !self.active_box.is_null() {
                     self.active_box = std::ptr::null();
                     redraw = true;
+                }
+                // Track visited links: on left-click release, record the href.
+                if button == 0 {
+                    if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
+                        self.visited_urls.insert(href);
+                    }
                 }
             }
             _ => {}
