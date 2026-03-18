@@ -1,5 +1,5 @@
 use crate::types::*;
-use cosmic_text::{Attrs, Buffer, Metrics, Shaping, Style as CTextStyle, Weight};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Style as CTextStyle, Weight};
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
 use crate::layout::block::{collapse_two, compute_intrinsic_width};
 use crate::layout::text::resolve_bidi_line;
@@ -443,11 +443,19 @@ pub fn layout_inline_block(
             descent: line_desc,
             extra_space_per_word: extra_per_gap,
             visual_segments: Vec::new(),
+            char_x: Vec::new(),
         };
 
         // Resolve BiDi visual segments for this line
         let para_dir = node.style.direction;
-        resolve_bidi_line(&collect_flat_text(node), &mut ll, para_dir);
+        let flat_text = collect_flat_text(node);
+        resolve_bidi_line(&flat_text, &mut ll, para_dir);
+
+        // Fill per-character x positions using real glyph metrics.
+        if let Some(fs_ptr) = engine.font_system {
+            let fs = unsafe { &mut *fs_ptr };
+            fill_char_x_for_line(fs, &flat_text, &runs, &mut ll);
+        }
 
         line_cache.push(ll);
         cursor_y += line_h;
@@ -468,6 +476,7 @@ pub fn layout_inline_block(
             descent: 0.0,
             extra_space_per_word: 0.0,
             visual_segments: Vec::new(),
+            char_x: Vec::new(),
         });
         cursor_y += font_px * 1.2;
     }
@@ -1023,6 +1032,108 @@ pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {
 
 pub fn approx_font_metrics(font_px: f32, _fs: Option<&mut cosmic_text::FontSystem>) -> (f32, f32) {
     (font_px * 0.80, font_px * 0.20)
+}
+
+// ─── Accurate per-character x positions using cosmic_text ────────────────────
+
+/// Populate `line.char_x` with real glyph x positions (relative to `line.x`).
+///
+/// Each entry `char_x[i]` is the visual x of the caret at byte offset
+/// `line.text_start + i` within `flat`.  Uses the same shaping as the renderer
+/// (Basic for ASCII, Advanced otherwise) so click-to-caret and caret rendering
+/// agree exactly with the rendered text positions.
+pub fn fill_char_x_for_line(
+    fs:   &mut cosmic_text::FontSystem,
+    flat: &str,
+    runs: &[InlineRun],
+    line: &mut LayoutLine,
+) {
+    let line_start = line.text_start;
+    let line_end   = (line.text_start + line.text_length).min(flat.len());
+    let range_len  = line_end.saturating_sub(line_start);
+    if range_len == 0 { return; }
+
+    // One entry per byte boundary plus one for end-of-line.
+    let mut positions = vec![f32::NAN; range_len + 1];
+
+    let mut cursor_x = 0.0f32; // x relative to line.x, advances across runs
+
+    for run in runs {
+        let seg_s = line_start.max(run.text_offset);
+        let seg_e = line_end.min(run.text_offset + run.length);
+        if seg_s >= seg_e { continue; }
+
+        // Snap to char boundaries.
+        let mut s = seg_s;
+        while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
+        let mut e = seg_e;
+        while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
+        if s >= e { continue; }
+
+        let seg_text = &flat[s..e];
+        let font_px  = run.style.font_size_px(16.0, 16.0);
+        let ct_w     = if run.style.font_weight.is_bold() { Weight::BOLD } else { Weight::NORMAL };
+        let ct_s     = match run.style.font_style {
+            FontStyle::Italic  => CTextStyle::Italic,
+            FontStyle::Oblique => CTextStyle::Oblique,
+            FontStyle::Normal  => CTextStyle::Normal,
+        };
+
+        let metrics = Metrics::new(font_px, font_px * 1.2);
+        let mut buf = Buffer::new(fs, metrics);
+        let family  = match run.style.font_family.as_str() {
+            "serif"      => Family::Serif,
+            "monospace"  => Family::Monospace,
+            "cursive"    => Family::Cursive,
+            "fantasy"    => Family::Fantasy,
+            name if name.is_empty() => Family::SansSerif,
+            name         => Family::Name(name),
+        };
+        let attrs   = Attrs::new().weight(ct_w).style(ct_s).family(family);
+        let shaping = if seg_text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
+        buf.set_text(fs, seg_text, attrs, shaping);
+        buf.shape_until_scroll(fs, false);
+
+        let mut seg_advance = 0.0f32;
+        for lr in buf.layout_runs() {
+            for glyph in lr.glyphs {
+                // glyph.start / .end are byte offsets within seg_text.
+                let abs_s = s + glyph.start;
+                let abs_e = s + glyph.end;
+                let i_s   = abs_s.saturating_sub(line_start);
+                let i_e   = abs_e.saturating_sub(line_start);
+                // Leading edge of this glyph.
+                if i_s < positions.len() && positions[i_s].is_nan() {
+                    positions[i_s] = cursor_x + glyph.x;
+                }
+                // Trailing edge (= leading edge of next char / end of last char).
+                if i_e < positions.len() && positions[i_e].is_nan() {
+                    positions[i_e] = cursor_x + glyph.x + glyph.w;
+                }
+                let right = glyph.x + glyph.w;
+                if right > seg_advance { seg_advance = right; }
+            }
+            if lr.line_w > seg_advance { seg_advance = lr.line_w; }
+        }
+
+        // Advance cursor_x by the segment's actual advance + extra word spacing.
+        // Mirrors what the renderer does: actual_advance + n_spaces*(word_s+extra).
+        let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
+        let extra  = line.extra_space_per_word;
+        let n_spc  = seg_text.chars().filter(|&c| c == ' ').count() as f32;
+        cursor_x += seg_advance + n_spc * (word_s + extra);
+    }
+
+    // End-of-line position.
+    positions[range_len] = cursor_x;
+
+    // Forward-fill NaN gaps (intermediate bytes of multi-byte / ligature glyphs).
+    let mut last = 0.0f32;
+    for p in positions.iter_mut() {
+        if p.is_nan() { *p = last; } else { last = *p; }
+    }
+
+    line.char_x = positions;
 }
 
 // ─── Collect flat text (same traversal as collect_items) ─────────────────────

@@ -1355,6 +1355,11 @@ pub struct LayoutLine {
     pub extra_space_per_word: f32,  // for text-align: justify
     /// BiDi visual segments in visual order. Empty = pure LTR, use logical order.
     pub visual_segments: Vec<VisualSegment>,
+    /// Per-character-boundary x positions relative to `self.x`, in logical pixels.
+    /// `char_x[i]` = visual x of the caret at byte offset `text_start + i`.
+    /// Length = `text_length + 1` (last entry = position after the final character).
+    /// Empty when no FontSystem was available during layout (falls back to approximation).
+    pub char_x: Vec<f32>,
 }
 
 // ─── HTML Box (DOM node) ─────────────────────────────────────────────────────

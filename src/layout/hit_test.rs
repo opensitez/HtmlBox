@@ -66,6 +66,12 @@ pub fn get_caret_x(
     let line_end = line.text_start + line.text_length;
     let offset   = offset.min(line_end);
 
+    // Fast path: use pre-computed per-character positions (accurate, no approximation).
+    if !line.char_x.is_empty() {
+        let idx = offset.saturating_sub(line.text_start).min(line.char_x.len() - 1);
+        return line.x + line.char_x[idx];
+    }
+
     // BiDi path
     if !line.visual_segments.is_empty() {
         let mut x = line.x;
@@ -107,6 +113,35 @@ pub fn get_offset_from_x(
     if x <= line.x { return line.text_start; }
 
     let line_end = line.text_start + line.text_length;
+
+    // Fast path: use pre-computed per-character positions (accurate, no approximation).
+    if !line.char_x.is_empty() {
+        let rel_x = x - line.x;
+        // Strip trailing newline from consideration
+        let measure_end = if line_end > line.text_start
+            && line_end <= text.len()
+            && text.as_bytes().get(line_end - 1) == Some(&b'\n')
+        { line_end - 1 } else { line_end };
+
+        // Walk char boundaries in char_x and find closest split point.
+        let mut best_off  = line.text_start;
+        let mut best_dist = f32::MAX;
+        let range_len = measure_end.saturating_sub(line.text_start);
+
+        // Check each char boundary (char_x[i] is the x at byte line.text_start+i)
+        for (i, &cx) in line.char_x[..=range_len.min(line.char_x.len() - 1)].iter().enumerate() {
+            let dist = (rel_x - cx).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_off  = line.text_start + i;
+            }
+        }
+        // Clamp to a valid char boundary
+        while best_off > line.text_start && !text.is_char_boundary(best_off) {
+            best_off -= 1;
+        }
+        return best_off.min(measure_end);
+    }
     // Strip trailing newline from measurement
     let measure_end = if line_end > line.text_start
         && line_end <= text.len()
