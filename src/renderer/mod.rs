@@ -199,15 +199,17 @@ impl Renderer {
         // For position:sticky, clamp the element's scroll offset so it stays
         // within the viewport while still allowing normal flow scrolling.
         let (px, py) = if node.style.position == Position::Sticky {
-            // top/left sticky thresholds relative to the current clip viewport
+            // top/left sticky thresholds relative to the current clip viewport.
+            // clip.x/clip.y is the scroll container's top-left in screen space,
+            // so the stick point is clip.origin + top/left value.
             let top_val  = node.style.top.resolve(font_px, clip.h, 16.0);
             let left_val = node.style.left.resolve(font_px, clip.w, 16.0);
             // Natural position (already scroll-adjusted above)
             let nat_x = pr.x - sx;
             let nat_y = pr.y - sy;
-            // Clamp: don't scroll past the sticky threshold
-            let cx = if !node.style.left.is_auto() { nat_x.max(left_val) } else { nat_x };
-            let cy = if !node.style.top.is_auto()  { nat_y.max(top_val)  } else { nat_y };
+            // Clamp: don't scroll past the sticky threshold within the scroll container
+            let cx = if !node.style.left.is_auto() { nat_x.max(clip.x + left_val) } else { nat_x };
+            let cy = if !node.style.top.is_auto()  { nat_y.max(clip.y + top_val)  } else { nat_y };
             (cx, cy)
         } else {
             (px, py)
