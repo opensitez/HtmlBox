@@ -347,3 +347,54 @@ fn scroll_padding_individual_sides() {
     assert_eq!(s.scroll_padding_right,  CssLength::Px(15.0));
     assert_eq!(s.scroll_padding_bottom, CssLength::Px(5.0));
 }
+
+// ── <br> in block context produces vertical space ────────────────────────────
+
+fn walk_boxes_t<F: FnMut(&HtmlBox)>(root: &HtmlBox, f: &mut F) {
+    f(root);
+    for child in &root.children { walk_boxes_t(child, f); }
+}
+
+#[test]
+fn br_between_block_containers_creates_vertical_gap() {
+    // The <br> between two flex containers must produce a line-height of vertical
+    // space so they are not flush against each other.
+    let html = r#"<html><body>
+        <div style="display:flex;gap:12px;" id="row1">
+            <div style="width:50%;background:linear-gradient(to bottom,#667eea,#764ba2);">A</div>
+            <div style="width:50%;background:linear-gradient(to right,#f093fb,#f5576c);">B</div>
+        </div>
+        <br>
+        <div style="display:flex;gap:12px;" id="row2">
+            <div style="width:33%;">C</div>
+            <div style="width:33%;">D</div>
+            <div style="width:33%;">E</div>
+        </div>
+    </body></html>"#;
+
+    let doc = load_html(html, 800.0);
+
+    let row1 = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "row1").unwrap_or(false))
+        .expect("row1 not found");
+    let row2 = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "row2").unwrap_or(false))
+        .expect("row2 not found");
+
+    let row1_bottom = row1.border_rect.y + row1.border_rect.h;
+    let row2_top    = row2.border_rect.y;
+    let gap = row2_top - row1_bottom;
+
+    // The <br> should contribute at least font_px * 1.2 (default 16px * 1.2 = 19.2px)
+    assert!(gap >= 19.0,
+        "expected vertical gap >= 19px between rows, got {:.1}px", gap);
+}
+
+#[test]
+fn br_in_block_has_nonzero_height() {
+    // A standalone <br> inside a block container must have a nonzero margin_rect.h.
+    let html = r#"<html><body><div id="outer"><div>Row 1</div><br><div>Row 2</div></div></body></html>"#;
+    let doc = load_html(html, 800.0);
+
+    let br = find_box(&doc.root, &|b| b.tag == "br").expect("br not found");
+    assert!(br.margin_rect.h > 0.0,
+        "br in block context must have nonzero height, got {}", br.margin_rect.h);
+}

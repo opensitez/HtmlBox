@@ -42,7 +42,7 @@ winit = "0.30"
 softbuffer = "0.4"
 bytemuck = "1"
 raw-window-handle = "0.6"
-cosmic-text = "0.12"
+cosmic-text = "0.18.2"
 unicode-bidi = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 resvg = "0.44"

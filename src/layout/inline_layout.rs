@@ -1093,7 +1093,7 @@ pub fn measure_text_width_fs_attrs(
     let metrics = Metrics::new(font_px, font_px * 1.2);
     let mut buffer = Buffer::new(fs, metrics);
     let attrs = Attrs::new().weight(weight).style(style);
-    buffer.set_text(fs, text, attrs, Shaping::Advanced);
+    buffer.set_text(fs, text, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(fs, false);
 
     let mut max_w = 0.0f32;
@@ -1186,7 +1186,7 @@ pub fn fill_char_x_for_line(
         // (glyph.start=0..4 for "world" in "Hello world") rather than buffer-relative
         // (6..10). Only Advanced gives correct offsets needed to populate char_x.
         let shaping = Shaping::Advanced;
-        buf.set_text(fs, seg_text, attrs, shaping);
+        buf.set_text(fs, seg_text, &attrs, shaping, None);
         buf.shape_until_scroll(fs, false);
 
         // Glyphs are in physical pixels; divide by scale to get logical pixels.

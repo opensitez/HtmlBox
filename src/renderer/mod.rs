@@ -1496,7 +1496,7 @@ impl Renderer {
         // Advanced (full HarfBuzz) for any non-ASCII text so that Arabic joins,
         // Hebrew vowels, Devanagari conjuncts, CJK, etc. all render correctly.
         let shaping = if text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
-        buf.set_text(&mut self.font_system, text, attrs, shaping);
+        buf.set_text(&mut self.font_system, text, &attrs, shaping, None);
         buf.shape_until_scroll(&mut self.font_system, false);
 
         // Measure the actual advance from the shaped run (physical pixels → logical).
@@ -1510,6 +1510,10 @@ impl Renderer {
         let phys_x = x * sc;
         let phys_y = y * sc;
 
+        // cosmic-text ignores color.a in its mask glyph callback (//TODO: blend base alpha?
+        // comment still present in 0.18.2). Capture it here and multiply with coverage.
+        let color_a = color.a() as u32;
+
         if mask.is_none() {
             // ── Fast path ────────────────────────────────────────────────────
             // Write glyph coverage directly into the pixmap's pixel buffer.
@@ -1522,9 +1526,12 @@ impl Renderer {
             buf.draw(&mut self.font_system, &mut self.swash_cache, color, |gx, gy, gw, gh, gc| {
                 let ga = gc.a();
                 if ga == 0 { return; }
+                // Apply color.a (dropped by cosmic-text) by multiplying with coverage.
+                let eff_a = ga as u32 * color_a / 255;
+                if eff_a == 0 { return; }
                 let bx = phys_x as i32 + gx;
                 let by = phys_y as i32 + gy;
-                let sa = ga as u32;
+                let sa = eff_a;
                 let ia = 255 - sa;
                 // Premultiply source color.
                 let pr = gc.r() as u32 * sa / 255;
@@ -1555,12 +1562,13 @@ impl Renderer {
             // Only reached for rounded-corner overflow clips (rare). Uses fill_rect
             // so the pixel-level mask is respected.
             buf.draw(&mut self.font_system, &mut self.swash_cache, color, |gx, gy, gw, gh, gc| {
-                if gc.a() == 0 { return; }
+                let eff_a = (gc.a() as u32 * color_a / 255) as u8;
+                if eff_a == 0 { return; }
                 if let Some(rect) = SkRect::from_xywh(
                     phys_x + gx as f32, phys_y + gy as f32, gw as f32, gh as f32,
                 ) {
                     let mut paint = Paint::default();
-                    paint.set_color_rgba8(gc.r(), gc.g(), gc.b(), gc.a());
+                    paint.set_color_rgba8(gc.r(), gc.g(), gc.b(), eff_a);
                     paint.anti_alias = true;
                     pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
                 }
@@ -1595,7 +1603,7 @@ impl Renderer {
         buf.set_metrics(&mut self.font_system, metrics);
         buf.set_size(&mut self.font_system, None, Some((phys_lh + 4.0).max(1.0)));
         let shaping = if text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
-        buf.set_text(&mut self.font_system, text, attrs, shaping);
+        buf.set_text(&mut self.font_system, text, &attrs, shaping, None);
         buf.shape_until_scroll(&mut self.font_system, false);
         let mut phys_advance = 0.0f32;
         for run in buf.layout_runs() {

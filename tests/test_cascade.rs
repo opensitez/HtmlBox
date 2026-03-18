@@ -1054,8 +1054,8 @@ fn cascade_hr_has_border() {
     let hr = find_box(&doc.root, &|b: &HtmlBox| b.tag == "hr");
     assert!(hr.is_some(), "hr not found");
     let s = &hr.unwrap().style;
-    assert_eq!(s.border_top_style, BorderStyle::Inset);
-    // UA sets border-width: 1px
+    // UA now uses border-top: 1px solid silver (not inset)
+    assert_eq!(s.border_top_style, BorderStyle::Solid);
     let w = match s.border_top_width { CssLength::Px(px) => px, _ => 0.0 };
     assert!(w >= 1.0, "hr border-top-width should be >= 1px");
 }

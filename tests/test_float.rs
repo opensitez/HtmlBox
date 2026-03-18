@@ -361,7 +361,9 @@ fn float_right_aligned_to_right_edge() {
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
     let right_edge = float_box.content_rect.x + float_box.content_rect.w;
-    assert!(right_edge >= 500.0 && right_edge <= 600.0,
+    // Body has 8px left margin (UA stylesheet); outer div content starts at x=8.
+    // Float right edge = 8 + 600 = 608.
+    assert!(right_edge >= 604.0 && right_edge <= 612.0,
         "right_edge = {right_edge}");
 }
 

@@ -1280,6 +1280,7 @@ impl ComputedStyle {
         self.user_select     = parent.user_select;
         self.font_stretch    = parent.font_stretch;
         self.href            = parent.href.clone();
+        self.text_shadow     = parent.text_shadow.clone();
     }
 
     pub fn is_block_level(&self) -> bool {

@@ -29,6 +29,49 @@ fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
 }
 
 // ============================================================
+// Flex Card Sizing Diagnostic
+// ============================================================
+
+#[test]
+fn flex_three_cards_equal_sizing() {
+    // Reproduce the "Flexbox Layout" section from demo.html
+    let html = r#"<html><body><div style="display:flex;gap:12px;">
+<div style="background-color:#eaf2f8;padding:12px;border:1px solid #3498db;"><b>Card 1</b><br>Flex items arranged horizontally with gap.</div>
+<div style="background-color:#fef9e7;padding:12px;border:1px solid #f1c40f;"><b>Card 2</b><br>Each card is a separate editable region.</div>
+<div style="background-color:#fdedec;padding:12px;border:1px solid #e74c3c;"><b>Card 3</b><br>Background, border, padding, font.</div>
+</div></body></html>"#;
+    let mut doc = parse_and_layout(html, 800.0);
+
+    // Simulate a resize by running layout again (same width)
+    let mut engine = rhtmledit::LayoutEngine::new();
+    engine.layout(&mut doc, 800.0);
+
+    // And again — this is the pattern that degrades on repeated layout
+    engine.layout(&mut doc, 800.0);
+
+    let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex).expect("flex container");
+    let cards: Vec<&HtmlBox> = flex.children.iter()
+        .filter(|c| c.style.display != Display::None && c.tag != "#text")
+        .collect();
+    assert_eq!(cards.len(), 3, "expected 3 flex cards");
+    let w0 = cards[0].border_rect.w;
+    let w1 = cards[1].border_rect.w;
+    let w2 = cards[2].border_rect.w;
+    eprintln!("Card widths after re-layout: {:.1} {:.1} {:.1}", w0, w1, w2);
+    eprintln!("Card 0 line widths: {:?}", cards[0].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    eprintln!("Card 1 line widths: {:?}", cards[1].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    eprintln!("Card 2 line widths: {:?}", cards[2].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    let max_w = w0.max(w1).max(w2);
+    let min_w = w0.min(w1).min(w2);
+    assert!(min_w > 0.0, "cards should have positive width");
+    assert!(
+        max_w / min_w < 2.0,
+        "cards are too unequal after re-layout: {:.1} {:.1} {:.1} (ratio {:.2})",
+        w0, w1, w2, max_w / min_w
+    );
+}
+
+// ============================================================
 // Flex Container Properties
 // ============================================================
 
@@ -782,9 +825,10 @@ fn flex_justify_content_center_single() {
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
-        // Centered: (400-100)/2 = 150
-        assert!(items[0].margin_rect.x >= 145.0 && items[0].margin_rect.x <= 155.0,
-            "A.x = {}", items[0].margin_rect.x);
+        // Body has 8px left margin (UA stylesheet); flex content_x = 8.
+        // Centered: 8 + (400-100)/2 = 158
+        let x = items[0].margin_rect.x;
+        assert!(x >= 153.0 && x <= 163.0, "A.x = {}", x);
     }
 }
 
