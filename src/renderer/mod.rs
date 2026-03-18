@@ -212,6 +212,12 @@ impl Renderer {
         } else {
             (px, py)
         };
+        // Effective scroll offsets that account for sticky clamping.
+        // For non-sticky elements: eff_sx == sx, eff_sy == sy.
+        // For sticky elements: eff_sx/eff_sy are reduced so that children and inline
+        // content are drawn at positions relative to the clamped (stuck) parent origin.
+        let eff_sx = pr.x - px;
+        let eff_sy = pr.y - py;
 
         // ── CSS transform ─────────────────────────────────────────────────────
         // Compute the element-level transform (CSS transform + DPI scale).
@@ -329,15 +335,15 @@ impl Renderer {
         }
 
         // ── Borders ──────────────────────────────────────────────────────────
-        self.draw_borders_masked(node, pixmap, sx, sy, eff_mask);
+        self.draw_borders_masked(node, pixmap, eff_sx, eff_sy, eff_mask);
 
         // ── Outline ──────────────────────────────────────────────────────────
         if node.style.outline_width > 0.0 && node.style.outline_style != BorderStyle::None {
             let br2 = node.border_rect;
             let ofs = node.style.outline_offset;
             let ow  = node.style.outline_width;
-            let rx  = br2.x - sx - ofs - ow;
-            let ry  = br2.y - sy - ofs - ow;
+            let rx  = br2.x - eff_sx - ofs - ow;
+            let ry  = br2.y - eff_sy - ofs - ow;
             let rw  = br2.w + 2.0 * (ofs + ow);
             let rh  = br2.h + 2.0 * (ofs + ow);
             let mut paint = Paint::default();
@@ -398,14 +404,16 @@ impl Renderer {
         };
 
         // ── Per-element scroll: children are shifted by the element's scroll ──
-        let child_sx = sx + node.scroll_left;
-        let child_sy = sy + node.scroll_top;
+        // Use eff_sx/eff_sy so sticky elements keep their children aligned with
+        // the clamped (stuck) background position.
+        let child_sx = eff_sx + node.scroll_left;
+        let child_sy = eff_sy + node.scroll_top;
 
         // ── ::before pseudo-element ───────────────────────────────────────────
         if !node.style.before_content.is_empty() && !node.line_cache.is_empty() {
             let first = &node.line_cache[0];
-            let tx = first.x - sx;
-            let ty = first.y - sy;
+            let tx = first.x - eff_sx;
+            let ty = first.y - eff_sy;
             let ps = node.style.before_style.as_deref().unwrap_or(&node.style);
             let ps_font_px = { let f = ps.font_size.resolve(font_px, 0.0, 16.0); if f > 0.0 { f } else { font_px } };
             let line_h = ps.line_height.resolve(ps_font_px, 0.0, 16.0).max(ps_font_px * 1.2);
@@ -421,7 +429,7 @@ impl Renderer {
         if !node.line_cache.is_empty() {
             let flat = collect_flat_text(node);
             self.draw_inline_content(
-                node, &flat, pixmap, sx, sy,
+                node, &flat, pixmap, eff_sx, eff_sy,
                 sel_start, sel_end, sel_box_ptr,
                 is_hovered, is_active, eff_mask,
             );
@@ -430,8 +438,8 @@ impl Renderer {
         // ── ::after pseudo-element ────────────────────────────────────────────
         if !node.style.after_content.is_empty() && !node.line_cache.is_empty() {
             let last = &node.line_cache[node.line_cache.len() - 1];
-            let tx = last.x - sx + last.width;
-            let ty = last.y - sy;
+            let tx = last.x - eff_sx + last.width;
+            let ty = last.y - eff_sy;
             let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
             let ps_font_px = { let f = ps.font_size.resolve(font_px, 0.0, 16.0); if f > 0.0 { f } else { font_px } };
             let line_h = ps.line_height.resolve(ps_font_px, 0.0, 16.0).max(ps_font_px * 1.2);
@@ -445,23 +453,23 @@ impl Renderer {
 
         // ── List marker ──────────────────────────────────────────────────────
         if node.style.display == Display::ListItem && !node.line_cache.is_empty() {
-            self.draw_list_marker(node, pixmap, sx, sy, eff_mask);
+            self.draw_list_marker(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
 
         // ── HR ───────────────────────────────────────────────────────────────
         if node.tag == "hr" {
-            self.draw_hr(node, pixmap, sx, sy, eff_mask);
+            self.draw_hr(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
 
         // ── Custom Component Painting ────────────────────────────────────────
         if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
             let cr = node.content_rect;
-            (callbacks.paint)(node, pixmap, cr.x - sx, cr.y - sy, cr.w, cr.h, self.scale);
+            (callbacks.paint)(node, pixmap, cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h, self.scale);
         }
 
         // ── Image placeholder for <img> ─────────────────────────────────────
         if node.tag == "img" {
-            self.draw_image_placeholder(node, pixmap, sx, sy, eff_mask);
+            self.draw_image_placeholder(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
 
         // ── Children: non-positioned first, then positioned by z-index ───────
@@ -510,7 +518,7 @@ impl Renderer {
         }
 
         // ── Scrollbars ────────────────────────────────────────────────────────
-        self.draw_scrollbars(node, pixmap, sx, sy);
+        self.draw_scrollbars(node, pixmap, eff_sx, eff_sy);
 
         // ── CSS Filters ───────────────────────────────────────────────────────
         // Apply pixel-level filter ops (blur, brightness, etc.) to the element region.
