@@ -1511,6 +1511,40 @@ impl Renderer {
         logical_advance
     }
 
+    // ─── Text measurement ────────────────────────────────────────────────────
+
+    /// Shape `text` and return its logical-pixel advance without drawing.
+    fn measure_text_run(&mut self, text: &str, font_px: f32, line_h: f32,
+                        weight: FontWeight, font_style: FontStyle) -> f32 {
+        if text.is_empty() { return 0.0; }
+        let sc      = self.scale;
+        let phys_px = font_px * sc;
+        let phys_lh = line_h  * sc;
+        let metrics = Metrics::new(phys_px, phys_lh);
+        let attrs = Attrs::new()
+            .weight(if weight.is_bold() { Weight::BOLD } else { Weight::NORMAL })
+            .style(match font_style {
+                FontStyle::Italic  => CTextStyle::Italic,
+                FontStyle::Oblique => CTextStyle::Oblique,
+                FontStyle::Normal  => CTextStyle::Normal,
+            });
+        if self.shape_buf.is_none() {
+            self.shape_buf = Some(Buffer::new(&mut self.font_system, metrics));
+        }
+        let mut buf = self.shape_buf.take().unwrap();
+        buf.set_metrics(&mut self.font_system, metrics);
+        buf.set_size(&mut self.font_system, None, Some((phys_lh + 4.0).max(1.0)));
+        let shaping = if text.is_ascii() { Shaping::Basic } else { Shaping::Advanced };
+        buf.set_text(&mut self.font_system, text, attrs, shaping);
+        buf.shape_until_scroll(&mut self.font_system, false);
+        let mut phys_advance = 0.0f32;
+        for run in buf.layout_runs() {
+            if run.line_w > phys_advance { phys_advance = run.line_w; }
+        }
+        self.shape_buf = Some(buf);
+        phys_advance / sc
+    }
+
     // ─── List marker ─────────────────────────────────────────────────────────
 
     fn draw_list_marker(
@@ -1558,21 +1592,23 @@ impl Renderer {
             }
             ListStyleType::Decimal | ListStyleType::LowerAlpha | ListStyleType::UpperAlpha
             | ListStyleType::LowerRoman | ListStyleType::UpperRoman => {
-                let marker   = format_list_marker(node.style.list_style_type, node.style.list_index);
-                let marker_w = approx_text_width(&marker, font_px);
+                let marker = format_list_marker(node.style.list_style_type, node.style.list_index);
+                let line_h = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
+                let marker_w = self.measure_text_run(&marker, font_px, line_h,
+                    node.style.font_weight, node.style.font_style);
                 let mx = if inside { first_line.x - sx } else { first_line.x - sx - marker_w - 4.0 };
                 let my = first_line.y - sy;
-                let line_h   = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
                 let ct_color = CTextColor::rgba(c.r, c.g, c.b, c.a);
                 self.draw_text_run(&marker, mx, my, font_px, line_h,
                     node.style.font_weight, node.style.font_style, ct_color, pixmap, mask);
             }
             ListStyleType::Disclosure => {
-                let marker   = "▸";
-                let marker_w = approx_text_width(marker, font_px);
+                let marker = "▸";
+                let line_h = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
+                let marker_w = self.measure_text_run(marker, font_px, line_h,
+                    node.style.font_weight, node.style.font_style);
                 let mx = if inside { first_line.x - sx } else { first_line.x - sx - marker_w - 4.0 };
                 let my = first_line.y - sy;
-                let line_h   = node.style.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2);
                 let ct_color = CTextColor::rgba(c.r, c.g, c.b, c.a);
                 self.draw_text_run(marker, mx, my, font_px, line_h,
                     node.style.font_weight, node.style.font_style, ct_color, pixmap, mask);

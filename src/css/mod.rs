@@ -3545,6 +3545,9 @@ fn apply_cascade_inner(
     let font_px = style.font_size_px(parent_font_px, root_font_px);
     style.font_size = CssLength::Px(font_px);
 
+    // Preserve list_index: set by the HTML parser (ol counter), not by CSS.
+    // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
+    style.list_index = root.style.list_index;
     root.style = style.clone();
 
     // Build full ComputedStyle for ::before / ::after pseudo-elements.

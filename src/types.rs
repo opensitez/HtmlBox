@@ -1266,7 +1266,7 @@ impl ComputedStyle {
         self.direction       = parent.direction;
         self.list_style_type     = parent.list_style_type;
         self.list_style_position = parent.list_style_position;
-        self.list_index      = parent.list_index;
+        // list_index is set by the HTML parser (ol counter), not inherited via cascade.
         self.visibility      = parent.visibility;
         self.direction       = parent.direction;
         self.unicode_bidi    = parent.unicode_bidi;

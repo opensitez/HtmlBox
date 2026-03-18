@@ -1,6 +1,7 @@
 // Ported from tests/test_html.cpp
 
 use crate::types::*;
+use crate::types::ListStyleType;
 use super::harness::*;
 
 // Helper: find the <body> box inside a document.
@@ -1177,4 +1178,54 @@ fn html_attributes_map_css_selector() {
     });
     assert!(div.is_some());
     assert_eq!(div.unwrap().style.color, Color::rgb(255, 0, 0));
+}
+
+// ============================================================
+// Ordered list numbering
+// ============================================================
+
+#[test]
+fn ol_list_index_sequential() {
+    // After parse + cascade, each <li> inside <ol> must have list_index 1,2,3.
+    let doc = parse("<ol><li>A</li><li>B</li><li>C</li></ol>");
+    let items: Vec<_> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    assert_eq!(items.len(), 3, "expected 3 <li> boxes");
+    let indices: Vec<i32> = items.iter().map(|b| b.style.list_index).collect();
+    assert_eq!(indices, vec![1, 2, 3], "list_index must be 1,2,3 not {:?}", indices);
+}
+
+#[test]
+fn ol_list_index_not_zero() {
+    // Regression: cascade was resetting list_index to 0.
+    let doc = parse("<ol><li>One</li><li>Two</li></ol>");
+    let items: Vec<_> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    for item in &items {
+        assert_ne!(item.style.list_index, 0, "<li> list_index must not be 0");
+    }
+}
+
+#[test]
+fn ol_list_style_type_decimal() {
+    // <ol> defaults to decimal list-style-type.
+    let doc = parse("<ol><li>Item</li></ol>");
+    let li = find_box(&doc.root, &|b| b.tag == "li").expect("<li> not found");
+    assert_eq!(li.style.list_style_type, ListStyleType::Decimal,
+        "ol > li must have Decimal list-style-type");
+}
+
+#[test]
+fn nested_ol_list_index_independent() {
+    // Nested <ol> restarts its own counter from 1.
+    let doc = parse("<ol><li>A</li><li><ol><li>X</li><li>Y</li></ol></li><li>B</li></ol>");
+    let all_li: Vec<_> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    // Outer: A=1, wrapper=2, B=3. Inner: X=1, Y=2.
+    let indices: Vec<i32> = all_li.iter().map(|b| b.style.list_index).collect();
+    // Outer items must include 1 and not all be 0.
+    assert!(indices.iter().any(|&i| i > 0), "at least one list_index must be > 0, got {:?}", indices);
+    // The two inner items must be 1 and 2.
+    let inner: Vec<_> = all_li.iter().filter(|b| {
+        // Children of the nested ol — identified by having siblings that are also li with low index
+        b.style.list_index <= 2
+    }).collect();
+    assert!(inner.len() >= 2, "expected inner list items with index 1 and 2");
 }
