@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: Georgia, serif;
+  background: #fafaf8;
+  color: #1a1a1a;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* ─── Top navigation (sticky) ───────────────────────────────── */
+.topnav {
+  position: sticky;
+  top: 0;
+  background: #1a1a1a;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  padding: 0 32px;
+  height: 52px;
+  z-index: 100;
+  border-bottom: 3px solid #e63946;
+}
+.topnav-brand {
+  font-family: sans-serif;
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: -0.5px;
+  color: #fff;
+  margin-right: 32px;
+}
+.topnav-brand span { color: #e63946; }
+.topnav-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+.topnav-links li {
+  font-family: sans-serif;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #aaa;
+}
+.topnav-links li.active { color: #fff; border-bottom: 2px solid #e63946; }
+
+/* ─── Section label (sticky) ────────────────────────────────── */
+.section-bar {
+  position: sticky;
+  top: 52px;
+  background: #f0ece4;
+  border-bottom: 1px solid #d6d0c4;
+  padding: 6px 32px;
+  font-family: sans-serif;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #888;
+  z-index: 90;
+}
+
+/* ─── Hero story ─────────────────────────────────────────────── */
+.hero {
+  display: flex;
+  gap: 0;
+  background: #fff;
+  border-bottom: 1px solid #e0dbd0;
+  padding: 32px;
+  align-items: flex-start;
+}
+.hero-image-wrap {
+  width: 520px;
+  flex-shrink: 0;
+  margin-right: 32px;
+}
+.hero-image {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(135deg, #1d3557 0%, #457b9d 50%, #a8dadc 100%);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  padding: 12px;
+}
+.hero-image-caption {
+  font-family: sans-serif;
+  font-size: 10px;
+  color: rgba(255,255,255,0.75);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.hero-body { flex: 1; }
+.hero-kicker {
+  font-family: sans-serif;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #e63946;
+  margin-bottom: 10px;
+}
+.hero-headline {
+  font-size: 28px;
+  font-weight: bold;
+  line-height: 1.2;
+  margin-bottom: 12px;
+  color: #111;
+}
+.hero-deck {
+  font-size: 16px;
+  color: #555;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.hero-byline {
+  font-family: sans-serif;
+  font-size: 12px;
+  color: #999;
+  border-top: 1px solid #eee;
+  padding-top: 12px;
+}
+.hero-byline strong { color: #444; }
+
+/* ─── Article body (multi-column) ───────────────────────────── */
+.article-body {
+  background: #fff;
+  padding: 28px 32px;
+  border-bottom: 1px solid #e0dbd0;
+  column-count: 3;
+  column-gap: 32px;
+}
+.article-body p {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #333;
+  margin-bottom: 14px;
+  break-inside: avoid;
+}
+.article-body p.dropcap::first-letter {
+  float: left;
+  font-size: 52px;
+  line-height: 0.8;
+  margin-right: 6px;
+  margin-top: 4px;
+  color: #e63946;
+  font-weight: bold;
+}
+.article-pullquote {
+  column-span: all;
+  border-top: 3px solid #e63946;
+  border-bottom: 1px solid #e0dbd0;
+  padding: 16px 0 14px;
+  margin: 16px 0;
+  font-size: 22px;
+  font-style: italic;
+  color: #1d3557;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* ─── Card grid ──────────────────────────────────────────────── */
+.cards-wrap {
+  padding: 24px 32px;
+  background: #fafaf8;
+}
+.cards-grid {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.card {
+  background: #fff;
+  border: 1px solid #e0dbd0;
+  border-radius: 4px;
+  overflow: hidden;
+  width: 220px;
+  flex-shrink: 0;
+}
+.card-thumb {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-thumb.red    { background: linear-gradient(135deg, #e63946, #f4a261); }
+.card-thumb.blue   { background: linear-gradient(135deg, #1d3557, #457b9d); }
+.card-thumb.green  { background: linear-gradient(135deg, #2d6a4f, #74c69d); }
+.card-thumb.purple { background: linear-gradient(135deg, #4a1942, #c77dff); }
+.card-thumb-label {
+  font-family: sans-serif;
+  font-size: 10px;
+  color: rgba(255,255,255,0.7);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.card-body { padding: 12px; }
+.card-section {
+  font-family: sans-serif;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #e63946;
+  margin-bottom: 4px;
+}
+.card-title {
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 1.3;
+  color: #111;
+  margin-bottom: 6px;
+}
+.card-meta {
+  font-family: sans-serif;
+  font-size: 11px;
+  color: #aaa;
+}
+
+/* ─── Opinion column (2-col) ─────────────────────────────────── */
+.opinion-wrap {
+  background: #fff;
+  border-bottom: 1px solid #e0dbd0;
+  padding: 24px 32px;
+  column-count: 2;
+  column-gap: 40px;
+}
+.opinion-piece { break-inside: avoid; margin-bottom: 20px; }
+.opinion-author {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.opinion-avatar {
+  width: 36px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.av1 { background: linear-gradient(135deg, #e63946, #ffb703); }
+.av2 { background: linear-gradient(135deg, #1d3557, #a8dadc); }
+.av3 { background: linear-gradient(135deg, #2d6a4f, #b7e4c7); }
+.av4 { background: linear-gradient(135deg, #7b2d8b, #e0aaff); }
+.opinion-name {
+  font-family: sans-serif;
+  font-size: 12px;
+  font-weight: bold;
+  color: #222;
+}
+.opinion-role {
+  font-family: sans-serif;
+  font-size: 11px;
+  color: #aaa;
+}
+.opinion-headline {
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 1.3;
+  margin-bottom: 6px;
+  color: #111;
+}
+.opinion-teaser {
+  font-size: 13px;
+  color: #555;
+  line-height: 1.5;
+}
+</style>
+</head>
+<body>
+
+<!-- sticky top nav -->
+<nav class="topnav">
+  <div class="topnav-brand">The<span>Wire</span></div>
+  <ul class="topnav-links">
+    <li class="active">World</li>
+    <li>Politics</li>
+    <li>Science</li>
+    <li>Culture</li>
+    <li>Opinion</li>
+    <li>Markets</li>
+  </ul>
+</nav>
+
+<!-- sticky section label -->
+<div class="section-bar">Top Story &mdash; World</div>
+
+<!-- hero article with 16/9 image -->
+<div class="hero">
+  <div class="hero-image-wrap">
+    <div class="hero-image">
+      <span class="hero-image-caption">Photo: Reuters / M. Andersen</span>
+    </div>
+  </div>
+  <div class="hero-body">
+    <div class="hero-kicker">Breaking &mdash; Climate</div>
+    <h1 class="hero-headline">Arctic Ice Sheet Records Lowest Extent Since Satellite Measurements Began</h1>
+    <p class="hero-deck">Scientists warn the acceleration in sea-ice loss is outpacing the most pessimistic projections made just five years ago, raising urgent questions about feedback loops already underway.</p>
+    <div class="hero-byline">
+      By <strong>Eleanor Marsh</strong> and <strong>Jonas Kiefer</strong>
+      &nbsp;&middot;&nbsp; Updated 3 hours ago &nbsp;&middot;&nbsp; 8 min read
+    </div>
+  </div>
+</div>
+
+<!-- multi-column article body (3 cols) -->
+<div class="article-body">
+  <p class="dropcap">Researchers at the Polar Science Institute announced this week that summer sea-ice coverage in the Arctic fell to a record low, surpassing the previous record set in 2012 by a margin that scientists described as &ldquo;deeply alarming.&rdquo; The findings, published simultaneously in three peer-reviewed journals, are based on a continuous record of satellite measurements spanning four decades.</p>
+
+  <p>The collapse was not confined to a single region. Ice loss was measured across all major Arctic basins, including areas historically considered relatively stable even during warm summers. Dr. Annika Strand of the Norwegian Meteorological Institute said the data suggests that previously distinct tipping points may be converging into a single, system-wide shift.</p>
+
+  <div class="article-pullquote">&ldquo;We are no longer talking about the Arctic we studied twenty years ago. That ecosystem is gone.&rdquo;</div>
+
+  <p>The implications extend well beyond the polar region. Arctic sea ice acts as a planetary thermostat, reflecting solar radiation back into space. As its extent diminishes, darker ocean water absorbs more heat, accelerating a feedback loop that is now measurable in global temperature anomalies year-round, not merely in summer months.</p>
+
+  <p>Shipping companies have taken note. The Northern Sea Route, once navigable only by icebreakers for a narrow window each autumn, remained clear for commercial transit throughout this summer with no icebreaker escort required. Analysts estimate the route will be reliably open for six months of the year by the end of the decade.</p>
+
+  <p>For Arctic communities, the changes are existential. Permafrost beneath dozens of Indigenous villages is thawing, undermining buildings and roads. Traditional hunting seasons have been disrupted as ice platforms that communities have relied upon for generations now form weeks later and break apart weeks earlier each year.</p>
+
+  <p>Negotiators at the upcoming international climate summit are expected to face renewed pressure to revise emissions targets downward in light of the new data, though diplomatic sources concede that the political will required for such revisions remains elusive among the largest emitters.</p>
+</div>
+
+<!-- sticky section label -->
+<div class="section-bar">More Stories</div>
+
+<!-- card grid with 3/2 aspect-ratio thumbnails -->
+<div class="cards-wrap">
+  <div class="cards-grid">
+    <div class="card">
+      <div class="card-thumb red"><span class="card-thumb-label">Politics</span></div>
+      <div class="card-body">
+        <div class="card-section">Politics</div>
+        <div class="card-title">Coalition Talks Collapse as Deadline Passes Without Agreement</div>
+        <div class="card-meta">4 hours ago &middot; 5 min read</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-thumb blue"><span class="card-thumb-label">Science</span></div>
+      <div class="card-body">
+        <div class="card-section">Science</div>
+        <div class="card-title">Webb Telescope Detects Water Vapor in Atmosphere of Distant Exoplanet</div>
+        <div class="card-meta">6 hours ago &middot; 4 min read</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-thumb green"><span class="card-thumb-label">Markets</span></div>
+      <div class="card-body">
+        <div class="card-section">Markets</div>
+        <div class="card-title">Central Bank Holds Rates Steady, Signals Caution on Inflation Path</div>
+        <div class="card-meta">2 hours ago &middot; 3 min read</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-thumb purple"><span class="card-thumb-label">Culture</span></div>
+      <div class="card-body">
+        <div class="card-section">Culture</div>
+        <div class="card-title">The Quiet Resurgence of the Literary Magazine in a Digital Age</div>
+        <div class="card-meta">Yesterday &middot; 7 min read</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- sticky section label -->
+<div class="section-bar">Opinion</div>
+
+<!-- opinion pieces: 2-column layout with circular avatars (1/1 aspect-ratio) -->
+<div class="opinion-wrap">
+  <div class="opinion-piece">
+    <div class="opinion-author">
+      <div class="opinion-avatar av1"></div>
+      <div>
+        <div class="opinion-name">Clara Fontaine</div>
+        <div class="opinion-role">Senior Fellow, Global Policy Institute</div>
+      </div>
+    </div>
+    <div class="opinion-headline">We Cannot Afford Another Decade of Climate Delay</div>
+    <p class="opinion-teaser">The gap between scientific consensus and political action has never been wider. Every year of inaction compounds the cost of the inevitable response we will eventually be forced to make.</p>
+  </div>
+
+  <div class="opinion-piece">
+    <div class="opinion-author">
+      <div class="opinion-avatar av2"></div>
+      <div>
+        <div class="opinion-name">Dmitri Voronov</div>
+        <div class="opinion-role">Economist, World Trade Review</div>
+      </div>
+    </div>
+    <div class="opinion-headline">The Green Transition Will Produce Winners and Losers — Acknowledge It</div>
+    <p class="opinion-teaser">Pretending that decarbonization is painless is a political strategy, not an economic argument. Honest policy requires confronting who bears the short-term burden.</p>
+  </div>
+
+  <div class="opinion-piece">
+    <div class="opinion-author">
+      <div class="opinion-avatar av3"></div>
+      <div>
+        <div class="opinion-name">Adaeze Obi</div>
+        <div class="opinion-role">Director, Climate Justice Alliance</div>
+      </div>
+    </div>
+    <div class="opinion-headline">Arctic Communities Were Never Consulted. They Must Be Now.</div>
+    <p class="opinion-teaser">Indigenous peoples have stewarded the Arctic for millennia. Excluding them from decisions about its future is not only unjust — it is strategically foolish.</p>
+  </div>
+
+  <div class="opinion-piece">
+    <div class="opinion-author">
+      <div class="opinion-avatar av4"></div>
+      <div>
+        <div class="opinion-name">Henrik Brauer</div>
+        <div class="opinion-role">Technology Correspondent</div>
+      </div>
+    </div>
+    <div class="opinion-headline">Geoengineering Is No Longer a Fringe Idea. That Should Worry Us.</div>
+    <p class="opinion-teaser">Proposals to reflect sunlight or seed clouds were once dismissed as science fiction. They are now being discussed seriously in government offices, which raises profound questions about governance and consent.</p>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wxHtmlEdit – Editor Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ── Toolbar ── */
+    #toolbar {
+      background: #f5f5f5;
+      border-bottom: 1px solid #ccc;
+      padding: 4px 6px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .tb-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 28px;
+      min-width: 30px;
+      padding: 0 6px;
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      background: #fff;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      color: #333;
+      white-space: nowrap;
+    }
+    .tb-btn:hover { background: #e8e8e8; border-color: #999; }
+    .tb-btn.active { background: #d0e8ff; border-color: #5a9fd4; }
+
+    .tb-btn b { font-weight: bold; }
+    .tb-btn em { font-style: italic; }
+    .tb-btn u  { text-decoration: underline; }
+
+    .tb-sep {
+      width: 1px;
+      height: 22px;
+      background: #bbb;
+      margin: 0 4px;
+      flex-shrink: 0;
+    }
+
+    .tb-select {
+      height: 28px;
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      background: #fff;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 0 4px;
+      cursor: pointer;
+      color: #333;
+    }
+
+    .tb-color {
+      height: 28px;
+      width: 40px;
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      padding: 2px;
+      cursor: pointer;
+      background: #fff;
+    }
+
+    .tb-checkbox-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #555;
+      height: 28px;
+      padding: 0 4px;
+    }
+
+    /* ── Status bar ── */
+    #statusbar {
+      background: #e8e8e8;
+      border-top: 1px solid #bbb;
+      padding: 3px 10px;
+      font-size: 11px;
+      color: #555;
+    }
+
+    /* ── Editor area ── */
+    #editor-wrap {
+      flex: 1;
+      overflow: auto;
+      background: #d4d4d4;
+      padding: 20px;
+    }
+
+    #editor {
+      max-width: 900px;
+      margin: 0 auto;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+      min-height: 100%;
+
+      /* document body style from C++ EDIT_HTML */
+      font-family: Georgia, serif;
+      font-size: 12pt;
+      padding: 16px;
+    }
+
+    /* content styles verbatim from EDIT_HTML */
+    #editor h1 { color: #2c3e50; }
+    #editor h2 { margin-top: 20px; margin-bottom: 8px; }
+
+    #editor table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+    #editor th, #editor td {
+      padding: 8px;
+      border: 1px solid #bdc3c7;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     TOOLBAR  (mirrors the wxWidgets toolbar)
+     ══════════════════════════════════════════ -->
+<div id="toolbar">
+
+  <!-- Bold / Italic / Underline -->
+  <button class="tb-btn" title="Bold (Ctrl+B)"><b>B</b></button>
+  <button class="tb-btn" title="Italic (Ctrl+I)"><em>I</em></button>
+  <button class="tb-btn" title="Underline (Ctrl+U)"><u>U</u></button>
+  <!-- Bullet list -->
+  <button class="tb-btn" title="Bullet List">&#9679; List</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Alignment -->
+  <button class="tb-btn" title="Align Left">&#8676; Left</button>
+  <button class="tb-btn" title="Align Center">&#8596; Center</button>
+  <button class="tb-btn" title="Align Right">Right &#8677;</button>
+  <button class="tb-btn" title="Justify">&#8644; Justify</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Indent -->
+  <button class="tb-btn" title="Decrease Indent">&#8676; Outdent</button>
+  <button class="tb-btn" title="Increase Indent">Indent &#8677;</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Undo / Redo -->
+  <button class="tb-btn" title="Undo (Ctrl+Z)">&#8630; Undo</button>
+  <button class="tb-btn" title="Redo (Ctrl+Shift+Z)">Redo &#8631;</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Insert -->
+  <button class="tb-btn" title="Insert Horizontal Rule">&#8213; HR</button>
+  <button class="tb-btn" title="Insert Image">&#128247; Img</button>
+  <button class="tb-btn" title="Insert Link (Ctrl+K)">Link</button>
+  <button class="tb-btn" title="Insert Table">Table</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Quote / Unquote / Clear -->
+  <button class="tb-btn" title="Quote">&gt;</button>
+  <button class="tb-btn" title="Unquote">&lt;</button>
+  <button class="tb-btn" title="Remove Formatting (Ctrl+\)">Tx</button>
+
+  <div class="tb-sep"></div>
+
+  <!-- Font family -->
+  <select class="tb-select" title="Font Family">
+    <option selected>Default</option>
+    <option>Sans</option>
+    <option>Serif</option>
+    <option>Monospace</option>
+    <option>Arial</option>
+    <option>Helvetica</option>
+    <option>Times New Roman</option>
+    <option>Georgia</option>
+    <option>Courier New</option>
+    <option>Verdana</option>
+    <option>Trebuchet MS</option>
+    <option>Comic Sans MS</option>
+  </select>
+
+  <!-- Font size -->
+  <select class="tb-select" style="width:70px" title="Font Size">
+    <option selected>Default</option>
+    <option>8</option><option>9</option><option>10</option><option>11</option>
+    <option>12</option><option>14</option><option>16</option><option>18</option>
+    <option>20</option><option>24</option><option>28</option><option>32</option>
+    <option>36</option><option>48</option><option>72</option>
+  </select>
+
+  <!-- Text color -->
+  <input type="color" class="tb-color" value="#000000" title="Text Color">
+  <!-- Background color -->
+  <input type="color" class="tb-color" value="#ffffff" title="Background Color">
+
+  <!-- Read-only checkbox -->
+  <label class="tb-checkbox-wrap">
+    <input type="checkbox"> Read-only
+  </label>
+
+  <div class="tb-sep"></div>
+
+  <button class="tb-btn" title="Toggle Dark Mode">Dark</button>
+
+  <div class="tb-sep"></div>
+
+  <button class="tb-btn" title="Print (Ctrl+P)">Print</button>
+  <button class="tb-btn" title="Print Preview">Preview</button>
+</div>
+
+<!-- ══════════════════════════════════════════
+     EDITOR  (HTML content from EDIT_HTML)
+     ══════════════════════════════════════════ -->
+<div id="editor-wrap">
+  <div id="editor" contenteditable="true">
+
+    <h1 style="color: #2c3e50;">wxHtmlEdit Layout Test</h1>
+
+    <!-- Flexbox row -->
+    <h2 style="color: #8e44ad;">Flexbox Row</h2>
+    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+      <div style="flex: 1; background: #eaf2f8; padding: 10px; border: 1px solid #aed6f1;">
+        <b>Column 1</b><br>Flex item with <em>flex:1</em>. Edit this text freely.
+      </div>
+      <div style="flex: 2; background: #fef9e7; padding: 10px; border: 1px solid #f9e79f;">
+        <b>Column 2</b><br>This column has <em>flex:2</em>, so it takes twice the space.
+        It contains <u>underlined</u> and <b>bold</b> words.
+      </div>
+      <div style="flex: 1; background: #fdedec; padding: 10px; border: 1px solid #f5b7b1;">
+        <b>Column 3</b><br>A shorter flex item.
+      </div>
+    </div>
+
+    <!-- Table -->
+    <h2 style="color: #e74c3c;">Table Layout</h2>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+      <tr style="background: #2c3e50; color: white;">
+        <th style="padding: 8px; border: 1px solid #1a252f;">Name</th>
+        <th style="padding: 8px; border: 1px solid #1a252f;">Type</th>
+        <th style="padding: 8px; border: 1px solid #1a252f;">Description</th>
+      </tr>
+      <tr style="background: #ecf0f1;">
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>SetHTML</b></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;">Load an HTML string into the editor</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>ToggleBold</b></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;">Toggle bold on current selection</td>
+      </tr>
+      <tr style="background: #ecf0f1;">
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>SetReadOnly</b></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+        <td style="padding: 8px; border: 1px solid #bdc3c7;">Enable or disable editing mode</td>
+      </tr>
+    </table>
+
+    <!-- CSS Grid -->
+    <h2 style="color: #27ae60;">CSS Grid</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px;">
+      <div style="background: #d5f5e3; padding: 10px; border: 1px solid #82e0aa;">Grid cell <b>A1</b></div>
+      <div style="background: #d4efdf; padding: 10px; border: 1px solid #7dcea0;">Grid cell <b>A2</b></div>
+      <div style="background: #d1f2eb; padding: 10px; border: 1px solid #76d7c4;">Grid cell <b>A3</b></div>
+      <div style="background: #a9dfbf; padding: 10px; border: 1px solid #52be80; grid-column: span 2;">
+        This cell <em>spans two columns</em> using grid-column: span 2
+      </div>
+      <div style="background: #a3e4d7; padding: 10px; border: 1px solid #48c9b0;">Grid cell <b>B3</b></div>
+    </div>
+
+    <!-- Positioned Elements -->
+    <h2 style="color: #d35400;">Positioned Elements</h2>
+    <div style="position: relative; height: 150px; background: #fbeee6; border: 2px dashed #e59866; margin-bottom: 16px;">
+      <div style="position: absolute; top: 10px; left: 10px; background: #f5cba7; padding: 8px; border: 1px solid #eb984e;">
+        Top-left (absolute)
+      </div>
+      <div style="position: absolute; top: 10px; right: 10px; background: #fadbd8; padding: 8px; border: 1px solid #ec7063;">
+        Top-right (absolute)
+      </div>
+      <div style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: #d2b4de; padding: 8px; border: 1px solid #a569bd;">
+        Bottom-center (absolute)
+      </div>
+    </div>
+
+    <!-- Nested Flex -->
+    <h2 style="color: #2980b9;">Nested Flex</h2>
+    <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+        <div style="background: #d6eaf8; padding: 8px; border: 1px solid #85c1e9;">Nested top</div>
+        <div style="background: #aed6f1; padding: 8px; border: 1px solid #5dade2;">Nested bottom</div>
+      </div>
+      <div style="flex: 2; background: #ebf5fb; padding: 12px; border: 1px solid #85c1e9;">
+        <p>This is the <b>main content area</b> in a nested flex layout.
+        The left column is itself a flex column with two stacked items.</p>
+        <p>Try <em>selecting text across</em> these flex boundaries
+        to test cross-container selection.</p>
+      </div>
+    </div>
+
+    <!-- Inline Formatting -->
+    <h2 style="color: #1abc9c;">Inline Formatting</h2>
+    <p>Normal, <b>bold</b>, <em>italic</em>, <u>underline</u>,
+    <b><em>bold-italic</em></b>,
+    <span style="color: #e74c3c;">red text</span>,
+    <span style="color: #3498db; font-size: 16pt;">large blue</span>,
+    <span style="background: #f1c40f; padding: 2px 4px;">highlighted</span>,
+    and <span style="font-family: monospace; background: #ecf0f1; padding: 2px 4px;">monospace code</span>.</p>
+
+    <p style="color: #999; font-size: 10pt; margin-top: 20px;">
+      Powered by wxHtmlEdit &mdash; layout engine test document.
+    </p>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     STATUS BAR
+     ══════════════════════════════════════════ -->
+<div id="statusbar">Editing mode</div>
+
+</body>
+</html>

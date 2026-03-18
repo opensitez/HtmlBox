@@ -1,0 +1,564 @@
+
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+  font-size: 10pt; color: #e1e1e6; margin: 0; padding: 0;
+  background: #313338;
+}
+
+/* ──────── App Shell: sidebar + main ──────── */
+.app { display: flex; height: 580px; }
+
+/* ──────── Server Rail (leftmost icon strip) ──────── */
+.rail {
+  width: 56px; background: #1e1f22; padding: 8px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.srv-icon {
+  width: 40px; height: 40px; border-radius: 20px;
+  background: #5865f2; color: #fff; font-size: 14pt;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative;
+}
+.srv-icon:hover { border-radius: 12px; background: #4752c4; }
+.srv-sep { width: 28px; height: 2px; background: #35363c; margin: 4px 0; }
+.srv-green { background: #57f287; color: #1e1f22; }
+.srv-orange { background: #f0b232; color: #1e1f22; }
+.srv-red { background: #ed4245; color: #fff; }
+.srv-gray { background: #4e5058; color: #b5bac1; }
+
+/* Badge — NEGATIVE POSITIONING to float outside parent */
+.badge {
+  position: relative; top: -10px; left: 14px;
+  background: #ed4245; color: #fff; font-size: 7pt; font-weight: bold;
+  padding: 1px 4px; border-radius: 8px; border: 2px solid #1e1f22;
+  min-width: 16px; text-align: center;
+}
+
+/* ──────── Channel Sidebar ──────── */
+.sidebar {
+  width: 200px; background: #2b2d31; padding: 0;
+  display: flex; flex-direction: column;
+}
+.sidebar-hdr {
+  padding: 10px 12px; border-bottom: 1px solid #1e1f22;
+  font-weight: bold; font-size: 11pt; color: #f2f3f5;
+}
+.channels {
+  flex: 1; overflow: auto; padding: 6px 0;
+}
+.ch-group { padding: 12px 8px 4px 12px; font-size: 7pt; font-weight: bold;
+             color: #949ba4; text-transform: uppercase; letter-spacing: 1px; }
+.ch {
+  padding: 5px 8px 5px 20px; margin: 0 6px; border-radius: 4px;
+  color: #949ba4; cursor: pointer; font-size: 9pt;
+}
+.ch:hover { background: #35373c; color: #dbdee1; }
+.ch-active { background: #404249 !important; color: #f2f3f5 !important; font-weight: 600; }
+.ch-prefix { color: #949ba4; margin-right: 4px; }
+
+/* Unread dot — NEGATIVE POSITION, overlapping left gutter */
+.unread-dot {
+  float: left; width: 6px; height: 6px; border-radius: 3px;
+  background: #f2f3f5; margin-top: 5px; margin-left: -14px; margin-right: 8px;
+}
+
+/* User panel at bottom of sidebar */
+.user-panel {
+  padding: 8px 10px; background: #232428; border-top: 1px solid #1e1f22;
+  display: flex; align-items: center; gap: 8px;
+}
+.user-avatar {
+  width: 28px; height: 28px; border-radius: 14px; background: #5865f2;
+  color: #fff; font-size: 11pt; display: flex; align-items: center;
+  justify-content: center; font-weight: bold; position: relative;
+}
+/* Online status — negative position to overlay avatar corner */
+.status-dot {
+  position: relative; top: -10px; left: 10px;
+  width: 10px; height: 10px; border-radius: 5px;
+  background: #23a559; border: 2px solid #232428;
+}
+.user-name { font-size: 8pt; font-weight: 600; color: #f2f3f5; }
+.user-tag { font-size: 7pt; color: #949ba4; }
+
+/* ──────── Main Chat Area ──────── */
+.main { flex: 1; display: flex; flex-direction: column; background: #313338; }
+.chat-hdr {
+  padding: 10px 16px; border-bottom: 1px solid #232428;
+  display: flex; align-items: center; gap: 8px;
+}
+.chat-hdr .ch-name { font-weight: bold; font-size: 11pt; color: #f2f3f5; }
+.chat-hdr .ch-topic { font-size: 8pt; color: #949ba4; margin-left: 8px; }
+.divider { width: 1px; height: 16px; background: #3f4147; margin: 0 4px; }
+.hdr-icon { color: #b5bac1; cursor: pointer; font-size: 12pt; padding: 0 4px; }
+.hdr-icon:hover { color: #f2f3f5; }
+
+/* ──────── Scrollable Message List ──────── */
+.messages {
+  flex: 1; overflow: auto; padding: 12px 16px;
+  scrollbar-color: rgba(255,255,255,0.3) rgba(0,0,0,0.1);
+}
+.msg {
+  display: flex; gap: 12px; padding: 4px 0;
+  margin-bottom: 10px;
+}
+.msg:hover { background: #2e3035; border-radius: 6px; }
+.msg-avatar {
+  width: 36px; height: 36px; border-radius: 18px;
+  font-size: 14pt; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: bold; flex-shrink: 0;
+}
+.av-blue { background: #5865f2; }
+.av-green { background: #57f287; color: #1e1f22; }
+.av-red { background: #ed4245; }
+.av-purple { background: #9b59b6; }
+.av-orange { background: #e67e22; }
+.av-teal { background: #1abc9c; }
+.msg-body { flex: 1; min-width: 0; }
+.msg-name { font-weight: bold; color: #f2f3f5; font-size: 9pt; }
+.msg-time { font-size: 7pt; color: #949ba4; margin-left: 6px; font-weight: normal; }
+.msg-text { color: #dbdee1; font-size: 9pt; margin-top: 2px; line-height: 1.4; }
+
+/* Inline code */
+.msg-text code {
+  background: #2b2d31; padding: 1px 4px; border-radius: 3px;
+  font-family: monospace; font-size: 8pt; color: #e9bfff;
+}
+
+/* Code block — scrollable horizontally */
+.code-block {
+  background: #1e1f22; border: 1px solid #2b2d31; border-radius: 6px;
+  padding: 10px 12px; margin: 6px 0; font-family: monospace; font-size: 8pt;
+  color: #e1e1e6; overflow: auto; max-height: 120px;
+  white-space: pre; line-height: 1.5;
+}
+.kw { color: #c678dd; }
+.str { color: #98c379; }
+.fn { color: #61afef; }
+.cm { color: #7f848e; font-style: italic; }
+.num { color: #d19a66; }
+
+/* Embedded image placeholder */
+.embed {
+  border-left: 3px solid #5865f2; background: #2b2d31;
+  border-radius: 0 6px 6px 0; padding: 10px 14px; margin: 6px 0;
+  max-width: 400px;
+}
+.embed-title { font-weight: bold; color: #00aff4; font-size: 9pt; }
+.embed-desc { color: #b5bac1; font-size: 8pt; margin-top: 4px; }
+.embed-footer { color: #949ba4; font-size: 7pt; margin-top: 6px; }
+
+/* Reaction pills */
+.reactions { display: flex; gap: 4px; margin-top: 4px; }
+.reaction {
+  background: #2b2d31; border: 1px solid #3f4147; border-radius: 6px;
+  padding: 2px 6px; font-size: 8pt; cursor: pointer;
+}
+.reaction:hover { border-color: #5865f2; background: #383a40; }
+.reaction .r-count { color: #b5bac1; margin-left: 3px; font-size: 7pt; }
+
+/* ──────── Pinned Items Panel (float layout) ──────── */
+.pinned-panel {
+  background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px;
+  margin: 8px 0; padding: 10px; max-height: 100px; overflow: scroll;
+}
+.pinned-hdr {
+  font-size: 8pt; font-weight: bold; color: #f2f3f5; margin-bottom: 6px;
+}
+.pin-item {
+  padding: 4px 0; border-bottom: 1px solid #3f4147; font-size: 8pt;
+  color: #b5bac1;
+}
+.pin-icon { float: left; margin-right: 6px; color: #f0b232; }
+.pin-by { float: right; font-size: 7pt; color: #949ba4; }
+
+/* ──────── Right Panel (Members) ──────── */
+.members-panel {
+  width: 200px; background: #2b2d31; border-left: 1px solid #232428;
+  padding: 12px; overflow: auto;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+.mp-title {
+  font-size: 7pt; font-weight: bold; color: #949ba4;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+}
+.member {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 4px; margin-bottom: 2px;
+  cursor: pointer;
+}
+.member:hover { background: #35373c; }
+.m-av {
+  width: 26px; height: 26px; border-radius: 13px;
+  font-size: 10pt; color: #fff; display: flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+  position: relative;
+}
+.m-status {
+  position: relative; top: -8px; left: 8px;
+  width: 8px; height: 8px; border-radius: 4px;
+  border: 2px solid #2b2d31;
+}
+.online { background: #23a559; }
+.idle { background: #f0b232; }
+.dnd { background: #ed4245; }
+.offline { background: #80848e; }
+.m-name { font-size: 8pt; color: #949ba4; }
+.m-name-online { color: #f2f3f5; }
+
+/* ──────── Message Input ──────── */
+.input-area {
+  padding: 0 16px 16px 16px;
+}
+.input-box {
+  background: #383a40; border-radius: 8px; padding: 10px 14px;
+  color: #949ba4; font-size: 9pt;
+  display: flex; align-items: center; gap: 8px;
+}
+.input-icon { font-size: 14pt; cursor: pointer; }
+.input-icon:hover { color: #f2f3f5; }
+.input-text { flex: 1; color: #949ba4; }
+
+/* ──────── Notification Toast — negative margin to overlap header ──────── */
+.toast {
+  background: #5865f2; color: #fff; font-size: 8pt; font-weight: 600;
+  padding: 8px 14px; border-radius: 6px;
+  position: relative; top: -30px;
+  margin: 0 auto; max-width: 280px; text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.toast-dismiss { float: right; cursor: pointer; color: rgba(255,255,255,0.7); font-size: 9pt; }
+.toast-dismiss:hover { color: #fff; }
+
+/* ──────── Overflow showcase box ──────── */
+.overflow-showcase {
+  background: #1e1f22; border: 1px solid #3f4147; border-radius: 8px;
+  margin: 8px 0; padding: 10px;
+}
+.showcase-title { font-size: 8pt; font-weight: bold; color: #5865f2; margin-bottom: 6px; }
+
+.scroll-box {
+  max-height: 80px; overflow: auto;
+  background: #2b2d31; border-radius: 4px; padding: 6px 8px;
+  font-size: 8pt; color: #b5bac1; line-height: 1.5;
+}
+
+/* ──────── File attachment card ──────── */
+.file-card {
+  background: #2b2d31; border: 1px solid #3f4147; border-radius: 6px;
+  padding: 10px; margin: 6px 0; display: flex; align-items: center; gap: 10px;
+  max-width: 350px;
+}
+.file-icon {
+  width: 36px; height: 36px; border-radius: 6px;
+  background: #5865f2; color: #fff; font-size: 14pt;
+  display: flex; align-items: center; justify-content: center;
+}
+.file-info { flex: 1; }
+.file-name { font-size: 9pt; color: #00aff4; font-weight: 600; cursor: pointer; }
+.file-name:hover { text-decoration: underline; }
+.file-size { font-size: 7pt; color: #949ba4; margin-top: 2px; }
+.file-dl { color: #b5bac1; font-size: 14pt; cursor: pointer; }
+.file-dl:hover { color: #f2f3f5; }
+
+</style>
+
+<div class="app">
+
+  <!-- ─── Server Rail ─── -->
+  <div class="rail">
+    <div class="srv-icon" style="background: #5865f2;">S<span class="badge">3</span></div>
+    <div class="srv-sep"></div>
+    <div class="srv-icon srv-green">W</div>
+    <div class="srv-icon srv-orange">D<span class="badge">12</span></div>
+    <div class="srv-icon srv-red">G</div>
+    <div class="srv-icon srv-gray">+</div>
+  </div>
+
+  <!-- ─── Channel Sidebar ─── -->
+  <div class="sidebar">
+    <div class="sidebar-hdr">Starbase HQ</div>
+    <div class="channels">
+      <div class="ch-group">Text Channels</div>
+      <div class="ch ch-active"><span class="ch-prefix">#</span> general</div>
+      <div class="ch"><span class="unread-dot"></span><span class="ch-prefix">#</span> announcements</div>
+      <div class="ch"><span class="ch-prefix">#</span> random</div>
+      <div class="ch"><span class="unread-dot"></span><span class="ch-prefix">#</span> dev-frontend</div>
+      <div class="ch"><span class="ch-prefix">#</span> dev-backend</div>
+      <div class="ch"><span class="ch-prefix">#</span> design</div>
+      <div class="ch"><span class="unread-dot"></span><span class="ch-prefix">#</span> bugs</div>
+      <div class="ch"><span class="ch-prefix">#</span> deployments</div>
+      <div class="ch-group">Voice Channels</div>
+      <div class="ch"><span class="ch-prefix">&#x1F50A;</span> Lounge</div>
+      <div class="ch"><span class="ch-prefix">&#x1F50A;</span> Standup</div>
+      <div class="ch"><span class="ch-prefix">&#x1F50A;</span> Pair Programming</div>
+      <div class="ch-group">Info</div>
+      <div class="ch"><span class="ch-prefix">#</span> rules</div>
+      <div class="ch"><span class="ch-prefix">#</span> resources</div>
+      <div class="ch"><span class="ch-prefix">#</span> introductions</div>
+    </div>
+    <div class="user-panel">
+      <div class="user-avatar">Y<span class="status-dot"></span></div>
+      <div>
+        <div class="user-name">Youness</div>
+        <div class="user-tag">Online</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Main Chat ─── -->
+  <div class="main">
+    <div class="chat-hdr">
+      <span class="ch-name"># general</span>
+      <span class="divider"></span>
+      <span class="ch-topic">Ship fast, break things, fix them faster</span>
+    </div>
+
+    <!-- Notification toast — uses negative positioning -->
+    <div class="toast">
+      <span class="toast-dismiss">&#x2715;</span>
+      3 new messages since you were away &#x2191;
+    </div>
+
+    <!-- Scrollable message list -->
+    <div class="messages">
+
+      <!-- Message 1 -->
+      <div class="msg">
+        <div class="msg-avatar av-blue">A</div>
+        <div class="msg-body">
+          <div class="msg-name">Alice Chen <span class="msg-time">Today at 9:02 AM</span></div>
+          <div class="msg-text">Hey team! Just pushed the new overflow scrolling feature. Each div with <code>overflow: auto</code> or <code>overflow: scroll</code> now gets its own scrollbar and scroll state. Try hovering over a scrollable area and using the mouse wheel!</div>
+          <div class="reactions">
+            <span class="reaction">&#x1F389;<span class="r-count">5</span></span>
+            <span class="reaction">&#x1F680;<span class="r-count">3</span></span>
+            <span class="reaction">&#x1F44D;<span class="r-count">8</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 2: code block -->
+      <div class="msg">
+        <div class="msg-avatar av-green">B</div>
+        <div class="msg-body">
+          <div class="msg-name">Bob Martinez <span class="msg-time">Today at 9:15 AM</span></div>
+          <div class="msg-text">Nice! Here's the CSS I used for the scrollable panel (scroll this code block):</div>
+          <div class="code-block"><span class="cm">/* Scrollable container with max height */</span>
+<span class="kw">.scroll-panel</span> {
+  <span class="fn">max-height</span>: <span class="num">200px</span>;
+  <span class="fn">overflow</span>: <span class="str">auto</span>;
+  <span class="fn">border-radius</span>: <span class="num">8px</span>;
+  <span class="fn">background</span>: <span class="str">#1e1f22</span>;
+  <span class="fn">padding</span>: <span class="num">12px</span>;
+}
+
+<span class="cm">/* Negative positioning for notification badges */</span>
+<span class="kw">.badge</span> {
+  <span class="fn">position</span>: <span class="str">relative</span>;
+  <span class="fn">top</span>: <span class="num">-10px</span>;
+  <span class="fn">left</span>: <span class="num">14px</span>;
+  <span class="fn">background</span>: <span class="str">#ed4245</span>;
+  <span class="fn">border-radius</span>: <span class="num">8px</span>;
+}
+
+<span class="cm">/* Float layout for mixed content */</span>
+<span class="kw">.float-img</span> {
+  <span class="fn">float</span>: <span class="str">left</span>;
+  <span class="fn">margin-right</span>: <span class="num">12px</span>;
+}</div>
+        </div>
+      </div>
+
+      <!-- Message 3: embed -->
+      <div class="msg">
+        <div class="msg-avatar av-purple">C</div>
+        <div class="msg-body">
+          <div class="msg-name">Charlie Park <span class="msg-time">Today at 9:31 AM</span></div>
+          <div class="msg-text">Found this great article about CSS overflow behavior:</div>
+          <div class="embed">
+            <div class="embed-title">MDN: CSS Overflow</div>
+            <div class="embed-desc">The overflow CSS shorthand property sets the desired behavior when content does not fit in the element's padding box. Scroll, auto, hidden, and visible are the four values.</div>
+            <div class="embed-footer">developer.mozilla.org</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 4: file attachment -->
+      <div class="msg">
+        <div class="msg-avatar av-orange">D</div>
+        <div class="msg-body">
+          <div class="msg-name">Diana Reeves <span class="msg-time">Today at 9:45 AM</span></div>
+          <div class="msg-text">Here's the updated component with all the fixes:</div>
+          <div class="file-card">
+            <div class="file-icon">&#x1F4C4;</div>
+            <div class="file-info">
+              <div class="file-name">Renderer.cpp</div>
+              <div class="file-size">42.3 KB</div>
+            </div>
+            <div class="file-dl">&#x2B73;</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 5: pinned items (scrollable, float layout) -->
+      <div class="msg">
+        <div class="msg-avatar av-teal">E</div>
+        <div class="msg-body">
+          <div class="msg-name">Eve Thompson <span class="msg-time">Today at 10:02 AM</span></div>
+          <div class="msg-text">Check out the pinned messages &#x1F4CC; (this box scrolls with overflow: scroll):</div>
+          <div class="pinned-panel">
+            <div class="pinned-hdr">&#x1F4CC; Pinned Messages</div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>v2.0 release notes — all overflow modes now work<span class="pin-by">Alice</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>Deploy checklist: run tests, build, push to staging<span class="pin-by">Bob</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>New scrollbar renders at 10px width, semi-transparent<span class="pin-by">Charlie</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>Hit-testing accounts for per-element scroll offset<span class="pin-by">Diana</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>Mouse wheel events route to innermost scrollable box<span class="pin-by">Eve</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>Negative positioning works with position:relative + negative top/left<span class="pin-by">Alice</span></div>
+            <div class="pin-item"><span class="pin-icon">&#x1F4CC;</span>Float layout: pin icons float left, author floats right<span class="pin-by">Bob</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 6: long thread preview (shows overflow clipping) -->
+      <div class="msg">
+        <div class="msg-avatar av-red">F</div>
+        <div class="msg-body">
+          <div class="msg-name">Frank Liu <span class="msg-time">Today at 10:18 AM</span></div>
+          <div class="msg-text">Here's a summary of all the CSS features we support now. Scroll through:</div>
+          <div class="overflow-showcase">
+            <div class="showcase-title">&#x2728; Feature Showcase</div>
+            <div class="scroll-box">
+&#x2705; overflow: hidden - clips content to padding box
+&#x2705; overflow: scroll - clips + shows scrollbar
+&#x2705; overflow: auto - scrollbar only when needed
+&#x2705; border-radius + overflow: hidden = rounded clipping
+&#x2705; max-height + overflow: auto = scrollable panels
+&#x2705; position: relative + negative top/left = overlapping elements
+&#x2705; float: left/right = classic column layouts
+&#x2705; clear: both = clearing floats
+&#x2705; display: flex = modern flexible layouts
+&#x2705; display: grid = CSS grid with columns/rows
+&#x2705; :hover pseudo-class = interactive state changes
+&#x2705; :active pseudo-class = pressed state styling
+&#x2705; box-shadow = drop shadows
+&#x2705; border-radius = rounded corners
+&#x2705; text-overflow: ellipsis = truncated text
+&#x2705; Custom components = &lt;graph&gt; tag with paint callback
+&#x2705; Event system = click, hover, drag, wheel
+&#x2705; Per-element scrolling = this very box!
+            </div>
+          </div>
+          <div class="reactions">
+            <span class="reaction">&#x1F525;<span class="r-count">12</span></span>
+            <span class="reaction">&#x2B50;<span class="r-count">7</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 7 -->
+      <div class="msg">
+        <div class="msg-avatar av-blue">A</div>
+        <div class="msg-body">
+          <div class="msg-name">Alice Chen <span class="msg-time">Today at 10:30 AM</span></div>
+          <div class="msg-text">Let me show off the float layout — notice how the image floats left and text wraps around it:</div>
+          <div style="background: #2b2d31; border-radius: 8px; padding: 12px; margin: 6px 0; overflow: hidden;">
+            <div style="float: left; width: 60px; height: 60px; border-radius: 8px; background: linear-gradient(135deg, #5865f2, #eb459e); margin: 0 12px 6px 0; display: flex; align-items: center; justify-content: center; font-size: 24pt; color: #fff;">&#x1F680;</div>
+            <div style="font-size: 9pt; color: #dbdee1; line-height: 1.5;">
+              <strong style="color: #f2f3f5;">wxHtmlEdit Engine v2.0</strong><br/>
+              A full HTML/CSS rendering engine with layout, painting, hit-testing, and now per-element scrolling. Supports flexbox, grid, floats, positioning, pseudo-classes, custom components, and more. Built with wxWidgets for cross-platform desktop apps.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 8 -->
+      <div class="msg">
+        <div class="msg-avatar av-green">B</div>
+        <div class="msg-body">
+          <div class="msg-name">Bob Martinez <span class="msg-time">Today at 10:45 AM</span></div>
+          <div class="msg-text">The negative positioning is really useful for notification badges. Look at the server icons on the left &#x2190; each badge uses <code>position: relative; top: -10px; left: 14px</code> to overlap the parent icon.</div>
+        </div>
+      </div>
+
+      <!-- Message 9 -->
+      <div class="msg">
+        <div class="msg-avatar av-purple">C</div>
+        <div class="msg-body">
+          <div class="msg-name">Charlie Park <span class="msg-time">Today at 11:00 AM</span></div>
+          <div class="msg-text">And the channel sidebar &#x2190; those unread indicators use <code>float: left</code> with <code>margin-left: -14px</code> to stick out into the gutter. Classic negative-margin float technique!</div>
+        </div>
+      </div>
+
+      <!-- Message 10: another scrollable -->
+      <div class="msg">
+        <div class="msg-avatar av-teal">E</div>
+        <div class="msg-body">
+          <div class="msg-name">Eve Thompson <span class="msg-time">Today at 11:15 AM</span></div>
+          <div class="msg-text">Here's a scrollable changelog (overflow: auto with max-height):</div>
+          <div style="background: #1e1f22; border: 1px solid #3f4147; border-radius: 6px; padding: 10px 12px; margin: 6px 0; max-height: 90px; overflow: auto; font-size: 8pt; color: #b5bac1; line-height: 1.6;">
+<strong style="color: #5865f2;">v2.0.0</strong> — Per-element scrolling, scrollbar rendering
+<strong style="color: #5865f2;">v1.9.0</strong> — Custom &lt;graph&gt; component system
+<strong style="color: #5865f2;">v1.8.0</strong> — hover/active pseudo-class cascade
+<strong style="color: #5865f2;">v1.7.0</strong> — Inline-block, float blockification
+<strong style="color: #5865f2;">v1.6.0</strong> — CSS Grid layout
+<strong style="color: #5865f2;">v1.5.0</strong> — Flexbox layout
+<strong style="color: #5865f2;">v1.4.0</strong> — Table layout
+<strong style="color: #5865f2;">v1.3.0</strong> — Float/clear
+<strong style="color: #5865f2;">v1.2.0</strong> — Box model, margins, padding
+<strong style="color: #5865f2;">v1.1.0</strong> — CSS selectors, cascade
+<strong style="color: #5865f2;">v1.0.0</strong> — Initial release, basic rendering
+          </div>
+        </div>
+      </div>
+
+      <!-- Message 11 -->
+      <div class="msg">
+        <div class="msg-avatar av-orange">D</div>
+        <div class="msg-body">
+          <div class="msg-name">Diana Reeves <span class="msg-time">Today at 11:30 AM</span></div>
+          <div class="msg-text">I love how we can nest scrollable containers. The main message area scrolls, and inside it you have the code block, pinned panel, feature list, and changelog all independently scrollable. &#x1F929;</div>
+          <div class="reactions">
+            <span class="reaction">&#x1F4AF;<span class="r-count">4</span></span>
+            <span class="reaction">&#x2764;<span class="r-count">6</span></span>
+            <span class="reaction">&#x1F60D;<span class="r-count">3</span></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+      <div class="input-box">
+        <span class="input-icon">&#x2795;</span>
+        <span class="input-text">Message #general</span>
+        <span class="input-icon">&#x1F642;</span>
+        <span class="input-icon">&#x1F4CE;</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Members Panel (scrollable) ─── -->
+  <div class="members-panel">
+    <div class="mp-title">Online — 8</div>
+
+    <div class="member"><div class="m-av av-blue">A<span class="m-status online"></span></div><div class="m-name m-name-online">Alice Chen</div></div>
+    <div class="member"><div class="m-av av-green">B<span class="m-status online"></span></div><div class="m-name m-name-online">Bob Martinez</div></div>
+    <div class="member"><div class="m-av av-purple">C<span class="m-status online"></span></div><div class="m-name m-name-online">Charlie Park</div></div>
+    <div class="member"><div class="m-av av-orange">D<span class="m-status idle"></span></div><div class="m-name m-name-online">Diana Reeves</div></div>
+    <div class="member"><div class="m-av av-teal">E<span class="m-status online"></span></div><div class="m-name m-name-online">Eve Thompson</div></div>
+    <div class="member"><div class="m-av av-red">F<span class="m-status dnd"></span></div><div class="m-name m-name-online">Frank Liu</div></div>
+    <div class="member"><div class="m-av av-blue">G<span class="m-status online"></span></div><div class="m-name m-name-online">Grace Kim</div></div>
+    <div class="member"><div class="m-av av-green">H<span class="m-status online"></span></div><div class="m-name m-name-online">Hank Moore</div></div>
+
+    <div class="mp-title" style="margin-top: 12px;">Offline — 4</div>
+
+    <div class="member"><div class="m-av srv-gray">I<span class="m-status offline"></span></div><div class="m-name">Ivan Petrov</div></div>
+    <div class="member"><div class="m-av srv-gray">J<span class="m-status offline"></span></div><div class="m-name">Jane Wilson</div></div>
+    <div class="member"><div class="m-av srv-gray">K<span class="m-status offline"></span></div><div class="m-name">Kyle Zhang</div></div>
+    <div class="member"><div class="m-av srv-gray">L<span class="m-status offline"></span></div><div class="m-name">Luna Adams</div></div>
+  </div>
+
+</div>

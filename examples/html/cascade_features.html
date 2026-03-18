@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── @media: adapt layout to viewport width ──────────────────────────── */
+@media (max-width: 900px) {
+  .two-col { column-count: 1; }
+  .hero-badge { display: none; }
+}
+@media (min-width: 901px) {
+  .two-col { column-count: 2; column-gap: 32px; }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f7f8fc;
+  color: #1e2330;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* ── :is() — group heading styles ────────────────────────────────────── */
+:is(h1, h2, h3, h4) { font-weight: 700; line-height: 1.2; }
+
+/* ── Page chrome ─────────────────────────────────────────────────────── */
+.topbar {
+  background: #1e2330;
+  color: #fff;
+  padding: 0 40px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topbar-logo { font-size: 17px; font-weight: 700; letter-spacing: -0.5px; }
+.topbar-logo span { color: #63b3ed; }
+.topbar-nav { display: flex; gap: 24px; }
+.topbar-nav a {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #a0aec0;
+  text-decoration: none;
+}
+
+/* ── :first-of-type / :last-of-type on nav links ─────────────────────── */
+.topbar-nav a:first-of-type { color: #fff; }
+.topbar-nav a:last-of-type  { color: #fc8181; }
+
+.hero {
+  background: linear-gradient(135deg, #1e2330 0%, #2d3748 60%, #4a5568 100%);
+  padding: 56px 40px 48px;
+  color: #fff;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+}
+.hero-text { flex: 1; }
+.hero-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #63b3ed;
+  margin-bottom: 12px;
+}
+.hero h1 { font-size: 36px; margin-bottom: 14px; color: #fff; }
+.hero-sub { font-size: 16px; color: #a0aec0; max-width: 560px; }
+
+.hero-badge {
+  background: rgba(99,179,237,0.12);
+  border: 1px solid rgba(99,179,237,0.3);
+  border-radius: 12px;
+  padding: 20px 28px;
+  color: #63b3ed;
+  font-size: 13px;
+  flex-shrink: 0;
+  width: 220px;
+}
+.hero-badge-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #718096; margin-bottom: 8px; }
+.hero-badge-count { font-size: 48px; font-weight: 700; line-height: 1; }
+.hero-badge-sub   { font-size: 12px; color: #718096; margin-top: 4px; }
+
+/* ── Section chrome ──────────────────────────────────────────────────── */
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #718096;
+  padding: 8px 40px;
+  background: #edf2f7;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 52px;
+  z-index: 90;
+}
+.section { padding: 32px 40px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.section h2 { font-size: 20px; margin-bottom: 6px; color: #1e2330; }
+.section-desc { font-size: 13px; color: #718096; margin-bottom: 24px; }
+.section-desc code {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: #edf2f7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #4a5568;
+}
+
+/* ── :nth-of-type — alternating feature rows ─────────────────────────── */
+.feature-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid #f0f4f8;
+}
+.feature-row:nth-of-type(even) {
+  background: #f7f8fc;
+  border-radius: 6px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.feature-row:last-of-type { border-bottom: none; }
+.feature-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #63b3ed;
+  margin-top: 7px;
+  flex-shrink: 0;
+}
+.feature-name { font-weight: 600; font-size: 14px; color: #2d3748; }
+.feature-desc { font-size: 13px; color: #718096; margin-top: 2px; }
+
+/* ── Buttons — :not() to style non-primary variants ─────────────────── */
+.btn-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.btn {
+  padding: 9px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.btn-primary { background: #4299e1; color: #fff; }
+
+/* Any button that isn't .btn-primary and isn't disabled gets a subtle style */
+.btn:not(.btn-primary):not([disabled]) {
+  background: #fff;
+  color: #4a5568;
+  border: 1px solid #e2e8f0;
+}
+/* :disabled — greyed out */
+.btn[disabled] {
+  background: #edf2f7;
+  color: #a0aec0;
+  cursor: default;
+  border: 1px solid #e2e8f0;
+}
+.btn-danger { background: #fc8181; color: #fff; }
+.btn-danger:not([disabled]) { background: #fc8181; }
+
+/* ── :checked, :disabled, :enabled form controls ─────────────────────── */
+.form-grid { display: flex; gap: 32px; flex-wrap: wrap; }
+.form-group { display: flex; flex-direction: column; gap: 10px; }
+.form-group label { font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 4px; }
+
+.check-item { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.check-box {
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  border: 2px solid #cbd5e0;
+  background: #fff;
+  flex-shrink: 0;
+}
+/* :checked — fill the checkbox */
+input[type=checkbox]:checked + .check-box,
+.check-box.checked {
+  background: #4299e1;
+  border-color: #4299e1;
+}
+/* :disabled — grey text */
+.check-item.disabled { color: #a0aec0; }
+.check-item.disabled .check-box { background: #edf2f7; border-color: #e2e8f0; }
+
+/* ── :has() — card changes when it "has" an active toggle ────────────── */
+.has-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+.has-card {
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 20px;
+  width: 200px;
+}
+/* :has(input:checked) — card with checked child glows blue */
+.has-card:has(input:checked) {
+  border-color: #4299e1;
+  background: #ebf8ff;
+}
+.has-card-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.has-card-desc  { font-size: 12px; color: #718096; margin-bottom: 14px; line-height: 1.5; }
+.has-card input[type=checkbox] { accent-color: #4299e1; }
+.has-card-check-label { font-size: 13px; color: #4a5568; display: flex; align-items: center; gap: 8px; }
+.has-card:has(input:checked) .has-card-title { color: #2b6cb0; }
+
+/* ── :first-of-type / :last-of-type — sidebar menu ──────────────────── */
+.menu { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; width: 220px; }
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 14px;
+  background: #fff;
+  border-bottom: 1px solid #f0f4f8;
+  color: #4a5568;
+}
+.menu-item:first-of-type { background: #4299e1; color: #fff; font-weight: 600; }
+.menu-item:last-of-type  { border-bottom: none; color: #fc8181; }
+.menu-item:nth-of-type(odd):not(:first-of-type) { background: #f7f8fc; }
+.menu-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* ── scroll-snap — horizontal card carousel ──────────────────────────── */
+.snap-container {
+  display: flex;
+  gap: 16px;
+  overflow-x: scroll;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 8px;
+}
+.snap-card {
+  flex: 0 0 280px;
+  scroll-snap-align: start;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+.snap-card-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+.snap-c1 { background: linear-gradient(135deg, #4299e1, #63b3ed); }
+.snap-c2 { background: linear-gradient(135deg, #48bb78, #68d391); }
+.snap-c3 { background: linear-gradient(135deg, #ed8936, #f6ad55); }
+.snap-c4 { background: linear-gradient(135deg, #9f7aea, #b794f4); }
+.snap-c5 { background: linear-gradient(135deg, #fc8181, #feb2b2); }
+.snap-card-body { padding: 14px; background: #fff; }
+.snap-card-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.snap-card-meta  { font-size: 12px; color: #718096; }
+
+/* ── contain — layout boxes ──────────────────────────────────────────── */
+.contain-grid { display: flex; gap: 20px; flex-wrap: wrap; }
+.contain-box {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  width: 220px;
+  contain: layout;
+}
+.contain-box h4 { font-size: 14px; margin-bottom: 6px; color: #2d3748; }
+.contain-box p  { font-size: 13px; color: #718096; line-height: 1.5; }
+.contain-badge  {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  background: #bee3f8;
+  color: #2b6cb0;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-bottom: 8px;
+}
+
+/* ── two-column article body (media-query controlled) ────────────────── */
+.article-body { font-size: 15px; color: #4a5568; line-height: 1.7; }
+.article-body p { margin-bottom: 14px; }
+/* :is() for headings inside article */
+.article-body :is(h3, h4) { color: #2d3748; margin: 16px 0 8px; }
+</style>
+</head>
+<body>
+
+<!-- Sticky top bar -->
+<nav class="topbar">
+  <div class="topbar-logo">CSS<span>Cascade</span></div>
+  <div class="topbar-nav">
+    <a href="#">Selectors</a>
+    <a href="#">Forms</a>
+    <a href="#">Layout</a>
+    <a href="#">Media</a>
+    <a href="#">Snap</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-text">
+    <div class="hero-eyebrow">Agent A &mdash; CSS Engine</div>
+    <h1>Advanced Cascade Features</h1>
+    <p class="hero-sub">Demonstrating <code>@media</code> queries, <code>:not()</code>, <code>:is()</code>, <code>:has()</code>, <code>:nth-of-type()</code>, <code>:checked</code>, <code>:disabled</code>, <code>scroll-snap</code>, and <code>contain</code> &mdash; all rendered natively by the engine.</p>
+  </div>
+  <div class="hero-badge">
+    <div class="hero-badge-label">Features</div>
+    <div class="hero-badge-count">11</div>
+    <div class="hero-badge-sub">CSS cascade additions</div>
+  </div>
+</div>
+
+<!-- ── :nth-of-type ── -->
+<div class="section-label">:nth-of-type &mdash; Alternating Rows</div>
+<div class="section">
+  <h2>Feature List</h2>
+  <p class="section-desc">Every even <code>.feature-row:nth-of-type(even)</code> gets a tinted background. The <code>:last-of-type</code> has no bottom border.</p>
+
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">@media queries</div><div class="feature-desc">min-width, max-width, orientation, prefers-color-scheme, hover, pointer, resolution — with and/or/not</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:not(), :is(), :where()</div><div class="feature-desc">Functional pseudo-classes with balanced-parenthesis selector parsing</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:has()</div><div class="feature-desc">Parent element styled based on the presence or state of a descendant</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:nth-of-type(), :first-of-type, :last-of-type</div><div class="feature-desc">Type-aware structural pseudo-classes using per-tag sibling counts</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:focus, :focus-visible, :focus-within</div><div class="feature-desc">Focus-state selectors threaded through cascade via focused_box pointer</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:checked, :disabled, :enabled</div><div class="feature-desc">Form-state pseudo-classes matched against HTML attributes</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">scroll-snap-type, scroll-snap-align</div><div class="feature-desc">Scroll snap properties parsed and stored on ComputedStyle</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">contain: layout / paint / size / strict / content</div><div class="feature-desc">CSS containment hints — contain_layout, contain_paint, contain_size flags</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">Viewport-aware cascade (apply_cascade_vp)</div><div class="feature-desc">Re-evaluates @media rules whenever the viewport dimensions change</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">recascade_with_focus()</div><div class="feature-desc">Document method to re-cascade styles when focus changes without full re-parse</div></div>
+  </div>
+  <div class="feature-row">
+    <div class="feature-dot"></div>
+    <div><div class="feature-name">:any-link, :link, :read-only, :read-write</div><div class="feature-desc">Additional pseudo-class selectors for anchor and input state matching</div></div>
+  </div>
+</div>
+
+<!-- ── :not() buttons ── -->
+<div class="section-label">:not() &mdash; Button Variants</div>
+<div class="section">
+  <h2>Button States</h2>
+  <p class="section-desc"><code>.btn:not(.btn-primary):not([disabled])</code> gets a white outlined style. <code>[disabled]</code> buttons are greyed out.</p>
+  <div class="btn-row">
+    <button class="btn btn-primary">Primary</button>
+    <button class="btn">Secondary</button>
+    <button class="btn">Outline</button>
+    <button class="btn btn-danger">Danger</button>
+    <button class="btn" disabled>Disabled</button>
+    <button class="btn btn-primary" disabled>Primary Disabled</button>
+  </div>
+</div>
+
+<!-- ── :checked / :disabled ── -->
+<div class="section-label">:checked &amp; :disabled &mdash; Form Controls</div>
+<div class="section">
+  <h2>Form Element States</h2>
+  <p class="section-desc">Checkboxes styled by <code>.check-box.checked</code> (simulating <code>:checked</code>). Disabled rows use <code>.disabled</code>.</p>
+  <div class="form-grid">
+    <div class="form-group">
+      <label>Preferences</label>
+      <div class="check-item">
+        <div class="check-box checked"></div>
+        <span>Dark mode</span>
+      </div>
+      <div class="check-item">
+        <div class="check-box checked"></div>
+        <span>Notifications</span>
+      </div>
+      <div class="check-item">
+        <div class="check-box"></div>
+        <span>Analytics</span>
+      </div>
+      <div class="check-item">
+        <div class="check-box"></div>
+        <span>Marketing emails</span>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Permissions (some disabled)</label>
+      <div class="check-item">
+        <div class="check-box checked"></div>
+        <span>Read files</span>
+      </div>
+      <div class="check-item disabled">
+        <div class="check-box"></div>
+        <span>Write files (requires Pro)</span>
+      </div>
+      <div class="check-item">
+        <div class="check-box checked"></div>
+        <span>Network access</span>
+      </div>
+      <div class="check-item disabled">
+        <div class="check-box"></div>
+        <span>Admin panel (requires Admin)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── :has() ── -->
+<div class="section-label">:has() &mdash; Parent Reacts to Child State</div>
+<div class="section">
+  <h2>Feature Toggle Cards</h2>
+  <p class="section-desc"><code>.has-card:has(input:checked)</code> applies a blue border and tinted background to the entire card when its checkbox is active.</p>
+  <div class="has-grid">
+    <div class="has-card">
+      <div class="has-card-title">Auto-save</div>
+      <div class="has-card-desc">Automatically save your work every 30 seconds to the cloud.</div>
+      <label class="has-card-check-label">
+        <input type="checkbox" checked>
+        <span>Enabled</span>
+      </label>
+    </div>
+    <div class="has-card">
+      <div class="has-card-title">Spell check</div>
+      <div class="has-card-desc">Highlight spelling errors as you type with red underlines.</div>
+      <label class="has-card-check-label">
+        <input type="checkbox">
+        <span>Disabled</span>
+      </label>
+    </div>
+    <div class="has-card">
+      <div class="has-card-title">Smart quotes</div>
+      <div class="has-card-desc">Automatically convert straight quotes to typographic curly quotes.</div>
+      <label class="has-card-check-label">
+        <input type="checkbox" checked>
+        <span>Enabled</span>
+      </label>
+    </div>
+    <div class="has-card">
+      <div class="has-card-title">Live preview</div>
+      <div class="has-card-desc">Render a live preview of your document in a side panel.</div>
+      <label class="has-card-check-label">
+        <input type="checkbox">
+        <span>Disabled</span>
+      </label>
+    </div>
+  </div>
+</div>
+
+<!-- ── :first-of-type / :last-of-type ── -->
+<div class="section-label">:first-of-type &amp; :last-of-type &mdash; Sidebar Menu</div>
+<div class="section">
+  <h2>Navigation Menu</h2>
+  <p class="section-desc"><code>.menu-item:first-of-type</code> is highlighted blue (active). <code>:last-of-type</code> is red (danger). Odd items (excluding first) get a tinted background via <code>:nth-of-type(odd):not(:first-of-type)</code>.</p>
+  <div class="menu">
+    <div class="menu-item"><div class="menu-dot"></div> Dashboard</div>
+    <div class="menu-item"><div class="menu-dot"></div> Projects</div>
+    <div class="menu-item"><div class="menu-dot"></div> Messages</div>
+    <div class="menu-item"><div class="menu-dot"></div> Settings</div>
+    <div class="menu-item"><div class="menu-dot"></div> Team</div>
+    <div class="menu-item"><div class="menu-dot"></div> Sign out</div>
+  </div>
+</div>
+
+<!-- ── scroll-snap ── -->
+<div class="section-label">scroll-snap-type &mdash; Horizontal Carousel</div>
+<div class="section">
+  <h2>Snapping Card Carousel</h2>
+  <p class="section-desc">Container uses <code>scroll-snap-type: x mandatory</code>. Each card has <code>scroll-snap-align: start</code>. Scroll horizontally to snap.</p>
+  <div class="snap-container">
+    <div class="snap-card">
+      <div class="snap-card-thumb snap-c1"></div>
+      <div class="snap-card-body">
+        <div class="snap-card-title">Introduction to CSS</div>
+        <div class="snap-card-meta">12 lessons &middot; Beginner</div>
+      </div>
+    </div>
+    <div class="snap-card">
+      <div class="snap-card-thumb snap-c2"></div>
+      <div class="snap-card-body">
+        <div class="snap-card-title">Flexbox Mastery</div>
+        <div class="snap-card-meta">9 lessons &middot; Intermediate</div>
+      </div>
+    </div>
+    <div class="snap-card">
+      <div class="snap-card-thumb snap-c3"></div>
+      <div class="snap-card-body">
+        <div class="snap-card-title">CSS Grid in Depth</div>
+        <div class="snap-card-meta">14 lessons &middot; Intermediate</div>
+      </div>
+    </div>
+    <div class="snap-card">
+      <div class="snap-card-thumb snap-c4"></div>
+      <div class="snap-card-body">
+        <div class="snap-card-title">Animations &amp; Transitions</div>
+        <div class="snap-card-meta">10 lessons &middot; Advanced</div>
+      </div>
+    </div>
+    <div class="snap-card">
+      <div class="snap-card-thumb snap-c5"></div>
+      <div class="snap-card-body">
+        <div class="snap-card-title">Custom Properties</div>
+        <div class="snap-card-meta">7 lessons &middot; Intermediate</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── contain ── -->
+<div class="section-label">contain: layout &mdash; Containment</div>
+<div class="section">
+  <h2>Layout Containment</h2>
+  <p class="section-desc">Each box has <code>contain: layout</code>, isolating its internal layout from affecting ancestors. The <code>contain_layout</code> flag is set in <code>ComputedStyle</code>.</p>
+  <div class="contain-grid">
+    <div class="contain-box">
+      <div class="contain-badge">contain: layout</div>
+      <h4>Isolated Box A</h4>
+      <p>This box&#39;s internal layout changes won&#39;t trigger ancestor reflows.</p>
+    </div>
+    <div class="contain-box">
+      <div class="contain-badge">contain: layout</div>
+      <h4>Isolated Box B</h4>
+      <p>Float or position changes inside this box stay contained within it.</p>
+    </div>
+    <div class="contain-box">
+      <div class="contain-badge">contain: layout</div>
+      <h4>Isolated Box C</h4>
+      <p>Useful for widget-like components in large document trees.</p>
+    </div>
+    <div class="contain-box">
+      <div class="contain-badge">contain: layout</div>
+      <h4>Isolated Box D</h4>
+      <p>Engine stores <code>contain_layout</code>, <code>contain_paint</code>, <code>contain_size</code> flags.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── @media + two-column article ── -->
+<div class="section-label">@media + :is() &mdash; Responsive Two-Column Article</div>
+<div class="section">
+  <h2>Responsive Layout</h2>
+  <p class="section-desc">Column count is controlled by <code>@media (min-width: 901px)</code>. Headings inside use <code>:is(h3, h4)</code> to share a single rule. Resize the window below 900px to collapse to one column.</p>
+  <div class="article-body two-col">
+    <p>The CSS cascade is the algorithm that determines which CSS rule applies to an element when multiple rules could match. It considers specificity, origin, importance, and source order.</p>
+    <h3>Specificity</h3>
+    <p>Specificity is calculated from selector parts: IDs contribute 100 points, classes and pseudo-classes 10 points, and element selectors 1 point. The higher the specificity, the higher the priority.</p>
+    <p>Inline styles bypass the cascade entirely and receive the highest specificity, just below <code>!important</code> declarations. Understanding specificity is essential to avoiding unexpected overrides.</p>
+    <h4>Inheritance</h4>
+    <p>Some CSS properties inherit their value from the parent element when no explicit value is set. Properties like <code>color</code>, <code>font-family</code>, and <code>line-height</code> inherit by default; box-model properties like <code>margin</code> and <code>padding</code> do not.</p>
+    <p>The <code>inherit</code> keyword forces inheritance for any property, and <code>initial</code> resets it to the property's default value. The <code>unset</code> keyword acts as <code>inherit</code> for inheritable properties and <code>initial</code> for others.</p>
+    <h3>The :is() and :where() Functions</h3>
+    <p>The <code>:is()</code> pseudo-class accepts a selector list and matches any element that matches any of the selectors. Its specificity equals the most specific selector in the list. <code>:where()</code> is identical but contributes zero specificity.</p>
+    <p>These functions dramatically reduce repetition when targeting multiple element types. Instead of writing separate rules for every heading level, a single <code>:is(h1,h2,h3,h4)</code> rule suffices.</p>
+  </div>
+</div>
+
+</body>
+</html>

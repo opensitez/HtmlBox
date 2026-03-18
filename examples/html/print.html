@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wxHtmlEdit – Print Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ── Toolbar ── */
+    #toolbar {
+      background: #f5f5f5;
+      border-bottom: 1px solid #ccc;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .tb-btn {
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      background: #fff;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      color: #333;
+    }
+    .tb-btn:hover { background: #e8e8e8; }
+
+    .tb-sep { width: 16px; }
+
+    .tb-checkbox-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #555;
+      height: 28px;
+    }
+
+    .tb-label {
+      font-size: 12px;
+      color: #555;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .tb-spin {
+      height: 28px;
+      width: 70px;
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      font-size: 12px;
+      padding: 0 4px;
+      text-align: right;
+    }
+
+    /* ── Page preview area ── */
+    #preview-area {
+      flex: 1;
+      overflow: auto;
+      background: #888;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    /* The simulated A4 page */
+    #page {
+      background: #fff;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      width: 794px;        /* A4 at 96dpi ≈ 794px */
+      min-height: 1123px;  /* A4 height */
+      position: relative;
+    }
+
+    /* Page header (shown when "Header" checkbox is ticked) */
+    #page-header {
+      border-bottom: 1px solid #ccc;
+      padding: 8px 20px;
+      font-size: 10pt;
+      color: #555;
+      text-align: center;
+      font-family: Georgia, serif;
+    }
+
+    /* Page footer */
+    #page-footer {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      border-top: 1px solid #ccc;
+      padding: 8px 20px;
+      font-size: 9pt;
+      color: #888;
+      text-align: center;
+      font-family: Georgia, serif;
+    }
+
+    /* The actual document content — styles verbatim from DEMO_HTML */
+    #doc-content {
+      font-family: Georgia, serif;
+      font-size: 12pt;
+      color: #333;
+      padding: 20px;
+    }
+
+    #doc-content h1 {
+      color: #2c3e50;
+      border-bottom: 2px solid #2c3e50;
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
+    #doc-content h2 { margin-top: 20px; margin-bottom: 8px; }
+    #doc-content p  { margin-bottom: 12px; line-height: 1.6; }
+    #doc-content ul { margin: 0 0 16px 24px; line-height: 1.8; }
+
+    #doc-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+    #doc-content th, #doc-content td {
+      padding: 8px;
+    }
+
+    #doc-content pre {
+      background: #f4f4f4;
+      padding: 12px;
+      border: 1px solid #ddd;
+      font-family: monospace;
+      font-size: 10pt;
+      overflow-x: auto;
+      margin-bottom: 16px;
+    }
+
+    /* @media print: hide the toolbar and simulate .no-print rule */
+    @media print {
+      #toolbar    { display: none; }
+      #preview-area { background: none; padding: 0; }
+      #page       { box-shadow: none; width: 100%; min-height: auto; }
+      .no-print   { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     TOOLBAR
+     ══════════════════════════════════════════ -->
+<div id="toolbar">
+  <button class="tb-btn" title="Print document (Ctrl+P)" onclick="window.print()">Print...</button>
+  <button class="tb-btn" title="Quick preview with current settings">Print Preview</button>
+  <button class="tb-btn" title="Configure settings then preview">Preview (Settings)...</button>
+
+  <div class="tb-sep"></div>
+
+  <label class="tb-checkbox-wrap">
+    <input type="checkbox" id="chk-header"> Header
+  </label>
+  <label class="tb-checkbox-wrap">
+    <input type="checkbox" id="chk-footer" checked> Footer
+  </label>
+
+  <div class="tb-sep"></div>
+
+  <span class="tb-label">Scale:</span>
+  <input type="number" class="tb-spin" value="100" min="25" max="400" step="5" title="Print scale (100% = fit page width)">
+  <span class="tb-label">%</span>
+</div>
+
+<!-- ══════════════════════════════════════════
+     PRINT PREVIEW  (simulated A4 page)
+     ══════════════════════════════════════════ -->
+<div id="preview-area">
+  <div id="page">
+
+    <!-- Optional page header -->
+    <div id="page-header">wxHtmlEdit Print Demo</div>
+
+    <!-- Document content — verbatim from DEMO_HTML string in print_demo.cpp -->
+    <div id="doc-content">
+
+      <h1 style="color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 8px;">
+        wxHtmlEdit Print Demo
+      </h1>
+
+      <p>This document demonstrates the <b>printing</b> and
+      <b>print preview</b> capabilities of wxHtmlEditWidget.
+      Click the buttons above to try them out.</p>
+
+      <h2 style="color: #8e44ad;">Feature List</h2>
+      <ul>
+        <li><b>Configurable margins</b> &mdash; top, bottom, left, right (in mm)</li>
+        <li><b>Page headers</b> &mdash; optional document title centered at top</li>
+        <li><b>Page footers</b> &mdash; automatic &ldquo;Page X of Y&rdquo; numbering</li>
+        <li><b>Print Preview</b> &mdash; paginated on-screen preview before printing</li>
+        <li><b>Multi-page support</b> &mdash; documents automatically paginated</li>
+        <li><b>Smart page breaks</b> &mdash; CSS page-break, orphans, widows support</li>
+        <li><b>Thead repetition</b> &mdash; table headers repeat on every page</li>
+        <li><b>Shrink-to-fit</b> &mdash; wide content auto-scaled to page</li>
+        <li><b>@media print</b> &mdash; print-specific CSS rules</li>
+      </ul>
+
+      <!-- This paragraph is hidden at print time -->
+      <p class="no-print" style="color: #e67e22; font-style: italic;">
+        This paragraph is hidden in print (@media print { .no-print { display: none; } })
+      </p>
+
+      <h2 style="color: #e74c3c;">Sample Table (with thead)</h2>
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+        <thead>
+          <tr style="background: #2c3e50; color: white;">
+            <th style="padding: 8px; border: 1px solid #1a252f;">Setting</th>
+            <th style="padding: 8px; border: 1px solid #1a252f;">Default</th>
+            <th style="padding: 8px; border: 1px solid #1a252f;">Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="background: #ecf0f1;">
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">marginTop</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">20 mm</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Top page margin</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">marginBottom</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">20 mm</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Bottom page margin</td>
+          </tr>
+          <tr style="background: #ecf0f1;">
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">marginLeft</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">15 mm</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Left page margin</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">marginRight</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">15 mm</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Right page margin</td>
+          </tr>
+          <tr style="background: #ecf0f1;">
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">showHeader</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">false</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Show title in page header</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">showFooter</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">true</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Show page numbers in footer</td>
+          </tr>
+          <tr style="background: #ecf0f1;">
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">scale</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">1.0</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Print scale factor</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">paperSize</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">A4</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Paper size (A4, Letter, Legal, A3, A5)</td>
+          </tr>
+          <tr style="background: #ecf0f1;">
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">orientation</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Portrait</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Page orientation</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">printBackgrounds</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">true</td>
+            <td style="padding: 8px; border: 1px solid #bdc3c7;">Print background colors</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 style="color: #27ae60;">Code Example</h2>
+      <pre>// Quick print with defaults
+widget-&gt;Print();
+
+// Print preview with settings dialog
+widget-&gt;PrintPreviewWithDialog();
+
+// Manual settings
+wxHtmlEditWidget::PrintSettings ps;
+ps.paperSize = wxHtmlEditWidget::PaperSize::Letter;
+ps.orientation = wxHtmlEditWidget::Orientation::Landscape;
+ps.scale = 0.75;
+ps.printBackgrounds = false;
+widget-&gt;PrintPreview(ps);</pre>
+
+      <h2 style="color: #2980b9;">Filler Text</h2>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+      tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
+      quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+      consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse
+      cillum dolore eu fugiat nulla pariatur.</p>
+
+      <p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia
+      deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste
+      natus error sit voluptatem accusantium doloremque laudantium, totam rem
+      aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto
+      beatae vitae dicta sunt explicabo.</p>
+
+      <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit,
+      sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt.
+      Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur,
+      adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et
+      dolore magnam aliquam quaerat voluptatem.</p>
+
+      <p style="color: #999; font-size: 10pt; margin-top: 24px; border-top: 1px solid #ddd; padding-top: 8px;">
+        Powered by wxHtmlEdit &mdash; printing demo
+      </p>
+
+    </div><!-- #doc-content -->
+
+    <!-- Page footer -->
+    <div id="page-footer">Page 1 of 1</div>
+
+  </div><!-- #page -->
+</div><!-- #preview-area -->
+
+</body>
+</html>

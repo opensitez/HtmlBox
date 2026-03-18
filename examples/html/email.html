@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flux Mail</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    background: #ffffff;
+    color: #1e1e1e;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ===== Layout ===== */
+  .app {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: 196px;
+    min-width: 196px;
+    background: #f5f5f5;
+    color: #3c3c3c;
+    display: flex;
+    flex-direction: column;
+    padding-top: 12px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    border-right: 1px solid #e8e8e8;
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 12px;
+    margin: 1px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    position: relative;
+    font-size: 10.5pt;
+    color: #3c3c3c;
+    user-select: none;
+  }
+  .sidebar-item:hover {
+    background: #e8e8e8;
+  }
+  .sidebar-item.active {
+    background: #0078d4;
+    color: #ffffff;
+  }
+  .sidebar-item.active .badge {
+    background: rgba(255,255,255,0.3);
+    color: #ffffff;
+  }
+
+  .sidebar-icon {
+    width: 22px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .sidebar-label {
+    flex: 1;
+  }
+  .badge {
+    background: #0078d4;
+    color: #ffffff;
+    font-size: 8.5pt;
+    font-weight: 600;
+    border-radius: 9px;
+    padding: 1px 7px;
+    min-width: 22px;
+    text-align: center;
+    line-height: 16px;
+    height: 18px;
+  }
+
+  .sidebar-section-header {
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #999999;
+    letter-spacing: 0.06em;
+    padding: 14px 18px 6px;
+    text-transform: uppercase;
+  }
+
+  .label-item {
+    display: flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 18px;
+    cursor: pointer;
+    font-size: 9.5pt;
+    color: #3c3c3c;
+    user-select: none;
+  }
+  .label-item:hover { background: #e8e8e8; border-radius: 6px; margin: 0 6px; padding: 0 12px; }
+  .label-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 10px;
+    flex-shrink: 0;
+  }
+
+  /* ===== Center column ===== */
+  .center-col {
+    width: 340px;
+    min-width: 280px;
+    max-width: 420px;
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #ebebeb;
+    flex-shrink: 0;
+  }
+
+  .toolbar {
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid #ebebeb;
+    gap: 4px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding: 0 14px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 9.5pt;
+    background: transparent;
+    color: #323232;
+    transition: background 0.1s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn:hover { background: #f0f0f0; }
+  .btn-primary {
+    background: #0078d4;
+    color: #ffffff;
+    border-radius: 14px;
+    padding: 0 16px;
+    height: 32px;
+    font-weight: 500;
+  }
+  .btn-primary:hover { background: #0064b0; }
+  .btn-outlined {
+    border: 1px solid #b4b4b4;
+    color: #323232;
+  }
+  .btn-outlined:hover { background: #f0f0f0; }
+  .btn-icon {
+    padding: 0;
+    width: 30px;
+  }
+  .spacer { flex: 1; }
+
+  /* ===== Email list ===== */
+  .email-list {
+    flex: 1;
+    overflow-y: auto;
+    background: #ffffff;
+  }
+
+  .email-item {
+    position: relative;
+    padding: 10px 14px 10px 18px;
+    min-height: 82px;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 8px;
+    margin: 2px 4px;
+  }
+  .email-item:hover { background: #f8f8f8; }
+  .email-item.selected {
+    background: #e8f0fe;
+  }
+  .email-item + .email-item:not(.selected) {
+    /* divider is done via box-shadow trick on non-selected items */
+  }
+
+  .email-item-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-left: 48px;
+    position: relative;
+  }
+
+  /* Unread blue dot */
+  .unread-dot {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0078d4;
+  }
+
+  /* Priority bar */
+  .priority-bar {
+    position: absolute;
+    left: 14px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 2px;
+  }
+  .priority-high { background: #e74c3c; }
+  .priority-low  { background: #95a5a6; }
+
+  /* Avatar */
+  .avatar {
+    position: absolute;
+    left: 18px;
+    top: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #ffffff;
+    flex-shrink: 0;
+  }
+
+  /* Row 1: sender + date */
+  .email-row1 {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .email-sender {
+    font-size: 10pt;
+    font-weight: 400;
+    color: #1e1e1e;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .email-sender.unread { font-weight: 700; }
+  .selected .email-sender { color: #1e1e1e; }
+
+  .star-icon {
+    font-size: 11px;
+    color: #f39c12;
+    flex-shrink: 0;
+  }
+  .attach-icon {
+    font-size: 10px;
+    color: #888888;
+    flex-shrink: 0;
+  }
+  .email-date {
+    font-size: 8.5pt;
+    color: #828282;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .selected .email-date { color: #555; }
+
+  /* Row 2: subject + labels */
+  .email-row2 {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .email-subject {
+    font-size: 9.5pt;
+    font-weight: 400;
+    color: #1e1e1e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+  .email-subject.unread { font-weight: 700; }
+
+  .pill {
+    display: inline-block;
+    font-size: 7.5pt;
+    padding: 1px 7px;
+    border-radius: 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  /* Row 3: preview */
+  .email-preview {
+    font-size: 8.5pt;
+    color: #828282;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* divider between non-selected items */
+  .email-divider {
+    height: 1px;
+    background: #ebebeb;
+    margin: 0 14px 0 68px;
+  }
+
+  /* ===== Right column ===== */
+  .right-col {
+    flex: 1;
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .preview-bar {
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid #ebebeb;
+    gap: 4px;
+  }
+
+  .preview-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 28px;
+    background: #ffffff;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    color: #1e1e1e;
+  }
+
+  /* ===== Email view content ===== */
+  .email-header {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ebebeb;
+  }
+  .email-priority-badge {
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #e74c3c;
+    margin-bottom: 6px;
+    letter-spacing: 0.04em;
+  }
+  .email-subject-title {
+    font-size: 16pt;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #1e1e1e;
+    line-height: 1.3;
+  }
+  .email-meta {
+    font-size: 9pt;
+    color: #888888;
+    margin-bottom: 6px;
+  }
+  .email-labels {
+    margin-top: 8px;
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .email-attachment-note {
+    font-size: 9pt;
+    color: #888888;
+    margin-top: 8px;
+  }
+  .email-body {
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: #1e1e1e;
+  }
+  .email-body p { margin: 0 0 10px; }
+  .email-body ul, .email-body ol { margin: 0 0 10px 20px; }
+  .email-body li { margin-bottom: 4px; }
+  .email-body h3 { margin: 12px 0 6px; font-size: 11pt; }
+  .email-body blockquote {
+    margin: 16px 0 0 0;
+    padding: 0 0 0 14px;
+    border-left: 3px solid #aaaaaa;
+    opacity: 0.55;
+  }
+  .email-body code {
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+  }
+  .email-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 9.5pt;
+  }
+  .email-body td {
+    padding: 6px 12px;
+    border-bottom: 1px solid #ebebeb;
+  }
+  .email-body tr:nth-child(odd) td { background: #fafafa; }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #b8b8b8; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== SIDEBAR ===== -->
+  <nav class="sidebar">
+
+    <!-- Folder list -->
+    <div class="sidebar-item active">
+      <span class="sidebar-icon">📥</span>
+      <span class="sidebar-label">Inbox</span>
+      <span class="badge">6</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">★</span>
+      <span class="sidebar-label">Starred</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">✉</span>
+      <span class="sidebar-label">Sent</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">📝</span>
+      <span class="sidebar-label">Drafts</span>
+      <span class="badge" style="background:#0078d4;">1</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">📦</span>
+      <span class="sidebar-label">Archive</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">⚠</span>
+      <span class="sidebar-label">Spam</span>
+      <span class="badge">2</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="sidebar-icon">🗑</span>
+      <span class="sidebar-label">Trash</span>
+    </div>
+
+    <!-- Labels section -->
+    <div class="sidebar-section-header">Labels</div>
+
+    <div class="label-item">
+      <span class="label-dot" style="background:#5b5fc7;"></span>Work
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#27ae60;"></span>Personal
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#e74c3c;"></span>Urgent
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#f39c12;"></span>Finance
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#3498db;"></span>Dev
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#9b59b6;"></span>Design
+    </div>
+    <div class="label-item">
+      <span class="label-dot" style="background:#1abc9c;"></span>Team
+    </div>
+
+  </nav>
+
+  <!-- ===== CENTER COLUMN ===== -->
+  <div class="center-col">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <button class="btn btn-primary">+ Compose</button>
+      <span class="spacer"></span>
+      <button class="btn btn-outlined btn-icon" title="Toggle dark mode">☽</button>
+    </div>
+
+    <!-- Email list -->
+    <div class="email-list">
+
+      <!-- Email 0: Alice Chen — HIGH PRIORITY, unread, starred -->
+      <div class="email-item selected">
+        <span class="priority-bar priority-high"></span>
+        <div class="avatar" style="background:#5b5fc7;">AC</div>
+        <div class="email-item-inner">
+          <span class="unread-dot"></span>
+          <div class="email-row1">
+            <span class="email-sender unread">Alice Chen</span>
+            <span class="star-icon">★</span>
+            <span class="email-date">10:32 AM</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject unread">Re: Project timeline update</span>
+            <span class="pill" style="background:rgba(231,76,60,0.15);color:#e74c3c;">Urgent</span>
+            <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;">Work</span>
+          </div>
+          <div class="email-preview">Thanks for the update. I agree we should push the deadline to next Friday...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 1: Bob Martin — read, no star -->
+      <div class="email-item">
+        <div class="avatar" style="background:#c74b50;">BM</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">Bob Martin</span>
+            <span class="email-date">9:15 AM</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">Code review: PR #247</span>
+            <span class="pill" style="background:rgba(52,152,219,0.15);color:#3498db;">Dev</span>
+          </div>
+          <div class="email-preview">I left a few comments on your PR. Mostly minor stuff — naming...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 2: CI Pipeline — read -->
+      <div class="email-item">
+        <div class="avatar" style="background:#27ae60;">CI</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">CI Pipeline</span>
+            <span class="email-date">8:44 AM</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">Build #1842 passed</span>
+            <span class="pill" style="background:rgba(52,152,219,0.15);color:#3498db;">Dev</span>
+          </div>
+          <div class="email-preview">All 1164 tests passed. Branch: main. Duration: 2m 34s.</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 3: Carol Davis — read -->
+      <div class="email-item">
+        <div class="avatar" style="background:#e67e22;">CD</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">Carol Davis</span>
+            <span class="email-date">Yesterday</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">Lunch today?</span>
+            <span class="pill" style="background:rgba(39,174,96,0.15);color:#27ae60;">Personal</span>
+          </div>
+          <div class="email-preview">Hey! Want to grab lunch today? I was thinking that new Thai place...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 4: Dave Wilson — unread, attachment -->
+      <div class="email-item">
+        <div class="avatar" style="background:#2980b9;">DW</div>
+        <div class="email-item-inner">
+          <span class="unread-dot"></span>
+          <div class="email-row1">
+            <span class="email-sender unread">Dave Wilson</span>
+            <span class="attach-icon" title="Has attachment">📎</span>
+            <span class="email-date">Yesterday</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject unread">Q1 Report draft attached</span>
+            <span class="pill" style="background:rgba(243,156,18,0.15);color:#f39c12;">Finance</span>
+            <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;">Work</span>
+          </div>
+          <div class="email-preview">Please find the Q1 report draft attached. Revenue up 12%...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 5: Eve Thompson — starred, attachment -->
+      <div class="email-item">
+        <div class="avatar" style="background:#8e44ad;">ET</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">Eve Thompson</span>
+            <span class="star-icon">★</span>
+            <span class="attach-icon" title="Has attachment">📎</span>
+            <span class="email-date">Mar 5</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">Meeting notes - March 5</span>
+            <span class="pill" style="background:rgba(26,188,156,0.15);color:#1abc9c;">Team</span>
+            <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;">Work</span>
+          </div>
+          <div class="email-preview">Sprint Planning notes. Action items for Alice, Bob, You, Frank...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 6: Frank Lee — LOW priority -->
+      <div class="email-item">
+        <span class="priority-bar priority-low"></span>
+        <div class="avatar" style="background:#16a085;">FL</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">Frank Lee</span>
+            <span class="email-date">Mar 5</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">Re: API rate limiting strategy</span>
+            <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;">Work</span>
+            <span class="pill" style="background:rgba(52,152,219,0.15);color:#3498db;">Dev</span>
+          </div>
+          <div class="email-preview">I've pushed the initial implementation. Can you take a look at the...</div>
+        </div>
+      </div>
+
+      <div class="email-divider"></div>
+
+      <!-- Email 7: Grace Kim — attachment -->
+      <div class="email-item">
+        <div class="avatar" style="background:#d35400;">GK</div>
+        <div class="email-item-inner">
+          <div class="email-row1">
+            <span class="email-sender">Grace Kim</span>
+            <span class="attach-icon" title="Has attachment">📎</span>
+            <span class="email-date">Mar 4</span>
+          </div>
+          <div class="email-row2">
+            <span class="email-subject">New brand guidelines v2</span>
+            <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;">Work</span>
+            <span class="pill" style="background:rgba(155,89,182,0.15);color:#9b59b6;">Design</span>
+          </div>
+          <div class="email-preview">Hi team, attached are the updated brand guidelines. Major changes...</div>
+        </div>
+      </div>
+
+    </div><!-- .email-list -->
+
+  </div><!-- .center-col -->
+
+  <!-- ===== RIGHT COLUMN — email preview ===== -->
+  <div class="right-col">
+
+    <!-- Preview toolbar -->
+    <div class="preview-bar">
+      <button class="btn">Reply</button>
+      <button class="btn">Reply All</button>
+      <button class="btn">Forward</button>
+      <span style="width:8px;"></span>
+      <button class="btn btn-icon" title="Star" style="color:#f39c12;">★</button>
+      <span class="spacer"></span>
+      <button class="btn">Archive</button>
+      <button class="btn">Trash</button>
+    </div>
+
+    <!-- Email reading pane — showing Alice Chen's email (index 0) -->
+    <div class="preview-pane">
+
+      <div class="email-header">
+        <div class="email-priority-badge">HIGH PRIORITY</div>
+        <div class="email-subject-title">Re: Project timeline update</div>
+        <div class="email-meta">Alice Chen &middot; to you@example.com &middot; 10:32 AM</div>
+        <div class="email-labels">
+          <span class="pill" style="background:rgba(91,95,199,0.15);color:#5b5fc7;font-size:8pt;padding:2px 8px;">Work</span>
+          <span class="pill" style="background:rgba(231,76,60,0.15);color:#e74c3c;font-size:8pt;padding:2px 8px;">Urgent</span>
+        </div>
+      </div>
+
+      <div class="email-body">
+        <p>Hi,</p>
+        <p>Thanks for the update. I agree we should push the deadline to next Friday. I've already told the design team.</p>
+        <p>One question: should we include the new onboarding flow in this release, or defer it to v2.1?</p>
+        <p>Best,<br>Alice</p>
+        <blockquote>
+          <p style="font-size:9pt;opacity:0.7;">On March 6, 2026, You wrote:</p>
+          <p>Just wanted to let you know that we're running a bit behind on the dashboard redesign.</p>
+          <p>I think we should push the milestone to next Friday.</p>
+        </blockquote>
+      </div>
+
+    </div><!-- .preview-pane -->
+
+  </div><!-- .right-col -->
+
+</div><!-- .app -->
+
+</body>
+</html>

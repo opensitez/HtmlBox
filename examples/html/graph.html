@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graph Demo – Custom Components + Events</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+  font-size: 10pt; color: #c9d1d9; margin: 0; padding: 0;
+  background: #0d1117;
+}
+
+/* ---- Header ---- */
+.hdr {
+  background: #161b22; border-bottom: 1px solid #30363d;
+  padding: 14px 20px;
+}
+.hdr h1 { color: #f0f6fc; font-size: 14pt; margin: 0 0 2px 0; }
+.hdr .sub { color: #8b949e; font-size: 8pt; margin: 4px 0 0 0; }
+.hdr .hint { color: #8b949e; font-size: 7pt; margin-top: 4px; }
+.hdr .key {
+  background: #21262d; color: #8b949e; padding: 1px 5px;
+  border-radius: 3px; border: 1px solid #30363d; font-family: monospace;
+}
+.hdr code { color: #58a6ff; background: #161b22; padding: 1px 4px; border-radius: 3px; }
+
+/* ---- Status banner ---- */
+.banner {
+  background: #0c2d6b; color: #a5d6ff; font-size: 8pt;
+  padding: 6px 20px; border-bottom: 1px solid #1f6feb;
+  font-weight: 600;
+}
+.banner .ev-type { color: #58a6ff; }
+.banner .ev-detail { color: #79c0ff; }
+
+/* ---- Main 2-col layout ---- */
+.main { display: flex; }
+.sidebar {
+  background: #161b22; border-right: 1px solid #30363d;
+  padding: 14px; width: 170px; min-width: 170px;
+}
+.sidebar h3 { color: #f0f6fc; font-size: 9pt; margin: 0 0 8px 0; }
+.sb-item {
+  padding: 5px 8px; margin-bottom: 2px; border-radius: 6px;
+  font-size: 8pt; color: #c9d1d9; cursor: pointer;
+  border: 1px solid transparent;
+}
+.sb-item:hover { background: #21262d; border-color: #30363d; }
+.sb-item-active { background: #1f6feb; color: #ffffff; border-color: #58a6ff; }
+.sb-item .sstat { color: #8b949e; float: right; }
+.sb-item-active .sstat { color: #a5d6ff; }
+.sb-sep { height: 1px; background: #21262d; margin: 10px 0; clear: both; }
+.sb-dot {
+  float: left; width: 6px; height: 6px;
+  border-radius: 3px; margin-right: 5px; margin-top: 3px;
+}
+.sb-item-active .sstat { color: #a5d6ff; }
+
+.content { flex: 1; min-width: 0; }
+
+/* ---- KPI strip ---- */
+.kpis { display: flex; gap: 10px; padding: 12px 16px; }
+.kpi {
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 10px 14px; flex: 1; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.kpi:hover { border-color: #58a6ff; background: #0d1824; }
+.kpi .kl { font-size: 7pt; color: #8b949e; margin-bottom: 2px; }
+.kpi .kv { font-size: 16pt; font-weight: bold; color: #f0f6fc; }
+.kpi .kd { font-size: 7pt; margin-top: 2px; }
+.kup { color: #3fb950; }
+.kdn { color: #f85149; }
+
+/* ---- Chart grid: 2 columns ---- */
+.charts { padding: 4px 16px 16px 16px; }
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.card {
+  background: #161b22; border: 2px solid #444c56; border-radius: 10px;
+  padding: 8px; overflow: hidden;
+  transition: border-color 0.15s, background 0.15s;
+}
+.card:hover { border-color: #58a6ff; background: #0d1824; }
+.card .cap { font-size: 7pt; color: #8b949e; margin-top: 4px; padding: 0 4px; }
+
+/* ---- SVG chart containers ---- */
+.chart-svg {
+  display: block;
+  width: 340px; height: 190px;
+  background: #161b22;
+  border-radius: 6px;
+}
+
+/* ---- Buttons ---- */
+.btn-row { display: flex; gap: 8px; padding: 0 16px 12px 16px; flex-wrap: wrap; }
+.btn {
+  padding: 5px 12px; border-radius: 6px; font-size: 8pt;
+  font-weight: 600; cursor: pointer; border: none; text-decoration: none;
+  display: inline-block;
+}
+.btn-blue   { background: #1f6feb; color: #fff; }
+.btn-green  { background: #3fb950; color: #fff; }
+.btn-purple { background: #8b5cf6; color: #fff; }
+.btn-orange { background: #d29922; color: #0d1117; }
+.btn-red    { background: #f85149; color: #fff; }
+.btn-rand   { background: #8b949e; color: #0d1117; }
+.btn-grow   { background: #238636; color: #fff; }
+.btn-shrink { background: #da3633; color: #fff; }
+
+/* ---- Counter row ---- */
+.counter-row { padding: 0 16px 10px 16px; font-size: 8pt; }
+.counter-label { color: #8b949e; }
+.counter-val {
+  color: #58a6ff; font-weight: bold; font-size: 11pt;
+  margin-left: 4px; margin-right: 4px;
+}
+
+/* ---- Event log ---- */
+.log-wrap {
+  margin: 0 16px 12px 16px; background: #161b22;
+  border: 1px solid #21262d; border-radius: 8px;
+  padding: 8px 12px;
+}
+.log-wrap h4 {
+  color: #8b949e; font-size: 7pt; margin: 0 0 6px 0;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.log-line { font-family: monospace; font-size: 7pt; color: #8b949e; padding: 1px 0; }
+.log-line .lt   { color: #58a6ff; font-weight: bold; }
+.log-line .ltgt { color: #d2a8ff; }
+.log-line .lval { color: #7ee787; }
+
+/* ---- Footer ---- */
+.ftr {
+  border-top: 1px solid #21262d; padding: 10px 20px;
+  font-size: 7pt; color: #8b949e;
+}
+.ftr code { color: #58a6ff; background: #161b22; padding: 1px 4px; border-radius: 3px; }
+
+/* ---- SVG chart shared text styles ---- */
+svg text { font-family: -apple-system, Helvetica, Arial, sans-serif; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="hdr">
+  <h1>Custom Components + Events Demo</h1>
+  <p class="sub">Showcases <code>RegisterComponent()</code> for the &lt;graph&gt; tag
+     and <code>AddEventListener()</code> for interactivity</p>
+  <p class="hint">
+    <span class="key">Click</span> chart to cycle type &nbsp;
+    <span class="key">Hover</span> chart for glow &nbsp;
+    <span class="key">Click</span> sidebar/KPI for selection &nbsp;
+    <span class="key">Click</span> buttons to change all charts
+  </p>
+</div>
+
+<!-- Status banner -->
+<div class="banner" id="status-banner">
+  <span class="ev-type">Ready</span> &mdash;
+  <span class="ev-detail" id="status-text">Interact with any element to see events fire</span>
+</div>
+
+<div class="main">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <h3>Pages</h3>
+    <div class="sb-item sb-item-active" id="sb-home">/home <span class="sstat">4,231</span></div>
+    <div class="sb-item" id="sb-products">/products <span class="sstat">2,847</span></div>
+    <div class="sb-item" id="sb-pricing">/pricing <span class="sstat">1,923</span></div>
+    <div class="sb-item" id="sb-blog">/blog <span class="sstat">1,456</span></div>
+    <div class="sb-item" id="sb-docs">/docs <span class="sstat">1,102</span></div>
+    <div class="sb-item" id="sb-about">/about <span class="sstat">879</span></div>
+
+    <div class="sb-sep"></div>
+    <h3>Sources</h3>
+    <div class="sb-item" id="sb-organic">
+      <span class="sb-dot" style="background:#4e79a7;"></span>Organic <span class="sstat">48%</span>
+    </div>
+    <div class="sb-item" id="sb-direct">
+      <span class="sb-dot" style="background:#f28e2b;"></span>Direct <span class="sstat">27%</span>
+    </div>
+    <div class="sb-item" id="sb-referral">
+      <span class="sb-dot" style="background:#59a14f;"></span>Referral <span class="sstat">15%</span>
+    </div>
+    <div class="sb-item" id="sb-social">
+      <span class="sb-dot" style="background:#e15759;"></span>Social <span class="sstat">10%</span>
+    </div>
+
+    <div class="sb-sep"></div>
+    <h3>Devices</h3>
+    <div class="sb-item" id="sb-desktop">Desktop <span class="sstat">62%</span></div>
+    <div class="sb-item" id="sb-mobile">Mobile <span class="sstat">31%</span></div>
+    <div class="sb-item" id="sb-tablet">Tablet <span class="sstat">7%</span></div>
+  </div>
+
+  <div class="content">
+
+    <!-- KPI cards -->
+    <div class="kpis">
+      <div class="kpi" id="kpi-users">
+        <div class="kl">Total Users</div>
+        <div class="kv">12,438</div>
+        <div class="kd kup">+12.5%</div>
+      </div>
+      <div class="kpi" id="kpi-views">
+        <div class="kl">Page Views</div>
+        <div class="kv">48,291</div>
+        <div class="kd kup">+8.3%</div>
+      </div>
+      <div class="kpi" id="kpi-bounce">
+        <div class="kl">Bounce Rate</div>
+        <div class="kv">34.2%</div>
+        <div class="kd kdn">+2.1%</div>
+      </div>
+      <div class="kpi" id="kpi-session">
+        <div class="kl">Avg Session</div>
+        <div class="kv">3m 42s</div>
+        <div class="kd kup">+0.8%</div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+      <span class="btn btn-blue" id="btn-bar">All Bar</span>
+      <span class="btn btn-green" id="btn-line">All Line</span>
+      <span class="btn btn-purple" id="btn-pie">All Pie</span>
+      <span class="btn btn-orange" id="btn-area">All Area</span>
+      <span class="btn btn-red" id="btn-scatter">All Scatter</span>
+      <span class="btn btn-rand" id="btn-rand">Randomize Data</span>
+      <span class="btn btn-grow" id="btn-grow">Grow +10%</span>
+      <span class="btn btn-shrink" id="btn-shrink">Shrink -10%</span>
+    </div>
+
+    <!-- Counters -->
+    <div class="counter-row">
+      <span class="counter-label">Total interactions:</span>
+      <span class="counter-val" id="click-count">0</span>
+      <span class="counter-label" style="margin-left:20px;">Charts cycled:</span>
+      <span class="counter-val" id="cycle-count">0</span>
+      <span class="counter-label" style="margin-left:20px;">Data refreshes:</span>
+      <span class="counter-val" id="refresh-count">0</span>
+    </div>
+
+    <!-- Chart grid -->
+    <div class="charts">
+      <div class="chart-grid">
+
+        <!-- 1: BAR – Weekly Revenue -->
+        <div class="card" id="card1">
+          <graph
+            data-type="bar"
+            data-title="Weekly Revenue ($K)"
+            data-values="42,58,35,67,49,73,61"
+            data-labels="Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+            data-colors="#4e79a7,#4e79a7,#4e79a7,#4e79a7,#4e79a7,#58a6ff,#58a6ff"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">Revenue by day</div>
+        </div>
+
+        <!-- 2: AREA – Active Users -->
+        <div class="card" id="card2">
+          <graph
+            data-type="area"
+            data-title="Active Users (7d)"
+            data-values="820,934,901,1034,1290,1330,1280"
+            data-labels="Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+            data-colors="#3fb950"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">User engagement trend</div>
+        </div>
+
+        <!-- 3: DONUT – Traffic Sources -->
+        <div class="card" id="card3">
+          <graph
+            data-type="donut"
+            data-title="Traffic Sources"
+            data-values="48,27,15,10"
+            data-labels="Organic,Direct,Referral,Social"
+            data-colors="#4e79a7,#f28e2b,#59a14f,#e15759"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">Source breakdown</div>
+        </div>
+
+        <!-- 4: LINE – Response Time -->
+        <div class="card" id="card4">
+          <graph
+            data-type="line"
+            data-title="Response Time (ms)"
+            data-values="234,198,256,187,201,178,165,190,210,175,155,148"
+            data-labels="J,F,M,A,M,J,J,A,S,O,N,D"
+            data-colors="#d29922"
+            data-min="100" data-max="300"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">P95 latency over 12 months</div>
+        </div>
+
+        <!-- 5: HBAR – Feature Usage -->
+        <div class="card" id="card5">
+          <graph
+            data-type="hbar"
+            data-title="Feature Usage"
+            data-values="89,72,65,51,43,28"
+            data-labels="Search,Upload,Export,Share,Filter,API"
+            data-colors="#b07aa1"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">Most-used features this quarter</div>
+        </div>
+
+        <!-- 6: GAUGE – Server Uptime -->
+        <div class="card" id="card6">
+          <graph
+            data-type="gauge"
+            data-values="99.7"
+            data-labels="SLA: 99.5%"
+            data-colors="#3fb950"
+            data-min="95" data-max="100"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">30-day rolling availability</div>
+        </div>
+
+      </div><!-- .chart-grid -->
+    </div><!-- .charts -->
+
+    <!-- Also show PIE and SCATTER as bonus rows -->
+    <div class="charts" style="padding-top:0;">
+      <div style="color:#8b949e; font-size:8pt; margin-bottom:8px; padding-left:4px;">
+        Additional chart types (pie, scatter) also supported via <code style="color:#58a6ff;background:#161b22;padding:1px 4px;border-radius:3px;">data-type</code> attribute:
+      </div>
+      <div class="chart-grid">
+
+        <!-- PIE – Traffic Sources (same data, no hole) -->
+        <div class="card" id="bonus1">
+          <graph
+            data-type="pie"
+            data-title="Traffic Sources"
+            data-values="48,27,15,10"
+            data-labels="Organic,Direct,Referral,Social"
+            data-colors="#4e79a7,#f28e2b,#59a14f,#e15759"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">Solid pie — same data as donut</div>
+        </div>
+
+        <!-- SCATTER – Response time as scatter plot -->
+        <div class="card" id="bonus2">
+          <graph
+            data-type="scatter"
+            data-title="Response Time Scatter (ms)"
+            data-values="234,198,256,187,201,178,165,190,210,175,155,148"
+            data-width="340" data-height="190">
+          </graph>
+          <div class="cap">Same latency data as scatter points</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Event log (static) -->
+    <div class="log-wrap">
+      <h4>Event Log (live)</h4>
+      <div class="log-line" id="log5">&nbsp;</div>
+      <div class="log-line" id="log4">&nbsp;</div>
+      <div class="log-line" id="log3">&nbsp;</div>
+      <div class="log-line" id="log2">&nbsp;</div>
+      <div class="log-line" id="log1">
+        <span class="lt">INIT</span> Demo loaded. Interact with elements above.
+      </div>
+    </div>
+
+  </div><!-- .content -->
+</div><!-- .main -->
+
+<div class="ftr">
+  <code>RegisterComponent("graph", measure, paint)</code> binds the custom drawing.
+  <code>AddEventListener(selector, type, callback)</code> binds all interactivity.
+  Components are C++ app-side only; HTML cannot activate them.
+  This page is a static HTML+CSS+SVG reconstruction of the wxHtmlEdit graph_demo.cpp output.
+</div>
+
+</body>
+</html>

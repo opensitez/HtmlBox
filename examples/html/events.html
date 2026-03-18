@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Events Demo – Kanban Board</title>
+  <style>
+    /* ── All styles verbatim from KANBAN_HTML in events_demo.cpp ── */
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, Helvetica, Arial, sans-serif;
+      font-size: 10pt; color: #c9d1d9; padding: 0; margin: 0;
+      background: #0d1117;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: linear-gradient(135deg, #161b22, #21262d);
+      color: #f0f6fc; padding: 14px 24px;
+      border-bottom: 1px solid #30363d;
+    }
+    .header h1 { color: #f0f6fc; font-size: 16pt; margin: 0; }
+    .header .subtitle { color: #8b949e; font-size: 8pt; margin-top: 2px; }
+    .header .keys { color: #484f58; font-size: 7pt; margin-top: 4px; }
+    .header .key {
+      background: #21262d; color: #8b949e; padding: 1px 5px;
+      border-radius: 3px; border: 1px solid #30363d; font-family: monospace;
+    }
+
+    /* ---- Status bar ---- */
+    .status-bar {
+      background: #161b22; color: #484f58; font-size: 8pt;
+      padding: 6px 24px; border-bottom: 1px solid #21262d;
+    }
+    .status-bar .count { color: #58a6ff; font-weight: bold; }
+    .focus-dot {
+      display: inline-block; width: 6px; height: 6px;
+      border-radius: 3px; background: #30363d; margin-right: 4px;
+    }
+    .focus-dot-active { background: #3fb950 !important; }
+
+    /* ---- Drag indicator banner ---- */
+    .drag-banner {
+      display: none; background: #1f6feb; color: #ffffff;
+      padding: 8px 24px; font-size: 9pt; font-weight: 600;
+      border-bottom: 2px solid #58a6ff;
+    }
+    .drag-banner-visible { display: block !important; }
+    .drag-banner .drag-icon { margin-right: 6px; }
+    .drag-banner .drag-target { color: #a5d6ff; margin-left: 8px; }
+
+    /* ---- Drag ghost ---- */
+    .drag-ghost {
+      display: none; position: absolute;
+      background: #1f6feb; color: #ffffff;
+      border: 2px solid #58a6ff; border-radius: 8px;
+      padding: 8px 14px; font-size: 9pt; font-weight: 600;
+      width: 180px; opacity: 0.9;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      pointer-events: none;
+    }
+    .drag-ghost-visible { display: block !important; }
+    .drag-ghost .ghost-tag {
+      font-size: 7pt; color: #a5d6ff; margin-top: 4px;
+    }
+
+    /* ---- Board ---- */
+    .board {
+      display: flex; gap: 16px; padding: 20px 24px;
+      align-items: flex-start;
+      overflow-x: auto;
+    }
+
+    /* ---- Columns ---- */
+    .column {
+      background: #161b22; border-radius: 12px;
+      padding: 0; min-width: 220px; width: 220px;
+      border: 1px solid #30363d;
+      transition: border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .column-drop-active {
+      border-color: #58a6ff !important;
+      box-shadow: 0 0 16px rgba(88,166,255,0.15) !important;
+    }
+    .column-header {
+      padding: 12px 16px; font-weight: bold; font-size: 9pt;
+      text-transform: uppercase; letter-spacing: 1px;
+      border-radius: 12px 12px 0 0;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .column-count {
+      background: rgba(255,255,255,0.15); border-radius: 10px;
+      padding: 2px 8px; font-size: 8pt;
+    }
+    .column-body { padding: 8px 12px; min-height: 60px; }
+
+    .col-backlog .column-header { background: #30363d; color: #c9d1d9; }
+    .col-todo .column-header    { background: #1f6feb; color: #ffffff; }
+    .col-progress .column-header { background: #d29922; color: #ffffff; }
+    .col-review .column-header  { background: #8b5cf6; color: #ffffff; }
+    .col-done .column-header    { background: #3fb950; color: #ffffff; }
+
+    /* ---- Cards ---- */
+    .card {
+      background: #0d1117; border: 1px solid #30363d;
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+      cursor: grab; color: #c9d1d9;
+    }
+    .card:hover { background: #161b22; }
+    .card-selected {
+      background: #0c2d6b !important;
+      border-color: #58a6ff !important;
+      box-shadow: 0 0 0 2px rgba(88,166,255,0.3);
+    }
+    .card-dragging {
+      opacity: 0.35;
+      border-style: dashed !important;
+      border-color: #58a6ff !important;
+      background: #161b22 !important;
+    }
+
+    .drop-placeholder {
+      display: none; border: 2px dashed #58a6ff;
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+      background: rgba(31,111,235,0.08);
+      color: #58a6ff; font-size: 8pt; text-align: center;
+      font-weight: 600; min-height: 40px;
+    }
+
+    .card-title { font-weight: 600; font-size: 9pt; margin-bottom: 4px; }
+    .card-desc {
+      font-size: 8pt; color: #8b949e;
+      margin-top: 6px; padding-top: 6px; border-top: 1px solid #21262d;
+    }
+    .card-meta {
+      display: flex; justify-content: space-between;
+      font-size: 7pt; color: #484f58; margin-top: 6px;
+    }
+    .card-tag {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      font-size: 7pt; font-weight: 600;
+    }
+    .tag-bug     { background: #3d1f1f; color: #f85149; }
+    .tag-feature { background: #0c2d6b; color: #79c0ff; }
+    .tag-chore   { background: #1b3a1b; color: #7ee787; }
+    .tag-urgent  { background: #3d2e0a; color: #d29922; }
+
+    .priority-high   { border-left: 3px solid #f85149; }
+    .priority-medium { border-left: 3px solid #d29922; }
+    .priority-low    { border-left: 3px solid #3fb950; }
+
+    /* ---- Action buttons ---- */
+    .actions {
+      padding: 12px 24px; display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .btn {
+      padding: 7px 14px; border-radius: 8px; font-size: 8pt;
+      font-weight: 600; cursor: pointer; border: none;
+    }
+    .btn-primary { background: #1f6feb; color: #ffffff; }
+    .btn-danger  { background: #f85149; color: #ffffff; }
+    .btn-success { background: #3fb950; color: #ffffff; }
+    .btn-warning { background: #d29922; color: #0d1117; }
+    .btn-purple  { background: #8b5cf6; color: #ffffff; }
+    .btn-disabled {
+      background: #21262d !important; color: #6e7681 !important;
+      cursor: default;
+    }
+
+    /* ---- Context menu ---- */
+    .ctx-menu {
+      display: none; background: #161b22; border: 1px solid #30363d;
+      border-radius: 8px; padding: 4px 0; min-width: 180px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .ctx-menu-visible { display: block; }
+    .ctx-item {
+      padding: 7px 16px; font-size: 8pt; color: #c9d1d9; cursor: pointer;
+    }
+    .ctx-item:hover { background: #21262d; }
+    .ctx-item .ctx-shortcut {
+      color: #484f58; font-size: 7pt; margin-left: 20px;
+    }
+    .ctx-sep { height: 1px; background: #21262d; margin: 4px 0; }
+    .ctx-danger { color: #f85149; }
+
+    /* ---- Event log ---- */
+    .event-log {
+      margin: 0 24px 20px 24px; background: #161b22;
+      border-radius: 8px; border: 1px solid #21262d;
+      padding: 12px 16px; max-height: 140px; overflow: hidden;
+    }
+    .event-log h3 {
+      color: #8b949e; font-size: 8pt; margin: 0 0 8px 0;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .log-entry {
+      font-family: monospace; font-size: 8pt; color: #484f58;
+      padding: 2px 0;
+    }
+    .log-entry .log-type   { color: #58a6ff; font-weight: bold; }
+    .log-entry .log-target { color: #d2a8ff; }
+    .log-entry .log-time   { color: #30363d; }
+
+    /* ---- Key hint ---- */
+    .key-hint {
+      display: none; background: #21262d; color: #8b949e;
+      font-size: 7pt; padding: 4px 24px;
+      border-bottom: 1px solid #30363d;
+    }
+    .key-hint-visible { display: block !important; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Kanban Board</h1>
+  <div class="subtitle">Drag cards between columns. Right-click for context menu.</div>
+  <div class="keys">
+    <span class="key">N</span> new task
+    <span class="key">Del</span> delete
+    <span class="key">F</span> find bugs
+    <span class="key">S</span> shuffle
+    <span class="key">E</span> expand/collapse
+    <span class="key">1-5</span> move to column
+    <span class="key">Tab</span> next card
+    <span class="key">Esc</span> deselect
+  </div>
+</div>
+
+<div class="drag-banner" id="drag-banner">
+  <span class="drag-icon">&#x2630;</span>
+  Dragging: <span id="drag-title">-</span>
+  <span class="drag-target" id="drag-target-col"></span>
+</div>
+
+<div class="key-hint" id="key-hint">
+  Key pressed: <span class="count" id="key-display">-</span>
+</div>
+
+<div class="status-bar">
+  <span class="focus-dot" id="focus-dot"></span>
+  Tasks: <span class="count" id="total-count">12</span> |
+  Selected: <span class="count" id="selected-info">none</span> |
+  Mouse: <span class="count" id="mouse-pos">-</span> |
+  Last: <span class="count" id="last-action">ready</span>
+</div>
+
+<div class="actions">
+  <div class="btn btn-primary btn-disabled" id="btn-left">&lt; Move</div>
+  <div class="btn btn-primary btn-disabled" id="btn-right">Move &gt;</div>
+  <div class="btn btn-danger btn-disabled" id="btn-delete">Delete</div>
+  <div class="btn btn-purple" id="btn-search">Find Bugs</div>
+  <div class="btn btn-success" id="btn-add">+ New</div>
+  <div class="btn btn-warning" id="btn-shuffle">Shuffle</div>
+</div>
+
+<div class="board">
+
+  <!-- Backlog -->
+  <div class="column col-backlog" id="col-backlog">
+    <div class="column-header">Backlog <span class="column-count" id="cnt-backlog">3</span></div>
+    <div class="column-body" id="body-backlog">
+      <div class="drop-placeholder" id="ph-backlog">Drop here</div>
+      <div class="card priority-low" id="card-1">
+        <div class="card-title">Update dependencies</div>
+        <div class="card-meta"><span class="card-tag tag-chore">chore</span><span>low</span></div>
+        <div class="card-desc">Audit and update all npm packages to latest versions.</div>
+      </div>
+      <div class="card priority-medium" id="card-2">
+        <div class="card-title">Dark mode improvements</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>med</span></div>
+        <div class="card-desc">Fix sidebar colors and code block backgrounds for dark mode.</div>
+      </div>
+      <div class="card priority-high" id="card-3">
+        <div class="card-title">Login page crash</div>
+        <div class="card-meta"><span class="card-tag tag-bug">bug</span><span>high</span></div>
+        <div class="card-desc">App crashes with special characters in password field.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- To Do -->
+  <div class="column col-todo" id="col-todo">
+    <div class="column-header">To Do <span class="column-count" id="cnt-todo">3</span></div>
+    <div class="column-body" id="body-todo">
+      <div class="drop-placeholder" id="ph-todo">Drop here</div>
+      <div class="card priority-high" id="card-4">
+        <div class="card-title">API rate limiting</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>high</span></div>
+        <div class="card-desc">100 req/min free tier, 1000 for pro.</div>
+      </div>
+      <div class="card priority-medium" id="card-5">
+        <div class="card-title">Fix search indexing</div>
+        <div class="card-meta"><span class="card-tag tag-bug">bug</span><span>med</span></div>
+        <div class="card-desc">Search results stale after document deletion.</div>
+      </div>
+      <div class="card priority-low" id="card-6">
+        <div class="card-title">Export to CSV</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>low</span></div>
+        <div class="card-desc">Export data tables as CSV with UTF-8 BOM.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- In Progress -->
+  <div class="column col-progress" id="col-progress">
+    <div class="column-header">In Progress <span class="column-count" id="cnt-progress">2</span></div>
+    <div class="column-body" id="body-progress">
+      <div class="drop-placeholder" id="ph-progress">Drop here</div>
+      <div class="card priority-high" id="card-7">
+        <div class="card-title">WebSocket reconnect</div>
+        <div class="card-meta"><span class="card-tag tag-bug">bug</span><span>high</span></div>
+        <div class="card-desc">Implement exponential backoff for WS drops.</div>
+      </div>
+      <div class="card priority-medium" id="card-8">
+        <div class="card-title">Dashboard redesign</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>med</span></div>
+        <div class="card-desc">Responsive grid layout with charts.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review -->
+  <div class="column col-review" id="col-review">
+    <div class="column-header">Review <span class="column-count" id="cnt-review">2</span></div>
+    <div class="column-body" id="body-review">
+      <div class="drop-placeholder" id="ph-review">Drop here</div>
+      <div class="card priority-medium" id="card-9">
+        <div class="card-title">OAuth2 integration</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>med</span></div>
+        <div class="card-desc">Google and GitHub OAuth2 with token refresh.</div>
+      </div>
+      <div class="card priority-high" id="card-10">
+        <div class="card-title">Memory leak fix</div>
+        <div class="card-meta"><span class="card-tag tag-bug">bug</span><span>high</span></div>
+        <div class="card-desc">Canvas renderer leaks ~2MB/hour.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done -->
+  <div class="column col-done" id="col-done">
+    <div class="column-header">Done <span class="column-count" id="cnt-done">2</span></div>
+    <div class="column-body" id="body-done">
+      <div class="drop-placeholder" id="ph-done">Drop here</div>
+      <div class="card priority-medium" id="card-11">
+        <div class="card-title">Pagination component</div>
+        <div class="card-meta"><span class="card-tag tag-feature">feature</span><span>med</span></div>
+        <div class="card-desc">Reusable pagination with keyboard navigation.</div>
+      </div>
+      <div class="card priority-high" id="card-12">
+        <div class="card-title">Timezone bug fix</div>
+        <div class="card-meta"><span class="card-tag tag-bug">bug</span><span>high</span></div>
+        <div class="card-desc">Now uses Intl API for user's local timezone.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Context menu (hidden by default) -->
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-expand">Expand / Collapse <span class="ctx-shortcut">E</span></div>
+  <div class="ctx-item" id="ctx-select">Select <span class="ctx-shortcut">Click</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-move-right">Move Right <span class="ctx-shortcut">&gt;</span></div>
+  <div class="ctx-item" id="ctx-move-left">Move Left <span class="ctx-shortcut">&lt;</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-prio-high">Priority: High</div>
+  <div class="ctx-item" id="ctx-prio-med">Priority: Medium</div>
+  <div class="ctx-item" id="ctx-prio-low">Priority: Low</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item ctx-danger" id="ctx-delete">Delete <span class="ctx-shortcut">Del</span></div>
+</div>
+
+<!-- Event log -->
+<div class="event-log" id="event-log">
+  <h3>Event Log</h3>
+  <div class="log-entry" id="log-5">
+    <span class="log-time">[--:--:--]</span>
+    <span class="log-type">READY</span>
+    Board loaded. Drag cards or use keyboard shortcuts.
+  </div>
+  <div class="log-entry" id="log-4">
+    <span class="log-time">[--:--:--]</span>
+    <span class="log-type">HINT</span>
+    Right-click a card for context menu
+  </div>
+  <div class="log-entry" id="log-3">
+    <span class="log-time">[--:--:--]</span>
+    <span class="log-type">HINT</span>
+    Press <span class="log-target">Tab</span> to cycle cards,
+    <span class="log-target">Esc</span> to deselect
+  </div>
+  <div class="log-entry" id="log-2">
+    <span class="log-time">[--:--:--]</span>
+    <span class="log-type">HINT</span>
+    Press <span class="log-target">N</span> to add a new task
+  </div>
+  <div class="log-entry" id="log-1">
+    <span class="log-time">[--:--:--]</span>
+    <span class="log-type">HINT</span>
+    <span class="log-target">F</span> to find bugs,
+    <span class="log-target">S</span> to shuffle
+  </div>
+</div>
+
+<!-- Drag ghost (off-screen / hidden) -->
+<div class="drag-ghost" id="drag-ghost">
+  <span id="ghost-title">Card</span>
+  <div class="ghost-tag" id="ghost-meta">feature</div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown Editor</title>
+  <style>
+    /* ── Window chrome ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: #0f0f1a;
+      font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif;
+      color: #e0e0e0;
+    }
+
+    .window {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 1100px;
+      margin: 0 auto;
+      box-shadow: 0 0 40px rgba(0,0,0,0.6);
+    }
+
+    /* ── Splitter ───────────────────────────────────────────────── */
+    .splitter {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Left pane: raw Markdown ────────────────────────────────── */
+    .pane-md {
+      flex: 0 0 45%;
+      border-right: 3px solid #334155;
+      display: flex;
+      flex-direction: column;
+      background: #12121f;
+    }
+
+    .pane-label {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #64748b;
+      background: #0f0f1a;
+      border-bottom: 1px solid #334155;
+      flex-shrink: 0;
+    }
+
+    .md-source {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #94a3b8;
+      white-space: pre;
+      background: #12121f;
+    }
+
+    /* ── Right pane: rendered HTML (preview) ───────────────────── */
+    .pane-preview {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Preview content — CSS extracted verbatim from AddStyle() in the demo */
+    .preview-body {
+      flex: 1;
+      overflow: auto;
+      font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+      line-height: 1.6;
+    }
+
+    .preview-body h1, .preview-body h2, .preview-body h3 { color: #60a5fa; }
+    .preview-body h1 {
+      font-size: 22pt;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 8px;
+    }
+    .preview-body h2 { font-size: 17pt; }
+    .preview-body h3 { font-size: 14pt; }
+
+    .preview-body code {
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      background: #2d2d44;
+      padding: 2px 5px;
+      border-radius: 3px;
+      color: #f59e0b;
+      font-size: 10pt;
+    }
+    .preview-body pre {
+      background: #16213e;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      overflow: auto;
+      margin: 12px 0;
+    }
+    .preview-body pre code {
+      background: none;
+      padding: 0;
+      color: #e0e0e0;
+    }
+    .preview-body blockquote {
+      border-left: 3px solid #60a5fa;
+      margin: 12px 0;
+      padding: 8px 16px;
+      background: #16213e;
+      color: #94a3b8;
+    }
+    .preview-body table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+    }
+    .preview-body th {
+      background: #16213e;
+      color: #60a5fa;
+      font-weight: bold;
+      padding: 8px 12px;
+      border: 1px solid #334155;
+    }
+    .preview-body td {
+      padding: 8px 12px;
+      border: 1px solid #334155;
+    }
+    .preview-body tr:nth-child(even) td { background: #16213e; }
+    .preview-body hr {
+      border: none;
+      border-top: 1px solid #334155;
+      margin: 16px 0;
+    }
+    .preview-body a { color: #60a5fa; }
+    .preview-body ul, .preview-body ol { padding-left: 24px; }
+    .preview-body li { margin: 4px 0; }
+    .preview-body p { margin: 8px 0; }
+    .preview-body del { opacity: 0.6; }
+
+    /* ── Bottom toolbar ─────────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      background: #1e1e2e;
+      border-top: 1px solid #334155;
+      padding: 6px 8px;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .toolbar-title {
+      font-size: 10pt;
+      font-weight: bold;
+      color: #9696b4;
+      margin-right: auto;
+      padding-left: 4px;
+    }
+
+    .toolbar button {
+      background: #2d2d44;
+      border: 1px solid #475569;
+      color: #cbd5e1;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: default;
+      font-family: inherit;
+    }
+
+    .toolbar button:hover {
+      background: #3b3b5c;
+    }
+  </style>
+</head>
+<body>
+<div class="window">
+
+  <!-- Splitter: left = raw MD, right = rendered preview -->
+  <div class="splitter">
+
+    <!-- Left pane: Markdown source -->
+    <div class="pane-md">
+      <div class="pane-label">Markdown Source</div>
+      <div class="md-source"># Markdown Editor
+
+This is a **live preview** of your Markdown content.
+
+## Features
+
+- **Bold**, *italic*, and ~~strikethrough~~
+- `Inline code` and code blocks
+- [Links](https://example.com) and images
+- Ordered and unordered lists
+- Tables with alignment
+- Blockquotes
+- Headings (ATX and Setext)
+
+## Code Block
+
+```cpp
+#include &lt;iostream&gt;
+
+int main() {
+    std::cout &lt;&lt; "Hello, Markdown!" &lt;&lt; std::endl;
+    return 0;
+}
+```
+
+## Table
+
+| Feature       | Status    | Notes          |
+|:--------------|:---------:|---------------:|
+| Parsing       | Done      | Round-trip     |
+| Serialization | Done      | Preserves style|
+| Editing       | Live      | Real-time      |
+
+## Blockquote
+
+&gt; The best way to predict the future
+&gt; is to invent it.
+&gt;
+&gt; — Alan Kay
+
+---
+
+### Ordered List
+
+1. First item
+2. Second item
+3. Third item
+
+Try editing the Markdown on the left!</div>
+    </div>
+
+    <!-- Right pane: rendered preview -->
+    <div class="pane-preview">
+      <div class="pane-label">Rendered Preview</div>
+      <div class="preview-body">
+
+        <h1>Markdown Editor</h1>
+
+        <p>This is a <strong>live preview</strong> of your Markdown content.</p>
+
+        <h2>Features</h2>
+        <ul>
+          <li><strong>Bold</strong>, <em>italic</em>, and <del>strikethrough</del></li>
+          <li><code>Inline code</code> and code blocks</li>
+          <li><a href="https://example.com">Links</a> and images</li>
+          <li>Ordered and unordered lists</li>
+          <li>Tables with alignment</li>
+          <li>Blockquotes</li>
+          <li>Headings (ATX and Setext)</li>
+        </ul>
+
+        <h2>Code Block</h2>
+        <pre><code>#include &lt;iostream&gt;
+
+int main() {
+    std::cout &lt;&lt; "Hello, Markdown!" &lt;&lt; std::endl;
+    return 0;
+}</code></pre>
+
+        <h2>Table</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:left">Feature</th>
+              <th style="text-align:center">Status</th>
+              <th style="text-align:right">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="text-align:left">Parsing</td>
+              <td style="text-align:center">Done</td>
+              <td style="text-align:right">Round-trip</td>
+            </tr>
+            <tr>
+              <td style="text-align:left">Serialization</td>
+              <td style="text-align:center">Done</td>
+              <td style="text-align:right">Preserves style</td>
+            </tr>
+            <tr>
+              <td style="text-align:left">Editing</td>
+              <td style="text-align:center">Live</td>
+              <td style="text-align:right">Real-time</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Blockquote</h2>
+        <blockquote>
+          <p>The best way to predict the future<br>is to invent it.</p>
+          <p>&#8212; Alan Kay</p>
+        </blockquote>
+
+        <hr>
+
+        <h3>Ordered List</h3>
+        <ol>
+          <li>First item</li>
+          <li>Second item</li>
+          <li>Third item</li>
+        </ol>
+
+        <p>Try editing the Markdown on the left!</p>
+
+      </div>
+    </div>
+
+  </div><!-- /splitter -->
+
+  <!-- Bottom toolbar -->
+  <div class="toolbar">
+    <span class="toolbar-title">Markdown Editor</span>
+    <button>Get Markdown</button>
+    <button>Get HTML</button>
+    <button>Round-Trip Test</button>
+  </div>
+
+</div><!-- /window -->
+</body>
+</html>

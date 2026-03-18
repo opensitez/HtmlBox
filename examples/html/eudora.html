@@ -1,0 +1,1752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eudora 2026 — Email Client Demo</title>
+<style>
+  /* ===== Reset & Base ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    background: #f5f3f0;
+    color: #231e19;
+  }
+
+  /* ===== Layout ===== */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: #f5f3f0;
+  }
+
+  /* ===== Toolbar ===== */
+  #toolbar {
+    display: flex;
+    align-items: center;
+    background: #f5f3f0;
+    padding: 2px 4px;
+    gap: 2px;
+    border-bottom: 1px solid #d2cfc8;
+    flex-shrink: 0;
+  }
+  .tbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: #231e19;
+    font-size: 10pt;
+    cursor: pointer;
+    border-radius: 6px;
+    white-space: nowrap;
+    font-family: inherit;
+  }
+  .tbtn:hover { background: #e6e3de; }
+  .tbtn:active { background: #d9d6d0; }
+  .tbtn.accent {
+    background: #326ea5;
+    color: white;
+  }
+  .tbtn.accent:hover { background: #285f94; }
+  .tbtn.accent:active { background: #1e5082; }
+  .tbtn.sep { margin-right: 6px; border-right: 1px solid rgba(35,30,25,0.12); }
+  #tb-spacer { flex: 1; }
+
+  /* ===== Content area ===== */
+  #content {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* ===== Wazoo sidebar ===== */
+  #wazoo {
+    width: 210px;
+    flex-shrink: 0;
+    background: #f8f7f4;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #d2cfc8;
+    overflow: hidden;
+  }
+  #wazoo-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .wazoo-item {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    height: 26px;
+    cursor: pointer;
+    gap: 6px;
+    font-size: 10pt;
+    color: #231e19;
+    border-radius: 5px;
+    margin: 1px 4px;
+  }
+  .wazoo-item:hover { background: #eeecea; }
+  .wazoo-item.selected { background: #326ea5; color: white; }
+  .wazoo-item.sep { height: 1px; background: #d7d4cf; margin: 4px 10px; pointer-events: none; }
+  .wazoo-item .wazoo-icon { font-size: 13px; }
+  .wazoo-item .wazoo-name { flex: 1; }
+  .wazoo-item .wazoo-badge {
+    background: #326ea5;
+    color: white;
+    font-size: 8pt;
+    padding: 1px 6px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+  }
+  .wazoo-item.selected .wazoo-badge { background: white; color: #326ea5; }
+  .wazoo-item .wazoo-expand { font-size: 8pt; color: #78726c; width: 12px; }
+  .wazoo-item.depth-1 { padding-left: 30px; }
+  .wazoo-item.depth-2 { padding-left: 48px; }
+  .wazoo-tabs {
+    display: flex;
+    border-top: 1px solid #d7d4cf;
+    background: #e6e3de;
+  }
+  .wazoo-tab {
+    flex: 1;
+    text-align: center;
+    padding: 6px 4px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #5f5a53;
+  }
+  .wazoo-tab.selected {
+    background: #326ea5;
+    color: white;
+  }
+  .wazoo-tab:not(.selected):hover { background: #dddad5; }
+
+  /* ===== Right panel ===== */
+  #right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: #f5f3f0;
+  }
+
+  /* ===== Tab bar ===== */
+  #tabbar {
+    display: flex;
+    background: #ebebeb;
+    border-bottom: 1px solid #d2cfc8;
+    flex-shrink: 0;
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px;
+    height: 28px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #5f5a53;
+    border-right: 1px solid #d2cfc8;
+    white-space: nowrap;
+    position: relative;
+  }
+  .tab:hover:not(.selected) { background: rgba(255,255,255,0.5); }
+  .tab.selected {
+    background: #fcfbf9;
+    color: #231e19;
+    border-top: 2px solid #326ea5;
+    margin-top: -1px;
+  }
+  .tab .tab-close {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    border-radius: 50%;
+    font-size: 10px;
+    color: #78726c;
+    cursor: pointer;
+  }
+  .tab .tab-close:hover { background: #e03228; color: white; }
+
+  /* ===== Pages ===== */
+  .page {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .page.active { display: flex; }
+
+  /* ===== Message list ===== */
+  .msg-list-wrap {
+    flex: 2;
+    overflow-y: auto;
+    min-height: 0;
+    background: white;
+  }
+  table.msg-list {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+  table.msg-list thead th {
+    background: #f5f3f0;
+    color: #504b44;
+    font-weight: normal;
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid #dedbd6;
+    font-size: 9pt;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    white-space: nowrap;
+  }
+  table.msg-list tbody tr {
+    border-bottom: 1px solid #e8e5e0;
+    cursor: pointer;
+    height: 22px;
+  }
+  table.msg-list tbody tr:nth-child(even) { background: #fafaf8; }
+  table.msg-list tbody tr:hover { background: #eeecea; }
+  table.msg-list tbody tr.selected { background: #326ea5; color: white; }
+  table.msg-list tbody tr.selected td { color: white; }
+  table.msg-list td {
+    padding: 2px 6px;
+    vertical-align: middle;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  td.col-s { width: 24px; text-align: center; }
+  td.col-p { width: 22px; text-align: center; }
+  td.col-a { width: 22px; text-align: center; }
+  td.col-f { width: 22px; text-align: center; }
+  td.col-who { width: 185px; }
+  td.col-date { width: 150px; color: #78726c; font-size: 9pt; }
+  td.col-size { width: 55px; text-align: right; color: #78726c; font-size: 9pt; }
+  td.col-subj { max-width: 0; width: 100%; }
+  tr.unread td.col-who,
+  tr.unread td.col-subj { font-weight: bold; color: #231e19; }
+  tr.selected td.col-who,
+  tr.selected td.col-subj { font-weight: bold; }
+  .dot-unread {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: #326ea5;
+    border-radius: 50%;
+    vertical-align: middle;
+  }
+  .pri-highest { color: #d23720; }
+  .pri-high { color: #d23720; }
+
+  /* ===== Message header ===== */
+  .msg-header {
+    flex-shrink: 0;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    padding: 7px 10px;
+    font-size: 9pt;
+    line-height: 1.8;
+  }
+  .msg-header .lbl { color: #6a6560; min-width: 55px; display: inline-block; }
+  .msg-header .subj { font-weight: bold; color: #231e19; }
+  .msg-header .meta { color: #6a6560; font-size: 8.5pt; }
+
+  /* ===== Message body / viewer ===== */
+  .msg-body {
+    flex: 3;
+    overflow-y: auto;
+    background: white;
+    min-height: 0;
+  }
+  .msg-body-inner {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    padding: 16px 20px;
+    line-height: 1.6;
+    max-width: 900px;
+  }
+
+  /* ===== Outbox page ===== */
+  #page-out .msg-header .lbl-to { color: #6a6560; }
+
+  /* ===== Contacts page ===== */
+  #page-contacts {
+    flex-direction: row !important;
+  }
+  .contact-list-wrap {
+    width: 280px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    background: white;
+    border-right: 1px solid #d2cfc8;
+  }
+  .contact-search {
+    padding: 8px;
+  }
+  .contact-search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #d7d4cf;
+    border-radius: 6px;
+    font-size: 9pt;
+    background: white;
+    color: #231e19;
+    font-family: inherit;
+  }
+  .contact-section-hdr {
+    font-weight: bold;
+    font-size: 9pt;
+    color: #326ea5;
+    padding: 4px 14px 2px;
+    border-bottom: 1px solid #eeecea;
+  }
+  .contact-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    height: 68px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0eeea;
+  }
+  .contact-card:hover { background: #eeecea; }
+  .contact-card.selected { background: #326ea5; }
+  .contact-card.selected .contact-name,
+  .contact-card.selected .contact-title,
+  .contact-card.selected .contact-email { color: white; }
+  .avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 15px;
+    font-weight: bold;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .avatar .online-dot {
+    position: absolute;
+    bottom: 1px;
+    right: 1px;
+    width: 10px;
+    height: 10px;
+    background: #2ea043;
+    border: 2px solid white;
+    border-radius: 50%;
+  }
+  .contact-info { flex: 1; min-width: 0; overflow: hidden; }
+  .contact-name { font-weight: bold; font-size: 10pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-title { font-size: 8.5pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-email { font-size: 8pt; color: #78726c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Contact detail */
+  .contact-detail-wrap {
+    flex: 1;
+    overflow-y: auto;
+    background: #f5f3f0;
+    padding: 20px;
+  }
+  .contact-detail-card {
+    max-width: 440px;
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .contact-banner {
+    height: 80px;
+  }
+  .contact-banner-inner {
+    height: 100%;
+    border-radius: 8px 8px 0 0;
+  }
+  .contact-avatar-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: -36px;
+    padding-bottom: 8px;
+  }
+  .contact-avatar-large {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: bold;
+    color: white;
+    border: 4px solid white;
+    position: relative;
+  }
+  .contact-avatar-large .online-dot {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    background: #2ea043;
+    border: 2px solid white;
+    border-radius: 50%;
+  }
+  .contact-detail-name {
+    font-size: 14pt;
+    font-weight: bold;
+    margin-top: 6px;
+    color: #231e19;
+  }
+  .contact-detail-title { font-size: 9pt; color: #6a6560; margin-top: 2px; }
+  .contact-detail-online { font-size: 8pt; font-weight: bold; color: #2ea043; margin-top: 2px; }
+  .contact-detail-body { padding: 0 20px 16px; }
+  .contact-detail-divider { border: none; border-top: 1px solid #d7d4cf; margin: 10px 0; }
+  .contact-info-row { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-start; }
+  .contact-info-icon { color: #326ea5; font-size: 15px; margin-top: 2px; }
+  .contact-info-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; }
+  .contact-info-value { font-size: 10pt; color: #231e19; }
+  .contact-info-value.email { color: #326ea5; }
+  .contact-detail-actions {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0 6px;
+  }
+  .contact-action-btn {
+    flex: 1;
+    padding: 8px 0;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 9pt;
+    cursor: pointer;
+    border: 1px solid #d7d4cf;
+    background: white;
+    color: #231e19;
+  }
+  .contact-action-btn.primary { background: #326ea5; color: white; border-color: #326ea5; }
+  .contact-action-btn:hover:not(.primary) { background: #eeecea; }
+  .recent-emails-section { margin-top: 12px; }
+  .recent-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; margin-bottom: 6px; }
+  .recent-email-row {
+    background: white;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+  }
+  .recent-email-subj { font-size: 9pt; color: #231e19; }
+  .recent-email-date { font-size: 8pt; color: #6a6560; }
+
+  /* ===== Filters page ===== */
+  #page-filters {
+    background: white;
+  }
+  .filters-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 10px;
+  }
+  .filters-title { font-size: 11pt; font-weight: bold; color: #231e19; flex: 1; }
+  .filters-meta { font-size: 8pt; color: #78726c; }
+  .add-rule-btn {
+    background: #326ea5;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 9pt;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .filter-cards { padding: 8px 12px; overflow-y: auto; }
+  .filter-card {
+    background: white;
+    border: 1px solid #d7d4cf;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    position: relative;
+  }
+  .filter-card.selected { border-color: #326ea5; border-width: 2px; }
+  .filter-status-bar {
+    width: 4px;
+    border-radius: 2px;
+    align-self: stretch;
+    flex-shrink: 0;
+  }
+  .filter-status-bar.active { background: #2ea043; }
+  .filter-status-bar.inactive { background: #78726c; }
+  .filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .toggle-track {
+    width: 38px;
+    height: 20px;
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .toggle-track.on { background: #2ea043; }
+  .toggle-track.off { background: #78726c; }
+  .toggle-knob {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    top: 2px;
+    transition: left 0.15s;
+  }
+  .toggle-track.on .toggle-knob { left: 20px; }
+  .toggle-track.off .toggle-knob { left: 2px; }
+  .filter-body { flex: 1; min-width: 0; }
+  .filter-num { font-size: 8pt; color: #78726c; }
+  .filter-name { font-weight: bold; color: #231e19; font-size: 10pt; }
+  .filter-name.inactive { color: #78726c; }
+  .filter-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .filter-pill {
+    font-size: 7pt;
+    font-weight: bold;
+    color: white;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+  .filter-pill.if { background: #326ea5; }
+  .filter-pill.then { background: #2ea043; }
+  .filter-pill.then.junk { background: #d97706; }
+  .filter-arrow { color: #326ea5; font-size: 12px; }
+  .filter-text { font-size: 9pt; color: #231e19; }
+  .filter-text.inactive { color: #78726c; }
+  .filter-action-text { font-size: 9pt; color: #326ea5; }
+  .filter-action-text.inactive { color: #78726c; }
+  .filter-status-pill {
+    position: absolute;
+    bottom: 8px;
+    right: 10px;
+    font-size: 8pt;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 8px;
+  }
+  .filter-status-pill.active { background: #2ea043; }
+  .filter-status-pill.inactive { background: #78726c; }
+
+  /* ===== Compose page ===== */
+  #page-compose { display: none; }
+  #page-compose.active { display: flex; }
+  .compose-header {
+    flex-shrink: 0;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    padding: 6px 0;
+  }
+  .compose-row {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    padding: 0;
+  }
+  .compose-label {
+    width: 68px;
+    padding-left: 10px;
+    font-size: 9pt;
+    color: #6e6960;
+    flex-shrink: 0;
+  }
+  .compose-value {
+    flex: 1;
+    margin: 2px 10px 2px 0;
+    padding: 0 6px;
+    height: 20px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    background: white;
+    font-size: 10pt;
+    font-family: inherit;
+    color: #231e19;
+  }
+  .compose-value:focus { outline: none; border-color: #326ea5; box-shadow: 0 0 0 2px rgba(50,110,165,0.2); }
+  .compose-plain {
+    flex: 1;
+    padding-left: 6px;
+    font-size: 10pt;
+    color: #231e19;
+  }
+  .compose-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    background: #f5f3f0;
+    border-bottom: 1px solid #d2cfc8;
+    padding: 2px 4px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .ctbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    min-width: 28px;
+    padding: 0 6px;
+    border: none;
+    background: transparent;
+    color: #231e19;
+    font-size: 10pt;
+    cursor: pointer;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .ctbtn:hover { background: #e6e3de; }
+  .ctbtn.accent { background: #326ea5; color: white; }
+  .ctbtn.sep { margin-right: 4px; border-right: 1px solid rgba(35,30,25,0.12); }
+  .compose-editor {
+    flex: 1;
+    overflow-y: auto;
+    background: white;
+    min-height: 0;
+  }
+  .compose-editor-inner {
+    padding: 14px 18px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    min-height: 100%;
+    outline: none;
+  }
+  .compose-sig {
+    margin-top: 20px;
+    padding-top: 8px;
+    border-top: 1px solid currentColor;
+    opacity: 0.3;
+    font-size: 9pt;
+  }
+
+  /* ===== Status bar ===== */
+  #statusbar {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    background: #f5f3f0;
+    border-top: 1px solid #d2cfc8;
+    font-size: 8.5pt;
+    flex-shrink: 0;
+  }
+  #statusbar .sb-left {
+    flex: 1;
+    padding-left: 10px;
+    color: #231e19;
+    border-right: 1px solid #d2cfc8;
+  }
+  #statusbar .sb-center {
+    flex: 1;
+    text-align: center;
+    color: #78726c;
+    border-right: 1px solid #d2cfc8;
+  }
+  #statusbar .sb-right {
+    flex: 1;
+    text-align: right;
+    padding-right: 10px;
+    color: #78726c;
+  }
+
+  /* ===== Email body styles (used inside .msg-body-inner) ===== */
+  .msg-body-inner p { margin-bottom: 10px; }
+  .msg-body-inner h3 { margin: 14px 0 6px; }
+  .msg-body-inner ul, .msg-body-inner ol { padding-left: 20px; margin-bottom: 10px; }
+  .msg-body-inner li { margin-bottom: 4px; }
+  .msg-body-inner blockquote {
+    margin: 12px 0 0 0;
+    padding: 0 0 0 10px;
+    border-left: 3px solid #326ea5;
+  }
+  .msg-body-inner table { border-collapse: collapse; }
+
+  /* ===== Calendar invite card ===== */
+  .cal-card {
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    max-width: 520px;
+  }
+  .cal-header {
+    background: #326ea5;
+    padding: 16px 20px;
+    color: white;
+  }
+  .cal-header .cal-label { font-size: 9pt; opacity: 0.8; text-transform: uppercase; }
+  .cal-header .cal-title { font-size: 16pt; font-weight: bold; margin-top: 4px; }
+  .cal-body { padding: 16px 20px; }
+  .cal-table { width: 100%; border-collapse: collapse; }
+  .cal-table td { padding: 8px 0; vertical-align: top; }
+  .cal-table .cal-field { width: 95px; font-size: 9pt; font-weight: bold; text-transform: uppercase; opacity: 0.5; }
+  .cal-agenda {
+    margin: 14px 0;
+    padding: 12px;
+    background: rgba(0,0,0,0.04);
+    border-radius: 6px;
+  }
+  .cal-agenda-label { font-size: 9pt; text-transform: uppercase; font-weight: bold; opacity: 0.5; margin-bottom: 6px; }
+  .cal-agenda ol { margin: 0; padding-left: 18px; }
+  .cal-rsvp { display: flex; margin-top: 12px; }
+  .cal-rsvp-btn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 10px;
+  }
+  .cal-rsvp-inner {
+    border-radius: 6px;
+    padding: 8px 0;
+    font-weight: bold;
+    text-align: center;
+  }
+  .cal-rsvp-inner.accept { background: #2ea043; color: white; }
+  .cal-rsvp-inner.tentative { background: #d97706; color: white; }
+  .cal-rsvp-inner.decline { border: 1px solid #ccc; opacity: 0.6; }
+
+  /* ===== Security table ===== */
+  .security-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .security-table td { padding: 4px 12px; }
+  .security-table tr:nth-child(even) { background: rgba(0,0,0,0.03); }
+
+  /* Dark mode support (future-ready) */
+  @media (prefers-color-scheme: dark) {
+    /* intentionally empty; toggle handled by JS */
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== Toolbar ===== -->
+  <div id="toolbar">
+    <button class="tbtn sep" onclick="setStatus('Checking mail...','Connecting to mail.example.com','')">📥 Check Mail</button>
+    <button class="tbtn accent" onclick="openCompose()">✏ New Message</button>
+    <button class="tbtn" onclick="openReply()">↩ Reply</button>
+    <button class="tbtn" onclick="openReply()">⇏ Reply All</button>
+    <button class="tbtn sep" onclick="openForward()">→ Forward</button>
+    <button class="tbtn" onclick="setStatus('Moved message to Trash','','')">🗑 Trash</button>
+    <button class="tbtn sep">⛔ Junk</button>
+    <button class="tbtn">🖨 Print</button>
+    <button class="tbtn sep">🔍 Find</button>
+    <span id="tb-spacer"></span>
+    <button class="tbtn" id="btn-dark" onclick="toggleDark()" title="Toggle dark mode">☽</button>
+  </div>
+
+  <!-- ===== Content ===== -->
+  <div id="content">
+
+    <!-- Wazoo sidebar -->
+    <div id="wazoo">
+      <div id="wazoo-tree">
+        <div class="wazoo-item selected" onclick="selectMailbox(0)">
+          <span class="wazoo-icon">📥</span>
+          <span class="wazoo-name">In</span>
+          <span class="wazoo-badge">3</span>
+        </div>
+        <div class="wazoo-item" onclick="selectMailbox(1)">
+          <span class="wazoo-icon">📤</span>
+          <span class="wazoo-name">Out</span>
+        </div>
+        <div class="wazoo-item">
+          <span class="wazoo-icon">✏</span>
+          <span class="wazoo-name">Drafts</span>
+          <span class="wazoo-badge">1</span>
+        </div>
+        <div class="wazoo-item">
+          <span class="wazoo-icon">🗑</span>
+          <span class="wazoo-name">Trash</span>
+        </div>
+        <div class="wazoo-item">
+          <span class="wazoo-icon">⛔</span>
+          <span class="wazoo-name">Junk</span>
+          <span class="wazoo-badge">5</span>
+        </div>
+        <div class="wazoo-item sep"></div>
+        <div class="wazoo-item">
+          <span class="wazoo-expand">▼</span>
+          <span class="wazoo-icon">💼</span>
+          <span class="wazoo-name">Work</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-expand">▼</span>
+          <span class="wazoo-icon">📁</span>
+          <span class="wazoo-name">Projects</span>
+        </div>
+        <div class="wazoo-item depth-2">
+          <span class="wazoo-icon">🔵</span>
+          <span class="wazoo-name">Active</span>
+          <span class="wazoo-badge">2</span>
+        </div>
+        <div class="wazoo-item depth-2">
+          <span class="wazoo-icon">✅</span>
+          <span class="wazoo-name">Completed</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">🔍</span>
+          <span class="wazoo-name">Reviews</span>
+          <span class="wazoo-badge">3</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-expand">▶</span>
+          <span class="wazoo-icon">📦</span>
+          <span class="wazoo-name">Archive</span>
+        </div>
+        <div class="wazoo-item">
+          <span class="wazoo-expand">▼</span>
+          <span class="wazoo-icon">🏠</span>
+          <span class="wazoo-name">Personal</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">✈</span>
+          <span class="wazoo-name">Travel</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">🧾</span>
+          <span class="wazoo-name">Receipts</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">📸</span>
+          <span class="wazoo-name">Photos</span>
+          <span class="wazoo-badge">2</span>
+        </div>
+        <div class="wazoo-item">
+          <span class="wazoo-expand">▼</span>
+          <span class="wazoo-icon">📋</span>
+          <span class="wazoo-name">Mailing Lists</span>
+          <span class="wazoo-badge">12</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">⚙</span>
+          <span class="wazoo-name">Eudora-Dev</span>
+          <span class="wazoo-badge">4</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">💬</span>
+          <span class="wazoo-name">Tech-Talk</span>
+          <span class="wazoo-badge">8</span>
+        </div>
+        <div class="wazoo-item depth-1">
+          <span class="wazoo-icon">🦀</span>
+          <span class="wazoo-name">Rust-Users</span>
+        </div>
+      </div>
+      <div class="wazoo-tabs">
+        <div class="wazoo-tab selected">Mailboxes</div>
+        <div class="wazoo-tab">Signatures</div>
+        <div class="wazoo-tab">Stationery</div>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <div id="right-panel">
+
+      <!-- Tab bar -->
+      <div id="tabbar">
+        <div class="tab selected" data-tab="in" onclick="switchTab('in', this)">📥 In</div>
+        <div class="tab" data-tab="out" onclick="switchTab('out', this)">📤 Out</div>
+        <div class="tab" data-tab="contacts" onclick="switchTab('contacts', this)">👥 Contacts</div>
+        <div class="tab" data-tab="filters" onclick="switchTab('filters', this)">📋 Filters</div>
+        <div class="tab" id="compose-tab" data-tab="compose" onclick="switchTab('compose', this)" style="display:none;">
+          ✏ New Message <span class="tab-close" onclick="event.stopPropagation(); closeCompose()">×</span>
+        </div>
+      </div>
+
+      <!-- ===== Page: Inbox ===== -->
+      <div class="page active" id="page-in">
+
+        <!-- Message list -->
+        <div class="msg-list-wrap">
+          <table class="msg-list">
+            <thead>
+              <tr>
+                <th class="col-s"></th>
+                <th class="col-p">P</th>
+                <th class="col-a">📎</th>
+                <th class="col-f">⚑</th>
+                <th class="col-who">Who</th>
+                <th class="col-date">Date</th>
+                <th class="col-size">Size</th>
+                <th class="col-subj">Subject</th>
+              </tr>
+            </thead>
+            <tbody id="inbox-rows">
+              <!-- rows injected by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Message header -->
+        <div class="msg-header" id="inbox-hdr">
+          <div><span class="lbl">From:</span> <span id="in-from"></span></div>
+          <div><span class="lbl">To:</span> <span id="in-to"></span><span id="in-cc-area"></span></div>
+          <div><span class="lbl">Subj:</span> <span class="subj" id="in-subj"></span></div>
+          <div class="meta" id="in-meta"></div>
+        </div>
+
+        <!-- Message body -->
+        <div class="msg-body">
+          <div class="msg-body-inner" id="in-body"></div>
+        </div>
+
+      </div><!-- /page-in -->
+
+      <!-- ===== Page: Outbox ===== -->
+      <div class="page" id="page-out">
+
+        <div class="msg-list-wrap">
+          <table class="msg-list">
+            <thead>
+              <tr>
+                <th class="col-s"></th>
+                <th class="col-p">P</th>
+                <th class="col-a">📎</th>
+                <th class="col-f">⚑</th>
+                <th class="col-who">To</th>
+                <th class="col-date">Date</th>
+                <th class="col-size">Size</th>
+                <th class="col-subj">Subject</th>
+              </tr>
+            </thead>
+            <tbody id="outbox-rows"></tbody>
+          </table>
+        </div>
+
+        <div class="msg-header">
+          <div><span class="lbl">From:</span> <span id="out-from"></span></div>
+          <div><span class="lbl">To:</span> <span id="out-to"></span><span id="out-cc-area"></span></div>
+          <div><span class="lbl">Subj:</span> <span class="subj" id="out-subj"></span></div>
+          <div class="meta" id="out-meta"></div>
+        </div>
+
+        <div class="msg-body">
+          <div class="msg-body-inner" id="out-body"></div>
+        </div>
+
+      </div><!-- /page-out -->
+
+      <!-- ===== Page: Contacts ===== -->
+      <div class="page" id="page-contacts">
+
+        <div class="contact-list-wrap">
+          <div class="contact-search">
+            <input type="text" placeholder="🔍  Search contacts...">
+          </div>
+          <div id="contact-list-inner">
+            <!-- injected by JS -->
+          </div>
+        </div>
+
+        <div class="contact-detail-wrap">
+          <div id="contact-detail-inner">
+            <!-- injected by JS -->
+          </div>
+        </div>
+
+      </div><!-- /page-contacts -->
+
+      <!-- ===== Page: Filters ===== -->
+      <div class="page" id="page-filters">
+        <div class="filters-header">
+          <span class="filters-title">📋 Mail Filters</span>
+          <span class="filters-meta" id="filters-meta">7 rules • 6 active • 1 disabled</span>
+          <button class="add-rule-btn">+ New Rule</button>
+        </div>
+        <div class="filter-cards" id="filter-cards">
+          <!-- injected by JS -->
+        </div>
+      </div><!-- /page-filters -->
+
+      <!-- ===== Page: Compose ===== -->
+      <div class="page" id="page-compose">
+        <div class="compose-header">
+          <div class="compose-row">
+            <span class="compose-label">From:</span>
+            <span class="compose-plain">you@example.com  &lt;Eudora User&gt;</span>
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">To:</span>
+            <input class="compose-value" id="compose-to" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Cc:</span>
+            <input class="compose-value" id="compose-cc" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Bcc:</span>
+            <input class="compose-value" id="compose-bcc" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Subject:</span>
+            <input class="compose-value" id="compose-subj" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Attach:</span>
+            <span class="compose-plain" id="compose-attach" style="color:#78726c;"></span>
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Priority:</span>
+            <span class="compose-plain" id="compose-priority">Normal</span>
+          </div>
+        </div>
+        <div class="compose-toolbar">
+          <button class="ctbtn accent" onclick="setStatus('Message sent!','',''); closeCompose()">✉ Send</button>
+          <button class="ctbtn" onclick="setStatus('Message queued in Out mailbox','SMTP Ready',''); closeCompose()">Queue</button>
+          <button class="ctbtn sep" onclick="closeCompose()">Discard</button>
+          <button class="ctbtn" style="font-weight:bold" onclick="document.execCommand('bold')">B</button>
+          <button class="ctbtn" style="font-style:italic" onclick="document.execCommand('italic')">I</button>
+          <button class="ctbtn" style="text-decoration:underline" onclick="document.execCommand('underline')">U</button>
+          <button class="ctbtn sep" onclick="document.execCommand('strikeThrough')"><s>S</s></button>
+          <button class="ctbtn" onclick="document.execCommand('fontSize',false,'5')">A+</button>
+          <button class="ctbtn sep" onclick="document.execCommand('fontSize',false,'2')">A−</button>
+          <button class="ctbtn sep">🎨</button>
+          <button class="ctbtn" onclick="document.execCommand('insertUnorderedList')">•</button>
+          <button class="ctbtn sep" onclick="document.execCommand('insertOrderedList')">1.</button>
+          <button class="ctbtn">»</button>
+          <button class="ctbtn">«</button>
+          <button class="ctbtn sep" onclick="document.execCommand('insertHorizontalRule')">—</button>
+          <button class="ctbtn sep">🔗</button>
+          <button class="ctbtn">📎 Attach</button>
+          <button class="ctbtn">Signature</button>
+        </div>
+        <div class="compose-editor">
+          <div class="compose-editor-inner" id="compose-body" contenteditable="true">
+            <p><br></p>
+            <p><br></p>
+            <div class="compose-sig">— <br>Sent with Eudora 2026</div>
+          </div>
+        </div>
+      </div><!-- /page-compose -->
+
+    </div><!-- /right-panel -->
+  </div><!-- /content -->
+
+  <!-- ===== Status bar ===== -->
+  <div id="statusbar">
+    <span class="sb-left" id="sb-left">In — 8 messages, 3 unread</span>
+    <span class="sb-center" id="sb-center">IMAP Idle</span>
+    <span class="sb-right" id="sb-right">Connected to mail.example.com</span>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ===== Data =====
+const kInbox = [
+  {
+    from: "Steve Dorner <sdorner@qualcomm.com>",
+    to: "you@example.com", cc: "",
+    subject: "Welcome to Eudora 2026!",
+    date: "Mar 7, 2026  10:15 AM", size: "4K",
+    body: `<p>Welcome to the new Eudora!</p>
+<p>We've rebuilt Eudora from the ground up for 2026, keeping the spirit of the original while adding modern features.</p>
+<ul>
+  <li>Rich HTML composition with live preview</li>
+  <li>Full dark mode support</li>
+  <li>Blazing fast search</li>
+  <li>Privacy-first &mdash; no tracking, no ads</li>
+</ul>
+<p>Best regards,<br>Steve</p>`,
+    unread: true, replied: false, forwarded: false, hasAttach: false,
+    pri: "highest", flagged: true
+  },
+  {
+    from: "Jeff Beckley <jbeckley@qualcomm.com>",
+    to: "eudora-dev@list.example.com",
+    cc: "sdorner@qualcomm.com; dpark@example.com",
+    subject: "Re: Re: Re: Re: Re: Toolbar redesign proposal",
+    date: "Mar 7, 2026  9:42 AM", size: "12K",
+    body: `<p>Looks like we have consensus then. Ship it!</p><p>Jeff</p>
+<blockquote style="margin: 12px 0 0 0; padding: 0 0 0 10px; border-left: 3px solid #326ea5;">
+<p style="font-size: 9pt; opacity: 0.5;">At Mar 7, 8:30 AM, Dana Park wrote:</p>
+<p>I agree with Steve. The separator lines really help with visual grouping. One small nit: can we make the hover state a bit more subtle?</p>
+<blockquote style="margin: 12px 0 0 0; padding: 0 0 0 10px; border-left: 3px solid #d23720;">
+<p style="font-size: 9pt; opacity: 0.5;">At Mar 6, 4:15 PM, Steve Dorner wrote:</p>
+<p>The spacing is perfect on macOS. I tested on both Retina and non-Retina displays. The icon-to-text gap at 5px feels natural.</p>
+<p>Regarding keyboard shortcuts in tooltips &mdash; yes, absolutely. This was one of the most-requested features from the beta testers.</p>
+<blockquote style="margin: 12px 0 0 0; padding: 0 0 0 10px; border-left: 3px solid #2ea043;">
+<p style="font-size: 9pt; opacity: 0.5;">At Mar 6, 2:00 PM, Jeff Beckley wrote:</p>
+<p>Here's my assessment of the toolbar redesign:</p>
+<ol>
+  <li>Icon spacing feels right on macOS</li>
+  <li>Should we add keyboard shortcuts to tooltips?</li>
+  <li>Separator lines between groups look clean</li>
+</ol>
+<blockquote style="margin: 12px 0 0 0; padding: 0 0 0 10px; border-left: 3px solid #8b5cf6;">
+<p style="font-size: 9pt; opacity: 0.5;">At Mar 6, 11:00 AM, Lisa Warren wrote:</p>
+<p>From a UX perspective, the new toolbar is a big improvement. The grouping of related actions (Reply/Reply All/Forward) matches user mental models well.</p>
+<p>I ran a quick usability test with 5 participants &mdash; all found the new layout more intuitive than the previous version.</p>
+<blockquote style="margin: 12px 0 0 0; padding: 0 0 0 10px; border-left: 3px solid #d97706;">
+<p style="font-size: 9pt; opacity: 0.5;">At Mar 5, 3:45 PM, Bob Chen wrote:</p>
+<p>Initial toolbar mockup attached. Key design decisions:</p>
+<ul>
+  <li>Flat buttons with hover highlight (no borders)</li>
+  <li>Emoji icons for universal rendering</li>
+  <li>Accent color on primary action (New Message)</li>
+  <li>Vertical separators between logical groups</li>
+</ul>
+<p>Let me know what you all think.</p>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>`,
+    unread: true, replied: false, forwarded: false, hasAttach: false,
+    pri: "normal", flagged: false
+  },
+  {
+    from: "Dana Park <dpark@example.com>",
+    to: "you@example.com",
+    cc: "lwarren@design.example",
+    subject: "📅 Calendar: Design Review Meeting",
+    date: "Mar 7, 2026  8:00 AM", size: "6K",
+    body: `<div class="cal-card">
+  <div class="cal-header">
+    <div class="cal-label">CALENDAR INVITATION</div>
+    <div class="cal-title">📅 Design Review Meeting</div>
+  </div>
+  <div class="cal-body">
+    <table class="cal-table">
+      <tr>
+        <td class="cal-field">When</td>
+        <td><b>Friday, March 14, 2026</b><br><span style="opacity:0.7;">2:00 PM &ndash; 3:30 PM (PST) &bull; 1h 30m</span></td>
+      </tr>
+      <tr>
+        <td class="cal-field">Where</td>
+        <td>📍 Conference Room B<br><span style="opacity:0.7;">🖥 Zoom: zoom.us/j/123456789</span></td>
+      </tr>
+      <tr>
+        <td class="cal-field">Organizer</td>
+        <td>Dana Park</td>
+      </tr>
+      <tr>
+        <td class="cal-field">Attendees</td>
+        <td>✅ You &nbsp; &bull; &nbsp; ❓ Lisa Warren &nbsp; &bull; &nbsp; ❓ Bob Chen &nbsp; &bull; &nbsp; ❓ Maria Santos</td>
+      </tr>
+    </table>
+    <div class="cal-agenda">
+      <div class="cal-agenda-label">Agenda</div>
+      <ol>
+        <li>Dashboard wireframe review</li>
+        <li>Mobile nav patterns</li>
+        <li>Color palette finalization</li>
+        <li>Q&amp;A / next steps</li>
+      </ol>
+    </div>
+    <div class="cal-rsvp">
+      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner accept">✓ Accept</div></div>
+      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner tentative">✿ Tentative</div></div>
+      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner decline">✗ Decline</div></div>
+    </div>
+  </div>
+</div>
+<p>Hi all, let's sync on the dashboard redesign. Please review the wireframes beforehand.</p>
+<p>Dana</p>`,
+    unread: true, replied: false, forwarded: false, hasAttach: true,
+    pri: "high", flagged: true
+  },
+  {
+    from: "Alan Strider <astrider@example.com>",
+    to: "team@example.com", cc: "",
+    subject: "Attachment: Q1 Budget Report",
+    date: "Mar 6, 2026  4:18 PM", size: "842K",
+    body: `<p>Hi team,</p>
+<p>Q1 budget report attached. Highlights:</p>
+<ul>
+  <li>Engineering 3% under budget</li>
+  <li>Marketing up 7% (planned)</li>
+  <li>Server costs down 12% post-migration</li>
+</ul>
+<p>Review by Thursday please.</p><p>Alan</p>`,
+    unread: false, replied: false, forwarded: false, hasAttach: true,
+    pri: "normal", flagged: false
+  },
+  {
+    from: "Mailing List <announce@eudora.example>",
+    to: "users@eudora.example", cc: "",
+    subject: "[Announce] Eudora 2026 Beta 3 available",
+    date: "Mar 6, 2026  2:30 PM", size: "2K",
+    body: `<p><b>Eudora 2026 Beta 3</b> is now available.</p>
+<ul>
+  <li>Fixed crash on large attachments</li>
+  <li>Improved IMAP IDLE stability</li>
+  <li>Drag-and-drop mailbox reordering</li>
+  <li>Dark mode fixes on Linux</li>
+</ul>`,
+    unread: false, replied: true, forwarded: false, hasAttach: false,
+    pri: "none", flagged: false
+  },
+  {
+    from: "Security Alert <noreply@auth.example>",
+    to: "you@example.com", cc: "",
+    subject: "New sign-in from Chrome on macOS",
+    date: "Mar 3, 2026  7:30 PM", size: "2K",
+    body: `<p>New sign-in detected:</p>
+<table class="security-table">
+  <tr><td>Device</td><td>Chrome on macOS</td></tr>
+  <tr><td>Location</td><td>San Francisco, CA</td></tr>
+  <tr><td>Time</td><td>Mar 3, 7:30 PM PST</td></tr>
+</table>
+<p>If this wasn't you, secure your account immediately.</p>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "high", flagged: false
+  },
+  {
+    from: "Newsletter <digest@techweekly.example>",
+    to: "subscribers@techweekly.example", cc: "",
+    subject: "This Week in Tech: AI, Open Source, and More",
+    date: "Mar 3, 2026  6:00 AM", size: "8K",
+    body: `<p><b>This Week in Tech</b> &mdash; March 3, 2026</p>
+<h3>Top Stories</h3>
+<ol>
+  <li>Open source email clients making a comeback</li>
+  <li>New CSS features in all major browsers</li>
+  <li>Rust adoption continues to grow</li>
+</ol>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "none", flagged: false
+  },
+  {
+    from: "Rick Langley <rick@example.com>",
+    to: "you@example.com", cc: "",
+    subject: "Lunch Friday?",
+    date: "Mar 2, 2026  1:12 PM", size: "1K",
+    body: `<p>Hey, want to grab lunch Friday? Thinking that new ramen place on 5th.</p>
+<p>Let me know!</p><p>Rick</p>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "none", flagged: false
+  }
+];
+
+const kOutbox = [
+  {
+    from: "you@example.com",
+    to: "Steve Dorner <sdorner@qualcomm.com>", cc: "",
+    subject: "Re: Welcome to Eudora 2026!",
+    date: "Mar 7, 2026  10:45 AM", size: "3K",
+    body: `<p>Thanks Steve! The new version is amazing.</p>
+<p>Quick questions:</p>
+<ol>
+  <li>Can I import old mailboxes?</li>
+  <li>CalDAV support?</li>
+</ol>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "normal", flagged: false
+  },
+  {
+    from: "you@example.com",
+    to: "team@example.com", cc: "astrider@example.com",
+    subject: "Dashboard redesign - timeline update",
+    date: "Mar 6, 2026  3:00 PM", size: "2K",
+    body: `<p>Hi team,</p>
+<p>Running behind on the dashboard redesign. Pushing milestone to next Friday.</p>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "normal", flagged: false
+  },
+  {
+    from: "you@example.com",
+    to: "Dana Park <dpark@example.com>", cc: "",
+    subject: "Re: Conference talk proposal",
+    date: "Mar 5, 2026  2:15 PM", size: "2K",
+    body: `<p>Fantastic news, Dana!</p>
+<p>Outline ideas:</p>
+<ol>
+  <li>History of desktop email clients</li>
+  <li>Modern rendering challenges</li>
+  <li>Live demo</li>
+</ol>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "none", flagged: false
+  },
+  {
+    from: "you@example.com",
+    to: "Rick Langley <rick@example.com>", cc: "",
+    subject: "Re: Lunch Friday?",
+    date: "Mar 2, 2026  1:30 PM", size: "1K",
+    body: `<p>Sounds great! 12:30 at the ramen place works.</p>`,
+    unread: false, replied: false, forwarded: false, hasAttach: false,
+    pri: "none", flagged: false
+  }
+];
+
+const kContacts = [
+  { name: "Steve Dorner",   email: "sdorner@qualcomm.com",   phone: "(858) 555-0100", company: "Qualcomm",    title: "Chief Architect",  notes: "Creator of Eudora. Prefers plain text.", color: "#326ea5" },
+  { name: "Jeff Beckley",   email: "jbeckley@qualcomm.com",  phone: "(858) 555-0101", company: "Qualcomm",    title: "Senior Engineer",  notes: "Toolbar and UI specialist.",             color: "#a55532" },
+  { name: "Alan Strider",   email: "astrider@example.com",   phone: "(415) 555-0200", company: "Acme Corp",   title: "Finance Director", notes: "Sends quarterly reports.",               color: "#2ea043" },
+  { name: "Dana Park",      email: "dpark@example.com",      phone: "(415) 555-0201", company: "TechStudio",  title: "Design Lead",      notes: "Conference co-speaker.",                 color: "#9b32a5" },
+  { name: "Rick Langley",   email: "rick@example.com",       phone: "(510) 555-0300", company: "",            title: "",                 notes: "College friend. Likes ramen.",           color: "#d29922" },
+  { name: "Lisa Warren",    email: "lwarren@design.example", phone: "(510) 555-0301", company: "DesignWorks", title: "UX Researcher",    notes: "Working on mobile nav project.",         color: "#d2372d" },
+  { name: "Bob Chen",       email: "bchen@example.com",      phone: "(650) 555-0400", company: "CloudSoft",   title: "DevOps Manager",   notes: "Handles infrastructure.",               color: "#32a582" },
+  { name: "Maria Santos",   email: "msantos@example.com",    phone: "(650) 555-0401", company: "DataFlow",    title: "Data Scientist",   notes: "ML and analytics expert.",              color: "#6450b4" }
+];
+
+const kFilters = [
+  { name: "Mailing Lists",  match: "To contains @list.example",      action: "Move to Mailing Lists",     enabled: true  },
+  { name: "Newsletters",    match: "From contains newsletter",        action: "Move to Newsletters",       enabled: true  },
+  { name: "Spam Keywords",  match: "Subject contains winner|lottery", action: "Move to Junk",              enabled: true  },
+  { name: "Work Priority",  match: "From contains @qualcomm.com",     action: "Set Priority: High, Flag",  enabled: true  },
+  { name: "Large Attach",   match: "Attachment Size > 5MB",           action: "Add Label: Large",          enabled: false },
+  { name: "Auto-Reply OOO", match: "Subject is Out of Office",        action: "Skip Inbox, Auto-Reply",    enabled: true  },
+  { name: "Conference",     match: "Subject contains conference|summit", action: "Move to Work/Projects",  enabled: false }
+];
+
+// ===== Helpers =====
+function displayName(addr) {
+  const m = addr.match(/^(.+?)\s*</);
+  return m ? m[1].trim() : addr;
+}
+function priSymbol(pri) {
+  if (pri === 'highest') return '<span class="pri-highest">▲▲</span>';
+  if (pri === 'high')    return '<span class="pri-high">▲</span>';
+  return '';
+}
+
+// ===== Render inbox =====
+let inSel = 0, outSel = 0, contactSel = 0;
+
+function buildMsgRow(email, idx, isOut, selIdx) {
+  const who = isOut ? email.to : email.from;
+  const disp = displayName(who);
+  const unread = email.unread;
+  const sel = idx === selIdx;
+  let cls = sel ? 'selected' : (unread ? 'unread' : '');
+  let sCell = '';
+  if (unread) sCell = '<span class="dot-unread"></span>';
+  else if (email.replied) sCell = '<span title="Replied">↩</span>';
+  else if (email.forwarded) sCell = '<span title="Forwarded">→</span>';
+  return `<tr class="${cls}" onclick="selectMsg('${isOut?'out':'in'}', ${idx})">
+    <td class="col-s">${sCell}</td>
+    <td class="col-p">${priSymbol(email.pri)}</td>
+    <td class="col-a">${email.hasAttach ? '📎' : ''}</td>
+    <td class="col-f" style="color:#d23720">${email.flagged ? '⚑' : ''}</td>
+    <td class="col-who">${escHtml(disp)}</td>
+    <td class="col-date">${escHtml(email.date)}</td>
+    <td class="col-size">${escHtml(email.size)}</td>
+    <td class="col-subj">${escHtml(email.subject)}</td>
+  </tr>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderInbox() {
+  document.getElementById('inbox-rows').innerHTML =
+    kInbox.map((e,i) => buildMsgRow(e, i, false, inSel)).join('');
+  showInboxMsg(inSel);
+  const unread = kInbox.filter(e => e.unread).length;
+  setStatus(`In \u2014 ${kInbox.length} messages, ${unread} unread`, 'IMAP Idle', 'Connected to mail.example.com');
+}
+
+function renderOutbox() {
+  document.getElementById('outbox-rows').innerHTML =
+    kOutbox.map((e,i) => buildMsgRow(e, i, true, outSel)).join('');
+  showOutboxMsg(outSel);
+}
+
+function showInboxMsg(idx) {
+  const e = kInbox[idx];
+  document.getElementById('in-from').textContent = e.from;
+  document.getElementById('in-to').textContent = e.to;
+  const ccArea = document.getElementById('in-cc-area');
+  ccArea.innerHTML = e.cc ? `  <span style="color:#6a6560">Cc:</span> ${escHtml(e.cc)}` : '';
+  document.getElementById('in-subj').textContent = e.subject;
+  let meta = `Date: ${e.date}    Size: ${e.size}`;
+  if (e.pri === 'high' || e.pri === 'highest') meta += '    Priority: HIGH';
+  if (e.hasAttach) meta += '    📎 Attachment';
+  document.getElementById('in-meta').textContent = meta;
+  document.getElementById('in-body').innerHTML = e.body;
+}
+
+function showOutboxMsg(idx) {
+  const e = kOutbox[idx];
+  document.getElementById('out-from').textContent = e.from;
+  document.getElementById('out-to').textContent = e.to;
+  const ccArea = document.getElementById('out-cc-area');
+  ccArea.innerHTML = e.cc ? `  <span style="color:#6a6560">Cc:</span> ${escHtml(e.cc)}` : '';
+  document.getElementById('out-subj').textContent = e.subject;
+  document.getElementById('out-meta').textContent = `Date: ${e.date}    Size: ${e.size}`;
+  document.getElementById('out-body').innerHTML = e.body;
+}
+
+function selectMsg(box, idx) {
+  if (box === 'in') {
+    inSel = idx;
+    kInbox[idx].unread = false;
+    renderInbox();
+  } else {
+    outSel = idx;
+    renderOutbox();
+  }
+}
+
+// ===== Contacts =====
+function renderContacts() {
+  const sorted = [...kContacts].map((c,i) => ({c,i}))
+    .sort((a,b) => a.c.name.localeCompare(b.c.name));
+
+  let html = '';
+  let lastLetter = '';
+  sorted.forEach(({c, i}) => {
+    const letter = c.name[0].toUpperCase();
+    if (letter !== lastLetter) {
+      html += `<div class="contact-section-hdr">${letter}</div>`;
+      lastLetter = letter;
+    }
+    const initials = c.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const online = (i % 3 === 0);
+    const sel = (i === contactSel) ? 'selected' : '';
+    html += `<div class="contact-card ${sel}" onclick="selectContact(${i})">
+      <div class="avatar" style="background:${c.color}">
+        ${escHtml(initials)}
+        ${online ? '<span class="online-dot"></span>' : ''}
+      </div>
+      <div class="contact-info">
+        <div class="contact-name">${escHtml(c.name)}</div>
+        <div class="contact-title">${c.title}${c.title && c.company ? ' \u2022 ' : ''}${c.company}</div>
+        <div class="contact-email">${escHtml(c.email)}</div>
+      </div>
+    </div>`;
+  });
+  document.getElementById('contact-list-inner').innerHTML = html;
+  renderContactDetail(contactSel);
+}
+
+function selectContact(idx) {
+  contactSel = idx;
+  renderContacts();
+}
+
+function renderContactDetail(idx) {
+  const c = kContacts[idx];
+  const initials = c.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+  const online = (idx % 3 === 0);
+  const tc = [c.title, c.company].filter(Boolean).join(' at ');
+  document.getElementById('contact-detail-inner').innerHTML = `
+  <div class="contact-detail-card">
+    <div class="contact-banner">
+      <div class="contact-banner-inner" style="background:${c.color}"></div>
+    </div>
+    <div class="contact-avatar-area">
+      <div class="contact-avatar-large" style="background:${c.color}">
+        ${escHtml(initials)}
+        ${online ? '<span class="online-dot"></span>' : ''}
+      </div>
+      <div class="contact-detail-name">${escHtml(c.name)}</div>
+      ${tc ? `<div class="contact-detail-title">${escHtml(tc)}</div>` : ''}
+      ${online ? '<div class="contact-detail-online">&#9679; Online</div>' : ''}
+    </div>
+    <div class="contact-detail-body">
+      <hr class="contact-detail-divider">
+      ${c.email ? `
+      <div class="contact-info-row">
+        <span class="contact-info-icon">✉</span>
+        <div>
+          <div class="contact-info-label">Email</div>
+          <div class="contact-info-value email">${escHtml(c.email)}</div>
+        </div>
+      </div>` : ''}
+      ${c.phone ? `
+      <div class="contact-info-row">
+        <span class="contact-info-icon">📞</span>
+        <div>
+          <div class="contact-info-label">Phone</div>
+          <div class="contact-info-value">${escHtml(c.phone)}</div>
+        </div>
+      </div>` : ''}
+      ${c.company ? `
+      <div class="contact-info-row">
+        <span class="contact-info-icon">🏢</span>
+        <div>
+          <div class="contact-info-label">Company</div>
+          <div class="contact-info-value">${escHtml(c.company)}</div>
+        </div>
+      </div>` : ''}
+      ${c.notes ? `
+      <hr class="contact-detail-divider">
+      <div class="contact-info-label" style="margin-bottom:4px;">Notes</div>
+      <div style="font-size:9pt;color:#231e19">${escHtml(c.notes)}</div>
+      ` : ''}
+      <div class="contact-detail-actions">
+        <div class="contact-action-btn primary" onclick="openComposeToContact(${idx})">✉ Email</div>
+        <div class="contact-action-btn">📞 Call</div>
+        <div class="contact-action-btn" style="color:#78726c">✏ Edit</div>
+      </div>
+      <div class="recent-emails-section">
+        <div class="recent-label">Recent Emails</div>
+        <div class="recent-email-row">
+          <div class="recent-email-subj">Re: Welcome to Eudora 2026!</div>
+          <div class="recent-email-date">Mar 7, 2026</div>
+        </div>
+        <div class="recent-email-row">
+          <div class="recent-email-subj">Dashboard redesign - timeline update</div>
+          <div class="recent-email-date">Mar 6, 2026</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openComposeToContact(idx) {
+  const c = kContacts[idx];
+  document.getElementById('compose-to').value = c.email;
+  showCompose();
+  setStatus('Composing message...', '', '');
+}
+
+// ===== Filters =====
+function renderFilters() {
+  const active = kFilters.filter(f => f.enabled).length;
+  document.getElementById('filters-meta').textContent =
+    `${kFilters.length} rules \u2022 ${active} active \u2022 ${kFilters.length - active} disabled`;
+
+  document.getElementById('filter-cards').innerHTML = kFilters.map((f, i) => {
+    const isJunk = f.action.includes('Junk') || f.action.includes('Skip');
+    return `<div class="filter-card" onclick="selectFilter(${i})">
+      <div class="filter-status-bar ${f.enabled ? 'active' : 'inactive'}"></div>
+      <div class="filter-toggle">
+        <div class="toggle-track ${f.enabled ? 'on' : 'off'}" onclick="event.stopPropagation(); toggleFilter(${i})">
+          <div class="toggle-knob"></div>
+        </div>
+      </div>
+      <div class="filter-body">
+        <div style="display:flex;gap:8px;align-items:baseline">
+          <span class="filter-num">#${i+1}</span>
+          <span class="filter-name ${f.enabled ? '' : 'inactive'}">${escHtml(f.name)}</span>
+        </div>
+        <div class="filter-row">
+          <span class="filter-pill if">IF</span>
+          <span class="filter-text ${f.enabled ? '' : 'inactive'}">${escHtml(f.match)}</span>
+        </div>
+        <div class="filter-arrow">&darr;</div>
+        <div class="filter-row">
+          <span class="filter-pill then ${isJunk ? 'junk' : ''}">THEN</span>
+          <span class="filter-action-text ${f.enabled ? '' : 'inactive'}">${escHtml(f.action)}</span>
+        </div>
+      </div>
+      <span class="filter-status-pill ${f.enabled ? 'active' : 'inactive'}">${f.enabled ? 'Active' : 'Off'}</span>
+    </div>`;
+  }).join('');
+}
+
+function selectFilter(idx) {
+  renderFilters();
+}
+
+function toggleFilter(idx) {
+  kFilters[idx].enabled = !kFilters[idx].enabled;
+  renderFilters();
+}
+
+// ===== Tab switching =====
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('selected'));
+  if (el) el.classList.add('selected');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+  const pageMap = { in: 'page-in', out: 'page-out', contacts: 'page-contacts', filters: 'page-filters', compose: 'page-compose' };
+  const pageEl = document.getElementById(pageMap[name]);
+  if (pageEl) pageEl.classList.add('active');
+
+  if (name === 'in') {
+    const u = kInbox.filter(e => e.unread).length;
+    setStatus(`In \u2014 ${kInbox.length} messages, ${u} unread`, 'IMAP Idle', 'Connected to mail.example.com');
+  } else if (name === 'out') {
+    setStatus(`Out \u2014 ${kOutbox.length} messages`, 'SMTP Ready', '');
+  } else if (name === 'contacts') {
+    setStatus(`Contacts \u2014 ${kContacts.length} people`, '', '');
+  } else if (name === 'filters') {
+    setStatus(`Filters \u2014 ${kFilters.length} rules`, '', '');
+  }
+}
+
+function selectMailbox(idx) {
+  document.querySelectorAll('.wazoo-item').forEach(el => el.classList.remove('selected'));
+  const items = document.querySelectorAll('.wazoo-item:not(.sep)');
+  if (items[idx]) items[idx].classList.add('selected');
+  if (idx === 0) {
+    switchTab('in', document.querySelector('[data-tab="in"]'));
+    document.querySelector('[data-tab="in"]').classList.add('selected');
+  } else if (idx === 1) {
+    switchTab('out', document.querySelector('[data-tab="out"]'));
+    document.querySelector('[data-tab="out"]').classList.add('selected');
+  }
+}
+
+// ===== Compose =====
+function showCompose() {
+  const composeTab = document.getElementById('compose-tab');
+  composeTab.style.display = 'flex';
+  switchTab('compose', composeTab);
+}
+
+function openCompose() {
+  document.getElementById('compose-to').value = '';
+  document.getElementById('compose-cc').value = '';
+  document.getElementById('compose-bcc').value = '';
+  document.getElementById('compose-subj').value = '';
+  document.getElementById('compose-attach').textContent = '';
+  document.getElementById('compose-priority').textContent = 'Normal';
+  document.getElementById('compose-tab').textContent = '';
+  document.getElementById('compose-tab').innerHTML =
+    '✏ New Message <span class="tab-close" onclick="event.stopPropagation(); closeCompose()">×</span>';
+  document.getElementById('compose-body').innerHTML =
+    '<p><br></p><p><br></p><div class="compose-sig">&mdash; <br>Sent with Eudora 2026</div>';
+  showCompose();
+  setStatus('Composing message...', '', '');
+}
+
+function openReply() {
+  const e = kInbox[inSel];
+  if (!e) return;
+  document.getElementById('compose-to').value = e.from;
+  document.getElementById('compose-cc').value = '';
+  document.getElementById('compose-bcc').value = '';
+  const subj = e.subject.startsWith('Re: ') ? e.subject : 'Re: ' + e.subject;
+  document.getElementById('compose-subj').value = subj;
+  document.getElementById('compose-attach').textContent = '';
+  document.getElementById('compose-priority').textContent = (e.pri === 'high' || e.pri === 'highest') ? 'High' : 'Normal';
+  document.getElementById('compose-tab').innerHTML =
+    '↩ Reply <span class="tab-close" onclick="event.stopPropagation(); closeCompose()">×</span>';
+  document.getElementById('compose-body').innerHTML =
+    `<p><br></p>
+    <div style="margin-top:20px;padding-top:8px;border-top:1px solid currentColor;opacity:0.3;font-size:9pt;">&mdash; <br>Sent with Eudora 2026</div>
+    <div style="font-size:9pt;opacity:0.5;margin:16px 0 4px 0;">At ${escHtml(e.date)}, ${escHtml(e.from)} wrote:</div>
+    <blockquote style="margin:0;padding:0 0 0 12px;border-left:3px solid #326ea5;">${e.body}</blockquote>`;
+  showCompose();
+  setStatus('Composing message...', '', '');
+}
+
+function openForward() {
+  const e = kInbox[inSel];
+  if (!e) return;
+  document.getElementById('compose-to').value = '';
+  document.getElementById('compose-subj').value = e.subject.startsWith('Fwd: ') ? e.subject : 'Fwd: ' + e.subject;
+  document.getElementById('compose-body').innerHTML =
+    `<p><br></p>
+    <div style="font-size:9pt;opacity:0.5;margin:16px 0 4px 0;">-------- Forwarded Message --------<br>From: ${escHtml(e.from)}<br>Date: ${escHtml(e.date)}</div>
+    <blockquote style="margin:0;padding:0 0 0 12px;border-left:3px solid #326ea5;">${e.body}</blockquote>`;
+  document.getElementById('compose-tab').innerHTML =
+    '→ Forward <span class="tab-close" onclick="event.stopPropagation(); closeCompose()">×</span>';
+  showCompose();
+  setStatus('Composing message...', '', '');
+}
+
+function closeCompose() {
+  const composeTab = document.getElementById('compose-tab');
+  composeTab.style.display = 'none';
+  switchTab('in', document.querySelector('[data-tab="in"]'));
+  document.querySelector('[data-tab="in"]').classList.add('selected');
+}
+
+// ===== Status =====
+function setStatus(left, center, right) {
+  document.getElementById('sb-left').textContent = left;
+  document.getElementById('sb-center').textContent = center;
+  document.getElementById('sb-right').textContent = right;
+}
+
+// ===== Dark mode =====
+let isDark = false;
+const darkStyle = `
+  body { background: #1e1e21; color: #cdc8c1; }
+  #app { background: #1a1a1d; }
+  #toolbar { background: #1a1a1d; border-color: #32323a; }
+  .tbtn { color: #cdc8c1; }
+  .tbtn:hover { background: #2a2a2f; }
+  #wazoo { background: #141417; border-color: #32323a; }
+  .wazoo-item { color: #c8c3bc; }
+  .wazoo-item:hover { background: #202024; }
+  .wazoo-item.selected { background: #324d78; }
+  .wazoo-tabs { background: #161619; border-color: #282828; }
+  .wazoo-tab { color: #827d76; }
+  .wazoo-tab.selected { background: #324d78; }
+  #right-panel { background: #1e1e21; }
+  #tabbar { background: #161619; border-color: #32323a; }
+  .tab { color: #827d76; border-color: #32323a; }
+  .tab.selected { background: #202024; color: #d2cdc6; border-top-color: #326ea5; }
+  .msg-list-wrap { background: #12121519; }
+  table.msg-list thead th { background: #181818; color: #7d7870; border-color: #282830; }
+  table.msg-list tbody tr { border-color: #242428; }
+  table.msg-list tbody tr:nth-child(even) { background: #161619; }
+  table.msg-list tbody tr:hover:not(.selected) { background: #202025; }
+  table.msg-list tbody tr.selected { background: #2d4d78; }
+  .msg-header { background: #161619; border-color: #282830; color: #c8c3bc; }
+  .msg-header .lbl { color: #5f5a53; }
+  .msg-body { background: #121215; }
+  .msg-body-inner { color: #c8c3bc; }
+  .contact-list-wrap { background: #121215; border-color: #32323a; }
+  .contact-card:hover { background: #202025; }
+  .contact-card.selected { background: #2d4d78; }
+  .contact-name { color: #c8c3bc; }
+  .contact-detail-wrap { background: #1e1e21; }
+  .contact-detail-card { background: #202024; }
+  .contact-detail-name { color: #c8c3bc; }
+  #page-filters { background: #121215; }
+  .filter-card { background: #1e1e21; border-color: #2c2c30; }
+  .filter-name { color: #c8c3bc; }
+  .filter-text { color: #c8c3bc; }
+  .compose-header { background: #161619; border-color: #282830; }
+  .compose-value { background: #1c1c1f; border-color: #2c2c30; color: #c8c3bc; }
+  .compose-toolbar { background: #1a1a1d; border-color: #32323a; }
+  .ctbtn { color: #c8c3bc; }
+  .ctbtn:hover { background: #2a2a2f; }
+  .compose-editor { background: #121215; }
+  .compose-editor-inner { color: #c8c3bc; }
+  #statusbar { background: #1a1a1d; border-color: #32323a; }
+  #sb-left { color: #c8c3bc; border-color: #32323a; }
+  #sb-center, #sb-right { color: #7d7870; border-color: #32323a; }
+`;
+let darkStyleEl = null;
+
+function toggleDark() {
+  isDark = !isDark;
+  document.getElementById('btn-dark').textContent = isDark ? '☀' : '☽';
+  if (isDark) {
+    if (!darkStyleEl) {
+      darkStyleEl = document.createElement('style');
+      darkStyleEl.id = 'dark-style';
+      darkStyleEl.textContent = darkStyle;
+      document.head.appendChild(darkStyleEl);
+    } else {
+      darkStyleEl.disabled = false;
+    }
+  } else {
+    if (darkStyleEl) darkStyleEl.disabled = true;
+  }
+}
+
+// ===== Init =====
+renderInbox();
+renderOutbox();
+renderContacts();
+renderFilters();
+</script>
+</body>
+</html>

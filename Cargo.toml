@@ -12,6 +12,30 @@ path = "src/lib.rs"
 name = "rhtmledit"
 path = "src/main.rs"
 
+[[example]]
+name = "contenteditable_demo"
+path = "examples/contenteditable_demo.rs"
+
+[[example]]
+name = "markdown_demo"
+path = "examples/markdown_demo.rs"
+
+[[example]]
+name = "print_demo"
+path = "examples/print_demo.rs"
+
+[[example]]
+name = "layout_features"
+path = "examples/layout_features.rs"
+
+[[example]]
+name = "cascade_features"
+path = "examples/cascade_features.rs"
+
+[[example]]
+name = "transform_filter_demo"
+path = "examples/transform_filter_demo.rs"
+
 [dependencies]
 tiny-skia = "0.11"
 winit = "0.30"

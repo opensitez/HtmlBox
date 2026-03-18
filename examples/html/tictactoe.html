@@ -1,0 +1,88 @@
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif;
+         background: #0f172a; color: #e2e8f0; padding: 0; margin: 0; }
+
+  .header { text-align: center; padding: 24px 0 8px 0; }
+  .header h1 { font-size: 22pt; color: #818cf8; margin: 0; }
+  .header .sub { font-size: 10pt; color: #64748b; margin-top: 4px; }
+
+  .status { text-align: center; font-size: 14pt; font-weight: bold;
+            color: #f8fafc; padding: 12px 0; }
+
+  .board { display: grid; grid-template-columns: 1fr 1fr 1fr;
+           gap: 6px; padding: 0 auto; margin: 0 auto;
+           width: 330px; }
+
+  .cell { width: 104px; height: 104px; background: #1e293b;
+          border: 2px solid #334155; border-radius: 12px;
+          text-align: center; font-size: 42pt; font-weight: bold;
+          cursor: pointer; line-height: 104px; }
+  .cell:hover { background: #283548; }
+
+  .cell-x { color: #818cf8; }
+  .cell-o { color: #f472b6; }
+  .cell-win { border-color: #fbbf24; background: #1e293b;
+              box-shadow: 0 0 12px rgba(251,191,36,0.4); }
+
+  .controls { text-align: center; padding: 16px 0; }
+  .btn { display: inline-block; color: #ffffff; border: none;
+         padding: 10px 24px; border-radius: 8px;
+         font-size: 10pt; font-weight: bold; cursor: pointer;
+         margin: 0 6px; }
+  .btn-reset { background: #6366f1; }
+  .btn-reset:hover { background: #818cf8; }
+  .btn-diff { background: #334155; }
+  .btn-diff:hover { background: #475569; }
+  .btn-diff-active { background: #f59e0b; color: #0f172a; }
+
+  .score-board { display: flex; justify-content: center; gap: 32px;
+                 padding: 8px 0 20px 0; }
+  .score { text-align: center; }
+  .score .label { font-size: 9pt; color: #64748b; font-weight: bold;
+                  text-transform: uppercase; letter-spacing: 1px; }
+  .score .value { font-size: 22pt; font-weight: bold; margin-top: 2px; }
+  .score-x .value { color: #818cf8; }
+  .score-o .value { color: #f472b6; }
+  .score-d .value { color: #94a3b8; }
+</style>
+
+<div class="header">
+  <h1>Tic-Tac-Toe</h1>
+  <div class="sub">You are X — beat the AI!</div>
+</div>
+
+<div class="score-board">
+  <div class="score score-x">
+    <div class="label">You (X)</div>
+    <div class="value" id="score-x">0</div>
+  </div>
+  <div class="score score-d">
+    <div class="label">Draws</div>
+    <div class="value" id="score-d">0</div>
+  </div>
+  <div class="score score-o">
+    <div class="label">AI (O)</div>
+    <div class="value" id="score-o">0</div>
+  </div>
+</div>
+
+<div id="status" class="status">Your turn</div>
+
+<div class="board">
+  <div class="cell" id="c0"></div>
+  <div class="cell" id="c1"></div>
+  <div class="cell" id="c2"></div>
+  <div class="cell" id="c3"></div>
+  <div class="cell" id="c4"></div>
+  <div class="cell" id="c5"></div>
+  <div class="cell" id="c6"></div>
+  <div class="cell" id="c7"></div>
+  <div class="cell" id="c8"></div>
+</div>
+
+<div class="controls">
+  <div class="btn btn-reset" id="reset">New Game</div>
+  <div class="btn btn-diff" id="diff-easy">Easy</div>
+  <div class="btn btn-diff btn-diff-active" id="diff-hard">Hard</div>
+</div>

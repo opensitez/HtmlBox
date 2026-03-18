@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Minesweeper</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif;
+         background: #1e293b; color: #e2e8f0; padding: 0; margin: 0; }
+
+  .header { text-align: center; padding: 18px 0 6px 0; }
+  .header h1 { font-size: 20pt; color: #38bdf8; margin: 0; }
+
+  .info-bar { display: flex; justify-content: center; gap: 40px;
+              padding: 10px 0; }
+  .info { text-align: center; }
+  .info .label { font-size: 8pt; color: #64748b; font-weight: bold;
+                 text-transform: uppercase; letter-spacing: 1px; }
+  .info .value { font-size: 18pt; font-weight: bold; color: #f8fafc;
+                 margin-top: 2px; }
+
+  .status { text-align: center; font-size: 13pt; font-weight: bold;
+            color: #f8fafc; padding: 8px 0; }
+
+  .board { display: grid;
+           gap: 2px; margin: 0 auto;
+           grid-template-columns: repeat(9, 36px);
+           width: 342px; }
+
+  .cell { height: 36px; background: #334155; border: 1px solid #475569;
+          border-radius: 4px; text-align: center; font-size: 13pt;
+          font-weight: bold; line-height: 36px; cursor: pointer; }
+  .cell:hover { background: #3b4f6b; }
+  .cell-revealed { background: #1e293b; border-color: #334155; cursor: default; }
+  .cell-mine { background: #dc2626; border-color: #ef4444; }
+  .cell-flag { background: #475569; }
+  .cell-1 { color: #3b82f6; }
+  .cell-2 { color: #22c55e; }
+  .cell-3 { color: #ef4444; }
+  .cell-4 { color: #7c3aed; }
+  .cell-5 { color: #a16207; }
+  .cell-6 { color: #0891b2; }
+  .cell-7 { color: #374151; }
+  .cell-8 { color: #6b7280; }
+
+  .controls { text-align: center; padding: 14px 0; }
+  .btn { display: inline-block; color: #ffffff; border: none;
+         padding: 10px 24px; border-radius: 8px;
+         font-size: 10pt; font-weight: bold; cursor: pointer;
+         margin: 0 6px; }
+  .btn-new { background: #0ea5e9; }
+  .btn-new:hover { background: #38bdf8; }
+  .btn-flag { background: #334155; }
+  .btn-flag:hover { background: #475569; }
+  .btn-flag-active { background: #f59e0b; color: #0f172a; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Minesweeper</h1>
+</div>
+
+<div class="info-bar">
+  <div class="info">
+    <div class="label">Mines</div>
+    <div class="value" id="mine-count">10</div>
+  </div>
+  <div class="info">
+    <div class="label">Time</div>
+    <div class="value" id="timer">0</div>
+  </div>
+</div>
+
+<div id="status" class="status">Click to start</div>
+
+<div class="board">
+  <div class="cell" id="r0c0"></div>
+  <div class="cell" id="r0c1"></div>
+  <div class="cell" id="r0c2"></div>
+  <div class="cell" id="r0c3"></div>
+  <div class="cell" id="r0c4"></div>
+  <div class="cell" id="r0c5"></div>
+  <div class="cell" id="r0c6"></div>
+  <div class="cell" id="r0c7"></div>
+  <div class="cell" id="r0c8"></div>
+  <div class="cell" id="r1c0"></div>
+  <div class="cell" id="r1c1"></div>
+  <div class="cell" id="r1c2"></div>
+  <div class="cell" id="r1c3"></div>
+  <div class="cell" id="r1c4"></div>
+  <div class="cell" id="r1c5"></div>
+  <div class="cell" id="r1c6"></div>
+  <div class="cell" id="r1c7"></div>
+  <div class="cell" id="r1c8"></div>
+  <div class="cell" id="r2c0"></div>
+  <div class="cell" id="r2c1"></div>
+  <div class="cell" id="r2c2"></div>
+  <div class="cell" id="r2c3"></div>
+  <div class="cell" id="r2c4"></div>
+  <div class="cell" id="r2c5"></div>
+  <div class="cell" id="r2c6"></div>
+  <div class="cell" id="r2c7"></div>
+  <div class="cell" id="r2c8"></div>
+  <div class="cell" id="r3c0"></div>
+  <div class="cell" id="r3c1"></div>
+  <div class="cell" id="r3c2"></div>
+  <div class="cell" id="r3c3"></div>
+  <div class="cell" id="r3c4"></div>
+  <div class="cell" id="r3c5"></div>
+  <div class="cell" id="r3c6"></div>
+  <div class="cell" id="r3c7"></div>
+  <div class="cell" id="r3c8"></div>
+  <div class="cell" id="r4c0"></div>
+  <div class="cell" id="r4c1"></div>
+  <div class="cell" id="r4c2"></div>
+  <div class="cell" id="r4c3"></div>
+  <div class="cell" id="r4c4"></div>
+  <div class="cell" id="r4c5"></div>
+  <div class="cell" id="r4c6"></div>
+  <div class="cell" id="r4c7"></div>
+  <div class="cell" id="r4c8"></div>
+  <div class="cell" id="r5c0"></div>
+  <div class="cell" id="r5c1"></div>
+  <div class="cell" id="r5c2"></div>
+  <div class="cell" id="r5c3"></div>
+  <div class="cell" id="r5c4"></div>
+  <div class="cell" id="r5c5"></div>
+  <div class="cell" id="r5c6"></div>
+  <div class="cell" id="r5c7"></div>
+  <div class="cell" id="r5c8"></div>
+  <div class="cell" id="r6c0"></div>
+  <div class="cell" id="r6c1"></div>
+  <div class="cell" id="r6c2"></div>
+  <div class="cell" id="r6c3"></div>
+  <div class="cell" id="r6c4"></div>
+  <div class="cell" id="r6c5"></div>
+  <div class="cell" id="r6c6"></div>
+  <div class="cell" id="r6c7"></div>
+  <div class="cell" id="r6c8"></div>
+  <div class="cell" id="r7c0"></div>
+  <div class="cell" id="r7c1"></div>
+  <div class="cell" id="r7c2"></div>
+  <div class="cell" id="r7c3"></div>
+  <div class="cell" id="r7c4"></div>
+  <div class="cell" id="r7c5"></div>
+  <div class="cell" id="r7c6"></div>
+  <div class="cell" id="r7c7"></div>
+  <div class="cell" id="r7c8"></div>
+  <div class="cell" id="r8c0"></div>
+  <div class="cell" id="r8c1"></div>
+  <div class="cell" id="r8c2"></div>
+  <div class="cell" id="r8c3"></div>
+  <div class="cell" id="r8c4"></div>
+  <div class="cell" id="r8c5"></div>
+  <div class="cell" id="r8c6"></div>
+  <div class="cell" id="r8c7"></div>
+  <div class="cell" id="r8c8"></div>
+</div>
+
+<div class="controls">
+  <div class="btn btn-new" id="new-game">New Game</div>
+  <div class="btn btn-flag" id="flag-mode">Flag Mode</div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Calculator</title>
+<style>
+  body { font-family: -apple-system, system-ui, Helvetica, Arial, sans-serif; background: #0f172a; color: #e2e8f0; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+  .calc { width: 320px; background:#071025; padding:16px; border-radius:12px; box-shadow: 0 6px 24px rgba(2,6,23,0.6); }
+  .display { height:56px; background:#021226; color:#e6eef8; font-size:24px; text-align:right; padding:10px; border-radius:8px; margin-bottom:12px; }
+  .keys { display:grid; grid-template-columns: repeat(4,1fr); gap:8px; }
+  .btn { background:#0b1220; color:#e6eef8; padding:14px 0; border-radius:8px; text-align:center; cursor:pointer; user-select:none; }
+  .btn-op { background:#1f2937; color:#fbbf24; }
+  .btn-eq { background:#10b981; color:#021226; grid-column: span 2; }
+  .btn-clear { background:#ef4444; color:#fff; }
+  .btn:active { transform: translateY(1px); }
+</style>
+</head>
+<body>
+<div class="calc">
+  <div id="display" class="display">0</div>
+  <div class="keys">
+    <div class="btn btn-clear" id="clear">C</div>
+    <div class="btn btn-op" data-value="(">(</div>
+    <div class="btn btn-op" data-value=")">)</div>
+    <div class="btn btn-op" data-value="/">÷</div>
+
+    <div class="btn" data-value="7">7</div>
+    <div class="btn" data-value="8">8</div>
+    <div class="btn" data-value="9">9</div>
+    <div class="btn btn-op" data-value="*">×</div>
+
+    <div class="btn" data-value="4">4</div>
+    <div class="btn" data-value="5">5</div>
+    <div class="btn" data-value="6">6</div>
+    <div class="btn btn-op" data-value="-">−</div>
+
+    <div class="btn" data-value="1">1</div>
+    <div class="btn" data-value="2">2</div>
+    <div class="btn" data-value="3">3</div>
+    <div class="btn btn-op" data-value="+">+</div>
+
+    <div class="btn" data-value="0">0</div>
+    <div class="btn" data-value=".">.</div>
+    <div class="btn btn-eq" id="equals">=</div>
+  </div>
+</div>
+</body>
+</html>

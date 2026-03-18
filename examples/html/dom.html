@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>wxHtmlEdit – DOM Dashboard Demo</title>
+  <style>
+    /* ── All styles verbatim from DASHBOARD_HTML in dom_demo.cpp ── */
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, Helvetica, Arial, sans-serif;
+      font-size: 10pt; color: #1e293b; padding: 0; margin: 0;
+      background: #f0f4ff;
+    }
+
+    /* Toolbar (native wx panel — reproduced as HTML) */
+    #toolbar {
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 4px 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .tb-btn {
+      height: 30px;
+      padding: 0 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #f8fafc;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      color: #334155;
+    }
+    .tb-btn:hover { background: #e2e8f0; }
+    .tb-toggle { background: #e0e7ff; color: #4338ca; border-color: #a5b4fc; }
+    .tb-label  { font-size: 12px; color: #64748b; }
+    .tb-slider { width: 90px; }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+      color: #ffffff; padding: 16px 24px;
+    }
+    .header h1 { color: #ffffff; font-size: 18pt; margin: 0; }
+    .header .subtitle { color: #e0e7ff; font-size: 9pt; margin-top: 4px; }
+
+    /* Stats row */
+    .stats { display: flex; gap: 14px; padding: 18px 24px; }
+    .stat-card {
+      padding: 16px 20px; border-radius: 12px;
+      border: none; color: #ffffff; flex: 1;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+    .stat-card-cpu  { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .stat-card-mem  { background: linear-gradient(135deg, #10b981, #059669); }
+    .stat-card-req  { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .stat-card-err  { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .stat-emoji  { font-size: 36pt; }
+    .stat-label  {
+      font-size: 8pt; color: rgba(255,255,255,0.85);
+      font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
+    }
+    .stat-value  { font-size: 24pt; font-weight: bold; color: #ffffff; margin: 2px 0; }
+    .stat-change { font-size: 8pt; color: rgba(255,255,255,0.8); }
+
+    /* Content area */
+    .content { padding: 0 24px 24px 24px; }
+    .section-title {
+      font-size: 12pt; font-weight: bold; color: #4338ca;
+      margin: 18px 0 10px 0;
+    }
+
+    /* Two-column grid */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* Panels */
+    .panel {
+      border: 1px solid #e0e7ff; border-radius: 12px;
+      background: #ffffff; overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .panel-header {
+      background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+      padding: 10px 16px; border-bottom: 1px solid #c7d2fe;
+      font-weight: bold; font-size: 10pt; color: #4338ca;
+    }
+    .panel-body { padding: 14px 16px; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left; padding: 10px 14px; font-size: 8pt;
+      color: #6366f1; background: #eef2ff; font-weight: bold;
+      text-transform: uppercase; letter-spacing: 1px;
+      border-bottom: 2px solid #c7d2fe;
+    }
+    td {
+      padding: 10px 14px; border-bottom: 1px solid #f0f4ff;
+      font-size: 10pt; color: #334155;
+    }
+
+    /* Badges */
+    .badge { padding: 3px 10px; border-radius: 12px; font-size: 8pt; font-weight: bold; }
+    .badge-ok   { background: #dcfce7; color: #166534; }
+    .badge-warn { background: #fef9c3; color: #854d0e; }
+    .badge-err  { background: #fee2e2; color: #991b1b; }
+
+    /* Progress bars */
+    .progress-track {
+      background: #e2e8f0; border-radius: 6px; height: 10px; margin-top: 6px;
+    }
+    .progress-fill { border-radius: 6px; height: 10px; }
+    .progress-label { font-size: 9pt; color: #64748b; margin-top: 4px; }
+
+    /* Sparkline chart area */
+    .chart {
+      font-family: monospace; font-size: 11pt;
+      padding: 12px 0; line-height: 1.4;
+    }
+    .chart-cpu { color: #3b82f6; }
+    .chart-rps { color: #f59e0b; }
+    .chart-meta {
+      font-family: -apple-system, Helvetica, sans-serif;
+      font-size: 9pt; color: #64748b; margin-top: 4px;
+    }
+
+    /* Activity feed */
+    .feed-item {
+      padding: 10px 16px; border-bottom: 1px solid #f0f4ff;
+      font-size: 10pt; color: #334155;
+    }
+    .feed-time { color: #6366f1; font-weight: bold; font-size: 9pt; }
+
+    /* Alerts */
+    .alert {
+      padding: 12px 16px; border-radius: 10px; margin: 8px 0; font-size: 10pt;
+    }
+    .alert-info { background: #eff6ff; border: 1px solid #93c5fd; color: #1e40af; }
+    .alert-warn { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+    .alert-crit { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+
+    /* Dark mode variants */
+    .dark body            { background: #0b1222; color: #e2e8f0; }
+    .dark .header         { background: linear-gradient(135deg, #312e81, #1e1b4b); }
+    .dark .stat-card-cpu  { background: linear-gradient(135deg, #1d4ed8, #1e3a8a); }
+    .dark .stat-card-mem  { background: linear-gradient(135deg, #047857, #064e3b); }
+    .dark .stat-card-req  { background: linear-gradient(135deg, #b45309, #78350f); }
+    .dark .stat-card-err  { background: linear-gradient(135deg, #b91c1c, #7f1d1d); }
+    .dark .section-title  { color: #a5b4fc; }
+    .dark .panel          { background: #1e293b; border-color: #334155; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+    .dark .panel-header   { background: linear-gradient(135deg, #1e1b4b, #172554); border-color: #334155; color: #a5b4fc; }
+    .dark th              { background: #1e1b4b; color: #a5b4fc; border-color: #334155; }
+    .dark td              { color: #cbd5e1; border-color: #1e293b; }
+    .dark .chart-cpu      { color: #60a5fa; }
+    .dark .chart-rps      { color: #fbbf24; }
+    .dark .chart-meta     { color: #94a3b8; }
+    .dark .feed-item      { color: #cbd5e1; border-color: #334155; }
+    .dark .feed-time      { color: #818cf8; }
+    .dark .progress-track { background: #334155; }
+    .dark .progress-label { color: #94a3b8; }
+    .dark .alert-info     { background: #172554; border-color: #1e40af; color: #93c5fd; }
+    .dark .alert-warn     { background: #422006; border-color: #92400e; color: #fcd34d; }
+    .dark .alert-crit     { background: #450a0a; border-color: #991b1b; color: #fca5a5; }
+
+    /* Compact mode variants */
+    .compact .stat-card     { padding: 10px 14px; }
+    .compact .stat-value    { font-size: 16pt; }
+    .compact .stat-emoji    { font-size: 26pt; }
+    .compact .stats         { gap: 8px; padding: 10px 24px; }
+    .compact .feed-item     { padding: 6px 12px; font-size: 9pt; }
+    .compact td             { padding: 6px 10px; font-size: 9pt; }
+    .compact th             { padding: 6px 10px; }
+    .compact .chart         { font-size: 9pt; padding: 8px 0; }
+    .compact .section-title { font-size: 10pt; margin: 10px 0 6px 0; }
+    .compact .panel-body    { padding: 10px 14px; }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     TOOLBAR  (mirrors wxWidgets native toolbar)
+     ══════════════════════════════════════════ -->
+<div id="toolbar">
+  <button class="tb-btn tb-toggle">&#127769; Dark</button>
+  <button class="tb-btn">&#128207; Compact</button>
+  <button class="tb-btn">&#9997; Pause</button>
+  <button class="tb-btn">&#128293; Chaos</button>
+  &nbsp;
+  <button class="tb-btn">&#43; Service</button>
+  <button class="tb-btn">&#128465; Alerts</button>
+  <button class="tb-btn">&#128465; Feed</button>
+  <span style="flex: 1;"></span>
+  <span class="tb-label">Speed:</span>
+  <input type="range" class="tb-slider" min="200" max="3000" value="1000" title="Update interval (ms)">
+</div>
+
+<!-- ══════════════════════════════════════════
+     DASHBOARD HTML  (verbatim from DASHBOARD_HTML)
+     ══════════════════════════════════════════ -->
+
+<!-- Header -->
+<div class="header">
+  <h1>&#128640; System Dashboard</h1>
+  <div class="subtitle" id="clock">Uptime: 0d 0h 0m 0s</div>
+</div>
+
+<!-- Stats cards -->
+<div class="stats">
+  <div class="stat-card stat-card-cpu">
+    <div class="stat-info">
+      <div class="stat-label">CPU</div>
+      <div class="stat-value" id="cpu-val">23%</div>
+      <div class="stat-change" id="cpu-chg">--</div>
+    </div>
+    <div class="stat-emoji">&#128187;</div>
+  </div>
+  <div class="stat-card stat-card-mem">
+    <div class="stat-info">
+      <div class="stat-label">Memory</div>
+      <div class="stat-value" id="mem-val">3200 MB</div>
+      <div class="stat-change" id="mem-chg">--</div>
+    </div>
+    <div class="stat-emoji">&#129504;</div>
+  </div>
+  <div class="stat-card stat-card-req">
+    <div class="stat-info">
+      <div class="stat-label">Req/s</div>
+      <div class="stat-value" id="req-val">1420</div>
+      <div class="stat-change" id="req-chg">--</div>
+    </div>
+    <div class="stat-emoji">&#9889;</div>
+  </div>
+  <div class="stat-card stat-card-err">
+    <div class="stat-info">
+      <div class="stat-label">Errors</div>
+      <div class="stat-value" id="err-val">0.12%</div>
+      <div class="stat-change" id="err-chg">--</div>
+    </div>
+    <div class="stat-emoji">&#128293;</div>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Row 1: Services + Resources -->
+  <div class="grid-2">
+
+    <!-- Services panel -->
+    <div class="panel">
+      <div class="panel-header">&#128295; Services</div>
+      <div class="panel-body" style="padding: 0;">
+        <table id="svc-table">
+          <thead>
+            <tr><th>Service</th><th>Status</th><th>Latency</th></tr>
+          </thead>
+          <tbody id="svc-tbody">
+            <tr id="svc-api">
+              <td>&#127760; API Gateway</td>
+              <td><span class="badge badge-ok" id="svc-api-badge">HEALTHY</span></td>
+              <td id="svc-api-lat">12ms</td>
+            </tr>
+            <tr id="svc-db">
+              <td>&#128451; Database</td>
+              <td><span class="badge badge-ok" id="svc-db-badge">HEALTHY</span></td>
+              <td id="svc-db-lat">3ms</td>
+            </tr>
+            <tr id="svc-cache">
+              <td>&#9889; Cache</td>
+              <td><span class="badge badge-ok" id="svc-cache-badge">HEALTHY</span></td>
+              <td id="svc-cache-lat">1ms</td>
+            </tr>
+            <tr id="svc-queue">
+              <td>&#128232; Msg Queue</td>
+              <td><span class="badge badge-ok" id="svc-queue-badge">HEALTHY</span></td>
+              <td id="svc-queue-lat">5ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Resources panel -->
+    <div class="panel">
+      <div class="panel-header">&#128190; Resources</div>
+      <div class="panel-body">
+
+        <div class="stat-label" style="color: #10b981;">MEMORY</div>
+        <div style="font-size: 16pt; font-weight: bold; color: #10b981;" id="mem-big">3200 / 8192 MB</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="mem-bar" style="width: 39%; background: #10b981;"></div>
+        </div>
+        <div class="progress-label" id="mem-label">39% used</div>
+
+        <div class="stat-label" style="color: #8b5cf6; margin-top: 16px;">DISK I/O</div>
+        <div style="font-size: 16pt; font-weight: bold; color: #8b5cf6;" id="disk-val">45 MB/s</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="disk-bar" style="width: 9%; background: #8b5cf6;"></div>
+        </div>
+
+        <div class="stat-label" style="color: #f59e0b; margin-top: 16px;">NETWORK</div>
+        <div style="font-size: 16pt; font-weight: bold; color: #f59e0b;" id="net-val">120 Mbps</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="net-bar" style="width: 12%; background: #f59e0b;"></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- .grid-2 -->
+
+  <!-- Row 2: Charts -->
+  <div class="grid-2" style="margin-top: 16px;">
+
+    <div class="panel">
+      <div class="panel-header">&#128200; CPU History (60s)</div>
+      <div class="panel-body">
+        <div class="chart chart-cpu" id="cpu-chart">&#9601;&#9601;&#9602;&#9602;&#9603;&#9603;&#9603;&#9604;&#9604;&#9604;&#9604;&#9605;&#9604;&#9603;&#9604;&#9604;&#9603;&#9604;&#9605;&#9604;</div>
+        <div class="chart-meta" id="cpu-meta">min 18%&nbsp;&nbsp;max 31%&nbsp;&nbsp;now 23%</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">&#128202; Requests/s (60s)</div>
+      <div class="panel-body">
+        <div class="chart chart-rps" id="rps-chart">&#9603;&#9603;&#9604;&#9604;&#9604;&#9603;&#9603;&#9604;&#9604;&#9605;&#9605;&#9604;&#9604;&#9603;&#9604;&#9604;&#9604;&#9605;&#9604;&#9604;</div>
+        <div class="chart-meta" id="rps-meta">min 1210&nbsp;&nbsp;max 1590&nbsp;&nbsp;now 1420 req/s</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Activity feed -->
+  <div class="section-title">&#128221; Activity Feed</div>
+  <div class="panel">
+    <div id="activity-feed">
+      <div class="feed-item">
+        <span class="feed-time">00:00:00</span>
+        &#129001; Dashboard initialized
+      </div>
+      <div class="feed-item">
+        <span class="feed-time">00:00:03</span>
+        &#9989; Health check passed
+      </div>
+      <div class="feed-item">
+        <span class="feed-time">00:00:06</span>
+        &#128640; Deployment completed
+      </div>
+      <div class="feed-item">
+        <span class="feed-time">00:00:09</span>
+        &#128201; Auto-scaler: 3 -&gt; 4 replicas
+      </div>
+    </div>
+  </div>
+
+  <!-- Alerts (empty initially) -->
+  <div id="alerts"></div>
+
+</div><!-- .content -->
+
+</body>
+</html>

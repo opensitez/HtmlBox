@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* ── Sticky topbar ────────────────────────────────────────────────────── */
+.topbar {
+  background: #0f172a;
+  border-bottom: 1px solid #1e293b;
+  padding: 0 40px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topbar-logo { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; color: #f1f5f9; }
+.topbar-logo em { font-style: normal; color: #818cf8; }
+.topbar-nav { display: flex; gap: 28px; }
+.topbar-nav a {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #64748b;
+  text-decoration: none;
+}
+.topbar-nav a:first-of-type { color: #818cf8; }
+
+/* ── Page sections ────────────────────────────────────────────────────── */
+.page { max-width: 960px; margin: 0 auto; padding: 0 32px 80px; }
+
+.section { padding: 52px 0 0; }
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #818cf8;
+  margin-bottom: 8px;
+}
+.section-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 6px;
+}
+.section-sub {
+  font-size: 14px;
+  color: #64748b;
+  margin-bottom: 32px;
+}
+
+/* ── Grid helpers ─────────────────────────────────────────────────────── */
+.grid-3 { display: flex; gap: 20px; flex-wrap: wrap; }
+.grid-3 > * { flex: 1 1 260px; }
+
+.grid-4 { display: flex; gap: 16px; flex-wrap: wrap; }
+.grid-4 > * { flex: 1 1 200px; }
+
+/* ── Card base ────────────────────────────────────────────────────────── */
+.card {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 24px;
+  border: 1px solid #334155;
+}
+.card-title { font-size: 13px; font-weight: 600; color: #94a3b8; margin-bottom: 16px; letter-spacing: 0.3px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   § 1  CSS 2D TRANSFORMS
+══════════════════════════════════════════════════════════════════════ */
+
+/* Swatch — shared base for transform demos */
+.swatch {
+  width: 80px; height: 80px;
+  border-radius: 10px;
+  margin: 24px auto 8px;
+}
+.swatch-label {
+  font-size: 11px;
+  color: #64748b;
+  text-align: center;
+}
+
+.t-rotate {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  transform: rotate(22deg);
+}
+.t-scale {
+  background: linear-gradient(135deg, #34d399, #059669);
+  transform: scale(1.25);
+}
+.t-skewX {
+  background: linear-gradient(135deg, #fb923c, #ea580c);
+  transform: skewX(18deg);
+}
+.t-skewY {
+  background: linear-gradient(135deg, #f472b6, #db2777);
+  transform: skewY(14deg);
+}
+.t-translate {
+  background: linear-gradient(135deg, #38bdf8, #0284c7);
+  transform: translate(12px, -10px);
+}
+.t-multi {
+  background: linear-gradient(135deg, #a78bfa, #7c3aed);
+  transform: rotate(15deg) scale(1.1) translateX(8px);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   § 2  CSS FILTERS
+══════════════════════════════════════════════════════════════════════ */
+
+.filter-strip {
+  height: 90px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: linear-gradient(90deg,
+    #ef4444 0%, #f97316 16%, #eab308 33%,
+    #22c55e 50%, #06b6d4 66%, #6366f1 83%, #ec4899 100%);
+}
+.filter-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; font-weight: 500; }
+
+.f-none       { filter: none; }
+.f-blur       { filter: blur(3px); }
+.f-bright     { filter: brightness(1.6); }
+.f-contrast   { filter: contrast(2.2); }
+.f-grayscale  { filter: grayscale(1); }
+.f-hue90      { filter: hue-rotate(90deg); }
+.f-hue180     { filter: hue-rotate(180deg); }
+.f-invert     { filter: invert(1); }
+.f-saturate   { filter: saturate(3); }
+.f-sepia      { filter: sepia(1); }
+.f-opacity    { filter: opacity(0.45); }
+.f-combo      { filter: contrast(1.4) saturate(1.8) hue-rotate(30deg); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   § 3  MIX-BLEND-MODE
+══════════════════════════════════════════════════════════════════════ */
+
+.blend-stage {
+  position: relative;
+  height: 100px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(90deg, #1d4ed8, #7c3aed, #be185d);
+  margin-bottom: 10px;
+}
+.blend-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, #fbbf24 0%, #f97316 60%, transparent 100%);
+}
+.blend-label { font-size: 11px; color: #94a3b8; text-align: center; }
+
+.bm-normal    .blend-overlay { mix-blend-mode: normal; }
+.bm-multiply  .blend-overlay { mix-blend-mode: multiply; }
+.bm-screen    .blend-overlay { mix-blend-mode: screen; }
+.bm-overlay   .blend-overlay { mix-blend-mode: overlay; }
+.bm-darken    .blend-overlay { mix-blend-mode: darken; }
+.bm-lighten   .blend-overlay { mix-blend-mode: lighten; }
+.bm-color-dodge .blend-overlay { mix-blend-mode: color-dodge; }
+.bm-color-burn  .blend-overlay { mix-blend-mode: color-burn; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   § 4  TEXT DECORATION
+══════════════════════════════════════════════════════════════════════ */
+
+.deco-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 8px 0;
+}
+.deco-row {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+}
+.deco-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #475569;
+  width: 100px;
+  flex-shrink: 0;
+}
+.deco-text { font-size: 17px; font-weight: 500; color: #e2e8f0; }
+
+/* Solid */
+.d-solid-red {
+  text-decoration: underline solid #ef4444;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+/* Double */
+.d-double-indigo {
+  text-decoration: underline double #818cf8;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+}
+/* Dotted */
+.d-dotted-amber {
+  text-decoration: underline dotted #fbbf24;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+/* Dashed */
+.d-dashed-green {
+  text-decoration: underline dashed #34d399;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+/* Wavy */
+.d-wavy-pink {
+  text-decoration: underline wavy #ec4899;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+}
+/* Line-through */
+.d-strike-cyan {
+  text-decoration: line-through solid #06b6d4;
+  text-decoration-thickness: 2px;
+}
+/* Overline */
+.d-overline-violet {
+  text-decoration: overline solid #a78bfa;
+  text-decoration-thickness: 2px;
+}
+/* Thick wavy */
+.d-wavy-thick {
+  text-decoration: underline wavy #f97316;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   § 5  POSITION: STICKY — scrollable showcase
+══════════════════════════════════════════════════════════════════════ */
+
+.sticky-demo {
+  height: 320px;
+  overflow-y: scroll;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  position: relative;
+}
+.sticky-inner { padding: 0 24px 40px; }
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  background: #1e3a5f;
+  border-bottom: 1px solid #2563eb;
+  padding: 10px 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #93c5fd;
+}
+.sticky-item {
+  padding: 18px 0;
+  border-bottom: 1px solid #1e293b;
+  font-size: 14px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sticky-item-num {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  flex-shrink: 0;
+}
+.sticky-section-head {
+  position: sticky;
+  top: 37px;
+  background: #0f172a;
+  padding: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #818cf8;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 2px;
+}
+
+/* ── Divider ──────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: #1e293b;
+  margin: 52px 0 0;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.footer {
+  padding: 32px 40px;
+  text-align: center;
+  font-size: 12px;
+  color: #334155;
+  max-width: 960px;
+  margin: 0 auto;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Sticky top navigation ─────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-logo">Agent <em>B</em> — Renderer &amp; Transforms</div>
+  <nav class="topbar-nav">
+    <a href="#">Transforms</a>
+    <a href="#">Filters</a>
+    <a href="#">Blend</a>
+    <a href="#">Decoration</a>
+    <a href="#">Sticky</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <!-- ══ § 1  CSS 2D TRANSFORMS ══════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">§ 1 — build_css_transform()</div>
+    <div class="section-title">CSS 2D Transforms</div>
+    <div class="section-sub">Composed into a tiny-skia Transform — applied to background, border, and box-shadow draws.</div>
+
+    <div class="grid-3">
+
+      <div class="card">
+        <div class="card-title">rotate(22deg)</div>
+        <div class="swatch t-rotate"></div>
+        <div class="swatch-label">rotate</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">scale(1.25)</div>
+        <div class="swatch t-scale"></div>
+        <div class="swatch-label">scale</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">skewX(18deg)</div>
+        <div class="swatch t-skewX"></div>
+        <div class="swatch-label">skewX</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">skewY(14deg)</div>
+        <div class="swatch t-skewY"></div>
+        <div class="swatch-label">skewY</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">translate(12px, -10px)</div>
+        <div class="swatch t-translate"></div>
+        <div class="swatch-label">translate</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">rotate + scale + translateX</div>
+        <div class="swatch t-multi"></div>
+        <div class="swatch-label">composed</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ § 2  CSS FILTERS ════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">§ 2 — apply_css_filters()</div>
+    <div class="section-title">CSS Filters</div>
+    <div class="section-sub">Pixel-level operations on the rendered region — blur, brightness, contrast, grayscale, hue-rotate, invert, saturate, sepia, opacity.</div>
+
+    <div class="grid-4">
+
+      <div>
+        <div class="filter-label">none (reference)</div>
+        <div class="filter-strip f-none"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">blur(3px)</div>
+        <div class="filter-strip f-blur"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">brightness(1.6)</div>
+        <div class="filter-strip f-bright"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">contrast(2.2)</div>
+        <div class="filter-strip f-contrast"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">grayscale(1)</div>
+        <div class="filter-strip f-grayscale"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">hue-rotate(90deg)</div>
+        <div class="filter-strip f-hue90"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">hue-rotate(180deg)</div>
+        <div class="filter-strip f-hue180"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">invert(1)</div>
+        <div class="filter-strip f-invert"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">saturate(3)</div>
+        <div class="filter-strip f-saturate"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">sepia(1)</div>
+        <div class="filter-strip f-sepia"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">opacity(0.45)</div>
+        <div class="filter-strip f-opacity"></div>
+      </div>
+
+      <div>
+        <div class="filter-label">contrast + saturate + hue-rotate</div>
+        <div class="filter-strip f-combo"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ § 3  MIX-BLEND-MODE ═════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">§ 3 — css_blend_mode()</div>
+    <div class="section-title">mix-blend-mode</div>
+    <div class="section-sub">Background paint maps CSS blend keywords to tiny-skia BlendMode. Radial warm glow composited over cool linear base.</div>
+
+    <div class="grid-4">
+
+      <div>
+        <div class="blend-stage bm-normal">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">normal</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-multiply">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">multiply</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-screen">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">screen</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-overlay">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">overlay</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-darken">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">darken</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-lighten">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">lighten</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-color-dodge">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">color-dodge</div>
+      </div>
+
+      <div>
+        <div class="blend-stage bm-color-burn">
+          <div class="blend-overlay"></div>
+        </div>
+        <div class="blend-label">color-burn</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ § 4  TEXT DECORATION ════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">§ 4 — text_decoration_color / thickness / offset</div>
+    <div class="section-title">Text Decoration Styles</div>
+    <div class="section-sub">Solid, Double, Dotted, Dashed, Wavy — with per-decoration color, thickness, and underline-offset control.</div>
+
+    <div class="card">
+      <div class="deco-list">
+
+        <div class="deco-row">
+          <div class="deco-tag">solid</div>
+          <div class="deco-text d-solid-red">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">double</div>
+          <div class="deco-text d-double-indigo">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">dotted</div>
+          <div class="deco-text d-dotted-amber">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">dashed</div>
+          <div class="deco-text d-dashed-green">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">wavy</div>
+          <div class="deco-text d-wavy-pink">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">line-through</div>
+          <div class="deco-text d-strike-cyan">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">overline</div>
+          <div class="deco-text d-overline-violet">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+        <div class="deco-row">
+          <div class="deco-tag">wavy thick</div>
+          <div class="deco-text d-wavy-thick">The quick brown fox jumps over the lazy dog</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ § 5  POSITION: STICKY ════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">§ 5 — position: sticky rendering</div>
+    <div class="section-title">Sticky Positioning</div>
+    <div class="section-sub">Element visual position is clamped to its top/left threshold within the viewport. Scroll the box below — the blue header and section sub-headers stick.</div>
+
+    <div class="sticky-demo">
+      <div class="sticky-inner">
+
+        <div class="sticky-header">Scheduled Transmissions — Agent B Telemetry</div>
+
+        <div class="sticky-section-head">Transforms</div>
+        <div class="sticky-item"><div class="sticky-item-num">1</div> rotate() — angle applied to composited transform matrix</div>
+        <div class="sticky-item"><div class="sticky-item-num">2</div> scale() — uniform and non-uniform axis scaling</div>
+        <div class="sticky-item"><div class="sticky-item-num">3</div> skewX() / skewY() — shear along X or Y axis</div>
+        <div class="sticky-item"><div class="sticky-item-num">4</div> translate() — pixel offset after other transforms</div>
+        <div class="sticky-item"><div class="sticky-item-num">5</div> matrix() — raw 6-value affine matrix</div>
+
+        <div class="sticky-section-head">Filters</div>
+        <div class="sticky-item"><div class="sticky-item-num">6</div> blur() — Gaussian kernel over rendered region</div>
+        <div class="sticky-item"><div class="sticky-item-num">7</div> brightness() / contrast() — luminance adjustments</div>
+        <div class="sticky-item"><div class="sticky-item-num">8</div> grayscale() — desaturate toward luminance</div>
+        <div class="sticky-item"><div class="sticky-item-num">9</div> hue-rotate() — shift all hues by N degrees</div>
+        <div class="sticky-item"><div class="sticky-item-num">10</div> invert() — complement each channel</div>
+        <div class="sticky-item"><div class="sticky-item-num">11</div> saturate() / sepia() / opacity() — further adjustments</div>
+
+        <div class="sticky-section-head">Decoration</div>
+        <div class="sticky-item"><div class="sticky-item-num">12</div> text-decoration-color — per-decoration color independent of text</div>
+        <div class="sticky-item"><div class="sticky-item-num">13</div> text-decoration-thickness — explicit line width in px / em</div>
+        <div class="sticky-item"><div class="sticky-item-num">14</div> text-underline-offset — gap between baseline and line</div>
+        <div class="sticky-item"><div class="sticky-item-num">15</div> Wavy style — sinusoidal path rendered per-glyph run</div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<div class="footer">
+  Agent B — src/renderer/mod.rs &amp; src/css/transform_filter.rs
+</div>
+
+</body>
+</html>

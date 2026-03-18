@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: Georgia, serif;
+            font-size: 12pt;
+            padding: 16px;
+            background: #ffffff;
+            color: #333;
+        }
+        h1 { color: #2c3e50; }
+        h2 { margin-top: 24px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+        th, td { padding: 8px; border: 1px solid #bdc3c7; }
+        th { background: #2c3e50; color: white; border: 1px solid #1a252f; }
+    </style>
+</head>
+<body style="font-family: Georgia, serif; font-size: 12pt; padding: 16px;">
+
+<h1 style="color: #2c3e50;">wxHtmlEdit Layout Test</h1>
+
+<h2 style="color: #8e44ad;">Flexbox Row</h2>
+<div style="display: flex; gap: 12px; margin-bottom: 16px;">
+  <div style="flex: 1; background: #eaf2f8; padding: 10px; border: 1px solid #aed6f1;">
+    <b>Column 1</b><br/>Flex item with <em>flex:1</em>. Edit this text freely.</div>
+  <div style="flex: 2; background: #fef9e7; padding: 10px; border: 1px solid #f9e79f;">
+    <b>Column 2</b><br/>This column has <em>flex:2</em>, so it takes twice the space. It contains <u>underlined</u> and <b>bold</b> words.</div>
+  <div style="flex: 1; background: #fdedec; padding: 10px; border: 1px solid #f5b7b1;">
+    <b>Column 3</b><br/>A shorter flex item.</div>
+</div>
+
+<h2 style="color: #e74c3c;">Table Layout</h2>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+  <tr style="background: #2c3e50; color: white;">
+    <th style="padding: 8px; border: 1px solid #1a252f;">Name</th>
+    <th style="padding: 8px; border: 1px solid #1a252f;">Type</th>
+    <th style="padding: 8px; border: 1px solid #1a252f;">Description</th>
+  </tr>
+  <tr style="background: #ecf0f1;">
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>SetHTML</b></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;">Load an HTML string into the editor</td>
+  </tr>
+  <tr>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>ToggleBold</b></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;">Toggle bold on current selection</td>
+  </tr>
+  <tr style="background: #ecf0f1;">
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><b>SetReadOnly</b></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;"><em>method</em></td>
+    <td style="padding: 8px; border: 1px solid #bdc3c7;">Enable or disable editing mode</td>
+  </tr>
+</table>
+
+<h2 style="color: #27ae60;">CSS Grid</h2>
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px;">
+  <div style="background: #d5f5e3; padding: 10px; border: 1px solid #82e0aa;">Grid cell <b>A1</b></div>
+  <div style="background: #d4efdf; padding: 10px; border: 1px solid #7dcea0;">Grid cell <b>A2</b></div>
+  <div style="background: #d1f2eb; padding: 10px; border: 1px solid #76d7c4;">Grid cell <b>A3</b></div>
+  <div style="background: #a9dfbf; padding: 10px; border: 1px solid #52be80; grid-column: span 2;">This cell <em>spans two columns</em> using grid-column: span 2</div>
+  <div style="background: #a3e4d7; padding: 10px; border: 1px solid #48c9b0;">Grid cell <b>B3</b></div>
+</div>
+
+<h2 style="color: #d35400;">Positioned Elements</h2>
+<div style="position: relative; height: 150px; background: #fbeee6; border: 2px dashed #e59866; margin-bottom: 16px;">
+  <div style="position: absolute; top: 10px; left: 10px; background: #f5cba7; padding: 8px; border: 1px solid #eb984e;">Top-left (absolute)</div>
+  <div style="position: absolute; top: 10px; right: 10px; background: #fadbd8; padding: 8px; border: 1px solid #ec7063;">Top-right (absolute)</div>
+  <div style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: #d2b4de; padding: 8px; border: 1px solid #a569bd;">Bottom-center (absolute)</div>
+</div>
+
+<h2 style="color: #2980b9;">Nested Flex</h2>
+<div style="display: flex; gap: 8px; margin-bottom: 16px;">
+  <div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+    <div style="background: #d6eaf8; padding: 8px; border: 1px solid #85c1e9;">Nested top</div>
+    <div style="background: #aed6f1; padding: 8px; border: 1px solid #5dade2;">Nested bottom</div>
+  </div>
+  <div style="flex: 2; background: #ebf5fb; padding: 12px; border: 1px solid #85c1e9;">
+    <p>This is the <b>main content area</b> in a nested flex layout. The left column is itself a flex column with two stacked items.</p>
+    <p>Try <em>selecting text across</em> these flex boundaries to test cross-container selection.</p>
+  </div>
+</div>
+
+<h2 style="color: #1abc9c;">Inline Formatting</h2>
+<p>Normal, <b>bold</b>, <em>italic</em>, <u>underline</u>, <b><em>bold-italic</em></b>, <span style="color: #e74c3c;">red text</span>, <span style="color: #3498db; font-size: 16pt;">large blue</span>, <span style="background: #f1c40f; padding: 2px 4px;">highlighted</span>, and <span style="font-family: monospace; background: #ecf0f1; padding: 2px 4px;">monospace code</span>.</p>
+
+<p style="color: #999; font-size: 10pt; margin-top: 20px;">Powered by wxHtmlEdit &mdash; layout engine test document.</p>
+</body>
+</html>
