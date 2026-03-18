@@ -3689,8 +3689,10 @@ pub fn ua_stylesheet() -> Stylesheet {
 
 const UA_CSS: &str = r##"
 head, link, meta, script, style, title { display: none; }
+area, base, basefont, datalist, noembed, noframes, param, rp, template { display: none; }
+[hidden] { display: none; }
 html { display: block; }
-body { display: block; margin: 0; }
+body { display: block; margin: 8px; }
 article, aside, nav, section { display: block; }
 h1 { display: block; font-size: 2em; font-weight: bold; margin-top: 0.67em; margin-bottom: 0.67em; break-after: avoid; break-inside: avoid; }
 h2 { display: block; font-size: 1.5em; font-weight: bold; margin-top: 0.83em; margin-bottom: 0.83em; break-after: avoid; break-inside: avoid; }
@@ -3700,6 +3702,7 @@ h5 { display: block; font-size: 0.83em; font-weight: bold; margin-top: 1.67em; m
 h6 { display: block; font-size: 0.67em; font-weight: bold; margin-top: 2.33em; margin-bottom: 2.33em; break-after: avoid; break-inside: avoid; }
 hgroup { display: block; }
 div, header, footer, main, search { display: block; }
+form { display: block; }
 p  { display: block; margin-top: 1em; margin-bottom: 1em; }
 address { display: block; font-style: italic; }
 blockquote { display: block; margin-top: 1em; margin-bottom: 1em; margin-left: 40px; margin-right: 40px; }
@@ -3708,18 +3711,21 @@ figure { display: block; margin-top: 1em; margin-bottom: 1em; margin-left: 40px;
 figcaption { display: block; }
 details { display: block; }
 summary { display: list-item; list-style-type: disclosure-closed; }
-pre { display: block; font-family: monospace; white-space: pre; margin-top: 1em; margin-bottom: 1em; }
-hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; border-style: inset; border-width: 1px; overflow: hidden; color: gray; }
-dl, ol, ul { display: block; margin-top: 1em; margin-bottom: 1em; }
-ol, ul { padding-left: 40px; }
+pre, listing, plaintext, xmp { display: block; font-family: monospace; white-space: pre; margin-top: 1em; margin-bottom: 1em; }
+hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; border-style: inset; border-width: 1px; overflow: hidden; color: gray; }
+dl, ol, ul, menu, dir { display: block; margin-top: 1em; margin-bottom: 1em; }
+ol, ul, menu { padding-left: 40px; }
+menu { list-style-type: disc; }
+dir  { list-style-type: disc; padding-left: 40px; }
 dd, dt { display: block; }
 dd { margin-left: 40px; }
 li { display: list-item; }
 ol { list-style-type: decimal; }
 ul { list-style-type: disc; }
-ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; }
-ul ul, ol ul { list-style-type: circle; }
-ul ul ul, ul ol ul, ol ul ul, ol ol ul { list-style-type: square; }
+ul ul, ul ol, ul menu, ol ul, ol ol, ol menu, menu ul, menu ol, menu menu,
+dir ul, dir ol, dir menu, dir dir { margin-top: 0; margin-bottom: 0; }
+ul ul, ol ul, menu ul { list-style-type: circle; }
+ul ul ul, ul ol ul, ol ul ul, ol ol ul, menu ul ul { list-style-type: square; }
 cite, dfn, em, i, var { font-style: italic; }
 b, strong { font-weight: bold; }
 code, kbd, samp, tt { font-family: monospace; }
@@ -3729,14 +3735,20 @@ sub  { vertical-align: sub; font-size: 0.83em; line-height: normal; }
 sup  { vertical-align: super; font-size: 0.83em; line-height: normal; }
 mark { background-color: yellow; color: black; }
 a { color: #0000ee; text-decoration: underline; cursor: pointer; }
+:visited { color: #551a8b; }
 u, ins { text-decoration: underline; }
 s, strike, del { text-decoration: line-through; }
-abbr { text-decoration: underline dotted; }
+abbr[title], acronym[title] { text-decoration: underline dotted; }
 q::before { content: open-quote; }
 q::after  { content: close-quote; }
 nobr { white-space: nowrap; }
+wbr  { display: inline; }
 br { display: inline; }
 img, svg { display: inline-block; break-inside: avoid; }
+canvas, video { display: inline-block; }
+audio { display: inline; }
+iframe { display: inline-block; border: 2px inset; }
+output { display: inline; }
 table { display: table; border-collapse: separate; border-spacing: 2px; box-sizing: border-box; }
 caption { display: table-caption; text-align: center; }
 colgroup { display: table-column-group; }
@@ -3752,9 +3764,10 @@ button, input[type=submit], input[type=button], input[type=reset] {
   display: inline-flex; align-items: center; justify-content: center;
   padding-left: 6px; padding-right: 6px; cursor: default;
 }
+input[type=hidden] { display: none; }
 input { display: inline-block; }
 select { display: inline-block; }
-textarea { display: inline-block; }
+textarea { display: inline-block; white-space: pre-wrap; }
 fieldset { display: block; margin-left: 2px; margin-right: 2px; padding-top: 0.35em; padding-bottom: 0.625em; padding-left: 0.75em; padding-right: 0.75em; border: 2px groove #ccc; }
 legend { padding-left: 2px; padding-right: 2px; }
 bdo { unicode-bidi: bidi-override; }

@@ -1336,3 +1336,30 @@ fn css_border_overrides_html_border_attr() {
     assert_eq!(w, 3.0,
         "author CSS border 3px should override HTML attr 1px, got {:?}", cell.style.border_top_width);
 }
+
+// ============================================================
+// Body / UA default tests
+// ============================================================
+
+#[test]
+fn body_margin_8px_from_ua() {
+    let doc = parse("<p>Hello</p>");
+    let body = find_box(&doc.root, &|b| b.tag == "body").unwrap();
+    let m = match body.style.margin_top {
+        crate::types::CssLength::Px(v) => v,
+        _ => -1.0,
+    };
+    assert_eq!(m, 8.0, "body margin-top should be 8px from UA stylesheet, got {:?}", body.style.margin_top);
+}
+
+#[test]
+fn body_margin_overridden_by_author_css() {
+    let doc = parse("<style>body { margin: 0; }</style><p>Hello</p>");
+    let body = find_box(&doc.root, &|b| b.tag == "body").unwrap();
+    let m = match body.style.margin_top {
+        crate::types::CssLength::Px(v) => v,
+        crate::types::CssLength::Zero => 0.0,
+        _ => -1.0,
+    };
+    assert_eq!(m, 0.0, "body margin-top should be overridden to 0 by author CSS, got {:?}", body.style.margin_top);
+}

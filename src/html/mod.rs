@@ -1259,21 +1259,6 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
 
     // Build combined stylesheet (UA + author)
     let mut stylesheet = ua_stylesheet();
-    // Remove body { margin } from UA stylesheet — the C++ UA has no body margin.
-    // With body as a child of html, the UA margin: 8px would offset body incorrectly.
-    for rule in &mut stylesheet.rules {
-        let is_body_rule = rule.selectors.iter().any(|sel| {
-            sel.parts.iter().any(|p| matches!(p, SelectorPart::Tag(t) if t == "body"))
-                && sel.parts.len() == 1
-        });
-        if is_body_rule {
-            rule.declarations.remove("margin");
-            rule.declarations.remove("margin-top");
-            rule.declarations.remove("margin-right");
-            rule.declarations.remove("margin-bottom");
-            rule.declarations.remove("margin-left");
-        }
-    }
     // Author rules must always win over UA rules regardless of selector specificity.
     // Boost every author rule's specificity by a large constant so that even
     // `* { padding: 0 }` (sp=0+100_000) beats `ul { padding-left: 40px }` (sp=1).
