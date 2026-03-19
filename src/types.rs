@@ -592,11 +592,15 @@ pub struct ComputedStyle {
     // Typography
     pub color:             Color,
     pub background_color:  Color,
-    pub font_family:       String,
-    pub font_size:         CssLength,
-    pub font_weight:       FontWeight,
-    pub font_style:        FontStyle,
-    pub line_height:       CssLength,
+    pub font_family:              String,
+    pub font_size:                CssLength,
+    pub font_weight:              FontWeight,
+    pub font_style:               FontStyle,
+    /// Parsed `font-variation-settings` axes, e.g. `[("wght", 700.0), ("wdth", 75.0)]`.
+    pub font_variation_settings:  Vec<(String, f32)>,
+    /// Parsed `font-feature-settings` tags, e.g. `[("kern", 1), ("liga", 0)]`.
+    pub font_feature_settings:    Vec<(String, u32)>,
+    pub line_height:              CssLength,
     pub letter_spacing:    CssLength,
     pub word_spacing:      CssLength,
     pub text_align:        TextAlign,
@@ -1037,11 +1041,13 @@ impl Default for ComputedStyle {
 
             color:            Color::BLACK,
             background_color: Color::TRANSPARENT,
-            font_family:      String::from("sans-serif"),
-            font_size:        CssLength::Px(16.0),
-            font_weight:      FontWeight::Normal,
-            font_style:       FontStyle::Normal,
-            line_height:      CssLength::Em(1.2),
+            font_family:             String::from("sans-serif"),
+            font_size:               CssLength::Px(16.0),
+            font_weight:             FontWeight::Normal,
+            font_style:              FontStyle::Normal,
+            font_variation_settings: Vec::new(),
+            font_feature_settings:   Vec::new(),
+            line_height:             CssLength::Em(1.2),
             letter_spacing:   CssLength::Zero,
             word_spacing:     CssLength::Zero,
             text_align:       TextAlign::Left,
@@ -1241,11 +1247,13 @@ impl ComputedStyle {
     /// Inherit inheritable properties from a parent style.
     pub fn inherit_from(&mut self, parent: &ComputedStyle) {
         self.color           = parent.color;
-        self.font_family     = parent.font_family.clone();
-        self.font_size       = parent.font_size;
-        self.font_weight     = parent.font_weight;
-        self.font_style      = parent.font_style;
-        self.line_height     = parent.line_height;
+        self.font_family             = parent.font_family.clone();
+        self.font_size               = parent.font_size;
+        self.font_weight             = parent.font_weight;
+        self.font_style              = parent.font_style;
+        self.font_variation_settings = parent.font_variation_settings.clone();
+        self.font_feature_settings   = parent.font_feature_settings.clone();
+        self.line_height             = parent.line_height;
         self.letter_spacing  = parent.letter_spacing;
         self.word_spacing    = parent.word_spacing;
         self.text_align      = parent.text_align;

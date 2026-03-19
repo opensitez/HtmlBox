@@ -1,5 +1,5 @@
 use crate::types::*;
-use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Style as CTextStyle, Weight};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Stretch, Style as CTextStyle, Weight};
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
 use crate::layout::block::{collapse_two, compute_intrinsic_width};
 use crate::layout::text::resolve_bidi_line;
@@ -1058,6 +1058,65 @@ fn push_line_from_slice(lines: &mut Vec<LineBuild>, slice: &[InlineItem]) {
     lines.push(line);
 }
 
+// ─── Font resolution helpers ───────────────────────────────────────────────────
+
+/// Resolve the first family name from a CSS `font-family` value (comma-separated,
+/// possibly with quoted names) into a cosmic-text `Family`.
+///
+/// The returned `Family::Name` borrows directly from `raw` (zero-copy for named fonts).
+/// Generic keywords (`sans-serif`, `serif`, …) return the corresponding enum variant.
+pub(crate) fn css_family_to_cosmic(raw: &str) -> Family<'_> {
+    let first = extract_first_css_family(raw);
+    match first {
+        "serif"      => Family::Serif,
+        "monospace"  => Family::Monospace,
+        "cursive"    => Family::Cursive,
+        "fantasy"    => Family::Fantasy,
+        ""           => Family::SansSerif,
+        name         => Family::Name(name),
+    }
+}
+
+/// Extract the first font-family name as a `&str` slice into `raw`.
+/// Strips surrounding quotes for quoted names.
+fn extract_first_css_family(raw: &str) -> &str {
+    let raw = raw.trim();
+    if raw.is_empty() { return ""; }
+    // Quoted name: `"Times New Roman"` or `'Foo'`
+    if raw.starts_with('"') {
+        return raw[1..].split('"').next().unwrap_or("").trim();
+    }
+    if raw.starts_with('\'') {
+        return raw[1..].split('\'').next().unwrap_or("").trim();
+    }
+    // Unquoted: up to the first comma
+    raw.split(',').next().unwrap_or(raw).trim()
+}
+
+/// Map a `font_stretch` percentage (100.0 = normal) to a cosmic-text `Stretch` variant.
+pub(crate) fn stretch_from_percent(pct: f32) -> Stretch {
+    // CSS spec breakpoints (midpoints between defined values):
+    if      pct <= 56.25  { Stretch::UltraCondensed }
+    else if pct <= 68.75  { Stretch::ExtraCondensed }
+    else if pct <= 81.25  { Stretch::Condensed }
+    else if pct <= 93.75  { Stretch::SemiCondensed }
+    else if pct <= 106.25 { Stretch::Normal }
+    else if pct <= 118.75 { Stretch::SemiExpanded }
+    else if pct <= 137.5  { Stretch::Expanded }
+    else if pct <= 175.0  { Stretch::ExtraExpanded }
+    else                  { Stretch::UltraExpanded }
+}
+
+/// Build a cosmic-text `Weight` from a `FontWeight` enum, optionally overridden
+/// by a `font-variation-settings` `"wght"` axis.
+pub(crate) fn weight_from_style(weight: FontWeight, var: &[(String, f32)]) -> Weight {
+    // font-variation-settings 'wght' overrides the logical font-weight.
+    for (tag, val) in var {
+        if tag == "wght" { return Weight(*val as u16); }
+    }
+    Weight(weight.value())
+}
+
 // ─── Text measurement ─────────────────────────────────────────────────────────
 
 pub fn measure_text_width(text: &str, font_px: f32, font_system: Option<&mut cosmic_text::FontSystem>) -> f32 {
@@ -1076,7 +1135,7 @@ pub fn measure_text_width_weighted(
     style:       FontStyle,
 ) -> f32 {
     if let Some(fs) = font_system {
-        let ct_weight = if weight.is_bold() { Weight::BOLD } else { Weight::NORMAL };
+        let ct_weight = Weight(weight.value());
         let ct_style  = match style {
             FontStyle::Italic  => CTextStyle::Italic,
             FontStyle::Oblique => CTextStyle::Oblique,
@@ -1174,12 +1233,13 @@ pub fn fill_char_x_for_line(
 
         let seg_text = &flat[s..e];
         let font_px  = run.style.font_size_px(16.0, 16.0);
-        let ct_w     = if run.style.font_weight.is_bold() { Weight::BOLD } else { Weight::NORMAL };
-        let ct_s     = match run.style.font_style {
+        let ct_w = weight_from_style(run.style.font_weight, &run.style.font_variation_settings);
+        let ct_s = match run.style.font_style {
             FontStyle::Italic  => CTextStyle::Italic,
             FontStyle::Oblique => CTextStyle::Oblique,
             FontStyle::Normal  => CTextStyle::Normal,
         };
+        let ct_stretch = stretch_from_percent(run.style.font_stretch);
 
         // Shape at physical pixel size (matching the renderer) so that char_x
         // positions agree with what is actually drawn on screen. Positions are
@@ -1187,15 +1247,8 @@ pub fn fill_char_x_for_line(
         let phys_px  = font_px * scale;
         let metrics = Metrics::new(phys_px, phys_px * 1.2);
         let mut buf = Buffer::new(fs, metrics);
-        let family  = match run.style.font_family.as_str() {
-            "serif"      => Family::Serif,
-            "monospace"  => Family::Monospace,
-            "cursive"    => Family::Cursive,
-            "fantasy"    => Family::Fantasy,
-            name if name.is_empty() => Family::SansSerif,
-            name         => Family::Name(name),
-        };
-        let attrs   = Attrs::new().weight(ct_w).style(ct_s).family(family);
+        let family  = css_family_to_cosmic(&run.style.font_family);
+        let attrs   = Attrs::new().weight(ct_w).style(ct_s).stretch(ct_stretch).family(family);
         // Always use Advanced shaping: Basic reports word-relative byte offsets
         // (glyph.start=0..4 for "world" in "Hello world") rather than buffer-relative
         // (6..10). Only Advanced gives correct offsets needed to populate char_x.

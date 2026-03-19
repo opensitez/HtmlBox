@@ -2,9 +2,10 @@ use tiny_skia::{
     FillRule, LineCap, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform,
 };
 use cosmic_text::{
-    Attrs, Buffer, Color as CTextColor, Family, FontSystem, Metrics, Shaping, SwashCache,
+    Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache,
     Style as CTextStyle, Weight,
 };
+use crate::layout::inline_layout::{css_family_to_cosmic, stretch_from_percent, weight_from_style};
 use winit::event::{TouchPhase, WindowEvent};
 use winit::keyboard::Key;
 use crate::types::*;
@@ -1352,21 +1353,27 @@ impl Renderer {
                 // Text shadow (advance not needed)
                 if let Some(ref ts) = style_ref.text_shadow {
                     let sh = CTextColor::rgba(ts.color.r, ts.color.g, ts.color.b, ts.color.a);
-                    self.draw_text_run(
+                    self.draw_text_run_ex(
                         &final_text,
                         cursor_x + ts.offset_x, ly + ts.offset_y,
                         run_font_px, run_line_h,
                         style_ref.font_weight, effective_font_style,
-                        &style_ref.font_family, sh, pixmap, mask,
+                        &style_ref.font_family,
+                        style_ref.font_stretch,
+                        &style_ref.font_variation_settings,
+                        sh, pixmap, mask,
                     );
                 }
 
                 // Main text — returns the actual cosmic-text advance (logical pixels).
-                let actual_advance = self.draw_text_run(
+                let actual_advance = self.draw_text_run_ex(
                     &final_text, cursor_x, ly,
                     run_font_px, run_line_h,
                     style_ref.font_weight, effective_font_style,
-                    &style_ref.font_family, ct_color, pixmap, mask,
+                    &style_ref.font_family,
+                    style_ref.font_stretch,
+                    &style_ref.font_variation_settings,
+                    ct_color, pixmap, mask,
                 );
 
                 // Use actual rendered width for decorations and cursor advance.
@@ -1588,27 +1595,45 @@ impl Renderer {
         pixmap:      &mut Pixmap,
         mask:        Option<&Mask>,
     ) -> f32 {
+        self.draw_text_run_ex(text, x, y, font_px, line_h, weight, font_style,
+            font_family, 100.0, &[], color, pixmap, mask)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_run_ex(
+        &mut self,
+        text:            &str,
+        x:               f32,
+        y:               f32,
+        font_px:         f32,
+        line_h:          f32,
+        weight:          FontWeight,
+        font_style:      FontStyle,
+        font_family:     &str,
+        font_stretch:    f32,
+        variation:       &[(String, f32)],
+        color:           CTextColor,
+        pixmap:          &mut Pixmap,
+        mask:            Option<&Mask>,
+    ) -> f32 {
         if text.is_empty() { return 0.0; }
         // Cosmic-text shapes at physical pixel sizes for correct sub-pixel rendering.
         let sc       = self.scale;
         let phys_px  = font_px  * sc;
         let phys_lh  = line_h   * sc;
         let metrics = Metrics::new(phys_px, phys_lh);
-        let family = match font_family {
-            "serif"      => Family::Serif,
-            "monospace"  => Family::Monospace,
-            "cursive"    => Family::Cursive,
-            "fantasy"    => Family::Fantasy,
-            name if name.is_empty() => Family::SansSerif,
-            name         => Family::Name(name),
+        let family  = css_family_to_cosmic(font_family);
+        let ct_w    = weight_from_style(weight, variation);
+        let ct_s    = match font_style {
+            FontStyle::Italic  => CTextStyle::Italic,
+            FontStyle::Oblique => CTextStyle::Oblique,
+            FontStyle::Normal  => CTextStyle::Normal,
         };
+        let ct_stretch = stretch_from_percent(font_stretch);
         let attrs = Attrs::new()
-            .weight(if weight.is_bold() { Weight::BOLD } else { Weight::NORMAL })
-            .style(match font_style {
-                FontStyle::Italic  => CTextStyle::Italic,
-                FontStyle::Oblique => CTextStyle::Oblique,
-                FontStyle::Normal  => CTextStyle::Normal,
-            })
+            .weight(ct_w)
+            .style(ct_s)
+            .stretch(ct_stretch)
             .family(family);
 
         // Reuse a single Buffer across calls to avoid per-run allocation.

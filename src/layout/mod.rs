@@ -8,6 +8,58 @@ pub mod hit_test;
 
 use crate::types::*;
 
+// ─── Font loading helpers ──────────────────────────────────────────────────────
+
+/// WOFF2 magic bytes: `wOF2` (0x774F4632).
+const WOFF2_MAGIC: [u8; 4] = [0x77, 0x4F, 0x46, 0x32];
+
+/// Load raw font bytes into the font system, with format detection.
+/// WOFF2 is detected and skipped (it requires Brotli decompression which is not
+/// currently bundled; convert to TTF/OTF/WOFF1 for use with @font-face).
+fn load_font_bytes(fs: &mut cosmic_text::FontSystem, data: Vec<u8>) {
+    if data.starts_with(&WOFF2_MAGIC) {
+        // WOFF2 uses Brotli compression. fontdb cannot decode it without an
+        // external decompressor. Skip and let the font-family fallback apply.
+        return;
+    }
+    fs.db_mut().load_font_data(data);
+}
+
+/// Minimal Base64 decoder (no external dependency).
+/// Returns `Err` on invalid input.
+fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
+    const TABLE: &[u8; 128] = b"\
+        \xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\
+        \xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\
+        \xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x3e\xff\xff\xff\x3f\
+        \x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\xff\xff\xff\xff\xff\xff\
+        \xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\
+        \x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff\
+        \xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\
+        \x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff";
+
+    let s: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut i = 0;
+    while i + 3 < s.len() {
+        let a = s[i];
+        let b = s[i + 1];
+        let c = s[i + 2];
+        let d = s[i + 3];
+        if a >= 128 || b >= 128 || c >= 128 || d >= 128 { return Err(()); }
+        let va = TABLE[a as usize];
+        let vb = TABLE[b as usize];
+        let vc = if c == b'=' { 0 } else { TABLE[c as usize] };
+        let vd = if d == b'=' { 0 } else { TABLE[d as usize] };
+        if va == 0xff || vb == 0xff || vc == 0xff || vd == 0xff { return Err(()); }
+        out.push((va << 2) | (vb >> 4));
+        if c != b'=' { out.push((vb << 4) | (vc >> 2)); }
+        if d != b'=' { out.push((vc << 6) | vd); }
+        i += 4;
+    }
+    Ok(out)
+}
+
 // ─── Float Context ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Clone)]
@@ -251,10 +303,31 @@ impl LayoutEngine {
         if let Some(fs_ptr) = self.font_system {
             let fs = unsafe { &mut *fs_ptr };
             for face in faces {
-                let path = crate::css::extract_url_path(&face.src);
+                let src = face.src.trim();
+
+                // ── Base64 data URI: `url("data:font/...;base64,<data>")` ──────
+                let url_inner = {
+                    let s = src.trim_start_matches("url(")
+                               .trim_end_matches(')')
+                               .trim()
+                               .trim_matches('"')
+                               .trim_matches('\'');
+                    s
+                };
+                if let Some(b64) = url_inner.strip_prefix("data:")
+                    .and_then(|s| s.find(";base64,").map(|i| &s[i + 8..]))
+                {
+                    if let Ok(bytes) = decode_base64(b64.trim()) {
+                        load_font_bytes(fs, bytes);
+                    }
+                    continue;
+                }
+
+                // ── File path ──────────────────────────────────────────────────
+                let path = crate::css::extract_url_path(src);
                 if path.is_empty() { continue; }
                 if let Ok(data) = std::fs::read(&path) {
-                    fs.db_mut().load_font_data(data);
+                    load_font_bytes(fs, data);
                 }
             }
         }

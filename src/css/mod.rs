@@ -503,6 +503,105 @@ impl Default for CssRule {
     }
 }
 
+// ─── Font utility helpers ──────────────────────────────────────────────────────
+
+/// Split a CSS `font-family` value into individual family names.
+/// Handles quoted names with spaces and strips surrounding quote characters.
+/// `"Times New Roman", Arial, sans-serif` → `["Times New Roman", "Arial", "sans-serif"]`
+pub fn split_font_families(raw: &str) -> Vec<String> {
+    let mut families = Vec::new();
+    let mut current  = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '"';
+
+    for ch in raw.chars() {
+        match ch {
+            '"' | '\'' if !in_quotes => { in_quotes = true; quote_char = ch; }
+            c if in_quotes && c == quote_char => { in_quotes = false; }
+            ',' if !in_quotes => {
+                let name = current.trim().to_string();
+                if !name.is_empty() { families.push(name); }
+                current.clear();
+            }
+            c => { current.push(c); }
+        }
+    }
+    let name = current.trim().to_string();
+    if !name.is_empty() { families.push(name); }
+    families
+}
+
+/// Map CSS system-font keywords to a generic CSS family name.
+/// Returns `None` for regular named fonts that should be kept as-is.
+pub fn resolve_system_font_keyword(name: &str) -> Option<&'static str> {
+    match name {
+        "system-ui" | "-apple-system" | "BlinkMacSystemFont"
+        | "ui-sans-serif" | "ui-rounded" => Some("sans-serif"),
+        "ui-serif"     => Some("serif"),
+        "ui-monospace" => Some("monospace"),
+        _              => None,
+    }
+}
+
+/// Parse a CSS `font-variation-settings` value into a list of `(axis-tag, value)` pairs.
+/// Accepts `normal` (returns empty) or `"wght" 700, "wdth" 75`.
+pub fn parse_variation_settings(v: &str) -> Vec<(String, f32)> {
+    let v = v.trim();
+    if v == "normal" { return Vec::new(); }
+    let mut result = Vec::new();
+    // Each entry: `"tag" value`, comma-separated.
+    for entry in v.split(',') {
+        let entry = entry.trim();
+        // Find the quoted tag
+        let (tag, rest) = if entry.starts_with('"') {
+            let end = entry[1..].find('"').map(|i| i + 1);
+            if let Some(end) = end {
+                (&entry[1..end], entry[end + 1..].trim())
+            } else { continue; }
+        } else if entry.starts_with('\'') {
+            let end = entry[1..].find('\'').map(|i| i + 1);
+            if let Some(end) = end {
+                (&entry[1..end], entry[end + 1..].trim())
+            } else { continue; }
+        } else { continue; };
+
+        if let Ok(val) = rest.parse::<f32>() {
+            result.push((tag.to_string(), val));
+        }
+    }
+    result
+}
+
+/// Parse a CSS `font-feature-settings` value into `(feature-tag, value)` pairs.
+/// Accepts `normal` (empty), `"kern"` (= 1), `"liga" on`, `"liga" off`, `"calt" 2`.
+pub fn parse_feature_settings(v: &str) -> Vec<(String, u32)> {
+    let v = v.trim();
+    if v == "normal" { return Vec::new(); }
+    let mut result = Vec::new();
+    for entry in v.split(',') {
+        let entry = entry.trim();
+        let (tag, rest) = if entry.starts_with('"') {
+            let end = entry[1..].find('"').map(|i| i + 1);
+            if let Some(end) = end {
+                (&entry[1..end], entry[end + 1..].trim())
+            } else { continue; }
+        } else if entry.starts_with('\'') {
+            let end = entry[1..].find('\'').map(|i| i + 1);
+            if let Some(end) = end {
+                (&entry[1..end], entry[end + 1..].trim())
+            } else { continue; }
+        } else { continue; };
+
+        let val = match rest {
+            "" | "on"  => 1,
+            "off"      => 0,
+            s          => s.parse::<u32>().unwrap_or(1),
+        };
+        result.push((tag.to_string(), val));
+    }
+    result
+}
+
 // ─── @font-face declaration ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Default)]
@@ -1245,7 +1344,21 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
 
-        "font-family" => { style.font_family = v.trim_matches('"').trim_matches('\'').to_string(); }
+        "font-family" => {
+            // Normalize the raw value: resolve system-font keywords in each family name.
+            // The full comma-separated string is preserved so the renderer can iterate
+            // through the fallback chain.
+            let normalized = split_font_families(v)
+                .into_iter()
+                .map(|name| {
+                    resolve_system_font_keyword(&name)
+                        .map(|s| s.to_string())
+                        .unwrap_or(name)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            style.font_family = normalized;
+        }
         "font-size"   => { style.font_size   = parse_font_size(v); }
         "font-weight" => {
             style.font_weight = match v {
@@ -1264,6 +1377,22 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
         "font" => apply_font_shorthand(style, v),
+        "font-variation-settings" => {
+            style.font_variation_settings = parse_variation_settings(v);
+            // Promote 'wght' axis to font-weight if no explicit font-weight was set.
+            for (tag, val) in &style.font_variation_settings {
+                if tag == "wght" {
+                    style.font_weight = FontWeight::Value(*val as u16);
+                }
+            }
+        }
+        "font-feature-settings" => {
+            style.font_feature_settings = parse_feature_settings(v);
+            // Promote 'smcp' feature to small_caps flag.
+            for (tag, val) in &style.font_feature_settings {
+                if tag == "smcp" { style.small_caps = *val != 0; }
+            }
+        }
 
         "line-height"    => { style.line_height    = parse_line_height(v); }
         "letter-spacing" => { style.letter_spacing = parse_length(v); }
@@ -2736,16 +2865,92 @@ fn apply_gradient(style: &mut ComputedStyle, v: &str) {
     }
 }
 
+/// Return true if a token looks like a font-size value (keyword or length unit).
+fn is_font_size_token(tok: &str) -> bool {
+    matches!(tok, "xx-small"|"x-small"|"small"|"medium"|"large"|"x-large"|"xx-large"|"smaller"|"larger")
+    || tok.ends_with("px") || tok.ends_with("em") || tok.ends_with("rem")
+    || tok.ends_with('%') || tok.ends_with("pt") || tok.ends_with("vw") || tok.ends_with("vh")
+}
+
 fn apply_font_shorthand(style: &mut ComputedStyle, v: &str) {
-    // Very simplified: just look for px/em values and font names
-    let parts: Vec<&str> = v.split_whitespace().collect();
-    for part in &parts {
-        if part.ends_with("px") || part.ends_with("em") || part.ends_with("rem") {
-            style.font_size = parse_length(part);
-        } else if *part == "bold" {
-            style.font_weight = FontWeight::Bold;
-        } else if *part == "italic" {
-            style.font_style = FontStyle::Italic;
+    // CSS font shorthand: [style] [variant] [weight] [stretch] size[/line-height] family-list
+    // System font keywords (single-token):
+    if matches!(v, "caption"|"icon"|"menu"|"message-box"|"small-caption"|"status-bar") {
+        return; // Use UA defaults; no overrides.
+    }
+
+    // Tokenise the shorthand, respecting quoted strings in the family part.
+    // Split by whitespace for the pre-family part; the family is everything after size.
+    let v = v.trim();
+    let mut size_found_at: Option<usize> = None; // byte offset in v
+    let mut byte_pos = 0usize;
+
+    // Walk tokens to find the font-size token (first length/keyword that can be a size).
+    for tok in v.split_whitespace() {
+        // Handle "size/line-height" as a single token.
+        let size_tok = if tok.contains('/') {
+            tok.splitn(2, '/').next().unwrap_or(tok)
+        } else {
+            tok
+        };
+
+        if is_font_size_token(size_tok) || size_tok.parse::<f32>().is_ok() {
+            // Parse size (and optional /line-height).
+            if tok.contains('/') {
+                let mut parts = tok.splitn(2, '/');
+                style.font_size = parse_font_size(parts.next().unwrap_or(""));
+                if let Some(lh) = parts.next() { style.line_height = parse_line_height(lh); }
+            } else {
+                style.font_size = parse_font_size(tok);
+            }
+            size_found_at = Some(byte_pos + tok.len());
+            break;
+        }
+
+        // Pre-size tokens: style / variant / weight.
+        match tok {
+            "italic"  | "oblique"   => {
+                style.font_style = if tok == "italic" { FontStyle::Italic } else { FontStyle::Oblique };
+            }
+            "small-caps"            => { style.small_caps = true; }
+            "bold"                  => { style.font_weight = FontWeight::Bold; }
+            "bolder"                => { style.font_weight = FontWeight::Value(700); }
+            "lighter"               => { style.font_weight = FontWeight::Value(300); }
+            "normal"                => {}
+            s if s.parse::<u16>().is_ok() => {
+                style.font_weight = FontWeight::Value(s.parse().unwrap());
+            }
+            _ => {}
+        }
+        byte_pos += tok.len() + 1; // +1 for the space
+    }
+
+    // Everything after the size (and optional /lh) token is the font-family list.
+    if let Some(after) = size_found_at {
+        let family_part = v[after..].trim();
+        // Strip any leading /line-height that wasn't part of the size token.
+        let family_part = if family_part.starts_with('/') {
+            let rest = family_part[1..].trim();
+            // The line-height value is the next whitespace-separated token.
+            let mut it = rest.splitn(2, char::is_whitespace);
+            let lh_tok = it.next().unwrap_or("");
+            style.line_height = parse_line_height(lh_tok);
+            it.next().unwrap_or("").trim()
+        } else {
+            family_part
+        };
+        if !family_part.is_empty() {
+            // Normalize system-font keywords in the family list.
+            let normalized = split_font_families(family_part)
+                .into_iter()
+                .map(|name| {
+                    resolve_system_font_keyword(&name)
+                        .map(|s| s.to_string())
+                        .unwrap_or(name)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            style.font_family = normalized;
         }
     }
 }
