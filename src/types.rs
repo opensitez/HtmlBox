@@ -1583,6 +1583,15 @@ pub struct Document {
     pub active_box:      *const HtmlBox,
     /// Currently focused element (raw pointer, null if none).
     pub focused_box:     *const HtmlBox,
+    /// Element hit on last MouseDown — used to fire Click on MouseUp if same target.
+    pub mousedown_target: *const HtmlBox,
+    /// Last click target + time for DblClick detection.
+    pub last_click_target: *const HtmlBox,
+    pub last_click_time:   Option<std::time::Instant>,
+    /// Drag state machine.
+    pub drag_source:       *const HtmlBox,
+    pub drag_start_doc_pt: (f32, f32),
+    pub drag_active:       bool,
     /// Set of link hrefs the user has clicked (for :visited pseudo-class).
     pub visited_urls:    std::collections::HashSet<String>,
 }
@@ -1599,10 +1608,16 @@ impl Document {
             scroll_x:        0.0,
             scroll_y:        0.0,
             scrollbar_drag:  None,
-            hovered_box:     std::ptr::null(),
-            active_box:      std::ptr::null(),
-            focused_box:     std::ptr::null(),
-            visited_urls:    std::collections::HashSet::new(),
+            hovered_box:       std::ptr::null(),
+            active_box:        std::ptr::null(),
+            focused_box:       std::ptr::null(),
+            mousedown_target:  std::ptr::null(),
+            last_click_target: std::ptr::null(),
+            last_click_time:   None,
+            drag_source:       std::ptr::null(),
+            drag_start_doc_pt: (0.0, 0.0),
+            drag_active:       false,
+            visited_urls:      std::collections::HashSet::new(),
         }
     }
 
@@ -1631,41 +1646,128 @@ impl Document {
 
     /// High-level mouse event entry point.
     pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
-        // First dispatch to listeners so they can `prevent_default()`.
-        let mut evt = crate::dom::HtmlEvent::new(etype);
-        evt.doc_pos = doc_pt;
-        evt.button  = button;
+        use crate::dom::{HtmlEventType, HtmlEvent};
+        // client_pos = screen-space logical coordinates (doc coords minus scroll).
+        let client_pos = (doc_pt.0, doc_pt.1 - self.scroll_y);
+
+        let mut evt = HtmlEvent::new(etype);
+        evt.doc_pos    = doc_pt;
+        evt.client_pos = client_pos;
+        evt.button     = button;
         let hit_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button)
             .map(|h| h.box_ptr)
             .unwrap_or(std::ptr::null());
         evt.target = hit_ptr;
 
-        // Update hover/active state; a pointer change means we need a redraw
-        // but NOT necessarily a full cascade (hover styles are pre-baked into
-        // the style at cascade time; only the pointer changes at runtime).
         let mut redraw = false;
         match etype {
-            crate::dom::HtmlEventType::MouseMove => {
+            HtmlEventType::MouseMove => {
                 if self.hovered_box != hit_ptr {
                     self.hovered_box = hit_ptr;
                     redraw = true;
                 }
+                // Drag: if mouse button held and moved past threshold, fire DragStart/Drag.
+                if !self.drag_source.is_null() {
+                    let dx = doc_pt.0 - self.drag_start_doc_pt.0;
+                    let dy = doc_pt.1 - self.drag_start_doc_pt.1;
+                    if !self.drag_active && (dx * dx + dy * dy) > 25.0 {
+                        // DragStart
+                        self.drag_active = true;
+                        let mut e = HtmlEvent::new(HtmlEventType::DragStart);
+                        e.target = self.drag_source; e.doc_pos = self.drag_start_doc_pt;
+                        e.client_pos = (self.drag_start_doc_pt.0, self.drag_start_doc_pt.1 - self.scroll_y);
+                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                    }
+                    if self.drag_active {
+                        let mut e = HtmlEvent::new(HtmlEventType::Drag);
+                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
+                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                    }
+                }
             }
-            crate::dom::HtmlEventType::MouseDown => {
+            HtmlEventType::MouseDown | HtmlEventType::PointerDown => {
                 if self.active_box != hit_ptr {
                     self.active_box = hit_ptr;
                     redraw = true;
                 }
+                if etype == HtmlEventType::MouseDown {
+                    self.mousedown_target  = hit_ptr;
+                    // Arm drag state machine.
+                    self.drag_source       = hit_ptr;
+                    self.drag_start_doc_pt = doc_pt;
+                    self.drag_active       = false;
+                }
+                // Focus change → Blur/FocusOut on old, Focus/FocusIn on new.
+                if etype == HtmlEventType::MouseDown && self.focused_box != hit_ptr {
+                    let old_focus = self.focused_box;
+                    self.focused_box = hit_ptr;
+                    if !old_focus.is_null() {
+                        let mut e = HtmlEvent::new(HtmlEventType::Blur);
+                        e.target = old_focus; e.related_target = hit_ptr;
+                        self.events.dispatch(&self.root, e);
+                        let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
+                        e.target = old_focus; e.related_target = hit_ptr;
+                        self.events.dispatch(&self.root, e);
+                    }
+                    if !hit_ptr.is_null() {
+                        let mut e = HtmlEvent::new(HtmlEventType::Focus);
+                        e.target = hit_ptr; e.related_target = old_focus;
+                        self.events.dispatch(&self.root, e);
+                        let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
+                        e.target = hit_ptr; e.related_target = old_focus;
+                        self.events.dispatch(&self.root, e);
+                    }
+                    redraw = true;
+                }
             }
-            crate::dom::HtmlEventType::MouseUp => {
+            HtmlEventType::MouseUp | HtmlEventType::PointerUp => {
                 if !self.active_box.is_null() {
                     self.active_box = std::ptr::null();
                     redraw = true;
                 }
-                // Track visited links: on left-click release, record the href.
-                if button == 0 {
-                    if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
-                        self.visited_urls.insert(href);
+                if etype == HtmlEventType::MouseUp {
+                    // DragEnd if drag was active; save flag before resetting.
+                    let was_dragging = self.drag_active;
+                    if was_dragging {
+                        let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
+                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
+                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                    }
+                    self.drag_source = std::ptr::null();
+                    self.drag_active = false;
+
+                    // Click only if no drag occurred and released on same element as pressed.
+                    if !hit_ptr.is_null() && hit_ptr == self.mousedown_target && !was_dragging {
+                        let mut click = HtmlEvent::new(HtmlEventType::Click);
+                        click.target = hit_ptr; click.doc_pos = doc_pt; click.client_pos = client_pos;
+                        click.button = button;
+                        if self.events.dispatch(&self.root, click) { redraw = true; }
+
+                        // DblClick: same target within 400 ms.
+                        let now = std::time::Instant::now();
+                        let is_dbl = self.last_click_target == hit_ptr
+                            && self.last_click_time
+                                .map(|t| t.elapsed().as_millis() < 400)
+                                .unwrap_or(false);
+                        if is_dbl {
+                            let mut dbl = HtmlEvent::new(HtmlEventType::DblClick);
+                            dbl.target = hit_ptr; dbl.doc_pos = doc_pt; dbl.client_pos = client_pos;
+                            dbl.button = button;
+                            if self.events.dispatch(&self.root, dbl) { redraw = true; }
+                            // Reset so triple-click doesn't re-trigger.
+                            self.last_click_target = std::ptr::null();
+                            self.last_click_time   = None;
+                        } else {
+                            self.last_click_target = hit_ptr;
+                            self.last_click_time   = Some(now);
+                        }
+                    }
+                    self.mousedown_target = std::ptr::null();
+                    // Track visited links.
+                    if button == 0 {
+                        if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
+                            self.visited_urls.insert(href);
+                        }
                     }
                 }
             }
@@ -1690,6 +1792,43 @@ impl Document {
             LayoutEngine::new().layout(self, width);
         }
 
+        redraw
+    }
+
+    /// Dispatch `MouseOver` on the new hover target and `MouseOut` on the previous one.
+    /// Called from the renderer on every `CursorMoved` event.
+    /// Returns `true` if listeners were fired (caller should redraw).
+    pub fn dispatch_over_out(&mut self, doc_pt: (f32, f32)) -> bool {
+        use crate::dom::{HtmlEventType, HtmlEvent};
+        let client_pos = (doc_pt.0, doc_pt.1 - self.scroll_y);
+        let new_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, 0)
+            .map(|h| h.box_ptr)
+            .unwrap_or(std::ptr::null());
+        let old_ptr = self.hovered_box;
+        if new_ptr == old_ptr { return false; }
+
+        let mut redraw = false;
+        macro_rules! ev {
+            ($t:expr, $tgt:expr, $rel:expr, $bubble:expr) => {{
+                let mut e = HtmlEvent::new($t);
+                e.target = $tgt; e.related_target = $rel;
+                e.doc_pos = doc_pt; e.client_pos = client_pos;
+                if $bubble { self.events.dispatch(&self.root, e) }
+                else       { self.events.dispatch_direct(&self.root, e) }
+            }};
+        }
+        if !old_ptr.is_null() {
+            if ev!(HtmlEventType::MouseOut,    old_ptr, new_ptr, true)  { redraw = true; }
+            if ev!(HtmlEventType::MouseLeave,  old_ptr, new_ptr, false) { redraw = true; }
+            ev!(HtmlEventType::PointerOut,   old_ptr, new_ptr, true);
+            ev!(HtmlEventType::PointerLeave, old_ptr, new_ptr, false);
+        }
+        if !new_ptr.is_null() {
+            if ev!(HtmlEventType::MouseOver,   new_ptr, old_ptr, true)  { redraw = true; }
+            if ev!(HtmlEventType::MouseEnter,  new_ptr, old_ptr, false) { redraw = true; }
+            ev!(HtmlEventType::PointerOver,  new_ptr, old_ptr, true);
+            ev!(HtmlEventType::PointerEnter, new_ptr, old_ptr, false);
+        }
         redraw
     }
 

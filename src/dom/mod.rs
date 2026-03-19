@@ -16,14 +16,44 @@ const CARET_BLINK_MS: u64 = 500;
 pub enum HtmlEventType {
     // Mouse
     Click, DblClick, MouseDown, MouseUp, MouseMove,
-    MouseEnter, MouseLeave, ContextMenu,
+    /// Fires when cursor enters element or any descendant (bubbles). Mirror of CSS :hover.
+    MouseOver,
+    /// Fires when cursor leaves element or any descendant (bubbles).
+    MouseOut,
+    /// Fires when cursor enters element boundary (does not bubble).
+    MouseEnter,
+    /// Fires when cursor leaves element boundary (does not bubble).
+    MouseLeave,
+    ContextMenu,
+    // Pointer (unified mouse/touch/stylus — fired alongside mouse events on desktop)
+    PointerDown, PointerUp, PointerMove, PointerCancel,
+    PointerEnter, PointerLeave, PointerOver, PointerOut,
     // Drag
     DragStart, Drag, DragEnter, DragOver, DragLeave, Drop, DragEnd,
     // Keyboard
     KeyDown, KeyUp, KeyPress,
-    // Content/focus/scroll
-    Scroll, Input, Change, Focus, Blur,
+    // Wheel / scroll
+    /// Raw wheel input from mouse or trackpad (fires before Scroll).
+    Wheel,
+    Scroll,
+    // Content / form / focus
+    Input, Change,
+    /// Fires on the focused element (does not bubble).
+    Focus,
+    /// Fires on the focused element when it loses focus (does not bubble).
+    Blur,
+    /// Bubbling version of Focus.
+    FocusIn,
+    /// Bubbling version of Blur.
+    FocusOut,
     SelectionChange,
+    // Document / window lifecycle
+    /// Fires on the document root after parsing and layout complete.
+    DOMContentLoaded,
+    /// Fires on the document root when the document is about to be replaced or the window closed.
+    Unload,
+    /// Fires on the document root when the viewport is resized.
+    Resize,
 }
 
 // ─── HtmlEvent ────────────────────────────────────────────────────────────────
@@ -48,6 +78,9 @@ pub struct HtmlEvent {
     pub shift_key:   bool,
     pub alt_key:     bool,
     pub meta_key:    bool,
+    /// Wheel scroll delta in logical pixels (positive = scroll down/right).
+    pub delta_x: f32,
+    pub delta_y: f32,
     /// Source box for drag events.
     pub drag_source:     *const HtmlBox,
     pub related_target:  *const HtmlBox,
@@ -71,6 +104,8 @@ impl HtmlEvent {
             shift_key:       false,
             alt_key:         false,
             meta_key:        false,
+            delta_x:         0.0,
+            delta_y:         0.0,
             drag_source:     std::ptr::null(),
             related_target:  std::ptr::null(),
             default_prevented:   false,
@@ -162,6 +197,27 @@ impl EventListeners {
 
     pub fn is_empty(&self) -> bool {
         self.inner.read().unwrap().entries.is_empty()
+    }
+
+    /// Dispatch a non-bubbling event: fires only on the exact target element.
+    /// Used for MouseEnter, MouseLeave, Focus, Blur (which do not bubble).
+    pub fn dispatch_direct(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
+        let inner = self.inner.read().unwrap();
+        if inner.entries.is_empty() { return false; }
+        evt.root = root as *const HtmlBox;
+        let target = evt.target;
+        if target.is_null() { return false; }
+        let b = unsafe { &*target };
+        evt.current_target = target;
+        let mut handled = false;
+        for entry in &inner.entries {
+            if entry.event_type != evt.event_type { continue; }
+            if !matches_simple_selector(b, &entry.selector) { continue; }
+            (entry.callback)(&mut evt);
+            handled = true;
+            if evt.propagation_stopped { break; }
+        }
+        handled || evt.default_prevented
     }
 
     /// Dispatch an event from a hit-test target, bubbling up through ancestors.
@@ -1390,7 +1446,7 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
 /// Returns true if `target` is `node` or a descendant of a node that has
 /// `contenteditable="true"`.  Used to allow key events inside contenteditable
 /// elements when the document-level editor is otherwise read-only.
-fn is_in_contenteditable(node: &HtmlBox, target: *const HtmlBox) -> bool {
+pub fn is_in_contenteditable(node: &HtmlBox, target: *const HtmlBox) -> bool {
     let self_ptr = node as *const HtmlBox;
     if std::ptr::eq(self_ptr, target) {
         // The target itself: check its own attribute.

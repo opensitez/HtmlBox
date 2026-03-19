@@ -4,7 +4,7 @@ use rhtmledit::dom::*;
 use rhtmledit::types::*;
 use rhtmledit::parse_html;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[test]
 fn event_listener_registration() {
@@ -108,4 +108,400 @@ fn event_selector_matching() {
     }
     
     assert_eq!(called_with.load(Ordering::SeqCst), 2);
+}
+
+// ─── Click fires on MouseUp (same target as MouseDown) ───────────────────────
+
+#[test]
+fn click_fires_on_mouseup_same_target() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="btn" style="width:100px;height:40px">Click</div>"#, 400.0,
+    );
+    let click_count = Arc::new(AtomicUsize::new(0));
+    let cc = click_count.clone();
+    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_| {
+        cc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 20.0), 0);
+    assert_eq!(click_count.load(Ordering::SeqCst), 1, "Click should fire once");
+}
+
+#[test]
+fn click_does_not_fire_on_different_target() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:40px">A</div>
+           <div id="b" style="width:100px;height:40px">B</div>"#, 400.0,
+    );
+    let click_count = Arc::new(AtomicUsize::new(0));
+    let cc = click_count.clone();
+    doc.events.add("*", HtmlEventType::Click, Box::new(move |evt| {
+        evt.stop_propagation();
+        cc.fetch_add(1, Ordering::SeqCst);
+    }));
+    // Down on A, up on B — no click.
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 60.0), 0);
+    assert_eq!(click_count.load(Ordering::SeqCst), 0, "Click should not fire across targets");
+}
+
+// ─── client_pos is set correctly ─────────────────────────────────────────────
+
+#[test]
+fn client_pos_set_on_events() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="box" style="width:200px;height:100px">Box</div>"#, 400.0,
+    );
+    let got_pos = Arc::new(std::sync::Mutex::new((0.0f32, 0.0f32)));
+    let gp = got_pos.clone();
+    doc.events.add("#box", HtmlEventType::MouseMove, Box::new(move |evt| {
+        *gp.lock().unwrap() = evt.client_pos;
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseMove, (80.0, 40.0), 0);
+    let pos = *got_pos.lock().unwrap();
+    assert!((pos.0 - 80.0).abs() < 1.0, "client_pos.x should be ~80, got {}", pos.0);
+    assert!((pos.1 - 40.0).abs() < 1.0, "client_pos.y should be ~40, got {}", pos.1);
+}
+
+// ─── DblClick fires on two clicks within 400ms ───────────────────────────────
+
+#[test]
+fn dblclick_fires_within_400ms() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="btn" style="width:100px;height:40px">Dbl</div>"#, 400.0,
+    );
+    let dbl_count   = Arc::new(AtomicUsize::new(0));
+    let click_count = Arc::new(AtomicUsize::new(0));
+    let dc = dbl_count.clone();
+    let cc = click_count.clone();
+    doc.events.add("#btn", HtmlEventType::DblClick, Box::new(move |_| {
+        dc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_| {
+        cc.fetch_add(1, Ordering::SeqCst);
+    }));
+    // First click
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 20.0), 0);
+    // Second click immediately after (within 400ms in tests)
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 20.0), 0);
+    assert_eq!(dbl_count.load(Ordering::SeqCst),   1, "DblClick should fire once");
+    assert_eq!(click_count.load(Ordering::SeqCst), 2, "Click should fire on both ups");
+}
+
+#[test]
+fn dblclick_does_not_fire_on_different_targets() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:40px">A</div>
+           <div id="b" style="width:100px;height:40px">B</div>"#, 400.0,
+    );
+    let dbl_count = Arc::new(AtomicUsize::new(0));
+    let dc = dbl_count.clone();
+    doc.events.add("*", HtmlEventType::DblClick, Box::new(move |_| {
+        dc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 20.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 60.0), 0); // different element
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (50.0, 60.0), 0);
+    assert_eq!(dbl_count.load(Ordering::SeqCst), 0, "DblClick should not fire on different targets");
+}
+
+// ─── Drag state machine ───────────────────────────────────────────────────────
+
+#[test]
+fn drag_fires_after_threshold() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="card" style="width:200px;height:100px">Drag me</div>"#, 400.0,
+    );
+    let start_count = Arc::new(AtomicUsize::new(0));
+    let drag_count  = Arc::new(AtomicUsize::new(0));
+    let end_count   = Arc::new(AtomicUsize::new(0));
+    let sc = start_count.clone();
+    let dc = drag_count.clone();
+    let ec = end_count.clone();
+    doc.events.add("#card", HtmlEventType::DragStart, Box::new(move |_| {
+        sc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#card", HtmlEventType::Drag, Box::new(move |_| {
+        dc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#card", HtmlEventType::DragEnd, Box::new(move |_| {
+        ec.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseDown, (100.0, 50.0), 0);
+    // Small move — below threshold, no DragStart yet.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (101.0, 50.0), 0);
+    assert_eq!(start_count.load(Ordering::SeqCst), 0, "DragStart should not fire below threshold");
+    // Move past 5px threshold.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (110.0, 50.0), 0);
+    assert_eq!(start_count.load(Ordering::SeqCst), 1, "DragStart should fire past threshold");
+    assert_eq!(drag_count.load(Ordering::SeqCst),  1, "Drag should fire on same move as DragStart");
+    // Another move — only Drag fires.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (120.0, 50.0), 0);
+    assert_eq!(start_count.load(Ordering::SeqCst), 1, "DragStart fires exactly once");
+    assert_eq!(drag_count.load(Ordering::SeqCst),  2, "Drag should fire on each move");
+    // Release.
+    doc.process_mouse_event(HtmlEventType::MouseUp, (120.0, 50.0), 0);
+    assert_eq!(end_count.load(Ordering::SeqCst), 1, "DragEnd should fire on release");
+}
+
+#[test]
+fn click_suppressed_when_drag_occurred() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="card" style="width:200px;height:100px">Drag me</div>"#, 400.0,
+    );
+    let click_count = Arc::new(AtomicUsize::new(0));
+    let cc = click_count.clone();
+    doc.events.add("#card", HtmlEventType::Click, Box::new(move |_| {
+        cc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseDown, (100.0, 50.0), 0);
+    doc.process_mouse_event(HtmlEventType::MouseMove, (110.0, 50.0), 0); // past threshold
+    doc.process_mouse_event(HtmlEventType::MouseUp,   (110.0, 50.0), 0);
+    assert_eq!(click_count.load(Ordering::SeqCst), 0, "Click should be suppressed after drag");
+}
+
+// ─── MouseEnter / MouseLeave are non-bubbling ─────────────────────────────────
+
+#[test]
+fn mouseenter_does_not_bubble() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:50px">A</div>
+           <div id="b" style="width:100px;height:50px">
+             <div id="child" style="width:80px;height:40px">child</div>
+           </div>"#, 400.0,
+    );
+    let parent_enter = Arc::new(AtomicUsize::new(0));
+    let child_enter  = Arc::new(AtomicUsize::new(0));
+    let pe = parent_enter.clone();
+    let ce = child_enter.clone();
+    doc.events.add("#b",     HtmlEventType::MouseEnter, Box::new(move |_| {
+        pe.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#child", HtmlEventType::MouseEnter, Box::new(move |_| {
+        ce.fetch_add(1, Ordering::SeqCst);
+    }));
+    // Start on A so hovered_box is set to A, then move to child inside B.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (50.0, 25.0), 0); // hover A
+    doc.dispatch_over_out((40.0, 70.0)); // move to child inside B
+    // Child should get MouseEnter; #b should NOT (non-bubbling means parent doesn't get child's Enter).
+    assert_eq!(child_enter.load(Ordering::SeqCst),  1, "Child should get MouseEnter");
+    assert_eq!(parent_enter.load(Ordering::SeqCst), 0, "Parent #b should not get MouseEnter from child (non-bubbling)");
+}
+
+#[test]
+fn mouseleave_does_not_bubble() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:50px">A</div>
+           <div id="b" style="width:100px;height:50px">B</div>"#, 400.0,
+    );
+    let a_leave      = Arc::new(AtomicUsize::new(0));
+    let parent_leave = Arc::new(AtomicUsize::new(0));
+    let al = a_leave.clone();
+    let pl = parent_leave.clone();
+    doc.events.add("#a",   HtmlEventType::MouseLeave, Box::new(move |_| {
+        al.fetch_add(1, Ordering::SeqCst);
+    }));
+    // body is ancestor of #a; MouseLeave should not bubble to it.
+    doc.events.add("body", HtmlEventType::MouseLeave, Box::new(move |_| {
+        pl.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.process_mouse_event(HtmlEventType::MouseMove, (50.0, 25.0), 0);
+    doc.dispatch_over_out((50.0, 75.0)); // move from A to B
+    assert_eq!(a_leave.load(Ordering::SeqCst),      1, "MouseLeave should fire on A");
+    assert_eq!(parent_leave.load(Ordering::SeqCst), 0, "MouseLeave should not bubble to body");
+}
+
+// ─── MouseOver / MouseOut via dispatch_over_out ───────────────────────────────
+
+#[test]
+fn mouseover_mouseout_dispatch_over_out() {
+    // Two stacked divs: A occupies y 0-50, B occupies y 50-100.
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
+        400.0,
+    );
+
+    let over_count = Arc::new(AtomicUsize::new(0));
+    let out_count  = Arc::new(AtomicUsize::new(0));
+    let oc  = over_count.clone();
+    let outc = out_count.clone();
+
+    doc.events.add("#b", HtmlEventType::MouseOver, Box::new(move |_| {
+        oc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#a", HtmlEventType::MouseOut, Box::new(move |_| {
+        outc.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    // Move onto A first so hovered_box is set to the A element.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (50.0, 25.0), 0);
+    // Now move to B — should fire MouseOut on A and MouseOver on B.
+    doc.dispatch_over_out((50.0, 75.0));
+
+    assert_eq!(over_count.load(Ordering::SeqCst), 1, "MouseOver on B should fire once");
+    assert_eq!(out_count.load(Ordering::SeqCst),  1, "MouseOut on A should fire once");
+}
+
+// ─── PointerOver / PointerOut via dispatch_over_out ──────────────────────────
+
+#[test]
+fn pointerover_pointerout_dispatch_over_out() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
+        400.0,
+    );
+
+    let pover_count = Arc::new(AtomicUsize::new(0));
+    let pout_count  = Arc::new(AtomicUsize::new(0));
+    let poc  = pover_count.clone();
+    let potc = pout_count.clone();
+
+    doc.events.add("#b", HtmlEventType::PointerOver, Box::new(move |_| {
+        poc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#a", HtmlEventType::PointerOut, Box::new(move |_| {
+        potc.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    // Hover A first, then move to B.
+    doc.process_mouse_event(HtmlEventType::MouseMove, (50.0, 25.0), 0);
+    doc.dispatch_over_out((50.0, 75.0));
+
+    assert_eq!(pover_count.load(Ordering::SeqCst), 1, "PointerOver on B should fire once");
+    assert_eq!(pout_count.load(Ordering::SeqCst),  1, "PointerOut on A should fire once");
+}
+
+// ─── FocusIn / FocusOut via process_mouse_event(MouseDown) ───────────────────
+
+#[test]
+fn focusin_focusout_on_mouse_down_focus_change() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
+        400.0,
+    );
+
+    let focusin_fired  = Arc::new(AtomicBool::new(false));
+    let focusout_fired = Arc::new(AtomicBool::new(false));
+    let fif  = focusin_fired.clone();
+    let fof  = focusout_fired.clone();
+
+    // FocusIn bubbles — stop propagation so it registers exactly once per dispatch.
+    doc.events.add("*", HtmlEventType::FocusIn, Box::new(move |evt| {
+        fif.store(true, Ordering::SeqCst);
+        evt.stop_propagation();
+    }));
+    doc.events.add("*", HtmlEventType::FocusOut, Box::new(move |evt| {
+        fof.store(true, Ordering::SeqCst);
+        evt.stop_propagation();
+    }));
+
+    // Click A — gives it focus (no previous focus, so only FocusIn should fire).
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 25.0), 0);
+    assert!(focusin_fired.load(Ordering::SeqCst),   "FocusIn should fire when A gains focus");
+    assert!(!focusout_fired.load(Ordering::SeqCst), "FocusOut should not fire when there was no previous focus");
+
+    // Reset flags.
+    focusin_fired.store(false, Ordering::SeqCst);
+
+    // Click B — focus moves from A to B: FocusOut on A then FocusIn on B.
+    doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 75.0), 0);
+    assert!(focusin_fired.load(Ordering::SeqCst),  "FocusIn should fire when B gains focus");
+    assert!(focusout_fired.load(Ordering::SeqCst), "FocusOut should fire when A loses focus");
+}
+
+// ─── PointerDown / PointerUp / PointerMove via process_mouse_event ───────────
+
+#[test]
+fn pointer_down_up_move_events() {
+    let mut doc = rhtmledit::load_html(
+        r#"<div id="box" style="width:200px;height:100px">Box</div>"#,
+        400.0,
+    );
+
+    let down_count  = Arc::new(AtomicUsize::new(0));
+    let up_count    = Arc::new(AtomicUsize::new(0));
+    let move_count  = Arc::new(AtomicUsize::new(0));
+    let dc = down_count.clone();
+    let uc = up_count.clone();
+    let mc = move_count.clone();
+
+    doc.events.add("#box", HtmlEventType::PointerDown, Box::new(move |_| {
+        dc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#box", HtmlEventType::PointerUp, Box::new(move |_| {
+        uc.fetch_add(1, Ordering::SeqCst);
+    }));
+    doc.events.add("#box", HtmlEventType::PointerMove, Box::new(move |_| {
+        mc.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    doc.process_mouse_event(HtmlEventType::PointerDown, (100.0, 50.0), 0);
+    doc.process_mouse_event(HtmlEventType::PointerMove, (110.0, 50.0), 0);
+    doc.process_mouse_event(HtmlEventType::PointerUp,   (110.0, 50.0), 0);
+
+    assert_eq!(down_count.load(Ordering::SeqCst),  1, "PointerDown should fire once");
+    assert_eq!(up_count.load(Ordering::SeqCst),    1, "PointerUp should fire once");
+    assert_eq!(move_count.load(Ordering::SeqCst),  1, "PointerMove should fire once");
+}
+
+// ─── Wheel event dispatched manually ─────────────────────────────────────────
+
+#[test]
+fn wheel_event_dispatch() {
+    let doc = parse_html(r#"<div id="scroll-area">content</div>"#);
+
+    let wheel_count = Arc::new(AtomicUsize::new(0));
+    let wc = wheel_count.clone();
+
+    doc.events.add("#scroll-area", HtmlEventType::Wheel, Box::new(move |_| {
+        wc.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    let scroll_box = query_selector(&doc.root, "#scroll-area").unwrap();
+    let mut evt = HtmlEvent::new(HtmlEventType::Wheel);
+    evt.target = scroll_box as *const HtmlBox;
+    doc.events.dispatch(&doc.root, evt);
+
+    assert_eq!(wheel_count.load(Ordering::SeqCst), 1, "Wheel event should fire once");
+}
+
+// ─── DOMContentLoaded event dispatched manually ───────────────────────────────
+
+#[test]
+fn dom_content_loaded_event_dispatch() {
+    let doc = parse_html("<p>hello</p>");
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let f = fired.clone();
+
+    doc.events.add("*", HtmlEventType::DOMContentLoaded, Box::new(move |_| {
+        f.store(true, Ordering::SeqCst);
+    }));
+
+    let evt = HtmlEvent::new(HtmlEventType::DOMContentLoaded);
+    doc.events.dispatch(&doc.root, evt);
+
+    assert!(fired.load(Ordering::SeqCst), "DOMContentLoaded should have fired");
+}
+
+// ─── Resize event dispatched manually ────────────────────────────────────────
+
+#[test]
+fn resize_event_dispatch() {
+    let doc = parse_html("<body><p>page</p></body>");
+
+    let fired = Arc::new(AtomicBool::new(false));
+    let f = fired.clone();
+
+    doc.events.add("*", HtmlEventType::Resize, Box::new(move |_| {
+        f.store(true, Ordering::SeqCst);
+    }));
+
+    let evt = HtmlEvent::new(HtmlEventType::Resize);
+    doc.events.dispatch(&doc.root, evt);
+
+    assert!(fired.load(Ordering::SeqCst), "Resize event should have fired");
 }

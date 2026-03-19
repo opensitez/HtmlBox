@@ -30,6 +30,8 @@ pub struct Renderer {
     touches:         std::collections::HashMap<u64, (f64, f64)>,
     pinch_dist:      Option<f32>,
     touch_centroid:  Option<(f32, f32)>,
+    /// Last known cursor position in physical pixels (for hover hit-testing).
+    cursor_physical: (f32, f32),
 }
 
 impl Renderer {
@@ -41,10 +43,11 @@ impl Renderer {
             zoom: 1.0,
             scale: 1.0,
             shape_buf: None,
-            ctrl_held:      false,
-            touches:        std::collections::HashMap::new(),
-            pinch_dist:     None,
-            touch_centroid: None,
+            ctrl_held:       false,
+            touches:         std::collections::HashMap::new(),
+            pinch_dist:      None,
+            touch_centroid:  None,
+            cursor_physical: (0.0, 0.0),
         }
     }
 
@@ -80,10 +83,8 @@ impl Renderer {
             WindowEvent::PanGesture { delta, .. } => {
                 if let Some(doc) = doc {
                     let zoom = self.zoom;
-                    // delta is in logical (point) units on macOS; divide by zoom to
-                    // convert from screen-space movement to document-space scroll.
                     doc.scroll_x = (doc.scroll_x - delta.x / zoom).max(0.0);
-                    doc.scroll_y -= delta.y / zoom; // renderer clamps max
+                    doc.scroll_y = (doc.scroll_y - delta.y / zoom).max(0.0);
                 }
                 true
             }
@@ -150,18 +151,31 @@ impl Renderer {
                 true
             }
 
-            // ── Plain wheel → horizontal scroll (vertical left to app) ────────
-            // Returns false so the caller can still call process_wheel_event for
-            // inner-box vertical scrolling.  Horizontal pan is always viewport-level.
+            // ── Plain wheel → dispatch Wheel event ───────────────────────────
             WindowEvent::MouseWheel { delta, .. } => {
-                let dx = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(x, _) => *x * 20.0,
-                    winit::event::MouseScrollDelta::PixelDelta(p)   => {
-                        p.x as f32 / self.scale.max(1.0)
-                    }
+                let sc = self.scale.max(1.0);
+                let (dx, dy) = match delta {
+                    // LineDelta: positive y = scroll up → negate for browser convention.
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => (*x * 20.0, -*y * 20.0),
+                    winit::event::MouseScrollDelta::PixelDelta(p)   =>
+                        (p.x as f32 / sc, -(p.y as f32 / sc)),
                 };
-                if dx.abs() > 0.5 {
-                    if let Some(doc) = doc {
+
+                if let Some(doc) = doc {
+                    let client_x = self.cursor_physical.0 / sc;
+                    let client_y = self.cursor_physical.1 / sc;
+                    let doc_pt   = (client_x / self.zoom, client_y / self.zoom + doc.scroll_y);
+                    let mut evt = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Wheel);
+                    evt.client_pos = (client_x, client_y);
+                    evt.doc_pos    = doc_pt;
+                    evt.delta_x    = dx;
+                    evt.delta_y    = dy;
+                    evt.target = crate::layout::hit_test::point_to_hit(&doc.root, doc_pt, 0)
+                        .map(|h| h.box_ptr)
+                        .unwrap_or(std::ptr::null());
+                    let events = doc.events.clone();
+                    events.dispatch(&doc.root, evt);
+                    if dx.abs() > 0.5 {
                         doc.scroll_x = (doc.scroll_x - dx / self.zoom).max(0.0);
                         return true;
                     }
@@ -185,6 +199,62 @@ impl Renderer {
                     }
                     _ => false,
                 }
+            }
+
+            // ── CursorMoved → update hover + fire MouseMove / MouseOver / MouseOut / Pointer ──
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_physical = (position.x as f32, position.y as f32);
+                if let Some(doc) = doc {
+                    let sc   = self.scale.max(1.0);
+                    let zoom = self.zoom;
+                    let sx = self.cursor_physical.0 / sc;
+                    let sy = self.cursor_physical.1 / sc;
+                    let pt = (sx / zoom, sy / zoom + doc.scroll_y);
+                    let mut redraw = doc.process_mouse_event(crate::dom::HtmlEventType::MouseMove, pt, 0);
+                    // PointerMove mirrors MouseMove
+                    redraw |= doc.process_mouse_event(crate::dom::HtmlEventType::PointerMove, pt, 0);
+                    // MouseOver / MouseOut fire when the hit target changes (bubbling Enter/Leave)
+                    redraw |= doc.dispatch_over_out(pt);
+                    return redraw;
+                }
+                false
+            }
+
+            // ── MouseInput → active state, MouseDown/Up, Pointer mirror ──────
+            WindowEvent::MouseInput { state, button, .. } => {
+                let bt = match button {
+                    winit::event::MouseButton::Left   => 0u8,
+                    winit::event::MouseButton::Middle => 1,
+                    winit::event::MouseButton::Right  => 2,
+                    _ => 0,
+                };
+                if let Some(doc) = doc {
+                    let sc   = self.scale.max(1.0);
+                    let zoom = self.zoom;
+                    let sx = self.cursor_physical.0 / sc;
+                    let sy = self.cursor_physical.1 / sc;
+                    let pt = (sx / zoom, sy / zoom + doc.scroll_y);
+                    let (mouse_type, ptr_type) = if *state == winit::event::ElementState::Pressed {
+                        (crate::dom::HtmlEventType::MouseDown, crate::dom::HtmlEventType::PointerDown)
+                    } else {
+                        (crate::dom::HtmlEventType::MouseUp, crate::dom::HtmlEventType::PointerUp)
+                    };
+                    let mut redraw = doc.process_mouse_event(mouse_type, pt, bt);
+                    redraw |= doc.process_mouse_event(ptr_type, pt, bt);
+                    return redraw;
+                }
+                false
+            }
+
+            // ── Resize → fire Resize event on document root ───────────────────
+            WindowEvent::Resized(size) => {
+                if let Some(doc) = doc {
+                    let mut evt = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Resize);
+                    evt.client_pos = (size.width as f32, size.height as f32);
+                    let events = doc.events.clone();
+                    events.dispatch(&doc.root, evt);
+                }
+                false // host still needs to call platform.resize() / re-layout
             }
 
             _ => false,
@@ -240,11 +310,14 @@ impl Renderer {
     /// `caret_info` — `Some((box_ptr, local_byte_offset))` where `box_ptr` is a raw pointer
     /// to the `HtmlBox` that owns the caret and `local_byte_offset` is the byte index within
     /// that box's flat text.  Mirrors C++ `Render(... caretPos, caretVisible, hasFocus)`.
+    /// Render one frame.
+    /// Hover/active state is updated automatically by `handle_window_event`
+    /// on `CursorMoved` and `MouseInput` events — no extra work needed here.
     pub fn render(
         &mut self,
-        doc:          &mut Document,
-        pixmap:       &mut Pixmap,
-        scale:        f32,
+        doc:    &mut Document,
+        pixmap: &mut Pixmap,
+        scale:  f32,
     ) {
         let (sel_start, sel_end) = doc.editor.sel_args();
         let caret_info = doc.editor.caret_info();
@@ -317,13 +390,18 @@ impl Renderer {
         );
 
         // ── Caret ─────────────────────────────────────────────────────────────
+        // Only draw the caret when the caret box lives inside a contenteditable
+        // element — never in read-only document content.
         if caret_visible {
             if let Some((caret_box_ptr, caret_local)) = caret_info {
-                self.draw_caret(
-                    &doc.root, pixmap,
-                    scroll_x, scroll_y,
-                    caret_box_ptr, caret_local,
-                );
+                let in_editable = crate::dom::is_in_contenteditable(&doc.root, caret_box_ptr);
+                if in_editable {
+                    self.draw_caret(
+                        &doc.root, pixmap,
+                        scroll_x, scroll_y,
+                        caret_box_ptr, caret_local,
+                    );
+                }
             }
         }
 

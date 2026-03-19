@@ -36,6 +36,10 @@ path = "examples/cascade_features.rs"
 name = "transform_filter_demo"
 path = "examples/transform_filter_demo.rs"
 
+[[example]]
+name = "event_playground"
+path = "examples/event_playground.rs"
+
 [dependencies]
 tiny-skia = "0.12"
 winit = "0.30"

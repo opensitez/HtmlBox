@@ -45,5 +45,8 @@ pub fn load_html_with_registry(
     engine.viewport_h = viewport_height;
     engine.component_registry = registry;
     engine.layout(&mut doc, viewport_width);
+    // Fire DOMContentLoaded — listeners registered before load_html can react.
+    let evt = dom::HtmlEvent::new(dom::HtmlEventType::DOMContentLoaded);
+    doc.events.dispatch(&doc.root, evt);
     doc
 }

@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Playground — rhtmledit</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* ---- Top bar ---- */
+    .topbar {
+      background: #161b22;
+      border-bottom: 2px solid #21262d;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .topbar-title {
+      color: #f0f6fc;
+      font-size: 13pt;
+      font-weight: bold;
+    }
+    .topbar-sub {
+      color: #8b949e;
+      font-size: 8pt;
+      margin-top: 2px;
+    }
+    .topbar-right {
+      color: #484f58;
+      font-size: 8pt;
+    }
+    .viewport-badge {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: #79c0ff;
+      font-size: 8pt;
+    }
+
+    /* ---- Event log bar ---- */
+    .log-bar {
+      background: #0d1117;
+      border-bottom: 1px solid #21262d;
+      padding: 6px 20px;
+      min-height: 30px;
+    }
+    .log-bar-title {
+      color: #484f58;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .log-entry {
+      font-family: monospace;
+      font-size: 8pt;
+      color: #484f58;
+      padding: 1px 0;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .log-entry-mouse  { color: #58a6ff; }
+    .log-entry-pointer { color: #3fb950; }
+    .log-entry-focus  { color: #f78166; }
+    .log-entry-key    { color: #d2a8ff; }
+    .log-entry-wheel  { color: #ffa657; }
+    .log-entry-drag   { color: #ff7b72; }
+    .log-entry-life   { color: #79c0ff; }
+
+    /* ---- Main layout ---- */
+    .main-layout {
+      display: flex;
+      min-height: 400px;
+    }
+
+    /* ---- Zones area ---- */
+    .zones-area {
+      flex: 1;
+      padding: 16px 16px 16px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-content: flex-start;
+    }
+
+    /* ---- Individual zones ---- */
+    .zone {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .zone-title {
+      color: #8b949e;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    .zone-status {
+      font-size: 8pt;
+      color: #484f58;
+      min-height: 18px;
+      margin-top: 6px;
+    }
+
+    /* ---- Hover zone ---- */
+    .hover-zone { width: 320px; }
+    .hover-boxes {
+      display: flex;
+      gap: 8px;
+    }
+    .hover-box {
+      width: 72px;
+      height: 56px;
+      border-radius: 8px;
+      border: 2px solid #30363d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8pt;
+      font-weight: bold;
+      cursor: default;
+    }
+    #hover-box-1 { background: #0c2d6b; color: #58a6ff; border-color: #1f6feb; }
+    #hover-box-2 { background: #1b3a1b; color: #3fb950; border-color: #3fb950; }
+    #hover-box-3 { background: #3d1f1f; color: #f85149; border-color: #f85149; }
+    #hover-box-4 { background: #1f1a3d; color: #d2a8ff; border-color: #8b5cf6; }
+    .hover-box-active { border-width: 3px !important; }
+
+    /* ---- Click zone ---- */
+    .click-zone { width: 280px; }
+    .click-buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .click-btn {
+      padding: 8px 14px;
+      border-radius: 7px;
+      font-family: monospace;
+      font-size: 8pt;
+      font-weight: bold;
+      cursor: pointer;
+      border: 2px solid transparent;
+    }
+    #btn-click    { background: #1f6feb; color: #ffffff; }
+    #btn-dblclick { background: #d29922; color: #0d1117; }
+    #btn-ctx      { background: #8b5cf6; color: #ffffff; }
+    .click-btn-flash { border-color: #ffffff !important; }
+
+    /* ---- Drag zone ---- */
+    .drag-zone { width: 320px; }
+    .drag-cards {
+      display: flex;
+      gap: 8px;
+    }
+    .drag-card {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-width: 82px;
+      text-align: center;
+      font-size: 8pt;
+      cursor: grab;
+    }
+    .drag-card-icon {
+      font-size: 16pt;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .drag-card-label { color: #8b949e; }
+    .drag-card-active {
+      border-color: #ff7b72 !important;
+      background: #2d1f1f !important;
+    }
+
+    /* ---- Keyboard zone ---- */
+    .key-zone { width: 280px; }
+    .key-display {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 10px 12px;
+      min-height: 54px;
+      font-size: 9pt;
+      color: #484f58;
+    }
+    .key-display-active { color: #d2a8ff; border-color: #8b5cf6 !important; }
+    .key-pressed {
+      display: inline-block;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 2px 8px;
+      margin: 2px;
+      font-size: 9pt;
+      font-weight: bold;
+      color: #d2a8ff;
+    }
+
+    /* ---- Wheel zone ---- */
+    .wheel-zone { width: 240px; }
+    .wheel-display {
+      background: #0d1117;
+      border: 2px solid #21262d;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .wheel-value {
+      font-size: 22pt;
+      font-weight: bold;
+      color: #ffa657;
+    }
+    .wheel-bar-wrap {
+      background: #21262d;
+      border-radius: 4px;
+      height: 8px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .wheel-bar {
+      height: 8px;
+      border-radius: 4px;
+      background: #ffa657;
+      width: 50%;
+    }
+    #wheel-delta-label {
+      color: #484f58;
+      font-size: 8pt;
+      margin-top: 4px;
+    }
+
+    /* ---- Focus zone ---- */
+    .focus-zone { width: 280px; }
+    .focus-items {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .focus-item {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 8pt;
+      cursor: pointer;
+    }
+    .focus-item-focused {
+      border-color: #f78166 !important;
+      background: #2d1a18 !important;
+      color: #f78166 !important;
+    }
+    .focus-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 4px;
+      background: #30363d;
+      margin-right: 6px;
+    }
+    .focus-dot-on { background: #f78166 !important; }
+
+    /* ---- Pointer zone ---- */
+    .pointer-zone { width: 280px; }
+    .pointer-canvas {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      height: 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .pointer-dot {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      background: #3fb950;
+      border: 2px solid #7ee787;
+      top: 33px;
+      left: 50%;
+    }
+    .pointer-trail {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 3px;
+      background: #3fb950;
+      opacity: 0.3;
+    }
+
+    /* ---- Sidebar stats ---- */
+    .sidebar {
+      width: 200px;
+      background: #161b22;
+      border-left: 1px solid #21262d;
+      padding: 14px 12px;
+      flex-shrink: 0;
+    }
+    .sidebar-title {
+      color: #8b949e;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+      font-weight: bold;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .stat-label {
+      font-size: 8pt;
+      color: #8b949e;
+    }
+    .stat-count {
+      font-size: 9pt;
+      font-weight: bold;
+      color: #484f58;
+      min-width: 28px;
+      text-align: right;
+    }
+    .stat-count-mouse   { color: #58a6ff; }
+    .stat-count-pointer { color: #3fb950; }
+    .stat-count-focus   { color: #f78166; }
+    .stat-count-key     { color: #d2a8ff; }
+    .stat-count-wheel   { color: #ffa657; }
+    .stat-count-drag    { color: #ff7b72; }
+    .stat-count-life    { color: #79c0ff; }
+    .stat-count-total   { color: #f0f6fc; font-size: 11pt; }
+    .stat-total-row {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 2px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* ---- Event log panel ---- */
+    .log-panel {
+      background: #0d1117;
+      border-top: 1px solid #21262d;
+      padding: 10px 20px;
+    }
+    .log-panel-title {
+      color: #484f58;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    #event-log {
+      font-family: monospace;
+      font-size: 8pt;
+      min-height: 140px;
+      max-height: 140px;
+      overflow: hidden;
+    }
+    .log-line {
+      padding: 2px 0;
+      border-bottom: 1px solid #161b22;
+      color: #484f58;
+    }
+    .log-tag-mouse   { color: #58a6ff; font-weight: bold; }
+    .log-tag-pointer { color: #3fb950; font-weight: bold; }
+    .log-tag-focus   { color: #f78166; font-weight: bold; }
+    .log-tag-key     { color: #d2a8ff; font-weight: bold; }
+    .log-tag-wheel   { color: #ffa657; font-weight: bold; }
+    .log-tag-drag    { color: #ff7b72; font-weight: bold; }
+    .log-tag-life    { color: #79c0ff; font-weight: bold; }
+
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div>
+    <div class="topbar-title">Event Playground</div>
+    <div class="topbar-sub">rhtmledit — interactive browser event demo</div>
+  </div>
+  <div class="topbar-right">
+    Viewport: <span class="viewport-badge" id="viewport-size">1200x800</span>
+  </div>
+</div>
+
+<!-- Main layout: zones + sidebar -->
+<div class="main-layout">
+
+  <!-- Zones -->
+  <div class="zones-area">
+
+    <!-- Hover zone -->
+    <div class="zone hover-zone" id="zone-hover">
+      <div class="zone-title">Hover Zone — MouseOver / MouseOut / Enter / Leave</div>
+      <div class="hover-boxes">
+        <div class="hover-box" id="hover-box-1">BLUE</div>
+        <div class="hover-box" id="hover-box-2">GREEN</div>
+        <div class="hover-box" id="hover-box-3">RED</div>
+        <div class="hover-box" id="hover-box-4">PURPLE</div>
+      </div>
+      <div class="zone-status" id="hover-status">Move mouse over boxes...</div>
+    </div>
+
+    <!-- Click zone -->
+    <div class="zone click-zone" id="zone-click">
+      <div class="zone-title">Click Zone — Click / DblClick / ContextMenu</div>
+      <div class="click-buttons">
+        <div class="click-btn" id="btn-click">Click</div>
+        <div class="click-btn" id="btn-dblclick">DblClick</div>
+        <div class="click-btn" id="btn-ctx">Right-Click</div>
+      </div>
+      <div class="zone-status" id="click-status">Click a button...</div>
+    </div>
+
+    <!-- Drag zone -->
+    <div class="zone drag-zone" id="zone-drag">
+      <div class="zone-title">Drag Zone — DragStart / Drag / DragEnd</div>
+      <div class="drag-cards">
+        <div class="drag-card" id="drag-card-1">
+          <span class="drag-card-icon">&#x25A0;</span>
+          <span class="drag-card-label">Alpha</span>
+        </div>
+        <div class="drag-card" id="drag-card-2">
+          <span class="drag-card-icon">&#x25B2;</span>
+          <span class="drag-card-label">Beta</span>
+        </div>
+        <div class="drag-card" id="drag-card-3">
+          <span class="drag-card-icon">&#x25CF;</span>
+          <span class="drag-card-label">Gamma</span>
+        </div>
+      </div>
+      <div class="zone-status" id="drag-status">Click and drag a card...</div>
+    </div>
+
+    <!-- Keyboard zone -->
+    <div class="zone key-zone" id="zone-key">
+      <div class="zone-title">Keyboard Zone — KeyDown / KeyUp</div>
+      <div class="key-display" id="key-display">
+        <span style="color: #484f58;">Press any key...</span>
+      </div>
+      <div class="zone-status" id="key-status">Waiting for keypress...</div>
+    </div>
+
+    <!-- Wheel zone -->
+    <div class="zone wheel-zone" id="zone-wheel">
+      <div class="zone-title">Wheel Zone — Wheel / Scroll</div>
+      <div class="wheel-display">
+        <div class="wheel-value" id="wheel-count">0</div>
+        <div style="color: #8b949e; font-size: 7pt;">scroll events</div>
+        <div class="wheel-bar-wrap">
+          <div class="wheel-bar" id="wheel-bar"></div>
+        </div>
+        <div id="wheel-delta-label">delta: 0.0</div>
+      </div>
+    </div>
+
+    <!-- Focus zone -->
+    <div class="zone focus-zone" id="zone-focus">
+      <div class="zone-title">Focus Zone — Focus / Blur / FocusIn / FocusOut</div>
+      <div class="focus-items">
+        <div class="focus-item" id="focus-item-1">
+          <span class="focus-dot" id="focus-dot-1"></span>
+          Input Field Alpha
+        </div>
+        <div class="focus-item" id="focus-item-2">
+          <span class="focus-dot" id="focus-dot-2"></span>
+          Input Field Beta
+        </div>
+        <div class="focus-item" id="focus-item-3">
+          <span class="focus-dot" id="focus-dot-3"></span>
+          Input Field Gamma
+        </div>
+      </div>
+      <div class="zone-status" id="focus-status">Click an item to focus...</div>
+    </div>
+
+    <!-- Pointer zone -->
+    <div class="zone pointer-zone" id="zone-pointer">
+      <div class="zone-title">Pointer Zone — PointerDown / PointerUp / PointerMove</div>
+      <div class="pointer-canvas" id="pointer-canvas">
+        <div class="pointer-dot" id="pointer-dot"></div>
+      </div>
+      <div class="zone-status" id="pointer-status">Move pointer over this zone...</div>
+    </div>
+
+  </div>
+
+  <!-- Sidebar stats -->
+  <div class="sidebar">
+    <div class="sidebar-title">Event Stats</div>
+
+    <div class="stat-row">
+      <span class="stat-label">Mouse</span>
+      <span class="stat-count stat-count-mouse" id="stat-mouse">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Pointer</span>
+      <span class="stat-count stat-count-pointer" id="stat-pointer">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Focus</span>
+      <span class="stat-count stat-count-focus" id="stat-focus">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Keyboard</span>
+      <span class="stat-count stat-count-key" id="stat-key">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Wheel</span>
+      <span class="stat-count stat-count-wheel" id="stat-wheel">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Drag</span>
+      <span class="stat-count stat-count-drag" id="stat-drag">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Lifecycle</span>
+      <span class="stat-count stat-count-life" id="stat-life">0</span>
+    </div>
+
+    <div class="stat-total-row">
+      <span class="stat-label" style="color: #f0f6fc; font-weight: bold;">TOTAL</span>
+      <span class="stat-count stat-count-total" id="stat-total">0</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Event log panel -->
+<div class="log-panel">
+  <div class="log-panel-title">Live Event Log (last 20)</div>
+  <div id="event-log">
+    <div class="log-line" id="log-0"><span class="log-tag-life">[DOMContentLoaded]</span> document ready</div>
+    <div class="log-line" id="log-1"><span class="log-tag-life">[Resize]</span> viewport initialized</div>
+    <div class="log-line" id="log-2" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-3" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-4" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-5" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-6" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-7" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-8" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-9" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-10" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-11" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-12" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-13" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-14" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-15" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-16" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-17" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-18" style="color: #484f58;">...</div>
+    <div class="log-line" id="log-19" style="color: #484f58;">...</div>
+  </div>
+</div>
+
+</body>
+</html>
