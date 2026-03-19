@@ -367,13 +367,63 @@ pub fn layout_grid(
         }
     }
 
-    // Auto-place items without explicit position
+    // Step 2 (CSS Grid spec §8.5): items with a definite row but auto column.
+    // They are locked to their specified row; only the column is auto-placed.
+    // The column cursor advances independently per row-start key.
+    {
+        let mut row_cursors: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ii, &idx) in item_indices.iter().enumerate() {
+            let child = &node.children[idx];
+            if is_explicitly_placed(child, &area_map) { continue; }
+            if child.style.grid_row_start <= 0 { continue; } // not row-locked
+
+            let span_col = get_span_col(child);
+            let rs = (child.style.grid_row_start as usize).saturating_sub(1);
+            let re_raw = child.style.grid_row_end;
+            let re = if re_raw > 0 {
+                (re_raw as usize).saturating_sub(1).max(rs + 1)
+            } else if re_raw < 0 {
+                rs + (-re_raw) as usize
+            } else {
+                rs + get_span_row(child)
+            };
+
+            let mut col = row_cursors.get(&rs).copied().unwrap_or(0);
+            loop {
+                let needed = col + span_col;
+                if needed > max_col { max_col = needed; }
+                ensure_row(&mut occ, re, max_col);
+                let mut fits = true;
+                'chk2: for r in rs..re {
+                    ensure_row(&mut occ, r, max_col);
+                    for c in col..col + span_col {
+                        if c < occ[r].len() && occ[r][c] { fits = false; break 'chk2; }
+                    }
+                }
+                if fits { break; }
+                col += 1;
+            }
+
+            placements[ii] = (col, col + span_col, rs, re);
+            for r in rs..re {
+                ensure_row(&mut occ, r, max_col);
+                for c in col..col + span_col {
+                    if c < occ[r].len() { occ[r][c] = true; }
+                }
+            }
+            if re > max_row { max_row = re; }
+            row_cursors.insert(rs, col + span_col);
+        }
+    }
+
+    // Step 3: Auto-place remaining (auto row AND auto column)
     let mut auto_row = 0usize;
     let mut auto_col = 0usize;
 
     for (ii, &idx) in item_indices.iter().enumerate() {
         let child = &node.children[idx];
         if is_explicitly_placed(child, &area_map) { continue; }
+        if child.style.grid_row_start > 0 { continue; } // handled in step 2
 
         let span_col = get_span_col(child);
         let span_row = get_span_row(child);
@@ -518,7 +568,30 @@ pub fn layout_grid(
         let child = &mut node.children[idx];
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
-        engine.layout_box(child, span_w, content_x, 0.0, font_px, root_font_px);
+
+        // Check for column-subgrid child — must use layout_grid_subgrid so children are
+        // placed across the inherited columns instead of being stacked in a single fraction.
+        // Row-subgrid is excluded: its row heights come from the parent (not measured here).
+        let child_is_col_subgrid = child.style.subgrid_columns
+            && !child.style.subgrid_rows
+            && matches!(child.style.display, Display::Grid | Display::InlineGrid);
+
+        if child_is_col_subgrid {
+            let sctx = SubgridContext {
+                col_px:      col_px.clone(),
+                col_x:       col_x.clone(),
+                col_gap,
+                row_heights: vec![],   // not yet known; subgrid measures its own rows
+                row_y:       vec![],
+                row_gap,
+                col_span:    (cs, ce),
+                row_span:    (rs, re),
+            };
+            layout_grid_subgrid(engine, child, &crbox, &sctx, content_x, 0.0, font_px, root_font_px);
+        } else {
+            engine.layout_box(child, span_w, content_x, 0.0, font_px, root_font_px);
+        }
+
         let h = child.border_rect.h + crbox.margin_top + crbox.margin_bottom;
         // Distribute height across spanned rows
         let row_span = (re - rs).max(1);
@@ -734,8 +807,9 @@ fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<St
     if !child.style.grid_area.is_empty() && area_map.contains_key(&child.style.grid_area) {
         return true;
     }
-    // Require BOTH axes to be specified (matching C++)
-    child.style.grid_column_start != 0 && child.style.grid_row_start != 0
+    // Require BOTH axes to have explicit line numbers (positive = line, negative = span, 0 = auto).
+    // A span (negative) is NOT an explicit placement — it drives auto-placement like auto.
+    child.style.grid_column_start > 0 && child.style.grid_row_start > 0
 }
 
 /// Resolve placement to (col_start, col_end, row_start, row_end), all 0-based.

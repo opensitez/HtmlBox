@@ -275,3 +275,90 @@ fn subgrid_multi_row_alignment() {
     // Row 2 should be below row 1
     assert!(r2a.border_rect.y > r1a.border_rect.y, "r2 must be below r1");
 }
+
+// ── Placement algorithm regression tests ─────────────────────────────────────
+
+#[test]
+fn span_only_column_is_not_explicitly_placed() {
+    // `grid-column: span 1` must NOT count as an explicit column placement.
+    // Without this fix all items were treated as explicitly placed and stacked
+    // on top of each other at (col=0, row=0).
+    // Two items with `grid-column: span 1` in a 2-column grid should end up
+    // side-by-side (different x positions), not overlapping.
+    let doc = parse_and_layout(
+        r#"<html><body style="margin:0">
+          <div style="display:grid; grid-template-columns:100px 100px;
+                      column-gap:0; width:200px; margin:0">
+            <div id="a" style="grid-column:span 1">A</div>
+            <div id="b" style="grid-column:span 1">B</div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let a = find_by_id(&doc.root, "a").expect("a");
+    let b = find_by_id(&doc.root, "b").expect("b");
+    assert!((a.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.border_rect.x);
+    assert!((b.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.border_rect.x);
+    // Same row
+    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "must be same row");
+}
+
+#[test]
+fn span_col_with_four_items_wraps_to_two_rows() {
+    // Four items each `grid-column: span 1` in a 2-column grid.
+    // Before the fix all four were placed at (0,0) and only the last was visible.
+    // After the fix: items 1&2 in row 0, items 3&4 in row 1.
+    let doc = parse_and_layout(
+        r#"<html><body style="margin:0">
+          <div style="display:grid; grid-template-columns:100px 100px;
+                      column-gap:0; width:200px; margin:0">
+            <div id="a" style="grid-column:span 1; height:50px">A</div>
+            <div id="b" style="grid-column:span 1; height:50px">B</div>
+            <div id="c" style="grid-column:span 1; height:50px">C</div>
+            <div id="d" style="grid-column:span 1; height:50px">D</div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let a = find_by_id(&doc.root, "a").expect("a");
+    let b = find_by_id(&doc.root, "b").expect("b");
+    let c = find_by_id(&doc.root, "c").expect("c");
+    let d = find_by_id(&doc.root, "d").expect("d");
+    // Row 0: a at x=0, b at x=100
+    assert!((a.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.border_rect.x);
+    assert!((b.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.border_rect.x);
+    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "a,b same row");
+    // Row 1: c at x=0, d at x=100, both below row 0
+    assert!((c.border_rect.x -   0.0).abs() < 2.0, "c.x={}", c.border_rect.x);
+    assert!((d.border_rect.x - 100.0).abs() < 2.0, "d.x={}", d.border_rect.x);
+    assert!(c.border_rect.y > a.border_rect.y, "c must be below a");
+    assert!((c.border_rect.y - d.border_rect.y).abs() < 2.0, "c,d same row");
+}
+
+#[test]
+fn row_locked_auto_column_step2_placement() {
+    // CSS Grid spec §8.5 step 2: items with a definite row (`grid-row: 1/2`)
+    // but auto column should be locked to that row and auto-placed only in the
+    // column axis — creating implicit columns if the explicit ones are full.
+    // Two items with `grid-row: 1/2; grid-column: span 1` in a 1-column grid:
+    // item 1 → col 1 (explicit), item 2 → col 2 (implicit).
+    // Before the fix both were treated as explicitly placed and stacked at (0,0).
+    let doc = parse_and_layout(
+        r#"<html><body style="margin:0">
+          <div style="display:grid; grid-template-columns:100px;
+                      column-gap:0; width:300px; margin:0">
+            <div id="a" style="grid-row:1/2; grid-column:span 1; height:40px">A</div>
+            <div id="b" style="grid-row:1/2; grid-column:span 1; height:40px">B</div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let a = find_by_id(&doc.root, "a").expect("a");
+    let b = find_by_id(&doc.root, "b").expect("b");
+    // Both locked to row 0 → same y
+    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0,
+        "both must be in the same row; a.y={} b.y={}", a.border_rect.y, b.border_rect.y);
+    // Must be in different columns → different x
+    assert!((b.border_rect.x - a.border_rect.x).abs() > 50.0,
+        "must be in different columns; a.x={} b.x={}", a.border_rect.x, b.border_rect.x);
+}
