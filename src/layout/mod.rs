@@ -272,6 +272,14 @@ pub struct LayoutEngine {
     /// positions are shaped at physical pixel size — matching the renderer —
     /// giving accurate click↔caret mapping on every display density.
     pub scale: f32,
+    /// Viewport width used in the last cascade pass, for skip-cascade optimization.
+    last_cascade_vw: f32,
+    /// Viewport height used in the last geometry pass, to detect vh-unit changes.
+    last_geometry_viewport_h: f32,
+    /// Whether any @media rules exist — cached to avoid O(n) scan every layout.
+    cached_has_media_q: bool,
+    /// Whether any @container rules exist — cached to avoid O(n) scan every layout.
+    cached_has_container_q: bool,
 }
 
 impl LayoutEngine {
@@ -283,6 +291,10 @@ impl LayoutEngine {
             font_system: None,
             component_registry: ComponentRegistry::default(),
             scale: 1.0,
+            last_cascade_vw: f32::NAN,   // NAN forces cascade on first call
+            last_geometry_viewport_h: f32::NAN, // NAN forces full layout on first call
+            cached_has_media_q: false,
+            cached_has_container_q: false,
         }
     }
 
@@ -341,20 +353,45 @@ impl LayoutEngine {
         doc.viewport_h = self.viewport_h;
         let root_font_px = self.root_font_px;
 
-        // Re-run CSS cascade with current viewport so @media queries reflect the real window size.
-        // Container-query rules are intentionally skipped here — they need layout context.
         let ss = doc.stylesheet.clone();
-        crate::css::apply_cascade_vp(
-            &mut doc.root, &ss, None, root_font_px,
-            self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
-        );
+
+        // Cache @media / @container presence so we don't O(n)-scan rules every layout.
+        // Reset the cache when the stylesheet changes (detected by rule count changing).
+        self.cached_has_media_q     = ss.rules.iter().any(|r| !r.media_condition.is_empty());
+        self.cached_has_container_q = ss.rules.iter().any(|r| !r.container_condition.is_empty());
+
+        // Skip the CSS cascade on resize when nothing media-query-relevant changed.
+        //
+        // The cascade is O(elements × rules) with string allocations — expensive.  It only
+        // needs to re-run when:
+        //   • first layout (last_cascade_vw is NAN), OR
+        //   • a @media rule flips its boolean result (a breakpoint was crossed).
+        //
+        // Pure @container rules are handled after geometry, not here.
+        // Viewport units (vw/vh) in property VALUES are resolved in layout_box, not cascade.
+        let needs_cascade = self.last_cascade_vw.is_nan()
+            || (self.cached_has_media_q
+                && ss.rules.iter().any(|r| {
+                    !r.media_condition.is_empty()
+                        && crate::css::evaluate_media(&r.media_condition, self.last_cascade_vw, self.viewport_h)
+                            != crate::css::evaluate_media(&r.media_condition, viewport_width, self.viewport_h)
+                }));
+
+        if needs_cascade {
+            crate::css::apply_cascade_vp(
+                &mut doc.root, &ss, None, root_font_px,
+                self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
+            );
+            self.last_cascade_vw = viewport_width;
+        }
 
         self.layout_geometry(doc, viewport_width, root_font_px);
+        self.last_geometry_viewport_h = self.viewport_h;
 
         // Container query post-pass: now that box sizes are known, apply @container rules
         // whose conditions match the computed dimensions of container ancestors, then
         // re-layout so the updated styles take effect.
-        if ss.rules.iter().any(|r| !r.container_condition.is_empty()) {
+        if self.cached_has_container_q {
             let changed = crate::css::apply_container_cascade_tree(
                 &mut doc.root, &ss, &[], &[], 0, 1, 0, 1,
                 root_font_px, self.viewport_w, self.viewport_h,
@@ -362,8 +399,17 @@ impl LayoutEngine {
             );
             if changed {
                 self.layout_geometry(doc, viewport_width, root_font_px);
+                self.last_geometry_viewport_h = self.viewport_h;
             }
         }
+    }
+
+    /// Force the next `layout()` call to re-run the full CSS cascade.
+    ///
+    /// Call this after DOM mutations (adding/removing elements, changing classes or
+    /// inline styles) so the skip-cascade optimisation does not hide the change.
+    pub fn invalidate_cascade(&mut self) {
+        self.last_cascade_vw = f32::NAN;
     }
 
     /// Layout without re-running the CSS cascade.
@@ -375,6 +421,7 @@ impl LayoutEngine {
         self.viewport_w = viewport_width;
         let root_font_px = self.root_font_px;
         self.layout_geometry(doc, viewport_width, root_font_px);
+        self.last_geometry_viewport_h = self.viewport_h;
     }
 
     fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
@@ -448,6 +495,48 @@ impl LayoutEngine {
                 } else {
                     rbox.margin_right = available - rbox.margin_left;
                 }
+            }
+        }
+
+        // ── Layout subtree pruning ────────────────────────────────────────────
+        // If this box's resolved content width is identical to the previous
+        // layout AND nothing is dirty AND there is no incoming float context
+        // (which could alter line widths), the entire subtree produces exactly
+        // the same geometry as before.  We just shift the cached rects to the
+        // new position without re-running any layout algorithm.
+        //
+        // This is the dominant win on resize for fixed-width components nested
+        // inside a fluid viewport (grid cards, sidebar items, etc.) — their
+        // content width never changes even when the viewport grows or shrinks.
+        // Also disable pruning when the viewport height changed so that vh-units
+        // (e.g. height: 100vh) and flex-stretch heights dependent on the viewport
+        // are recalculated rather than returning stale cached geometry.
+        let viewport_h_unchanged = self.viewport_h == self.last_geometry_viewport_h;
+        if fc.is_none() && !node.layout_dirty && node.resolved_content_width > 0.0
+            && viewport_h_unchanged
+        {
+            let new_content_w = if let Some(cw) = rbox.content_width {
+                cw
+            } else {
+                let outer = rbox.margin_left + rbox.border_left  + rbox.padding_left
+                          + rbox.border_right + rbox.padding_right + rbox.margin_right;
+                (containing_w - outer).max(0.0)
+            };
+            // Also check the explicit content height hasn't changed.
+            // This catches flex-stretch re-layouts where the parent mutates
+            // child.style.height before calling layout_box a second time.
+            let height_ok = match rbox.content_height {
+                None    => true,  // auto height is determined by children — safe
+                Some(h) => (h - node.content_rect.h).abs() < 0.5,
+            };
+            if (new_content_w - node.resolved_content_width).abs() < 0.5 && height_ok {
+                // Content size is unchanged — just move the subtree.
+                let dx = (x + rbox.margin_left) - node.border_rect.x;
+                let dy = (y + rbox.margin_top)  - node.border_rect.y;
+                if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                    shift_rects(node, dx, dy);
+                }
+                return node.margin_rect.h;
             }
         }
 

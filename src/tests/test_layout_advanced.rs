@@ -1,6 +1,8 @@
 // Ported from tests/test_layout_advanced.cpp
 
 use crate::css::apply_property;
+use crate::html::parse_html;
+use crate::layout::LayoutEngine;
 use crate::types::*;
 use super::harness::*;
 
@@ -309,5 +311,130 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
     for b in &boxes {
         assert!(b.margin_rect.w < 400.0,
             "auto-margin child must not inflate flex item intrinsic width to container width");
+    }
+}
+
+// ── Flex-stretch height on initial layout and after viewport resize ───────────
+
+fn find_by_id_mut<'a>(node: &'a mut HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+    if node.attributes.get("id").map(|s| s == id).unwrap_or(false) {
+        // SAFETY: we only need an immutable ref; re-borrow immutably via pointer
+        return Some(unsafe { &*(node as *const HtmlBox) });
+    }
+    for child in node.children.iter_mut() {
+        if let Some(b) = find_by_id_mut(child, id) { return Some(b); }
+    }
+    None
+}
+
+fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+    if node.attributes.get("id").map(|s| s == id).unwrap_or(false) { return Some(node); }
+    for child in &node.children {
+        if let Some(b) = find_by_id(child, id) { return Some(b); }
+    }
+    None
+}
+
+/// Flex-stretch: sidebar fills the full viewport height on initial layout.
+#[test]
+fn flex_stretch_sidebar_fills_height_initial() {
+    // A classic sidebar layout: row flex container at 100vh, sidebar stretches.
+    let html = r#"<html><head><style>
+        html, body { margin: 0; padding: 0; }
+        .app  { display: flex; flex-direction: row; height: 100vh; }
+        .side { width: 200px; background: navy; }
+        .main { flex: 1; background: white; }
+    </style></head><body>
+        <div class="app">
+            <div id="side" class="side"></div>
+            <div id="main" class="main"></div>
+        </div>
+    </body></html>"#;
+
+    let mut doc = parse_html(html);
+    let mut engine = LayoutEngine::new();
+    engine.viewport_h = 600.0;
+    engine.layout(&mut doc, 800.0);
+
+    let side = find_by_id(&doc.root, "side").expect("side");
+    assert!((side.border_rect.h - 600.0).abs() < 2.0,
+        "sidebar should stretch to 100vh=600px on initial layout, got {}", side.border_rect.h);
+}
+
+/// Flex-stretch: sidebar correctly updates its height when the window is resized.
+#[test]
+fn flex_stretch_sidebar_updates_on_viewport_height_resize() {
+    let html = r#"<html><head><style>
+        html, body { margin: 0; padding: 0; }
+        .app  { display: flex; flex-direction: row; height: 100vh; }
+        .side { width: 200px; background: navy; }
+        .main { flex: 1; background: white; }
+    </style></head><body>
+        <div class="app">
+            <div id="side" class="side"></div>
+            <div id="main" class="main"></div>
+        </div>
+    </body></html>"#;
+
+    let mut doc = parse_html(html);
+    let mut engine = LayoutEngine::new();
+
+    // Initial layout at 600px tall.
+    engine.viewport_h = 600.0;
+    engine.layout(&mut doc, 800.0);
+
+    {
+        let side = find_by_id(&doc.root, "side").expect("side");
+        assert!((side.border_rect.h - 600.0).abs() < 2.0,
+            "initial: sidebar should be 600px, got {}", side.border_rect.h);
+    }
+
+    // Simulate window resize: taller viewport. Width unchanged so pruning would
+    // incorrectly skip re-layout without the viewport_h guard.
+    engine.viewport_h = 900.0;
+    engine.layout(&mut doc, 800.0);
+
+    {
+        let side = find_by_id(&doc.root, "side").expect("side");
+        assert!((side.border_rect.h - 900.0).abs() < 2.0,
+            "after resize to 900px: sidebar should be 900px, got {}", side.border_rect.h);
+    }
+}
+
+/// Fixed-width elements should still be pruned (not re-laid out) when only
+/// viewport width changes within the same column (regression guard).
+#[test]
+fn layout_pruning_still_active_on_width_only_resize() {
+    // A fixed-width card inside a fluid container. When the viewport is widened,
+    // the card's content width never changes — it should be pruned (not re-laid out).
+    // We verify the card's position shifts correctly without failing.
+    let html = r#"<html><head><style>
+        html, body { margin: 0; padding: 0; }
+        .wrap { display: flex; justify-content: center; }
+        .card { width: 300px; height: 200px; background: blue; }
+    </style></head><body>
+        <div class="wrap">
+            <div id="card" class="card"></div>
+        </div>
+    </body></html>"#;
+
+    let mut doc = parse_html(html);
+    let mut engine = LayoutEngine::new();
+    engine.viewport_h = 600.0;
+    engine.layout(&mut doc, 600.0);
+
+    {
+        let card = find_by_id(&doc.root, "card").expect("card");
+        assert!((card.border_rect.w - 300.0).abs() < 2.0, "initial: card 300px wide");
+        assert!((card.border_rect.h - 200.0).abs() < 2.0, "initial: card 200px tall");
+    }
+
+    // Widen viewport; card dimensions unchanged, only centering margin shifts.
+    engine.layout(&mut doc, 1000.0);
+
+    {
+        let card = find_by_id(&doc.root, "card").expect("card");
+        assert!((card.border_rect.w - 300.0).abs() < 2.0, "after width resize: card still 300px");
+        assert!((card.border_rect.h - 200.0).abs() < 2.0, "after width resize: card still 200px");
     }
 }

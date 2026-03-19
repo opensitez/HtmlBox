@@ -3730,6 +3730,32 @@ pub fn apply_container_cascade_tree(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
 ) -> bool {
+    // Create owned Vecs once at the top level; the recursive inner function
+    // reuses them via push/pop so no per-node heap allocation is needed.
+    let mut cs  = container_stack.to_vec();
+    let mut anc = ancestors.to_vec();
+    apply_container_cascade_inner(
+        node, stylesheet, &mut cs, &mut anc,
+        child_index, sibling_count, type_child_index, type_sibling_count,
+        root_font_px, vw, vh, focused_box, keyboard_focus,
+    )
+}
+
+fn apply_container_cascade_inner(
+    node: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    container_stack: &mut Vec<ContainerEntry>,
+    ancestors: &mut Vec<AncestorInfo>,
+    child_index: usize,
+    sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+    root_font_px: f32,
+    vw: f32,
+    vh: f32,
+    focused_box: *const crate::types::HtmlBox,
+    keyboard_focus: bool,
+) -> bool {
     use crate::types::ContainerType;
 
     let mut changed = false;
@@ -3777,50 +3803,68 @@ pub fn apply_container_cascade_tree(
                     apply_property(&mut node.style, prop, &resolved);
                 }
             }
+            // Mark layout dirty so the subtree pruning doesn't suppress the
+            // geometry changes caused by these newly applied container rules.
+            node.layout_dirty = true;
         }
     }
 
     // Update container stack: if this element is a container, push it
-    let mut new_stack = container_stack.to_vec();
-    if !matches!(node.style.container_type, ContainerType::Normal) {
-        new_stack.push(ContainerEntry {
+    // Push this element as a container ancestor (if it qualifies), recurse, pop.
+    let pushed_container = !matches!(node.style.container_type, ContainerType::Normal);
+    if pushed_container {
+        container_stack.push(ContainerEntry {
             width:  node.content_rect.w,
             height: node.content_rect.h,
             name:   node.style.container_name.clone(),
         });
     }
 
-    // Build ancestor info for children (mirrors apply_cascade_inner)
-    let my_info = AncestorInfo {
+    let n_children = node.children.len();
+    if n_children == 0 {
+        if pushed_container { container_stack.pop(); }
+        return changed;
+    }
+
+    // Push this element as an ancestor for children (mirrors apply_cascade_inner).
+    ancestors.push(AncestorInfo {
         tag:              node.tag.clone(),
         attributes:       node.attributes.clone(),
         child_index,
         sibling_count,
         type_child_index,
         type_sibling_count,
-    };
-    let mut child_ancestors = ancestors.to_vec();
-    child_ancestors.push(my_info);
+    });
 
-    let n_children = node.children.len();
-    if n_children == 0 { return changed; }
-
+    // O(n) type counting (was O(n²) with per-child filter passes).
     let child_tags: Vec<String> = node.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
-    let type_counts: Vec<usize> = child_tags.iter().enumerate().map(|(i, tag)| {
-        child_tags[..=i].iter().filter(|t| *t == tag).count() - 1
+    let mut type_running: HashMap<&str, usize> = HashMap::new();
+    let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
+        let slot = type_running.entry(tag.as_str()).or_insert(0);
+        let idx  = *slot;
+        *slot += 1;
+        idx
     }).collect();
     let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
-        child_tags.iter().filter(|t| *t == tag).count()
+        *type_running.get(tag.as_str()).unwrap_or(&0)
     }).collect();
 
     for (i, child) in node.children.iter_mut().enumerate() {
-        let c = apply_container_cascade_tree(
-            child, stylesheet, &new_stack, &child_ancestors,
+        let c = apply_container_cascade_inner(
+            child, stylesheet, container_stack, ancestors,
             i, n_children, type_counts[i], type_totals[i],
             root_font_px, vw, vh, focused_box, keyboard_focus,
         );
         if c { changed = true; }
     }
+
+    // If any descendant changed, mark this node dirty too.
+    // This prevents the layout subtree pruning from skipping an ancestor whose
+    // content width is unchanged while a child still needs re-layout.
+    if changed { node.layout_dirty = true; }
+
+    ancestors.pop();
+    if pushed_container { container_stack.pop(); }
     changed
 }
 
@@ -3846,7 +3890,11 @@ pub fn apply_cascade_vp(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
 ) {
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &[], 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus);
+    // A single Vec is reused for the entire tree traversal (push/pop per node)
+    // instead of cloning the ancestor list at every level — O(depth) allocations
+    // instead of O(nodes × depth).
+    let mut ancestors: Vec<AncestorInfo> = Vec::new();
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3855,7 +3903,9 @@ fn apply_cascade_inner(
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
-    ancestors: &[AncestorInfo],
+    // Mutable: we push this element's info before recursing and pop after.
+    // One Vec is reused for the entire tree — no per-node heap allocation.
+    ancestors: &mut Vec<AncestorInfo>,
     child_index: usize,
     sibling_count: usize,
     type_child_index: usize,
@@ -4106,6 +4156,10 @@ fn apply_cascade_inner(
     // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
     style.list_index = root.style.list_index;
     root.style = style.clone();
+    // Mark dirty so the layout subtree pruning (in layout_box_with_fc) knows to
+    // re-layout this element.  Cleared by the individual layout algorithms after
+    // they have computed the final geometry.
+    root.layout_dirty = true;
 
     // Build full ComputedStyle for ::before / ::after pseudo-elements.
     // Each inherits from the element's computed style, then has its own declarations applied.
@@ -4149,39 +4203,45 @@ fn apply_cascade_inner(
         root.style.marker_style = Some(ps);
     }
 
-    // Build this box's AncestorInfo for children
-    let my_info = AncestorInfo {
+    let n_children = root.children.len();
+    if n_children == 0 { return; }
+
+    // Push this element's info so children can see it as an ancestor.
+    // Popped after children are processed — the Vec is reused for the whole tree.
+    ancestors.push(AncestorInfo {
         tag:                root.tag.clone(),
         attributes:         root.attributes.clone(),
         child_index,
         sibling_count,
         type_child_index,
         type_sibling_count,
-    };
-    let mut child_ancestors = ancestors.to_vec();
-    child_ancestors.push(my_info);
+    });
 
-    let n_children = root.children.len();
-
-    // Pre-compute type_child_index and type_sibling_count for each child.
-    // For each child, count how many prior siblings share the same tag,
-    // and how many total siblings share that tag.
+    // Pre-compute type_child_index and type_sibling_count for each child in O(n).
+    // The old approach was O(n²): for each child, filter the whole sibling list.
     let child_tags: Vec<String> = root.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
-    let type_counts: Vec<usize> = child_tags.iter().enumerate().map(|(i, tag)| {
-        child_tags[..=i].iter().filter(|t| *t == tag).count() - 1  // 0-based index among same-tag
+    let mut type_running: HashMap<&str, usize> = HashMap::new();
+    let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
+        let slot = type_running.entry(tag.as_str()).or_insert(0);
+        let idx  = *slot;
+        *slot += 1;
+        idx
     }).collect();
-    let type_totals: Vec<usize> = child_tags.iter().enumerate().map(|(_, tag)| {
-        child_tags.iter().filter(|t| *t == tag).count()
+    // type_running now holds the total count for each tag — reuse it for type_totals.
+    let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
+        *type_running.get(tag.as_str()).unwrap_or(&0)
     }).collect();
 
     for (i, child) in root.children.iter_mut().enumerate() {
         apply_cascade_inner(
             child, stylesheet, Some(&style), root_font_px,
-            &child_ancestors, i, n_children,
+            ancestors, i, n_children,
             type_counts[i], type_totals[i],
             vw, vh, focused_box, keyboard_focus,
         );
     }
+
+    ancestors.pop();
 }
 
 // ─── User-Agent Stylesheet ───────────────────────────────────────────────────
