@@ -167,15 +167,16 @@ impl ApplicationHandler for App {
                 self.request_redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let dy = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y * 20.0,
-                    winit::event::MouseScrollDelta::PixelDelta(p)   => p.y as f32 / platform.scale_factor(),
+                let (dx, dy) = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => (x * 20.0, y * 20.0),
+                    winit::event::MouseScrollDelta::PixelDelta(p)   =>
+                        (p.x as f32 / platform.scale_factor(), p.y as f32 / platform.scale_factor()),
                 };
                 let zoom = self.renderer.zoom;
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
                 if let Some(doc) = self.doc.as_mut() {
-                    let doc_pt = (mx / sc / zoom, my / sc / zoom + doc.scroll_y);
-                    doc.process_wheel_event(doc_pt, dy);
+                    let doc_pt = (mx / sc / zoom + doc.scroll_x, my / sc / zoom + doc.scroll_y);
+                    doc.process_wheel_event_xy(doc_pt, dx, dy);
                 }
                 self.request_redraw();
             }

@@ -2299,8 +2299,16 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "scroll-behavior" => {
             style.scroll_behavior = if v == "smooth" { ScrollBehavior::Smooth } else { ScrollBehavior::Auto };
         }
-        "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y" => {
-            // Accepted but not implemented
+        "overscroll-behavior" => {
+            let val = parse_overscroll(v.split_whitespace().next().unwrap_or("auto"));
+            style.overscroll_behavior_x = val;
+            style.overscroll_behavior_y = val;
+        }
+        "overscroll-behavior-x" => {
+            style.overscroll_behavior_x = parse_overscroll(v);
+        }
+        "overscroll-behavior-y" => {
+            style.overscroll_behavior_y = parse_overscroll(v);
         }
         "isolation" => {
             style.isolation = v == "isolate";
@@ -2412,21 +2420,21 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
 
         // ── Scroll snap ───────────────────────────────────────────────────────
         "scroll-snap-type" => {
-            style.scroll_snap_type = match v.split_whitespace().next().unwrap_or("none") {
-                "x"      => ScrollSnapType::X,
-                "y"      => ScrollSnapType::Y,
-                "both"   => ScrollSnapType::Both,
-                "block"  => ScrollSnapType::Block,
-                "inline" => ScrollSnapType::Inline,
-                "none"   => ScrollSnapType::None,
-                _ => ScrollSnapType::None,
+            // CSS: `scroll-snap-type: <axis> [mandatory|proximity]`
+            let mut words = v.split_whitespace();
+            let axis = match words.next().unwrap_or("none") {
+                "x"      => ScrollSnapAxis::X,
+                "y"      => ScrollSnapAxis::Y,
+                "both"   => ScrollSnapAxis::Both,
+                "block"  => ScrollSnapAxis::Block,
+                "inline" => ScrollSnapAxis::Inline,
+                _        => ScrollSnapAxis::None,
             };
-            // Optional second keyword: mandatory / proximity
-            if v.contains("mandatory") {
-                style.scroll_snap_type = ScrollSnapType::Mandatory;
-            } else if v.contains("proximity") {
-                style.scroll_snap_type = ScrollSnapType::Proximity;
-            }
+            let mandatory = match words.next().unwrap_or("proximity") {
+                "mandatory" => true,
+                _           => false,
+            };
+            style.scroll_snap_type = ScrollSnapType { axis, mandatory };
         }
         "scroll-snap-align" => {
             style.scroll_snap_align = match v.split_whitespace().next().unwrap_or("none") {
@@ -3007,6 +3015,14 @@ fn parse_overflow(v: &str) -> Overflow {
         "scroll" => Overflow::Scroll,
         "auto"   => Overflow::Auto,
         _        => Overflow::Visible,
+    }
+}
+
+fn parse_overscroll(v: &str) -> OverscrollBehavior {
+    match v.trim() {
+        "none"    => OverscrollBehavior::None,
+        "contain" => OverscrollBehavior::Contain,
+        _         => OverscrollBehavior::Auto,
     }
 }
 

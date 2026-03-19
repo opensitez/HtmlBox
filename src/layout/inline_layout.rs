@@ -594,6 +594,29 @@ pub fn layout_inline_block(
     node.line_cache  = line_cache;
     node.inline_runs = runs;
 
+    // ── 5b. Scroll extent for overflow:scroll/auto inline containers ───────────
+    if matches!(node.style.overflow_x, crate::types::Overflow::Scroll | crate::types::Overflow::Auto)
+    || matches!(node.style.overflow_y, crate::types::Overflow::Scroll | crate::types::Overflow::Auto)
+    {
+        // Natural content height from inline lines
+        let natural_h = raw_h.max(content_h);
+        // Natural content width: max width across all lines
+        let natural_w = node.line_cache.iter()
+            .map(|l| l.width)
+            .fold(content_w, f32::max);
+        node.scroll_height = natural_h;
+        node.scroll_width  = natural_w;
+        let max_v = (node.scroll_height - content_h).max(0.0);
+        let max_h = (node.scroll_width  - content_w).max(0.0);
+        node.scroll_top  = node.scroll_top.min(max_v).max(0.0);
+        node.scroll_left = node.scroll_left.min(max_h).max(0.0);
+    } else {
+        node.scroll_height = content_h;
+        node.scroll_width  = content_w;
+        node.scroll_top    = 0.0;
+        node.scroll_left   = 0.0;
+    }
+
     // ── 6. Position atomic inline-block children ──────────────────────────────
     //    Separate pass after all lines are built (mirrors C++ post-loop pass)
     for (ci, ax, ay) in atomic_pos {

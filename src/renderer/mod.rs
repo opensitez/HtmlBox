@@ -155,7 +155,7 @@ impl Renderer {
                 true
             }
 
-            // ── Plain wheel → dispatch Wheel event ───────────────────────────
+            // ── Plain wheel → dispatch Wheel event then scroll ───────────────
             WindowEvent::MouseWheel { delta, .. } => {
                 let sc = self.scale.max(1.0);
                 let (dx, dy) = match delta {
@@ -168,7 +168,12 @@ impl Renderer {
                 if let Some(doc) = doc {
                     let client_x = self.cursor_physical.0 / sc;
                     let client_y = self.cursor_physical.1 / sc;
-                    let doc_pt   = (client_x / self.zoom, client_y / self.zoom + doc.scroll_y);
+                    // doc_pt accounts for scroll_y (vertical viewport scroll) and
+                    // scroll_x for horizontal panning.
+                    let doc_pt = (
+                        client_x / self.zoom + doc.scroll_x,
+                        client_y / self.zoom + doc.scroll_y,
+                    );
                     let mut evt = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Wheel);
                     evt.client_pos = (client_x, client_y);
                     evt.doc_pos    = doc_pt;
@@ -179,10 +184,10 @@ impl Renderer {
                         .unwrap_or(std::ptr::null());
                     let events = doc.events.clone();
                     events.dispatch(&doc.root, evt);
-                    if dx.abs() > 0.5 {
-                        doc.scroll_x = (doc.scroll_x - dx / self.zoom).max(0.0);
-                        return true;
-                    }
+                    // dx/dy are in browser-event convention (positive = scroll right/down).
+                    // process_wheel_event uses the opposite convention (negative = scroll down)
+                    // inherited from main.rs LineDelta usage, so negate before forwarding.
+                    return doc.process_wheel_event_xy(doc_pt, -dx, -dy);
                 }
                 false
             }

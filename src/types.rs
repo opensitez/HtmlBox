@@ -772,6 +772,10 @@ pub struct ComputedStyle {
     pub scroll_snap_type:  ScrollSnapType,
     pub scroll_snap_align: ScrollSnapAlign,
 
+    // Overscroll chaining
+    pub overscroll_behavior_x: OverscrollBehavior,
+    pub overscroll_behavior_y: OverscrollBehavior,
+
     // Containment
     pub contain_layout: bool,
     pub contain_paint:  bool,
@@ -912,14 +916,45 @@ impl Default for ScrollBehavior { fn default() -> Self { Self::Auto } }
 pub enum TextDecorationStyle { Solid, Double, Dotted, Dashed, Wavy }
 impl Default for TextDecorationStyle { fn default() -> Self { Self::Solid } }
 
+/// Scroll-container axis for `scroll-snap-type`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum ScrollSnapType {
-    #[default] None, X, Y, Both, Block, Inline,
-    Mandatory, Proximity,
+pub enum ScrollSnapAxis {
+    #[default] None,
+    X, Y, Both, Block, Inline,
+}
+
+/// Combined snap-type carrying both axis and strictness.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ScrollSnapType {
+    pub axis:      ScrollSnapAxis,
+    /// `true` = mandatory (always snap), `false` = proximity (snap only when close).
+    pub mandatory: bool,
+}
+
+impl ScrollSnapType {
+    pub fn none() -> Self { Self { axis: ScrollSnapAxis::None, mandatory: false } }
+    pub fn snaps_y(self) -> bool {
+        matches!(self.axis, ScrollSnapAxis::Y | ScrollSnapAxis::Both | ScrollSnapAxis::Block)
+    }
+    pub fn snaps_x(self) -> bool {
+        matches!(self.axis, ScrollSnapAxis::X | ScrollSnapAxis::Both | ScrollSnapAxis::Inline)
+    }
+    pub fn is_enabled(self) -> bool { self.axis != ScrollSnapAxis::None }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ScrollSnapAlign { #[default] None, Start, End, Center }
+
+/// Controls scroll chaining when a scroll container reaches its boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum OverscrollBehavior {
+    /// Default: propagate scroll to the parent scroll container.
+    #[default] Auto,
+    /// Don't chain — swallow the scroll delta at the boundary.
+    Contain,
+    /// Same as Contain for chaining (no bounce effects either).
+    None,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MixBlendMode {
@@ -1183,8 +1218,10 @@ impl Default for ComputedStyle {
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_thickness: CssLength::Auto,
 
-            scroll_snap_type:  ScrollSnapType::None,
+            scroll_snap_type:  ScrollSnapType::none(),
             scroll_snap_align: ScrollSnapAlign::None,
+            overscroll_behavior_x: OverscrollBehavior::Auto,
+            overscroll_behavior_y: OverscrollBehavior::Auto,
 
             contain_layout: false,
             contain_paint:  false,
@@ -2014,22 +2051,30 @@ impl Document {
 
     /// Handle a wheel/scroll event.
     ///
-    /// `doc_pt` is the cursor position in document coordinates
-    /// (`(mouse_x / scale, mouse_y / scale + doc.scroll_y)`).
-    /// `delta_y` is the scroll amount in logical pixels (positive = scroll down).
+    /// `doc_pt` is the cursor position in document coordinates.
+    /// `delta_y` is the vertical scroll amount in logical pixels (negative = scroll down,
+    /// positive = scroll up).  Horizontal scroll is handled internally by the renderer via
+    /// `process_wheel_event_xy`.
     ///
     /// Finds the innermost scrollable box under the cursor and scrolls it.
-    /// If no scrollable box is found, falls through to the viewport (`self.scroll_y`).
-    /// Returns `true` if any scroll position changed (caller should request a redraw).
+    /// Respects `overscroll-behavior` to control scroll chaining.
+    /// Returns `true` if any scroll position changed.
     pub fn process_wheel_event(&mut self, doc_pt: (f32, f32), delta_y: f32) -> bool {
-        if scroll_box_at(&mut self.root, doc_pt, delta_y) {
+        self.process_wheel_event_xy(doc_pt, 0.0, delta_y)
+    }
+
+    /// Like `process_wheel_event` but also accepts a horizontal delta.
+    /// Used by the renderer when handling trackpad/horizontal wheel events.
+    pub fn process_wheel_event_xy(&mut self, doc_pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
+        if scroll_box_at(&mut self.root, doc_pt, delta_x, delta_y) {
             return true;
         }
         // Viewport fallback — renderer will clamp on next render.
-        let old = self.scroll_y;
+        let old_x = self.scroll_x;
+        let old_y = self.scroll_y;
+        self.scroll_x -= delta_x;
         self.scroll_y -= delta_y;
-        // Detect a change (renderer clamps, so just signal redraw whenever delta != 0)
-        self.scroll_y != old || delta_y != 0.0
+        self.scroll_x != old_x || self.scroll_y != old_y || delta_x != 0.0 || delta_y != 0.0
     }
 
     /// Move keyboard focus to the next focusable element (Tab key).
@@ -2155,13 +2200,31 @@ impl Default for Document {
 
 // ─── Wheel-event scroll dispatch ──────────────────────────────────────────────
 
+/// Search a subtree for absolute/fixed descendants that contain `pt` and can
+/// be scrolled. Used when an in-flow ancestor fails the hit test but its
+/// absolute children may still be under the cursor.
+fn scroll_abs_in(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
+    for child in &mut node.children {
+        if matches!(child.style.display, Display::None) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            let mr = child.margin_rect;
+            if pt.0 >= mr.x && pt.0 < mr.x + mr.w && pt.1 >= mr.y && pt.1 < mr.y + mr.h {
+                if scroll_box_at(child, pt, delta_x, delta_y) { return true; }
+            }
+        } else {
+            if scroll_abs_in(child, pt, delta_x, delta_y) { return true; }
+        }
+    }
+    false
+}
+
 /// Walk the box tree and scroll the *innermost* scrollable box that contains
 /// `pt` (in accumulated-scroll document coordinates).  Returns `true` if a box
 /// was scrolled.
 ///
 /// `pt` on entry is already adjusted for all ancestor scroll offsets so that it
 /// can be compared directly against children's `margin_rect` (layout-space) positions.
-fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_y: f32) -> bool {
+fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
     if matches!(node.style.display, Display::None) { return false; }
 
     // Adjust pt for this node's own scroll so we can test its children,
@@ -2175,7 +2238,7 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_y: f32) -> bool {
             // Out-of-flow boxes use the viewport coordinate rather than parent scroll.
             let mr = child.margin_rect;
             if pt.0 >= mr.x && pt.0 < mr.x + mr.w && pt.1 >= mr.y && pt.1 < mr.y + mr.h {
-                if scroll_box_at(child, pt, delta_y) { return true; }
+                if scroll_box_at(child, pt, delta_x, delta_y) { return true; }
             }
             continue;
         }
@@ -2183,29 +2246,136 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_y: f32) -> bool {
         if local_pt.0 >= mr.x && local_pt.0 < mr.x + mr.w
             && local_pt.1 >= mr.y && local_pt.1 < mr.y + mr.h
         {
-            if scroll_box_at(child, local_pt, delta_y) { return true; }
+            if scroll_box_at(child, local_pt, delta_x, delta_y) { return true; }
+        } else {
+            // Even though cursor is outside this in-flow child's bounds, its
+            // absolute/fixed descendants may be positioned at the cursor location.
+            if scroll_abs_in(child, pt, delta_x, delta_y) { return true; }
         }
     }
 
-    // Check whether *this* node is scrollable and the cursor is inside it.
-    let can_v = matches!(node.style.overflow_y, Overflow::Scroll | Overflow::Auto)
+    // Check whether *this* node is scrollable.
+    let can_v = delta_y.abs() > 0.1
+        && matches!(node.style.overflow_y, Overflow::Scroll | Overflow::Auto)
         && node.scroll_height > node.content_rect.h;
+    let can_h = delta_x.abs() > 0.1
+        && matches!(node.style.overflow_x, Overflow::Scroll | Overflow::Auto)
+        && node.scroll_width > node.content_rect.w;
+
+    let mut scrolled = false;
+
     if can_v {
         let max_scroll = (node.scroll_height - node.content_rect.h).max(0.0);
         let before = node.scroll_top;
-        // Same sign as the viewport: delta_y < 0 = scroll down, so subtract.
         node.scroll_top = (node.scroll_top - delta_y).clamp(0.0, max_scroll);
-        if (node.scroll_top - before).abs() > 1e-3 { return true; }
+        if (node.scroll_top - before).abs() > 1e-3 {
+            apply_scroll_snap_y(node);
+            scrolled = true;
+        }
+    }
+    if can_h {
+        let max_scroll = (node.scroll_width - node.content_rect.w).max(0.0);
+        let before = node.scroll_left;
+        node.scroll_left = (node.scroll_left - delta_x).clamp(0.0, max_scroll);
+        if (node.scroll_left - before).abs() > 1e-3 {
+            apply_scroll_snap_x(node);
+            scrolled = true;
+        }
     }
 
-    let can_h = matches!(node.style.overflow_x, Overflow::Scroll | Overflow::Auto)
-        && node.scroll_width > node.content_rect.w;
-    if can_h {
-        // Horizontal scroll not triggered by vertical wheel; include for completeness.
-        let _ = can_h;
+    if scrolled { return true; }
+
+    // overscroll-behavior: if this element is a scroll container but couldn't
+    // scroll (already at boundary), check whether it should swallow the event anyway.
+    let is_v_container = matches!(node.style.overflow_y, Overflow::Scroll | Overflow::Auto);
+    let is_h_container = matches!(node.style.overflow_x, Overflow::Scroll | Overflow::Auto);
+    if delta_y.abs() > 0.1 && is_v_container
+        && node.style.overscroll_behavior_y != OverscrollBehavior::Auto
+    {
+        return true; // Contain/None: don't chain to parent.
+    }
+    if delta_x.abs() > 0.1 && is_h_container
+        && node.style.overscroll_behavior_x != OverscrollBehavior::Auto
+    {
+        return true;
     }
 
     false
+}
+
+/// Snap the vertical scroll position of `node` to the nearest child snap point,
+/// if the element has `scroll-snap-type` with a Y/Both axis.
+fn apply_scroll_snap_y(node: &mut HtmlBox) {
+    if !node.style.scroll_snap_type.snaps_y() { return; }
+    let content_y = node.content_rect.y;
+    let content_h = node.content_rect.h;
+    let snap_points = collect_snap_points_y(node, content_y, content_h);
+    if snap_points.is_empty() { return; }
+    let max_scroll = (node.scroll_height - content_h).max(0.0);
+    let target = nearest_snap(node.scroll_top, &snap_points, content_h,
+                              node.style.scroll_snap_type.mandatory);
+    node.scroll_top = target.clamp(0.0, max_scroll);
+}
+
+/// Snap the horizontal scroll position of `node`.
+fn apply_scroll_snap_x(node: &mut HtmlBox) {
+    if !node.style.scroll_snap_type.snaps_x() { return; }
+    let content_x = node.content_rect.x;
+    let content_w = node.content_rect.w;
+    let snap_points = collect_snap_points_x(node, content_x, content_w);
+    if snap_points.is_empty() { return; }
+    let max_scroll = (node.scroll_width - content_w).max(0.0);
+    let target = nearest_snap(node.scroll_left, &snap_points, content_w,
+                              node.style.scroll_snap_type.mandatory);
+    node.scroll_left = target.clamp(0.0, max_scroll);
+}
+
+fn collect_snap_points_y(node: &HtmlBox, content_y: f32, content_h: f32) -> Vec<f32> {
+    let mut pts = Vec::new();
+    for child in &node.children {
+        if matches!(child.style.display, Display::None) { continue; }
+        let mr = child.margin_rect;
+        let pt = match child.style.scroll_snap_align {
+            ScrollSnapAlign::Start  => mr.y - content_y,
+            ScrollSnapAlign::End    => mr.y + mr.h - content_y - content_h,
+            ScrollSnapAlign::Center => mr.y + mr.h * 0.5 - content_y - content_h * 0.5,
+            ScrollSnapAlign::None   => continue,
+        };
+        pts.push(pt);
+    }
+    pts
+}
+
+fn collect_snap_points_x(node: &HtmlBox, content_x: f32, content_w: f32) -> Vec<f32> {
+    let mut pts = Vec::new();
+    for child in &node.children {
+        if matches!(child.style.display, Display::None) { continue; }
+        let mr = child.margin_rect;
+        let pt = match child.style.scroll_snap_align {
+            ScrollSnapAlign::Start  => mr.x - content_x,
+            ScrollSnapAlign::End    => mr.x + mr.w - content_x - content_w,
+            ScrollSnapAlign::Center => mr.x + mr.w * 0.5 - content_x - content_w * 0.5,
+            ScrollSnapAlign::None   => continue,
+        };
+        pts.push(pt);
+    }
+    pts
+}
+
+/// Return the snap target closest to `current`.
+/// For proximity snapping, only snap if within half the viewport size.
+fn nearest_snap(current: f32, pts: &[f32], viewport_size: f32, mandatory: bool) -> f32 {
+    pts.iter()
+        .copied()
+        .min_by(|a, b| (a - current).abs().partial_cmp(&(b - current).abs()).unwrap())
+        .map(|nearest| {
+            if mandatory || (nearest - current).abs() <= viewport_size * 0.5 {
+                nearest
+            } else {
+                current
+            }
+        })
+        .unwrap_or(current)
 }
 
 // ─── Per-element scrollbar hit-test ──────────────────────────────────────────
