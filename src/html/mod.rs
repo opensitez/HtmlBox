@@ -819,11 +819,15 @@ fn normalize_css_text(css: &str) -> String {
 // ─── Parser ─────────────────────────────────────────────────────────────────
 
 struct HtmlParser {
-    tokens:     Vec<Token>,
-    pos:        usize,
-    stylesheet: Stylesheet,
-    title:      String,
-    base_url:   String,
+    tokens:             Vec<Token>,
+    pos:                usize,
+    stylesheet:         Stylesheet,
+    title:              String,
+    base_url:           String,
+    linked_stylesheets: Vec<String>,
+    /// Optional host-registered hook, fired for every open tag as it is parsed.
+    /// Receives the tag name and its attribute map.
+    on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
 }
 
 impl HtmlParser {
@@ -834,6 +838,16 @@ impl HtmlParser {
             stylesheet: Stylesheet::default(),
             title: String::new(),
             base_url: String::new(),
+            linked_stylesheets: Vec::new(),
+            on_open_tag: None,
+        }
+    }
+
+    /// Fire the host hook (if any) for an open tag.
+    #[inline]
+    fn fire_hook(&mut self, tag: &str, attrs: &HashMap<String, String>) {
+        if let Some(ref mut f) = self.on_open_tag {
+            f(tag, attrs);
         }
     }
 
@@ -885,6 +899,7 @@ impl HtmlParser {
                 }
                 Some(Token::OpenTag { tag, attrs, self_closing }) => {
                     self.pos += 1;
+                    self.fire_hook(&tag, &attrs);
                     self.handle_tag(tag, attrs, self_closing, children, ol_counter);
                 }
             }
@@ -1074,8 +1089,9 @@ fn parse_head_content(parser: &mut HtmlParser) {
                 parser.pos += 1;
                 break;
             }
-            Some(Token::OpenTag { tag, attrs: _, self_closing }) => {
+            Some(Token::OpenTag { tag, attrs, self_closing }) => {
                 parser.pos += 1;
+                parser.fire_hook(&tag, &attrs);
                 match tag.as_str() {
                     "style" => {
                         let css = parser.collect_raw_text_until("style");
@@ -1085,6 +1101,15 @@ fn parse_head_content(parser: &mut HtmlParser) {
                     "title" => {
                         let text = parser.collect_raw_text_until("title");
                         parser.title = text.trim().to_string();
+                    }
+                    "link" => {
+                        // Collect <link rel="stylesheet" href="..."> for the host to fetch.
+                        let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+                        let href = attrs.get("href").cloned().unwrap_or_default();
+                        if rel == "stylesheet" && !href.is_empty() {
+                            parser.linked_stylesheets.push(href);
+                        }
+                        // <link> is void — no closing tag to skip.
                     }
                     _ => {
                         if !self_closing {
@@ -1187,6 +1212,30 @@ pub fn parse_html(html: &str) -> Document {
 
 /// Like `parse_html` but also accepts a base URL/path for resolving relative resources.
 pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
+    parse_html_with_hooks(html, base_url, |_, _| {})
+}
+
+/// Parse HTML with a host-registered tag hook.
+///
+/// `hook` is called for **every open tag** as it is parsed, receiving the tag
+/// name (lowercase) and its attribute map.  The hook fires before the engine
+/// processes the tag, so it is safe to kick off background work (e.g. fetching
+/// a stylesheet referenced by a `<link>` tag) while the rest of the document
+/// continues to parse.
+///
+/// ```ignore
+/// let doc = parse_html_with_hooks(html, base_url, |tag, attrs| {
+///     if tag == "link" && attrs.get("rel").map(|s| s == "stylesheet").unwrap_or(false) {
+///         if let Some(href) = attrs.get("href") {
+///             start_css_fetch(href);
+///         }
+///     }
+/// });
+/// ```
+pub fn parse_html_with_hooks<F>(html: &str, base_url: &str, mut hook: F) -> Document
+where
+    F: FnMut(&str, &HashMap<String, String>) + 'static,
+{
     // Pre-pass: extract <svg> blocks, replace with <img> placeholders
     let (processed_html, svg_map) = extract_svg_blocks(html);
     let html_to_parse = if svg_map.is_empty() { html } else { &processed_html };
@@ -1194,6 +1243,7 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
     let tokens = tokenize(html_to_parse);
     let mut parser = HtmlParser::new(tokens);
     parser.base_url = base_url.to_string();
+    parser.on_open_tag = Some(Box::new(move |tag, attrs| hook(tag, attrs)));
 
     // Always create html > body structure
     let mut html_box = HtmlBox::new("html");
@@ -1282,12 +1332,14 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
     }
 
     let title = parser.title.clone();
+    let linked_stylesheets = parser.linked_stylesheets.clone();
 
     let mut doc = Document {
         root: html_box,
         stylesheet,
         title,
         base_url: base_url.to_string(),
+        linked_stylesheets,
         editor: crate::dom::Editor::new(),
         events: crate::dom::EventListeners::new(),
         scroll_x: 0.0,
@@ -1306,6 +1358,9 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,
+        pending_announcements:    Vec::new(),
+        live_region_snapshots:    std::collections::HashMap::new(),
+        live_regions_initialized: false,
     };
 
     // Apply cascade

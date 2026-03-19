@@ -1615,6 +1615,31 @@ pub enum ScrollbarDragKind {
 unsafe impl Send for ScrollbarDragKind {}
 unsafe impl Sync for ScrollbarDragKind {}
 
+// ─── aria-live announcement types ─────────────────────────────────────────────
+
+/// How urgently an aria-live announcement should be delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LivePoliteness {
+    /// No announcement (aria-live="off" or no attribute).
+    Off,
+    /// Deliver after the user's current action completes (aria-live="polite").
+    Polite,
+    /// Interrupt the user immediately (aria-live="assertive").
+    Assertive,
+}
+
+/// An accessibility announcement queued by a change to an `aria-live` region.
+#[derive(Debug, Clone)]
+pub struct Announcement {
+    /// Text content to announce.
+    pub text:        String,
+    /// Urgency — how the host or AT should prioritise this announcement.
+    pub politeness:  LivePoliteness,
+    /// `true` when `aria-atomic="true"` was set on the region.
+    /// Hosts should announce the full `text`; `false` means only the diff matters.
+    pub atomic:      bool,
+}
+
 /// The root document: box tree + stylesheet + metadata.
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -1622,6 +1647,9 @@ pub struct Document {
     pub stylesheet:      Stylesheet,
     pub title:           String,
     pub base_url:        String,
+    /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
+    /// Populated by the parser so the host can fetch and merge external CSS.
+    pub linked_stylesheets: Vec<String>,
     pub editor:          Editor,
     pub events:          EventListeners,
     /// Viewport scroll position in logical pixels (managed by Renderer::render).
@@ -1651,6 +1679,17 @@ pub struct Document {
     pub viewport_h:      f32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
     pub keyboard_focus:  bool,
+
+    // ── aria-live region machinery ─────────────────────────────────────────────
+    /// Announcements queued since the last call to `take_announcements()`.
+    pub pending_announcements: Vec<Announcement>,
+    /// Text-content snapshots for each aria-live region, keyed by HtmlBox pointer.
+    /// Updated every layout pass to detect content changes.
+    pub(crate) live_region_snapshots: HashMap<usize, String>,
+    /// `false` until the first `check_live_regions()` call.
+    /// On the very first pass, only assertive regions announce their initial content;
+    /// polite regions are silently initialised so they don't flood the user on load.
+    pub(crate) live_regions_initialized: bool,
 }
 
 impl Document {
@@ -1660,6 +1699,7 @@ impl Document {
             stylesheet:      Stylesheet::default(),
             title:           String::new(),
             base_url:        String::new(),
+            linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
             events:          EventListeners::new(),
             scroll_x:        0.0,
@@ -1678,6 +1718,9 @@ impl Document {
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
+            pending_announcements:    Vec::new(),
+            live_region_snapshots:    HashMap::new(),
+            live_regions_initialized: false,
         }
     }
 
@@ -1960,6 +2003,101 @@ impl Document {
         }
     }
 
+    // ── aria-live ──────────────────────────────────────────────────────────────
+
+    /// Drain and return all pending aria-live announcements.
+    ///
+    /// Call this after each layout pass and deliver the announcements to the
+    /// platform (e.g. a screen reader via accesskit, a toast notification in a
+    /// browser chrome, or a system alert).
+    ///
+    /// ```ignore
+    /// for ann in doc.take_announcements() {
+    ///     match ann.politeness {
+    ///         LivePoliteness::Assertive => speak_immediately(&ann.text),
+    ///         LivePoliteness::Polite    => speak_when_idle(&ann.text),
+    ///         LivePoliteness::Off       => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn take_announcements(&mut self) -> Vec<Announcement> {
+        std::mem::take(&mut self.pending_announcements)
+    }
+
+    /// Scan all `aria-live` regions in the document, compare their text content
+    /// to the snapshot from the previous call, and queue announcements for any
+    /// regions whose content has changed.
+    ///
+    /// This is called automatically by `LayoutEngine::layout`.  You only need
+    /// to call it manually if you modify the DOM outside of a layout pass.
+    pub fn check_live_regions(&mut self) {
+        let initialized = self.live_regions_initialized;
+        let mut new_ann: Vec<Announcement> = Vec::new();
+
+        fn walk(
+            node:         &HtmlBox,
+            snapshots:    &mut HashMap<usize, String>,
+            out:          &mut Vec<Announcement>,
+            initialized:  bool,
+        ) {
+            let politeness = match node.attributes.get("aria-live").map(|s| s.as_str()) {
+                Some("assertive") => LivePoliteness::Assertive,
+                Some("polite")    => LivePoliteness::Polite,
+                _                 => LivePoliteness::Off,
+            };
+
+            if politeness != LivePoliteness::Off {
+                // aria-busy: region is being updated, defer announcement
+                let busy = node.attributes.get("aria-busy")
+                    .map(|v| v == "true").unwrap_or(false);
+                if !busy {
+                    let ptr   = node as *const HtmlBox as usize;
+                    let text  = collect_live_text(node);
+                    let atomic = node.attributes.get("aria-atomic")
+                        .map(|v| v == "true").unwrap_or(false);
+
+                    match snapshots.get(&ptr) {
+                        None => {
+                            // First time seeing this region.
+                            snapshots.insert(ptr, text.clone());
+                            // Assertive regions announce on page load; polite ones
+                            // are silently initialised so they don't flood the user.
+                            if !initialized
+                                && politeness == LivePoliteness::Assertive
+                                && !text.is_empty()
+                            {
+                                out.push(Announcement { text, politeness, atomic });
+                            }
+                        }
+                        Some(prev) if *prev != text => {
+                            // Content changed since last layout pass.
+                            let changed = text.clone();
+                            snapshots.insert(ptr, text);
+                            if !changed.is_empty() {
+                                out.push(Announcement { text: changed, politeness, atomic });
+                            }
+                        }
+                        _ => {} // No change, no announcement.
+                    }
+                }
+                // Treat the live region as an atomic unit — don't recurse into it
+                // looking for nested live regions (that would produce double announcements).
+                return;
+            }
+
+            for child in &node.children {
+                walk(child, snapshots, out, initialized);
+            }
+        }
+
+        let root_ptr = &self.root as *const HtmlBox as *const u8; // borrow-checker anchor
+        let _ = root_ptr;
+        walk(&self.root, &mut self.live_region_snapshots, &mut new_ann, initialized);
+
+        self.live_regions_initialized = true;
+        self.pending_announcements.extend(new_ann);
+    }
+
     /// Handle a mouse event for scrollbars (click, drag, release).
     ///
     /// Call this **before** `process_mouse_event` on every mouse down/move/up.
@@ -2203,6 +2341,39 @@ fn collect_focusable_ordered(
 
 impl Default for Document {
     fn default() -> Self { Self::new() }
+}
+
+// ─── aria-live helper ──────────────────────────────────────────────────────────
+
+/// Collect the visible text content of a live region by walking its subtree.
+/// Used by `Document::check_live_regions` to compare snapshots.
+fn collect_live_text(node: &HtmlBox) -> String {
+    let mut buf = String::new();
+    collect_live_text_inner(node, &mut buf);
+    // Collapse runs of whitespace for stable comparison across minor reflows.
+    let mut out = String::with_capacity(buf.len());
+    let mut in_ws = false;
+    for ch in buf.chars() {
+        if ch.is_ascii_whitespace() {
+            if !in_ws { out.push(' '); in_ws = true; }
+        } else {
+            in_ws = false;
+            out.push(ch);
+        }
+    }
+    out.trim().to_string()
+}
+
+fn collect_live_text_inner(node: &HtmlBox, buf: &mut String) {
+    if !node.text.trim().is_empty() {
+        if !buf.is_empty() { buf.push(' '); }
+        buf.push_str(node.text.trim());
+    }
+    for child in &node.children {
+        if !matches!(child.style.display, Display::None) && child.style.visibility {
+            collect_live_text_inner(child, buf);
+        }
+    }
 }
 
 // ─── Wheel-event scroll dispatch ──────────────────────────────────────────────

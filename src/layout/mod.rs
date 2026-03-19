@@ -402,6 +402,9 @@ impl LayoutEngine {
                 self.last_geometry_viewport_h = self.viewport_h;
             }
         }
+
+        // Detect aria-live region changes and queue announcements.
+        doc.check_live_regions();
     }
 
     /// Force the next `layout()` call to re-run the full CSS cascade.

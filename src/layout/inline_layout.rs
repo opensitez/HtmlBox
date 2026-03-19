@@ -153,7 +153,7 @@ pub fn layout_inline_block(
     let mut runs:  Vec<InlineRun>  = Vec::new();
     for (i, child) in node.children.iter().enumerate() {
         if matches!(child.style.display, Display::None) { continue; }
-        collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i);
+        collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true);
     }
     // Also collect from own text (text directly inside element)
     if !node.text.is_empty() {
@@ -161,7 +161,7 @@ pub fn layout_inline_block(
             // Text node laid out directly (e.g. as a flex child): collect self,
             // but skip whitespace-only nodes (handled by parent inline layout).
             if !node.text.chars().all(|c| c.is_ascii_whitespace()) {
-                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
             }
         } else if !node.inline_runs.is_empty() {
             // Block has pre-built inline runs (e.g. from the markdown parser).
@@ -175,13 +175,13 @@ pub fn layout_inline_block(
                 let mut tmp = HtmlBox::new("#text");
                 tmp.text = run_text;
                 tmp.style = run.style.clone();
-                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
             }
         } else {
             let mut tmp_node = HtmlBox::new("#text");
             tmp_node.text = node.text.clone();
             tmp_node.style = node.style.clone();
-            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0);
+            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
         }
     }
 
@@ -751,15 +751,19 @@ pub struct InlineItem {
 
 /// Walk a node and emit InlineItems into `items`, also building style runs.
 /// `text_offset` tracks the current byte position in the global flat-text string.
+/// `is_direct_child` must be `true` only when `node` is an immediate child of the
+/// inline container being laid out; Float items use `box_idx` to index back into
+/// that container's `children` vec, so the index is only valid at depth 0.
 pub fn collect_items(
-    engine:         &LayoutEngine,
-    node:           &HtmlBox,
-    parent_font_px: f32,
-    root_font_px:   f32,
-    items:          &mut Vec<InlineItem>,
-    runs:           &mut Vec<InlineRun>,
-    text_offset:    &mut usize,
-    box_idx:        usize,
+    engine:          &LayoutEngine,
+    node:            &HtmlBox,
+    parent_font_px:  f32,
+    root_font_px:    f32,
+    items:           &mut Vec<InlineItem>,
+    runs:            &mut Vec<InlineRun>,
+    text_offset:     &mut usize,
+    box_idx:         usize,
+    is_direct_child: bool,
 ) {
     if matches!(node.style.display, Display::None) { return; }
 
@@ -768,7 +772,11 @@ pub fn collect_items(
     if matches!(node.style.position, Position::Absolute | Position::Fixed) { return; }
 
     // ── Float ─────────────────────────────────────────────────────────────
-    if !matches!(node.style.float, crate::types::Float::None) {
+    // Only emit a Float item when this node is a *direct* child of the
+    // inline container being laid out.  Nested floats (float inside a <span>
+    // inside a block) would produce an out-of-bounds child_idx; we fall through
+    // and render them inline instead.
+    if !matches!(node.style.float, crate::types::Float::None) && is_direct_child {
         items.push(InlineItem {
             kind: InlineItemKind::Float { child_idx: box_idx },
             advance: 0.0, ascent: 0.0, descent: 0.0, height: 0.0,
@@ -832,7 +840,7 @@ pub fn collect_items(
     // ── Recurse into children ─────────────────────────────────────────────
     let runs_before = runs.len();
     for (i, child) in node.children.iter().enumerate() {
-        collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i);
+        collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i, false);
     }
     // CSS background-color is not inherited, but an inline element's background
     // must visually paint behind its descendant text runs.  Propagate this
