@@ -461,6 +461,7 @@ impl Default for GridAutoFlow { fn default() -> Self { Self::Row } }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridTrackKind {
     Fixed, Percent, Fractional, Auto, MinMax, MinContent, MaxContent, FitContent,
+    Subgrid,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -488,8 +489,10 @@ impl GridTrackSize {
     pub fn percent(pct: f32) -> Self { Self { kind: GridTrackKind::Percent, value: pct, ..Default::default() } }
     pub fn fr(fr: f32) -> Self { Self { kind: GridTrackKind::Fractional, value: fr, ..Default::default() } }
     pub fn auto() -> Self { Self::default() }
+    pub fn subgrid() -> Self { Self { kind: GridTrackKind::Subgrid, ..Default::default() } }
     pub fn is_auto(&self) -> bool { self.kind == GridTrackKind::Auto }
     pub fn is_none(&self) -> bool { self.kind == GridTrackKind::Auto && self.value == 0.0 }
+    pub fn is_subgrid(&self) -> bool { self.kind == GridTrackKind::Subgrid }
 }
 
 // ─── CSS Transform ────────────────────────────────────────────────────────────
@@ -640,6 +643,8 @@ pub struct ComputedStyle {
     pub grid_auto_rows:        GridTrackSize,
     pub grid_template_areas:   Vec<Vec<String>>,
     pub auto_repeat_columns:   Vec<GridTrackSize>,
+    pub subgrid_columns:       bool,
+    pub subgrid_rows:          bool,
     pub grid_column_start:     i32,  // 0=auto, >0=line number (1-based), <0=span
     pub grid_column_end:       i32,
     pub grid_row_start:        i32,
@@ -1119,6 +1124,8 @@ impl Default for ComputedStyle {
             grid_auto_rows:        GridTrackSize::default(),
             grid_template_areas:   Vec::new(),
             auto_repeat_columns:   Vec::new(),
+            subgrid_columns:       false,
+            subgrid_rows:          false,
             grid_column_start:     0,
             grid_column_end:       0,
             grid_row_start:        0,

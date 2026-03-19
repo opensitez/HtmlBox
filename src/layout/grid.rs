@@ -4,6 +4,273 @@ use crate::layout::block::apply_relative_offset;
 #[allow(unused_imports)]
 use crate::css::parse_single_track;
 
+// ─── Subgrid support ─────────────────────────────────────────────────────────
+
+/// Resolved track context passed from a parent grid into a subgrid child.
+#[derive(Clone, Debug)]
+pub struct SubgridContext {
+    /// Pixel widths of parent grid columns.
+    pub col_px:      Vec<f32>,
+    /// X offsets of parent columns relative to parent content_x.
+    pub col_x:       Vec<f32>,
+    /// Column gap from parent.
+    pub col_gap:     f32,
+    /// Pixel heights of parent grid rows.
+    pub row_heights: Vec<f32>,
+    /// Y offsets of parent rows relative to parent content_y.
+    pub row_y:       Vec<f32>,
+    /// Row gap from parent.
+    pub row_gap:     f32,
+    /// 0-based column span this subgrid occupies: [start, end)
+    pub col_span:    (usize, usize),
+    /// 0-based row span this subgrid occupies: [start, end)
+    pub row_span:    (usize, usize),
+}
+
+impl SubgridContext {
+    fn inherited_col_px(&self) -> &[f32] {
+        let (cs, ce) = self.col_span;
+        &self.col_px[cs.min(self.col_px.len())..ce.min(self.col_px.len())]
+    }
+    fn inherited_row_heights(&self) -> &[f32] {
+        let (rs, re) = self.row_span;
+        &self.row_heights[rs.min(self.row_heights.len())..re.min(self.row_heights.len())]
+    }
+    fn local_col_x(&self) -> Vec<f32> {
+        let (cs, ce) = self.col_span;
+        let cs = cs.min(self.col_x.len());
+        let ce = ce.min(self.col_x.len());
+        let origin = self.col_x.get(cs).copied().unwrap_or(0.0);
+        self.col_x[cs..ce].iter().map(|&x| x - origin).collect()
+    }
+    fn local_row_y(&self) -> Vec<f32> {
+        let (rs, re) = self.row_span;
+        let rs = rs.min(self.row_y.len());
+        let re = re.min(self.row_y.len());
+        let origin = self.row_y.get(rs).copied().unwrap_or(0.0);
+        self.row_y[rs..re].iter().map(|&y| y - origin).collect()
+    }
+}
+
+/// Layout a grid item that uses `grid-template-columns: subgrid` and/or
+/// `grid-template-rows: subgrid`. Inherits track sizes from the parent.
+pub fn layout_grid_subgrid(
+    engine:       &LayoutEngine,
+    node:         &mut HtmlBox,
+    rbox:         &ResolvedBox,
+    ctx:          &SubgridContext,
+    x:            f32,
+    y:            f32,
+    font_px:      f32,
+    root_font_px: f32,
+) -> f32 {
+    let content_x = x + rbox.margin_left + rbox.border_left + rbox.padding_left;
+    let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
+
+    let col_is_sub = node.style.subgrid_columns;
+    let row_is_sub = node.style.subgrid_rows;
+
+    // --- Column axis ---
+    let (col_px, col_x_local, col_gap) = if col_is_sub {
+        (ctx.inherited_col_px().to_vec(), ctx.local_col_x(), ctx.col_gap)
+    } else {
+        let cw = rbox.content_width.unwrap_or({
+            ctx.inherited_col_px().iter().sum::<f32>()
+            + ctx.col_gap * ctx.inherited_col_px().len().saturating_sub(1) as f32
+        });
+        let tracks = resolve_track_sizes(
+            &node.style.grid_template_columns,
+            &node.style.auto_repeat_columns,
+            cw, font_px, root_font_px,
+        );
+        let gap = engine.res_len(&node.style.column_gap, font_px, cw, root_font_px);
+        let n = tracks.len().max(1);
+        let dummy_widths = vec![0.0f32; n];
+        let px = resolve_to_pixels(&tracks, &node.style.grid_auto_columns,
+                                   cw, gap, n, font_px, root_font_px, &dummy_widths);
+        let x_offsets: Vec<f32> = {
+            let mut xs = Vec::with_capacity(px.len());
+            let mut cx = 0.0f32;
+            for &w in &px { xs.push(cx); cx += w + gap; }
+            xs
+        };
+        (px, x_offsets, gap)
+    };
+
+    let content_w: f32 = col_px.iter().sum::<f32>()
+        + col_gap * col_px.len().saturating_sub(1) as f32;
+    let n_cols = col_px.len().max(1);
+
+    // --- Collect visible items ---
+    let mut item_indices: Vec<usize> = node.children.iter().enumerate()
+        .filter(|(_, c)| !matches!(c.style.display, Display::None)
+            && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+            && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace())))
+        .map(|(i, _)| i)
+        .collect();
+    item_indices.sort_by(|&a, &b| node.children[a].style.order.cmp(&node.children[b].style.order));
+    let n_items = item_indices.len();
+
+    // --- Placement ---
+    let area_map = build_area_map(&node.style.grid_template_areas);
+    let mut placements: Vec<(usize, usize, usize, usize)> = vec![(0, 1, 0, 1); n_items];
+    let mut max_row = 0usize;
+    let mut max_col = n_cols;
+
+    for (ii, &idx) in item_indices.iter().enumerate() {
+        let child = &node.children[idx];
+        let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_cols);
+        placements[ii] = (cs, ce, rs, re);
+        if ce > max_col { max_col = ce; }
+        if re > max_row { max_row = re; }
+    }
+
+    // Auto-place (row-flow)
+    let mut occ: Vec<Vec<bool>> = vec![vec![false; max_col.max(1)]; (max_row + n_items + 1).max(1)];
+    for (ii, &idx) in item_indices.iter().enumerate() {
+        let child = &node.children[idx];
+        if is_explicitly_placed(child, &area_map) {
+            let (cs, ce, rs, re) = placements[ii];
+            for r in rs..re {
+                ensure_row(&mut occ, r, max_col);
+                for c in cs..ce { if c < occ[r].len() { occ[r][c] = true; } }
+            }
+        }
+    }
+    let mut auto_row = 0usize;
+    let mut auto_col = 0usize;
+    for (ii, &idx) in item_indices.iter().enumerate() {
+        let child = &node.children[idx];
+        if is_explicitly_placed(child, &area_map) { continue; }
+        let span_col = get_span_col(child).min(n_cols);
+        let span_row = get_span_row(child);
+        'outer: loop {
+            ensure_row(&mut occ, auto_row + span_row, max_col);
+            if auto_col + span_col > max_col { auto_row += 1; auto_col = 0; continue; }
+            let mut fits = true;
+            'chk: for r in auto_row..auto_row + span_row {
+                ensure_row(&mut occ, r, max_col);
+                for c in auto_col..auto_col + span_col {
+                    if c < occ[r].len() && occ[r][c] { fits = false; break 'chk; }
+                }
+            }
+            if fits { break 'outer; }
+            auto_col += 1;
+            if auto_col + span_col > max_col { auto_row += 1; auto_col = 0; }
+        }
+        placements[ii] = (auto_col, auto_col + span_col, auto_row, auto_row + span_row);
+        for r in auto_row..auto_row + span_row {
+            ensure_row(&mut occ, r, max_col);
+            for c in auto_col..auto_col + span_col { if c < occ[r].len() { occ[r][c] = true; } }
+        }
+        if placements[ii].3 > max_row { max_row = placements[ii].3; }
+        auto_col += span_col;
+    }
+    let n_rows = max_row.max(1);
+
+    // --- Row axis ---
+    let (row_heights, row_y_local, row_gap) = if row_is_sub {
+        (ctx.inherited_row_heights().to_vec(), ctx.local_row_y(), ctx.row_gap)
+    } else {
+        let rgap = engine.res_len(&node.style.row_gap, font_px, content_w, root_font_px);
+        let mut heights = vec![0.0f32; n_rows];
+        // First pass: measure children
+        for (ii, &idx) in item_indices.iter().enumerate() {
+            let (cs, ce, rs, re) = placements[ii];
+            let cs = cs.min(n_cols.saturating_sub(1));
+            let ce = ce.min(n_cols).max(cs + 1);
+            let sw = span_width(&col_px, &col_x_local, cs, ce, col_gap, content_w);
+            let child = &mut node.children[idx];
+            engine.layout_box(child, sw, content_x, 0.0, font_px, root_font_px);
+            let cf = child.style.font_size_px(font_px, root_font_px);
+            let cr = engine.res_box(&child.style, cf, sw, root_font_px);
+            let h = child.border_rect.h + cr.margin_top + cr.margin_bottom;
+            let rspan = (re - rs).max(1);
+            let hp = h / rspan as f32;
+            for r in rs..re.min(n_rows) { if hp > heights[r] { heights[r] = hp; } }
+        }
+        // Apply explicit row track sizes
+        for (ri, track) in node.style.grid_template_rows.iter().enumerate() {
+            if ri < heights.len() {
+                let px = track_to_px(track, content_w, font_px, root_font_px);
+                if px > 0.0 && px > heights[ri] { heights[ri] = px; }
+            }
+        }
+        let ys: Vec<f32> = {
+            let mut v = Vec::with_capacity(n_rows);
+            let mut cy = 0.0f32;
+            for &h in &heights { v.push(cy); cy += h + rgap; }
+            v
+        };
+        (heights, ys, rgap)
+    };
+
+    // --- Second pass: position children ---
+    for (ii, &idx) in item_indices.iter().enumerate() {
+        let (cs, ce, rs, re) = placements[ii];
+        let cs = cs.min(n_cols.saturating_sub(1));
+        let ce = ce.min(n_cols).max(cs + 1);
+        let rs = rs.min(n_rows.saturating_sub(1));
+        let re = re.min(n_rows).max(rs + 1);
+
+        let sw = span_width(&col_px, &col_x_local, cs, ce, col_gap, content_w);
+        let cell_h = row_heights[rs..re].iter().sum::<f32>()
+            + row_gap * (re - rs).saturating_sub(1) as f32;
+        let ix = content_x + col_x_local.get(cs).copied().unwrap_or(0.0);
+        let iy = content_y + row_y_local.get(rs).copied().unwrap_or(0.0);
+
+        let child = &mut node.children[idx];
+        let cf = child.style.font_size_px(font_px, root_font_px);
+        let eff_align = effective_align_self_grid(child, node.style.align_items);
+        if eff_align == AlignItems::Stretch && child.style.height.is_auto() {
+            let cr = engine.res_box(&child.style, cf, sw, root_font_px);
+            let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
+                (cell_h - cr.margin_top - cr.margin_bottom).max(0.0)
+            } else {
+                (cell_h - cr.margin_top - cr.margin_bottom
+                    - cr.padding_top - cr.padding_bottom
+                    - cr.border_top  - cr.border_bottom).max(0.0)
+            };
+            let saved = child.style.height.clone();
+            child.style.height = CssLength::Px(css_h);
+            engine.layout_box(child, sw, ix, iy, font_px, root_font_px);
+            child.style.height = saved;
+        } else {
+            engine.layout_box(child, sw, ix, iy, font_px, root_font_px);
+        }
+
+        let cr = engine.res_box(&child.style, cf, sw, root_font_px);
+        let eff_justify = effective_justify_self(child, node.style.justify_items);
+        let cell_w = sw;
+        let dx_align = match eff_justify {
+            AlignItems::FlexEnd  => cell_w - child.border_rect.w - cr.margin_left - cr.margin_right,
+            AlignItems::Center   => (cell_w - child.border_rect.w - cr.margin_left - cr.margin_right) / 2.0,
+            _ => 0.0,
+        };
+        let dy_align = match eff_align {
+            AlignItems::FlexEnd  => cell_h - child.border_rect.h - cr.margin_top - cr.margin_bottom,
+            AlignItems::Center   => (cell_h - child.border_rect.h - cr.margin_top - cr.margin_bottom) / 2.0,
+            _ => 0.0,
+        };
+        let target_x = ix + cr.margin_left + dx_align;
+        let target_y = iy + cr.margin_top  + dy_align;
+        let dx = target_x - child.border_rect.x;
+        let dy = target_y - child.border_rect.y;
+        shift_rects(child, dx, dy);
+
+        if matches!(child.style.position, Position::Relative | Position::Sticky) {
+            apply_relative_offset(child, cf, content_w, root_font_px);
+        }
+    }
+
+    let total_h = row_y_local.last().copied().unwrap_or(0.0)
+        + row_heights.last().copied().unwrap_or(0.0);
+    let ch = rbox.content_height.unwrap_or(total_h);
+
+    layout_abs_children(engine, node, font_px, root_font_px);
+    finish_grid(node, rbox, content_x, content_y, content_w, ch)
+}
+
 /// CSS Grid layout.
 /// Returns total outer height.
 /// Mirrors C++ LayoutGrid.
@@ -337,6 +604,34 @@ pub fn layout_grid(
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
 
+        // Check for subgrid child
+        let child_is_subgrid = (child.style.subgrid_columns || child.style.subgrid_rows)
+            && matches!(child.style.display, Display::Grid | Display::InlineGrid);
+
+        if child_is_subgrid {
+            let sctx = SubgridContext {
+                col_px:      col_px.clone(),
+                col_x:       col_x.clone(),
+                col_gap,
+                row_heights: row_heights.clone(),
+                row_y:       row_y.clone(),
+                row_gap,
+                col_span:    (cs, ce),
+                row_span:    (rs, re),
+            };
+            layout_grid_subgrid(engine, child, &crbox, &sctx, ix, iy, font_px, root_font_px);
+            // Align subgrid box within its cell
+            let target_x = ix + crbox.margin_left;
+            let target_y = iy + crbox.margin_top;
+            let ddx = target_x - child.border_rect.x;
+            let ddy = target_y - child.border_rect.y;
+            if ddx.abs() > 0.01 || ddy.abs() > 0.01 { shift_rects(child, ddx, ddy); }
+            if matches!(child.style.position, Position::Relative | Position::Sticky) {
+                apply_relative_offset(child, child_font, content_w, root_font_px);
+            }
+            continue;
+        }
+
         // Handle justify-self / align-self
         let eff_justify = effective_justify_self(child, node.style.justify_items);
         let eff_align   = effective_align_self_grid(child, node.style.align_items);
@@ -584,6 +879,7 @@ pub fn track_to_px(track: &GridTrackSize, container: f32, font_px: f32, root_fon
             track_to_px(&max_t, container, font_px, root_font_px)
         }
         GridTrackKind::FitContent => track.value,
+        GridTrackKind::Subgrid    => 0.0,
     }
 }
 
@@ -660,6 +956,11 @@ fn resolve_to_pixels(
                 let cw = content_widths.get(i).copied().unwrap_or(0.0);
                 sizes[i] = cw;
                 used += cw;
+                flexible_cols += 1;
+            }
+            GridTrackKind::Subgrid => {
+                // Subgrid sentinels should not appear in resolved track lists;
+                // treat as auto if encountered.
                 flexible_cols += 1;
             }
         }

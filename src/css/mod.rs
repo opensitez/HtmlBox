@@ -1591,11 +1591,25 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
         "grid-template-columns" => {
-            style.grid_template_columns = parse_track_list(v, &mut style.auto_repeat_columns);
+            let tracks = parse_track_list(v, &mut style.auto_repeat_columns);
+            if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
+                style.subgrid_columns = true;
+                style.grid_template_columns = Vec::new();
+            } else {
+                style.subgrid_columns = false;
+                style.grid_template_columns = tracks;
+            }
         }
         "grid-template-rows" => {
             let mut dummy = Vec::new();
-            style.grid_template_rows = parse_track_list(v, &mut dummy);
+            let tracks = parse_track_list(v, &mut dummy);
+            if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
+                style.subgrid_rows = true;
+                style.grid_template_rows = Vec::new();
+            } else {
+                style.subgrid_rows = false;
+                style.grid_template_rows = tracks;
+            }
         }
         "grid-auto-columns" => {
             style.grid_auto_columns = parse_single_track(v);
@@ -1884,6 +1898,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "grid" | "grid-template" => {
             if v == "none" {
                 style.grid_template_rows.clear(); style.grid_template_columns.clear();
+                style.subgrid_columns = false; style.subgrid_rows = false;
             } else if let Some(slash) = v.find('/') {
                 let rows_part = v[..slash].trim();
                 let cols_part = v[slash+1..].trim();
@@ -3345,6 +3360,7 @@ pub fn parse_single_track(v: &str) -> GridTrackSize {
 /// auto_repeat_cols receives any auto-fill/auto-fit tracks.
 pub fn parse_track_list(v: &str, auto_repeat_cols: &mut Vec<GridTrackSize>) -> Vec<GridTrackSize> {
     if v.is_empty() { return Vec::new(); }
+    if v.trim() == "subgrid" { return vec![GridTrackSize::subgrid()]; }
     // Tokenize respecting parens
     let tokens = tokenize_track_list(v);
     let mut result = Vec::new();
