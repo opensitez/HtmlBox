@@ -203,3 +203,75 @@ fn subgrid_both_axes() {
     assert!(b.border_rect.x > a.border_rect.x, "b must be right of a");
     assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "a and b same row");
 }
+
+#[test]
+fn subgrid_row_list_pattern() {
+    // Classic "table via subgrid" pattern:
+    // Parent: 4 fixed columns. Each row is a subgrid spanning all 4.
+    let doc = parse_and_layout(
+        r#"<html><body style="margin:0">
+          <div id="parent" style="display:grid;
+                grid-template-columns:48px 200px 100px 80px;
+                column-gap:0; width:428px; margin:0">
+            <div id="row1" style="display:grid; grid-template-columns:subgrid;
+                                  grid-column:1/5; margin:0; padding:0">
+              <div id="a">A</div>
+              <div id="b">B</div>
+              <div id="c">C</div>
+              <div id="d">D</div>
+            </div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let a = find_by_id(&doc.root, "a").expect("a");
+    let b = find_by_id(&doc.root, "b").expect("b");
+    let c = find_by_id(&doc.root, "c").expect("c");
+    let d = find_by_id(&doc.root, "d").expect("d");
+
+    assert!((a.border_rect.w -  48.0).abs() < 2.0, "a={}", a.border_rect.w);
+    assert!((b.border_rect.w - 200.0).abs() < 2.0, "b={}", b.border_rect.w);
+    assert!((c.border_rect.w - 100.0).abs() < 2.0, "c={}", c.border_rect.w);
+    assert!((d.border_rect.w -  80.0).abs() < 2.0, "d={}", d.border_rect.w);
+
+    assert!((a.border_rect.x -   0.0).abs() < 2.0, "ax={}", a.border_rect.x);
+    assert!((b.border_rect.x -  48.0).abs() < 2.0, "bx={}", b.border_rect.x);
+    assert!((c.border_rect.x - 248.0).abs() < 2.0, "cx={}", c.border_rect.x);
+    assert!((d.border_rect.x - 348.0).abs() < 2.0, "dx={}", d.border_rect.x);
+}
+
+#[test]
+fn subgrid_multi_row_alignment() {
+    // Two subgrid rows both using the same 3 parent columns.
+    // All cells in column 0 should share the same x=0; column 1 → x=100; column 2 → x=260.
+    let doc = parse_and_layout(
+        r#"<html><body style="margin:0">
+          <div id="parent" style="display:grid;
+                grid-template-columns:100px 160px 80px;
+                column-gap:0; width:340px; margin:0">
+            <div id="r1" style="display:grid; grid-template-columns:subgrid;
+                                grid-column:1/4; margin:0; padding:0">
+              <div id="r1a">R1A</div><div id="r1b">R1B</div><div id="r1c">R1C</div>
+            </div>
+            <div id="r2" style="display:grid; grid-template-columns:subgrid;
+                                grid-column:1/4; margin:0; padding:0">
+              <div id="r2a">R2A</div><div id="r2b">R2B</div><div id="r2c">R2C</div>
+            </div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let r1a = find_by_id(&doc.root, "r1a").expect("r1a");
+    let r1b = find_by_id(&doc.root, "r1b").expect("r1b");
+    let r2a = find_by_id(&doc.root, "r2a").expect("r2a");
+    let r2b = find_by_id(&doc.root, "r2b").expect("r2b");
+
+    // Both rows' first cells should be at x=0
+    assert!((r1a.border_rect.x - 0.0).abs() < 2.0, "r1a.x={}", r1a.border_rect.x);
+    assert!((r2a.border_rect.x - 0.0).abs() < 2.0, "r2a.x={}", r2a.border_rect.x);
+    // Both rows' second cells should be at x=100
+    assert!((r1b.border_rect.x - 100.0).abs() < 2.0, "r1b.x={}", r1b.border_rect.x);
+    assert!((r2b.border_rect.x - 100.0).abs() < 2.0, "r2b.x={}", r2b.border_rect.x);
+    // Row 2 should be below row 1
+    assert!(r2a.border_rect.y > r1a.border_rect.y, "r2 must be below r1");
+}

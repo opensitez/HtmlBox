@@ -480,25 +480,29 @@ impl Default for PseudoElement {
 
 #[derive(Clone, Debug)]
 pub struct CssRule {
-    pub selectors:        Vec<CssSelector>,
-    pub declarations:     HashMap<String, String>,
-    pub specificity:      u32,     // max of all selectors
-    pub media_condition:  String,  // non-empty if inside @media
-    pub original_selector: String, // verbatim selector text for roundtrip
-    pub is_hover:         bool,
-    pub pseudo_element:   PseudoElement,
+    pub selectors:           Vec<CssSelector>,
+    pub declarations:        HashMap<String, String>,
+    pub specificity:         u32,     // max of all selectors
+    pub media_condition:     String,  // non-empty if inside @media
+    pub container_condition: String,  // non-empty if inside @container
+    pub container_name:      String,  // optional container name (empty = unnamed)
+    pub original_selector:   String,  // verbatim selector text for roundtrip
+    pub is_hover:            bool,
+    pub pseudo_element:      PseudoElement,
 }
 
 impl Default for CssRule {
     fn default() -> Self {
         Self {
-            selectors:         Vec::new(),
-            declarations:      HashMap::new(),
-            specificity:       0,
-            media_condition:   String::new(),
-            original_selector: String::new(),
-            is_hover:          false,
-            pseudo_element:    PseudoElement::None,
+            selectors:           Vec::new(),
+            declarations:        HashMap::new(),
+            specificity:         0,
+            media_condition:     String::new(),
+            container_condition: String::new(),
+            container_name:      String::new(),
+            original_selector:   String::new(),
+            is_hover:            false,
+            pseudo_element:      PseudoElement::None,
         }
     }
 }
@@ -781,8 +785,20 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
                 }
             } else if at_lower.starts_with("@container") {
                 // @container [name] (condition) { ... }
-                // Just recursively parse as-is (without tracking container condition for now)
-                if let Some(inner_rules) = parse_stylesheet_inner(inner_block, parent_media) {
+                // Extract optional container name and condition string.
+                let header = at_header["@container".len()..].trim();
+                let (cname, cond) = if header.starts_with('(') {
+                    (String::new(), header.to_string())
+                } else if let Some(paren) = header.find('(') {
+                    (header[..paren].trim().to_string(), header[paren..].trim().to_string())
+                } else {
+                    (String::new(), header.to_string())
+                };
+                if let Some(mut inner_rules) = parse_stylesheet_inner(inner_block, parent_media) {
+                    for r in &mut inner_rules {
+                        r.container_condition = cond.clone();
+                        r.container_name      = cname.clone();
+                    }
                     for r in inner_rules { rules.push(r); }
                 }
             }
@@ -3608,6 +3624,206 @@ fn parse_media_px(s: &str) -> f32 {
     }
 }
 
+// ─── Container Query Evaluation ──────────────────────────────────────────────
+
+/// Evaluate a `@container` condition string against known container dimensions.
+///
+/// Supports:
+/// - Legacy syntax: `(min-width: Xpx)`, `(max-width: Xpx)`, `(min-height: Xpx)`, `(max-height: Xpx)`
+/// - Modern range syntax: `(width > Xpx)`, `(width >= Xpx)`, `(width < Xpx)`, `(width <= Xpx)`
+/// - Logical: `and`, `or`, `not`
+pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
+    let cond = condition.trim();
+    if cond.is_empty() { return true; }
+
+    // Comma = OR at top level
+    {
+        let mut depth = 0usize;
+        let bytes = cond.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => { if depth > 0 { depth -= 1; } }
+                b',' if depth == 0 => {
+                    return evaluate_container(&cond[..i], w, h)
+                        || evaluate_container(&cond[i+1..], w, h);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(rest) = cond.strip_prefix("not ") {
+        return !evaluate_container(rest.trim(), w, h);
+    }
+    if let Some(idx) = find_keyword_outside_parens(cond, " and ") {
+        return evaluate_container(&cond[..idx], w, h) && evaluate_container(&cond[idx+5..], w, h);
+    }
+    if let Some(idx) = find_keyword_outside_parens(cond, " or ") {
+        return evaluate_container(&cond[..idx], w, h) || evaluate_container(&cond[idx+4..], w, h);
+    }
+
+    // Strip outer parens
+    let inner = if cond.starts_with('(') && cond.ends_with(')') {
+        &cond[1..cond.len()-1]
+    } else {
+        cond
+    };
+    let lower = inner.to_ascii_lowercase();
+    let lower = lower.trim();
+
+    // Legacy min-/max- syntax
+    if let Some(rest) = lower.strip_prefix("min-width:")  { return w >= parse_media_px(rest.trim()); }
+    if let Some(rest) = lower.strip_prefix("max-width:")  { return w <= parse_media_px(rest.trim()); }
+    if let Some(rest) = lower.strip_prefix("min-height:") { return h >= parse_media_px(rest.trim()); }
+    if let Some(rest) = lower.strip_prefix("max-height:") { return h <= parse_media_px(rest.trim()); }
+
+    // Modern range syntax: `width >= 300px`, `width > 300px`, etc.
+    fn parse_range(expr: &str, dim: f32) -> Option<bool> {
+        let e = expr.trim();
+        if let Some(rest) = e.strip_prefix(">=") { return Some(dim >= parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix("<=") { return Some(dim <= parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix('>')  { return Some(dim >  parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix('<')  { return Some(dim <  parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix(':')  { return Some((dim - parse_media_px(rest.trim())).abs() < 0.5); }
+        None
+    }
+    if let Some(rest) = lower.strip_prefix("width")  { if let Some(v) = parse_range(rest, w) { return v; } }
+    if let Some(rest) = lower.strip_prefix("height") { if let Some(v) = parse_range(rest, h) { return v; } }
+    if let Some(rest) = lower.strip_prefix("inline-size")  { if let Some(v) = parse_range(rest, w) { return v; } }
+    if let Some(rest) = lower.strip_prefix("block-size")   { if let Some(v) = parse_range(rest, h) { return v; } }
+
+    // Unknown — fail-open
+    true
+}
+
+// ─── Container Cascade Pass ───────────────────────────────────────────────────
+
+/// An entry on the container ancestor stack built during `apply_container_cascade_tree`.
+#[derive(Clone)]
+pub struct ContainerEntry {
+    pub width:  f32,
+    pub height: f32,
+    pub name:   String,
+}
+
+/// Walk `node` and all its descendants applying any `@container` rules whose
+/// condition matches the nearest container ancestor in `container_stack`.
+///
+/// This is called as a post-layout pass (after box sizes are known) so that
+/// container dimensions are available for condition evaluation.
+///
+/// Returns `true` if any styles were changed (used to decide whether a
+/// second layout pass is needed).
+pub fn apply_container_cascade_tree(
+    node: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    container_stack: &[ContainerEntry],
+    ancestors: &[AncestorInfo],
+    child_index: usize,
+    sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+    root_font_px: f32,
+    vw: f32,
+    vh: f32,
+    focused_box: *const crate::types::HtmlBox,
+    keyboard_focus: bool,
+) -> bool {
+    use crate::types::ContainerType;
+
+    let mut changed = false;
+
+    // Apply matching container rules to this element
+    if !container_stack.is_empty() {
+        let match_ctx = MatchContext {
+            focused_box,
+            keyboard_focus,
+            type_child_index,
+            type_sibling_count,
+            html_box: Some(node),
+        };
+        let mut cont_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
+        for rule in &stylesheet.rules {
+            if rule.container_condition.is_empty() { continue; }
+            if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) { continue; }
+            // Find nearest container that matches the rule's name
+            let ctx = if rule.container_name.is_empty() {
+                container_stack.last()
+            } else {
+                container_stack.iter().rev().find(|c| c.name == rule.container_name)
+            };
+            let ctx = match ctx { Some(c) => c, None => continue };
+            if !evaluate_container(&rule.container_condition, ctx.width, ctx.height) { continue; }
+            // Full selector matching (same logic as apply_cascade_inner)
+            let has_hover   = rule.selectors.iter().any(|s| s.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover")));
+            let has_active  = rule.selectors.iter().any(|s| s.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active")));
+            if has_hover || has_active { continue; }  // state pseudo-class rules are handled separately
+            for sel in &rule.selectors {
+                if sel.matches_with_ancestors_ctx(node, child_index, sibling_count, ancestors, &match_ctx) {
+                    if rule.pseudo_element == PseudoElement::None {
+                        cont_matched.push((rule.specificity, rule.declarations.clone()));
+                    }
+                    break;
+                }
+            }
+        }
+        if !cont_matched.is_empty() {
+            changed = true;
+            cont_matched.sort_by_key(|(sp, _)| *sp);
+            for (_, decls) in &cont_matched {
+                for (prop, val) in decls {
+                    let resolved = resolve_var_references(val, &stylesheet.variables);
+                    apply_property(&mut node.style, prop, &resolved);
+                }
+            }
+        }
+    }
+
+    // Update container stack: if this element is a container, push it
+    let mut new_stack = container_stack.to_vec();
+    if !matches!(node.style.container_type, ContainerType::Normal) {
+        new_stack.push(ContainerEntry {
+            width:  node.content_rect.w,
+            height: node.content_rect.h,
+            name:   node.style.container_name.clone(),
+        });
+    }
+
+    // Build ancestor info for children (mirrors apply_cascade_inner)
+    let my_info = AncestorInfo {
+        tag:              node.tag.clone(),
+        attributes:       node.attributes.clone(),
+        child_index,
+        sibling_count,
+        type_child_index,
+        type_sibling_count,
+    };
+    let mut child_ancestors = ancestors.to_vec();
+    child_ancestors.push(my_info);
+
+    let n_children = node.children.len();
+    if n_children == 0 { return changed; }
+
+    let child_tags: Vec<String> = node.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+    let type_counts: Vec<usize> = child_tags.iter().enumerate().map(|(i, tag)| {
+        child_tags[..=i].iter().filter(|t| *t == tag).count() - 1
+    }).collect();
+    let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
+        child_tags.iter().filter(|t| *t == tag).count()
+    }).collect();
+
+    for (i, child) in node.children.iter_mut().enumerate() {
+        let c = apply_container_cascade_tree(
+            child, stylesheet, &new_stack, &child_ancestors,
+            i, n_children, type_counts[i], type_totals[i],
+            root_font_px, vw, vh, focused_box, keyboard_focus,
+        );
+        if c { changed = true; }
+    }
+    changed
+}
+
 // ─── CSS Cascade ─────────────────────────────────────────────────────────────
 
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
@@ -3760,6 +3976,8 @@ fn apply_cascade_inner(
         if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
             continue;
         }
+        // Container rules require layout context — applied in a post-layout pass.
+        if !rule.container_condition.is_empty() { continue; }
         for sel in &rule.selectors {
             // Detect state-pseudo-class rules (:hover, :active) and match their
             // base selector so the style can be stored for runtime activation.

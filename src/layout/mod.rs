@@ -342,6 +342,7 @@ impl LayoutEngine {
         let root_font_px = self.root_font_px;
 
         // Re-run CSS cascade with current viewport so @media queries reflect the real window size.
+        // Container-query rules are intentionally skipped here — they need layout context.
         let ss = doc.stylesheet.clone();
         crate::css::apply_cascade_vp(
             &mut doc.root, &ss, None, root_font_px,
@@ -349,6 +350,20 @@ impl LayoutEngine {
         );
 
         self.layout_geometry(doc, viewport_width, root_font_px);
+
+        // Container query post-pass: now that box sizes are known, apply @container rules
+        // whose conditions match the computed dimensions of container ancestors, then
+        // re-layout so the updated styles take effect.
+        if ss.rules.iter().any(|r| !r.container_condition.is_empty()) {
+            let changed = crate::css::apply_container_cascade_tree(
+                &mut doc.root, &ss, &[], &[], 0, 1, 0, 1,
+                root_font_px, self.viewport_w, self.viewport_h,
+                doc.focused_box, doc.keyboard_focus,
+            );
+            if changed {
+                self.layout_geometry(doc, viewport_width, root_font_px);
+            }
+        }
     }
 
     /// Layout without re-running the CSS cascade.
