@@ -29,12 +29,16 @@ fn nav_point_to_hit_basic() {
 
 #[test]
 fn nav_hit_test_distinct_offsets() {
-    let doc = layout("<p>A</p><p>B</p><p>C</p>", 800.0);
-    
-    // We'll hit specific points and verify they hit different boxes or offsets
-    let hit_a = point_to_hit(&doc.root, (5.0, 5.0), 0).unwrap();
-    let hit_b = point_to_hit(&doc.root, (5.0, 30.0), 0).unwrap(); // assuming some line height
-    
+    // Use explicit height on paragraphs so layout is predictable regardless of UA margins.
+    let doc = layout(
+        r#"<body style="margin:0"><p style="height:60px;margin:0">A</p><p style="height:60px;margin:0">B</p><p style="height:60px;margin:0">C</p></body>"#,
+        800.0,
+    );
+
+    // P1 is at y=0..60, P3 is at y=120..180. These two points clearly hit different boxes.
+    let hit_a = point_to_hit(&doc.root, (5.0, 30.0), 0).unwrap();
+    let hit_b = point_to_hit(&doc.root, (5.0, 150.0), 0).unwrap();
+
     assert!(hit_a.box_ptr != hit_b.box_ptr || hit_a.local_offset != hit_b.local_offset);
 }
 
@@ -51,14 +55,21 @@ fn nav_caret_x_roundtrip() {
 
 #[test]
 fn nav_wrapped_text_multiple_lines() {
-    let doc = layout("<p>This is a long sentence that should wrap multiple times in a narrow viewport of one hundred pixels</p>", 100.0);
-    
+    // Reset body margin so text starts at a known position (y=0), then use
+    // explicit y values well within the wrapped content.
+    let doc = layout(
+        r#"<body style="margin:0;padding:0"><p style="margin:0">This is a long sentence that should wrap multiple times in a narrow viewport of one hundred pixels wide enough to test wrapping behavior here</p></body>"#,
+        100.0,
+    );
+
+    // Text starts at y=0. At 100px wide there are many wrapped lines (each ~16px).
+    // y=5 hits line 1, y=100 hits line 7+. The resolved y coords must be >20px apart.
     let hit_start = point_to_hit(&doc.root, (5.0, 5.0), 0).unwrap();
     let hit_end   = point_to_hit(&doc.root, (5.0, 100.0), 0).unwrap();
-    
+
     let pt_start = offset_to_point(&doc.root, hit_start.box_ptr, hit_start.local_offset, 0.0, 0.0).unwrap();
     let pt_end   = offset_to_point(&doc.root, hit_end.box_ptr, hit_end.local_offset, 0.0, 0.0).unwrap();
-    
+
     assert!(pt_end.1 > pt_start.1 + 20.0);
 }
 
@@ -377,8 +388,12 @@ fn nav_wrapped_text_line_ordering() {
 
 #[test]
 fn nav_nested_divs_have_content() {
-    // Deeply nested div should still produce a hittable point
-    let doc = layout("<div><div><p>Inner paragraph</p></div></div>", 800.0);
+    // Deeply nested div should still produce a hittable point.
+    // Reset body/p margins so content is at y=0, making layout predictable.
+    let doc = layout(
+        r#"<body style="margin:0;padding:0"><div><div><p style="margin:0">Inner paragraph</p></div></div></body>"#,
+        800.0,
+    );
     let hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
     assert!(hit.is_some());
 }

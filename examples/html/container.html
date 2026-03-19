@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  background: #0a0a0f;
+  color: #e2e8f0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── App header ── */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  height: 50px;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+.app-logo {
+  font-size: 15px;
+  font-weight: 800;
+  color: #818cf8;
+  letter-spacing: -0.3px;
+}
+.app-nav {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+.app-nav-item {
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.app-nav-item.active {
+  color: #e2e8f0;
+  background: #1e293b;
+}
+.app-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.app-hint {
+  font-size: 11px;
+  color: #334155;
+}
+
+/* ── App body ── */
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid #1e293b;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: #080b12;
+}
+.sidebar-section {
+  padding: 14px 12px 8px;
+}
+.sidebar-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #334155;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.sidebar-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* ── Board ── */
+.board {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.board-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+.board-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.board-meta {
+  font-size: 11px;
+  color: #334155;
+}
+.board-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 1;
+  overflow: hidden;
+}
+.board-col {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #1e293b;
+  overflow-y: auto;
+}
+.board-col:last-child { border-right: none; }
+.col-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  position: sticky;
+  top: 0;
+  background: #0a0a0f;
+  border-bottom: 1px solid #1e293b;
+  z-index: 1;
+}
+.col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.col-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; }
+.col-count {
+  background: #1e293b;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.col-add {
+  margin-left: auto;
+  font-size: 16px;
+  color: #334155;
+  cursor: pointer;
+  line-height: 1;
+}
+.col-tasks {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ═══════════════════════════════════════════
+   TASK CARD — container query component
+   Same HTML, layout adapts to container width.
+
+   < 190px  → compact: priority bar + title only
+   ≥ 190px  → + label badge + assignee + date
+   ≥ 270px  → + description text
+   ≥ 460px  → + footer: actions + progress bar
+═══════════════════════════════════════════ */
+
+.task {
+  container-type: inline-size;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.task:hover { border-color: #334155; }
+
+/* Default: compact — priority bar + title */
+.task-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+}
+.task-priority {
+  width: 3px;
+  min-height: 20px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.task-content { flex: 1; min-width: 0; }
+.task-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  line-height: 1.35;
+}
+.task-meta {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+.task-label {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.task-assignee {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.task-date { font-size: 10px; color: #334155; margin-left: auto; }
+
+.task-desc {
+  display: none;
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+
+.task-footer {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid #0f172a;
+}
+.task-actions { display: flex; gap: 5px; }
+.task-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.task-btn-primary { background: #4f46e5; color: #fff; }
+.task-btn-ghost { background: transparent; border: 1px solid #1e293b; color: #475569; }
+
+.task-progress { display: flex; align-items: center; gap: 6px; }
+.task-progress-bar {
+  width: 56px;
+  height: 3px;
+  background: #1e293b;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.task-progress-fill { height: 100%; border-radius: 2px; }
+.task-progress-pct { font-size: 10px; color: #334155; }
+
+/* ≥ 190px: show meta row (label, assignee, date)
+   Sidebar cards are ~196px wide — just past this threshold */
+@container (min-width: 190px) {
+  .task-meta { display: flex; }
+}
+
+/* ≥ 270px: show description
+   Board cards (2 cols, 800px window) are ~270px — hits this threshold.
+   Sidebar cards (~196px) do NOT — so you see the difference immediately. */
+@container (min-width: 270px) {
+  .task-body { padding: 10px 12px; }
+  .task-title { font-size: 13px; }
+  .task-desc  { display: block; }
+}
+
+/* ≥ 460px: show footer with actions + progress bar
+   Appears when the window is widened (each board column grows) */
+@container (min-width: 460px) {
+  .task-footer { display: flex; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="app-logo">Orbit</div>
+  <div class="app-nav">
+    <div class="app-nav-item active">Board</div>
+    <div class="app-nav-item">Timeline</div>
+    <div class="app-nav-item">Backlog</div>
+  </div>
+  <div class="app-header-right">
+    <div class="app-hint">resize window to see columns adapt</div>
+    <div class="app-avatar">Y</div>
+  </div>
+</div>
+
+<div class="app-body">
+
+  <!-- Sidebar (220px wide): cards are ~196px → show meta but NOT description.
+       Board cards (~269px) DO show description. Same component, different context. -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">To Do · 3</div>
+      <div class="sidebar-tasks">
+
+        <div class="task">
+          <div class="task-body">
+            <div class="task-priority" style="background:#ef4444"></div>
+            <div class="task-content">
+              <div class="task-title">Audit login flow</div>
+              <div class="task-meta">
+                <div class="task-label" style="background:#fef2f2;color:#991b1b">High</div>
+                <div class="task-assignee" style="background:#312e81">Y</div>
+                <div class="task-date">Today</div>
+              </div>
+              <div class="task-desc">Review session handling and token refresh logic for security gaps before the Q1 audit.</div>
+            </div>
+          </div>
+          <div class="task-footer">
+            <div class="task-actions">
+              <div class="task-btn task-btn-primary">Open</div>
+              <div class="task-btn task-btn-ghost">Assign</div>
+            </div>
+            <div class="task-progress">
+              <div class="task-progress-bar"><div class="task-progress-fill" style="width:30%;background:#4f46e5"></div></div>
+              <div class="task-progress-pct">30%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="task">
+          <div class="task-body">
+            <div class="task-priority" style="background:#f59e0b"></div>
+            <div class="task-content">
+              <div class="task-title">Update API docs</div>
+              <div class="task-meta">
+                <div class="task-label" style="background:#fffbeb;color:#92400e">Med</div>
+                <div class="task-assignee" style="background:#065f46">K</div>
+                <div class="task-date">Wed</div>
+              </div>
+              <div class="task-desc">Document v2 endpoints including auth headers and pagination parameters.</div>
+            </div>
+          </div>
+          <div class="task-footer">
+            <div class="task-actions">
+              <div class="task-btn task-btn-primary">Open</div>
+              <div class="task-btn task-btn-ghost">Assign</div>
+            </div>
+            <div class="task-progress">
+              <div class="task-progress-bar"><div class="task-progress-fill" style="width:70%;background:#f59e0b"></div></div>
+              <div class="task-progress-pct">70%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="task">
+          <div class="task-body">
+            <div class="task-priority" style="background:#3b82f6"></div>
+            <div class="task-content">
+              <div class="task-title">Fix mobile nav overlap</div>
+              <div class="task-meta">
+                <div class="task-label" style="background:#eff6ff;color:#1e40af">Low</div>
+                <div class="task-assignee" style="background:#7c2d12">E</div>
+                <div class="task-date">Thu</div>
+              </div>
+              <div class="task-desc">Hamburger menu overlaps hero content on iOS Safari narrow viewport.</div>
+            </div>
+          </div>
+          <div class="task-footer">
+            <div class="task-actions">
+              <div class="task-btn task-btn-primary">Open</div>
+              <div class="task-btn task-btn-ghost">Assign</div>
+            </div>
+            <div class="task-progress">
+              <div class="task-progress-bar"><div class="task-progress-fill" style="width:10%;background:#3b82f6"></div></div>
+              <div class="task-progress-pct">10%</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Board: 2 columns — each ~285px at 800px window, wide enough to show description
+       Sidebar (~196px cards) shows meta only; board (~269px cards) shows meta + description.
+       Widen the window to 1100px+ to see the footer (actions + progress bar) appear. -->
+  <div class="board">
+    <div class="board-toolbar">
+      <div class="board-title">Sprint 12</div>
+      <div class="board-meta">· 7 tasks · Q1 2025 · same .task component in sidebar and board</div>
+    </div>
+    <div class="board-columns">
+
+      <!-- In Progress -->
+      <div class="board-col">
+        <div class="col-header">
+          <div class="col-dot" style="background:#f59e0b"></div>
+          <div class="col-title">In Progress</div>
+          <div class="col-count">2</div>
+          <div class="col-add">+</div>
+        </div>
+        <div class="col-tasks">
+
+          <div class="task">
+            <div class="task-body">
+              <div class="task-priority" style="background:#ef4444"></div>
+              <div class="task-content">
+                <div class="task-title">Audit login flow</div>
+                <div class="task-meta">
+                  <div class="task-label" style="background:#fef2f2;color:#991b1b">High</div>
+                  <div class="task-assignee" style="background:#312e81">Y</div>
+                  <div class="task-date">Today</div>
+                </div>
+                <div class="task-desc">Review session handling and token refresh logic for security gaps before the Q1 audit.</div>
+              </div>
+            </div>
+            <div class="task-footer">
+              <div class="task-actions">
+                <div class="task-btn task-btn-primary">Open</div>
+                <div class="task-btn task-btn-ghost">Assign</div>
+              </div>
+              <div class="task-progress">
+                <div class="task-progress-bar"><div class="task-progress-fill" style="width:30%;background:#ef4444"></div></div>
+                <div class="task-progress-pct">30%</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="task">
+            <div class="task-body">
+              <div class="task-priority" style="background:#f59e0b"></div>
+              <div class="task-content">
+                <div class="task-title">Update API docs</div>
+                <div class="task-meta">
+                  <div class="task-label" style="background:#fffbeb;color:#92400e">Med</div>
+                  <div class="task-assignee" style="background:#065f46">K</div>
+                  <div class="task-date">Wed</div>
+                </div>
+                <div class="task-desc">Document v2 endpoints including auth headers and pagination parameters.</div>
+              </div>
+            </div>
+            <div class="task-footer">
+              <div class="task-actions">
+                <div class="task-btn task-btn-primary">Open</div>
+                <div class="task-btn task-btn-ghost">Assign</div>
+              </div>
+              <div class="task-progress">
+                <div class="task-progress-bar"><div class="task-progress-fill" style="width:70%;background:#f59e0b"></div></div>
+                <div class="task-progress-pct">70%</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Done -->
+      <div class="board-col">
+        <div class="col-header">
+          <div class="col-dot" style="background:#22c55e"></div>
+          <div class="col-title">Done</div>
+          <div class="col-count">2</div>
+          <div class="col-add">+</div>
+        </div>
+        <div class="col-tasks">
+
+          <div class="task">
+            <div class="task-body">
+              <div class="task-priority" style="background:#22c55e"></div>
+              <div class="task-content">
+                <div class="task-title">Migrate to TypeScript</div>
+                <div class="task-meta">
+                  <div class="task-label" style="background:#f0fdf4;color:#166534">Done</div>
+                  <div class="task-assignee" style="background:#7c2d12">E</div>
+                  <div class="task-date">Mon</div>
+                </div>
+                <div class="task-desc">Converted all JS modules to .ts with strict mode. Zero type errors in CI.</div>
+              </div>
+            </div>
+            <div class="task-footer">
+              <div class="task-actions">
+                <div class="task-btn task-btn-primary">View</div>
+                <div class="task-btn task-btn-ghost">Reopen</div>
+              </div>
+              <div class="task-progress">
+                <div class="task-progress-bar"><div class="task-progress-fill" style="width:100%;background:#22c55e"></div></div>
+                <div class="task-progress-pct">100%</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="task">
+            <div class="task-body">
+              <div class="task-priority" style="background:#22c55e"></div>
+              <div class="task-content">
+                <div class="task-title">Design system v1</div>
+                <div class="task-meta">
+                  <div class="task-label" style="background:#f0fdf4;color:#166534">Done</div>
+                  <div class="task-assignee" style="background:#312e81">Y</div>
+                  <div class="task-date">Tue</div>
+                </div>
+                <div class="task-desc">Tokens, components, and Storybook stories for the core UI kit. Shipped to staging.</div>
+              </div>
+            </div>
+            <div class="task-footer">
+              <div class="task-actions">
+                <div class="task-btn task-btn-primary">View</div>
+                <div class="task-btn task-btn-ghost">Reopen</div>
+              </div>
+              <div class="task-progress">
+                <div class="task-progress-bar"><div class="task-progress-fill" style="width:100%;background:#22c55e"></div></div>
+                <div class="task-progress-pct">100%</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

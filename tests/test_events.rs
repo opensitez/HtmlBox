@@ -379,7 +379,7 @@ fn pointerover_pointerout_dispatch_over_out() {
 #[test]
 fn focusin_focusout_on_mouse_down_focus_change() {
     let mut doc = rhtmledit::load_html(
-        r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
+        r#"<div id="a" tabindex="0" style="width:100px;height:50px">A</div><div id="b" tabindex="0" style="width:100px;height:50px">B</div>"#,
         400.0,
     );
 

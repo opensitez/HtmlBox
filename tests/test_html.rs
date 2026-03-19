@@ -571,25 +571,25 @@ fn html_content_goes_in_body() {
 
 #[test]
 fn html_ua_body_margin() {
-    // UABodyMargin: UA stylesheet gives body no margin.
+    // UABodyMargin: UA stylesheet gives body 8px margin (browser default).
     let doc = parse_and_layout("<p>Text</p>", 800.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.style.margin_top.resolve(16.0, 0.0, 16.0), 0.0);
-    assert_eq!(body.style.margin_left.resolve(16.0, 0.0, 16.0), 0.0);
+    assert_eq!(body.style.margin_top.resolve(16.0, 0.0, 16.0), 8.0);
+    assert_eq!(body.style.margin_left.resolve(16.0, 0.0, 16.0), 8.0);
 }
 
 #[test]
 fn html_body_layout_position() {
-    // BodyLayoutPosition: body at x=0, width=800.
+    // BodyLayoutPosition: body margin_rect at x=0; content inset by UA 8px margin.
     let doc = parse_and_layout("<p>Text</p>", 800.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.content_rect.x, 8.0);
+    assert_eq!(body.content_rect.w, 784.0);
 }
 
 #[test]
@@ -609,7 +609,7 @@ fn html_body_layout_with_explicit_margin() {
 
 #[test]
 fn html_body_layout_with_box_sizing() {
-    // BodyLayoutWithBoxSizing: box-sizing: border-box doesn't shift body.
+    // BodyLayoutWithBoxSizing: box-sizing: border-box doesn't affect margin offset.
     let doc = parse_and_layout(
         r#"<style>* { box-sizing: border-box; }</style><p>Text</p>"#,
         800.0,
@@ -618,7 +618,7 @@ fn html_body_layout_with_box_sizing() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
+    assert_eq!(body.content_rect.x, 8.0); // UA body margin: 8px
 }
 
 #[test]
@@ -632,7 +632,7 @@ fn html_body_layout_demo_pattern() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
+    assert_eq!(body.content_rect.x, 8.0); // UA body margin: 8px
     assert_eq!(doc.root.margin_rect.x, 0.0);
     assert_eq!(doc.root.content_rect.w, 685.0);
 }
@@ -648,7 +648,7 @@ fn html_body_layout_with_floats() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
+    assert_eq!(body.content_rect.x, 8.0); // UA body margin: 8px
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn html_body_bfc_isolation() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.content_rect.w, 784.0); // 800 - 2*8px UA body margin
 }
 
 #[test]
@@ -707,14 +707,14 @@ fn html_body_explicit_width_with_margin() {
 
 #[test]
 fn html_body_no_margin_full_viewport() {
-    // BodyNoMarginFullViewport: default body fills full 1024px viewport.
+    // BodyNoMarginFullViewport: UA body margin 8px insets content from full 1024px viewport.
     let doc = parse_and_layout("<p>Hello</p>", 1024.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.content_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 1024.0);
-    assert_eq!(body.margin_rect.w, 1024.0);
+    assert_eq!(body.content_rect.x, 8.0);   // UA body margin: 8px
+    assert_eq!(body.content_rect.w, 1008.0); // 1024 - 2*8px
+    assert_eq!(body.margin_rect.w, 1024.0);  // margin_rect spans full viewport
 }
 
 // ============================================================
@@ -724,31 +724,33 @@ fn html_body_no_margin_full_viewport() {
 #[test]
 fn html_table_full_width_in_body_with_padding() {
     // TableFullWidthInBodyWithPadding: table matches body content width.
+    // body: UA margin 8px + explicit padding 16px → content = 800 - 2*8 - 2*16 = 752
     let doc = parse_and_layout(
         r#"<body style="padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>Long description text</td></tr></table></body>"#,
         800.0,
     );
     let body = get_body(&doc);
     assert!(body.is_some());
-    assert_eq!(body.unwrap().content_rect.w, 768.0);
+    assert_eq!(body.unwrap().content_rect.w, 752.0);
     let table = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::Table);
     assert!(table.is_some());
-    assert_eq!(table.unwrap().margin_rect.w, 768.0);
+    assert_eq!(table.unwrap().margin_rect.w, 752.0);
 }
 
 #[test]
 fn html_table_full_width_in_body_with_padding_and_box_sizing() {
     // TableFullWidthInBodyWithPaddingAndBoxSizing: same with border-box.
+    // body: UA margin 8px + explicit padding 16px → content = 800 - 2*8 - 2*16 = 752
     let doc = parse_and_layout(
         r#"<style>* { box-sizing: border-box; }</style><body style="padding: 16px;"><table style="width: 100%; border-collapse: collapse;"><tr><td style="padding: 8px; border: 1px solid #ccc;">Name</td><td style="padding: 8px; border: 1px solid #ccc;">Type</td><td style="padding: 8px; border: 1px solid #ccc;">Load an HTML string into the editor</td></tr></table></body>"#,
         800.0,
     );
     let body = get_body(&doc);
     assert!(body.is_some());
-    assert_eq!(body.unwrap().content_rect.w, 768.0);
+    assert_eq!(body.unwrap().content_rect.w, 752.0);
     let table = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::Table);
     assert!(table.is_some());
-    assert_eq!(table.unwrap().margin_rect.w, 768.0);
+    assert_eq!(table.unwrap().margin_rect.w, 752.0);
 }
 
 #[test]
@@ -829,14 +831,14 @@ fn html_double_layout_preserves_body_position() {
     assert!(body.is_some());
     let body = body.unwrap();
     assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.content_rect.w, 784.0); // 800 - 2*8px UA margin
 
     let doc2 = parse_and_layout("<p>Text</p>", 700.0);
     let body2 = get_body(&doc2);
     assert!(body2.is_some());
     let body2 = body2.unwrap();
     assert_eq!(body2.margin_rect.x, 0.0);
-    assert_eq!(body2.content_rect.w, 700.0);
+    assert_eq!(body2.content_rect.w, 684.0); // 700 - 2*8px UA margin
 }
 
 #[test]
@@ -853,7 +855,7 @@ fn html_double_layout_with_floats_preserves_body() {
     assert!(body2.is_some());
     let body2 = body2.unwrap();
     assert_eq!(body2.margin_rect.x, 0.0);
-    assert_eq!(body2.content_rect.w, 750.0);
+    assert_eq!(body2.content_rect.w, 734.0); // 750 - 2*8px UA margin
 }
 
 #[test]
@@ -887,7 +889,7 @@ fn html_double_layout_table_in_body_with_padding() {
     let table2 = find_box(&doc2.root, &|b: &HtmlBox| b.style.display == Display::Table);
     assert!(table2.is_some());
     assert_eq!(table2.unwrap().margin_rect.w, tw1);
-    assert_eq!(tw1, 768.0);
+    assert_eq!(tw1, 752.0); // 800 - 2*8px UA margin - 2*16px body padding
 }
 
 // ============================================================

@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  background: #0f0f13;
+  color: #e2e8f0;
+  padding: 40px 32px;
+  line-height: 1.4;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 800;
+  color: #f8fafc;
+  margin-bottom: 6px;
+  letter-spacing: -0.5px;
+}
+.subtitle {
+  font-size: 14px;
+  color: #64748b;
+  margin-bottom: 48px;
+}
+
+.section { margin-bottom: 52px; }
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 8px;
+}
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 4px;
+}
+.section-desc {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 20px;
+}
+code {
+  background: #1e1e2e;
+  border: 1px solid #2d2d3f;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #a78bfa;
+}
+
+/* ════════════════════════════════════════════════
+   DEMO 1 — WITHOUT SUBGRID (columns misalign)
+════════════════════════════════════════════════ */
+
+.bad-notice {
+  display: inline-block;
+  background: #450a0a;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #fca5a5;
+  margin-bottom: 12px;
+}
+
+.good-notice {
+  display: inline-block;
+  background: #052e16;
+  border: 1px solid #14532d;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #86efac;
+  margin-bottom: 12px;
+}
+
+/* Column header row (shared by both demos for comparison) */
+.col-header {
+  display: flex;
+  gap: 0;
+  background: #1e1e2e;
+  border: 1px solid #2d2d3f;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 0;
+  width: 640px;
+}
+
+.ch { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #475569; padding: 0 12px; }
+.ch-rank  { width: 52px; }
+.ch-name  { flex: 1; }
+.ch-score { width: 90px; }
+.ch-tier  { width: 110px; }
+.ch-delta { width: 80px; }
+
+/* ── BAD: each row is a flex container, no shared column tracks ── */
+
+.bad-list {
+  width: 640px;
+  border: 1px solid #2d2d3f;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.bad-row {
+  display: flex;
+  align-items: center;
+  padding: 11px 0;
+  border-bottom: 1px solid #1a1a26;
+  background: #161622;
+}
+.bad-row:last-child { border-bottom: none; }
+.bad-row:nth-child(even) { background: #1a1a28; }
+
+/* These widths are hard-coded guesses — still misalign vs the header above */
+.bad-rank  { width: 52px; text-align: center; font-size: 13px; font-weight: 700; color: #64748b; }
+.bad-name  { flex: 1; font-size: 14px; color: #e2e8f0; padding: 0 12px; }
+.bad-score { width: 90px; font-size: 14px; font-weight: 700; color: #f8fafc; }
+.bad-tier  { width: 110px; padding: 0 12px; }
+.bad-delta { width: 80px; font-size: 12px; padding: 0 12px; }
+
+/* ════════════════════════════════════════════════
+   DEMO 2 — WITH SUBGRID (perfect alignment)
+════════════════════════════════════════════════ */
+
+/*
+ * Parent grid defines 5 column tracks.
+ * Each row is a subgrid item spanning all 5 tracks.
+ * Children naturally occupy one track each — no widths needed.
+ */
+.sg-list {
+  display: grid;
+  grid-template-columns: 52px 1fr 90px 110px 80px;
+  column-gap: 0;
+  width: 640px;
+  border: 1px solid #2d2d3f;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+
+.sg-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / 6;
+  align-items: center;
+  padding: 0;
+  border-bottom: 1px solid #1a1a26;
+  background: #161622;
+}
+.sg-row:last-child { border-bottom: none; }
+.sg-row:nth-child(even) { background: #1a1a28; }
+
+/* No explicit widths — they come from the parent's track sizes */
+.sg-rank  { padding: 11px 0; text-align: center; font-size: 13px; font-weight: 700; color: #64748b; }
+.sg-name  { padding: 11px 12px; font-size: 14px; color: #e2e8f0; }
+.sg-score { padding: 11px 0; font-size: 14px; font-weight: 700; color: #f8fafc; }
+.sg-tier  { padding: 11px 12px; }
+.sg-delta { padding: 11px 12px; font-size: 12px; }
+
+/* Shared decoration cells */
+.medal-gold   { color: #f59e0b; font-size: 16px; }
+.medal-silver { color: #94a3b8; font-size: 16px; }
+.medal-bronze { color: #b45309; font-size: 16px; }
+
+.tier-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tier-diamond { background: #1e3a5f; color: #7dd3fc; border: 1px solid #1d4ed8; }
+.tier-plat    { background: #1e1b4b; color: #a5b4fc; border: 1px solid #4338ca; }
+.tier-gold    { background: #292524; color: #fcd34d; border: 1px solid #78350f; }
+.tier-silver  { background: #1c1917; color: #94a3b8; border: 1px solid #3f3f46; }
+
+.delta-up   { color: #22c55e; }
+.delta-down { color: #ef4444; }
+.delta-same { color: #64748b; }
+
+/* ════════════════════════════════════════════════
+   DEMO 3 — SETTINGS FORM: 3-col subgrid
+   label | control | hint
+════════════════════════════════════════════════ */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr 180px;
+  column-gap: 0;
+  width: 680px;
+  border: 1px solid #2d2d3f;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.form-head {
+  grid-column: 1 / 4;
+  background: #7c3aed;
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.2px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / 4;
+  border-bottom: 1px solid #1e1e2e;
+  align-items: start;
+}
+.form-row:last-child { border-bottom: none; }
+.form-row:nth-child(odd) { background: #161622; }
+.form-row:nth-child(even) { background: #1a1a28; }
+
+.form-label {
+  padding: 14px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  border-right: 1px solid #1e1e2e;
+}
+
+.form-val {
+  padding: 14px 18px;
+  font-size: 13px;
+  color: #e2e8f0;
+  border-right: 1px solid #1e1e2e;
+}
+
+.form-hint {
+  padding: 14px 16px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.pill-green  { background: #052e16; color: #86efac; border: 1px solid #14532d; }
+.pill-blue   { background: #1e3a5f; color: #93c5fd; border: 1px solid #1e40af; }
+.pill-orange { background: #292524; color: #fb923c; border: 1px solid #7c2d12; }
+.pill-purple { background: #2e1065; color: #c4b5fd; border: 1px solid #4c1d95; }
+
+/* ════════════════════════════════════════════════
+   DEMO 4 — SIDE-BY-SIDE comparison panel
+════════════════════════════════════════════════ */
+
+.compare-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  width: 780px;
+}
+
+.compare-box {
+  border: 1px solid #2d2d3f;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.compare-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.compare-title.bad-title  { background: #450a0a; color: #fca5a5; border-bottom: 1px solid #7f1d1d; }
+.compare-title.good-title { background: #052e16; color: #86efac; border-bottom: 1px solid #14532d; }
+
+/* The same 4 "album cards" rendered with and without subgrid */
+
+/* Bad: each card is a block, elements float/stack unpredictably */
+.album-grid-bad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #1e1e2e;
+}
+
+.album-card-bad {
+  background: #161622;
+  padding: 12px;
+}
+
+.album-art-bad {
+  width: 100%;
+  height: 60px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.album-name-bad { font-size: 13px; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; }
+.album-artist-bad { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+/* Tracks count varies — CTA button ends up at different heights */
+.album-tracks-bad { font-size: 11px; color: #475569; margin-bottom: 6px; }
+.album-cta-bad {
+  background: #2e1065;
+  color: #a78bfa;
+  border: 1px solid #4c1d95;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Good: outer grid has 4 row tracks, each card uses subgrid rows */
+.album-grid-good {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto auto auto auto;
+  gap: 0 1px;
+  background: #2d2d3f;
+}
+
+.album-card-good {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  grid-column: span 1;
+  grid-row: span 5;
+  background: #161622;
+  padding: 12px;
+  gap: 0;
+}
+
+.album-art-good {
+  height: 60px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+.album-name-good   { font-size: 13px; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; }
+.album-artist-good { font-size: 11px; color: #64748b; }
+.album-tracks-good { font-size: 11px; color: #475569; padding-top: 4px; }
+.album-cta-good {
+  background: #2e1065;
+  color: #a78bfa;
+  border: 1px solid #4c1d95;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  align-self: end;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<h1>CSS Subgrid</h1>
+<div class="subtitle">grid-template-columns: subgrid — children lock to the parent's column tracks</div>
+
+<!-- ═══════════════════════════════════════════
+     DEMO 1: Leaderboard — column subgrid
+═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Core use case</div>
+  <div class="section-title">Leaderboard rows sharing parent column tracks</div>
+  <div class="section-desc">
+    Same column header. Two different row implementations.
+    Notice how the subgrid rows perfectly snap to the header's column positions
+    without any explicit widths on the cells.
+  </div>
+
+  <!-- WITHOUT -->
+  <div class="bad-notice">✗ Without subgrid — flex rows, cells don't align to header</div>
+  <div class="col-header">
+    <div class="ch ch-rank">#</div>
+    <div class="ch ch-name">Player</div>
+    <div class="ch ch-score">Score</div>
+    <div class="ch ch-tier">Tier</div>
+    <div class="ch ch-delta">Change</div>
+  </div>
+  <div class="bad-list">
+    <div class="bad-row">
+      <div class="bad-rank"><span class="medal-gold">🥇</span></div>
+      <div class="bad-name">Nadia Vasquez</div>
+      <div class="bad-score">9,847</div>
+      <div class="bad-tier"><span class="tier-badge tier-diamond">Diamond</span></div>
+      <div class="bad-delta delta-up">▲ 2</div>
+    </div>
+    <div class="bad-row">
+      <div class="bad-rank"><span class="medal-silver">🥈</span></div>
+      <div class="bad-name">Kenji Mori</div>
+      <div class="bad-score">9,203</div>
+      <div class="bad-tier"><span class="tier-badge tier-diamond">Diamond</span></div>
+      <div class="bad-delta delta-down">▼ 1</div>
+    </div>
+    <div class="bad-row">
+      <div class="bad-rank"><span class="medal-bronze">🥉</span></div>
+      <div class="bad-name">Amara Osei-Bonsu</div>
+      <div class="bad-score">8,761</div>
+      <div class="bad-tier"><span class="tier-badge tier-plat">Platinum</span></div>
+      <div class="bad-delta delta-same">— 0</div>
+    </div>
+    <div class="bad-row">
+      <div class="bad-rank">4</div>
+      <div class="bad-name">Lior Ben-David</div>
+      <div class="bad-score">7,490</div>
+      <div class="bad-tier"><span class="tier-badge tier-gold">Gold</span></div>
+      <div class="bad-delta delta-up">▲ 5</div>
+    </div>
+    <div class="bad-row">
+      <div class="bad-rank">5</div>
+      <div class="bad-name">Priya Nair</div>
+      <div class="bad-score">6,815</div>
+      <div class="bad-tier"><span class="tier-badge tier-silver">Silver</span></div>
+      <div class="bad-delta delta-down">▼ 3</div>
+    </div>
+  </div>
+
+  <div style="height:24px"></div>
+
+  <!-- WITH SUBGRID -->
+  <div class="good-notice">✓ With subgrid — each row inherits the parent's 5 column tracks</div>
+  <div class="col-header">
+    <div class="ch ch-rank">#</div>
+    <div class="ch ch-name">Player</div>
+    <div class="ch ch-score">Score</div>
+    <div class="ch ch-tier">Tier</div>
+    <div class="ch ch-delta">Change</div>
+  </div>
+  <div class="sg-list">
+    <div class="sg-row">
+      <div class="sg-rank"><span class="medal-gold">🥇</span></div>
+      <div class="sg-name">Nadia Vasquez</div>
+      <div class="sg-score">9,847</div>
+      <div class="sg-tier"><span class="tier-badge tier-diamond">Diamond</span></div>
+      <div class="sg-delta delta-up">▲ 2</div>
+    </div>
+    <div class="sg-row">
+      <div class="sg-rank"><span class="medal-silver">🥈</span></div>
+      <div class="sg-name">Kenji Mori</div>
+      <div class="sg-score">9,203</div>
+      <div class="sg-tier"><span class="tier-badge tier-diamond">Diamond</span></div>
+      <div class="sg-delta delta-down">▼ 1</div>
+    </div>
+    <div class="sg-row">
+      <div class="sg-rank"><span class="medal-bronze">🥉</span></div>
+      <div class="sg-name">Amara Osei-Bonsu</div>
+      <div class="sg-score">8,761</div>
+      <div class="sg-tier"><span class="tier-badge tier-plat">Platinum</span></div>
+      <div class="sg-delta delta-same">— 0</div>
+    </div>
+    <div class="sg-row">
+      <div class="sg-rank">4</div>
+      <div class="sg-name">Lior Ben-David</div>
+      <div class="sg-score">7,490</div>
+      <div class="sg-tier"><span class="tier-badge tier-gold">Gold</span></div>
+      <div class="sg-delta delta-up">▲ 5</div>
+    </div>
+    <div class="sg-row">
+      <div class="sg-rank">5</div>
+      <div class="sg-name">Priya Nair</div>
+      <div class="sg-score">6,815</div>
+      <div class="sg-tier"><span class="tier-badge tier-silver">Silver</span></div>
+      <div class="sg-delta delta-down">▼ 3</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     DEMO 2: Settings form — 3-column subgrid
+═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">3-column subgrid</div>
+  <div class="section-title">Settings form — label · value · hint</div>
+  <div class="section-desc">
+    Parent declares <code>grid-template-columns: 160px 1fr 180px</code>.
+    Each <code>.form-row</code> uses <code>grid-template-columns: subgrid; grid-column: 1/4</code>
+    so all labels, all controls, and all hints lock to the same column lines — no widths on the cells.
+  </div>
+
+  <div class="form-grid">
+    <div class="form-head">Account Settings</div>
+
+    <div class="form-row">
+      <div class="form-label">Display name</div>
+      <div class="form-val">Nadia Vasquez</div>
+      <div class="form-hint">Shown on leaderboard</div>
+    </div>
+    <div class="form-row">
+      <div class="form-label">Email</div>
+      <div class="form-val">nadia@example.com</div>
+      <div class="form-hint">Used for login</div>
+    </div>
+    <div class="form-row">
+      <div class="form-label">Account status</div>
+      <div class="form-val"><span class="pill pill-green">Active</span></div>
+      <div class="form-hint">Verified since 2022</div>
+    </div>
+    <div class="form-row">
+      <div class="form-label">Subscription</div>
+      <div class="form-val"><span class="pill pill-purple">Pro · $12/mo</span></div>
+      <div class="form-hint">Renews 2025-08-01</div>
+    </div>
+    <div class="form-row">
+      <div class="form-label">2FA</div>
+      <div class="form-val"><span class="pill pill-blue">Enabled</span></div>
+      <div class="form-hint">TOTP authenticator</div>
+    </div>
+    <div class="form-row">
+      <div class="form-label">API access</div>
+      <div class="form-val"><span class="pill pill-orange">Rate limited</span></div>
+      <div class="form-hint">1000 req / day</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     DEMO 3: Album cards — subgrid rows
+═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Subgrid rows</div>
+  <div class="section-title">Album cards — CTA buttons pinned to shared row track</div>
+  <div class="section-desc">
+    Without subgrid rows (left): album art, title, artist, track count, and CTA stack
+    independently per card — cards with more tracks push the button down.
+    With subgrid rows (right): the outer grid's 5 row tracks are inherited, so CTA
+    buttons always share the same baseline.
+  </div>
+
+  <div class="compare-wrap">
+
+    <!-- BAD -->
+    <div class="compare-box">
+      <div class="compare-title bad-title">✗ Without subgrid rows</div>
+      <div class="album-grid-bad">
+
+        <div class="album-card-bad">
+          <div class="album-art-bad" style="background:linear-gradient(135deg,#7c3aed,#2563eb)">🎵</div>
+          <div class="album-name-bad">Neon Dreams</div>
+          <div class="album-artist-bad">Solaris</div>
+          <div class="album-tracks-bad">4 tracks · 16 min</div>
+          <div class="album-cta-bad">▶ Play</div>
+        </div>
+
+        <div class="album-card-bad">
+          <div class="album-art-bad" style="background:linear-gradient(135deg,#059669,#0891b2)">🎸</div>
+          <div class="album-name-bad">Electric Coast</div>
+          <div class="album-artist-bad">The Shoreline</div>
+          <div class="album-tracks-bad">12 tracks · 44 min — this album has a lot more tracks so the button moves down</div>
+          <div class="album-cta-bad">▶ Play</div>
+        </div>
+
+        <div class="album-card-bad">
+          <div class="album-art-bad" style="background:linear-gradient(135deg,#dc2626,#ea580c)">🥁</div>
+          <div class="album-name-bad">Rhythm Engine</div>
+          <div class="album-artist-bad">Drumbastic</div>
+          <div class="album-tracks-bad">7 tracks · 28 min</div>
+          <div class="album-cta-bad">▶ Play</div>
+        </div>
+
+        <div class="album-card-bad">
+          <div class="album-art-bad" style="background:linear-gradient(135deg,#9333ea,#e11d48)">🎹</div>
+          <div class="album-name-bad">Keys to the City</div>
+          <div class="album-artist-bad">Ivory</div>
+          <div class="album-tracks-bad">9 tracks · 38 min</div>
+          <div class="album-cta-bad">▶ Play</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- GOOD -->
+    <div class="compare-box">
+      <div class="compare-title good-title">✓ With subgrid rows — CTA buttons aligned</div>
+      <div class="album-grid-good">
+
+        <div class="album-card-good">
+          <div class="album-art-good" style="background:linear-gradient(135deg,#7c3aed,#2563eb)">🎵</div>
+          <div class="album-name-good">Neon Dreams</div>
+          <div class="album-artist-good">Solaris</div>
+          <div class="album-tracks-good">4 tracks · 16 min</div>
+          <div class="album-cta-good">▶ Play</div>
+        </div>
+
+        <div class="album-card-good">
+          <div class="album-art-good" style="background:linear-gradient(135deg,#059669,#0891b2)">🎸</div>
+          <div class="album-name-good">Electric Coast</div>
+          <div class="album-artist-good">The Shoreline</div>
+          <div class="album-tracks-good">12 tracks · 44 min — this album has a lot more tracks so the button moves down</div>
+          <div class="album-cta-good">▶ Play</div>
+        </div>
+
+        <div class="album-card-good">
+          <div class="album-art-good" style="background:linear-gradient(135deg,#dc2626,#ea580c)">🥁</div>
+          <div class="album-name-good">Rhythm Engine</div>
+          <div class="album-artist-good">Drumbastic</div>
+          <div class="album-tracks-good">7 tracks · 28 min</div>
+          <div class="album-cta-good">▶ Play</div>
+        </div>
+
+        <div class="album-card-good">
+          <div class="album-art-good" style="background:linear-gradient(135deg,#9333ea,#e11d48)">🎹</div>
+          <div class="album-name-good">Keys to the City</div>
+          <div class="album-artist-good">Ivory</div>
+          <div class="album-tracks-good">9 tracks · 38 min</div>
+          <div class="album-cta-good">▶ Play</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

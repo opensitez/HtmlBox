@@ -375,8 +375,9 @@ fn pixel_at(pixmap: &Pixmap, lx: u32, ly: u32, scale: f32) -> (u8, u8, u8, u8) {
 fn gradient_background_covers_element_at_scale_1() {
     // A div with a linear-gradient background should have non-white pixels
     // inside its bounds at scale 1.0.
-    let html = "<div style=\"width:100px; height:50px; \
-                 background: linear-gradient(to right, #ff0000, #0000ff);\"></div>";
+    // Reset body margin so the div starts at x=0, y=0 — makes pixel coords predictable.
+    let html = "<body style=\"margin:0;padding:0\"><div style=\"width:100px; height:50px; \
+                 background: linear-gradient(to right, #ff0000, #0000ff);\"></div></body>";
     let pixmap = render_doc(html, 200, 100, 1.0);
     // The center of the div (50, 25) should NOT be white
     let (r, g, b, _) = pixel_at(&pixmap, 50, 25, 1.0);
@@ -411,9 +412,9 @@ fn gradient_background_covers_element_at_scale_2() {
 #[test]
 fn gradient_background_position_matches_scale_1_and_2() {
     // Render the same HTML at scale 1 and scale 2.
-    // The left-edge logical pixel should be strongly red in both cases.
-    let html = "<div style=\"width:100px; height:50px; \
-                 background: linear-gradient(to right, #ff0000, #0000ff);\"></div>";
+    // Reset body margin so the div starts at x=0 — pixel coords match at both scales.
+    let html = "<body style=\"margin:0;padding:0\"><div style=\"width:100px; height:50px; \
+                 background: linear-gradient(to right, #ff0000, #0000ff);\"></div></body>";
     let pm1 = render_doc(html, 200, 100, 1.0);
     let pm2 = render_doc(html, 200, 100, 2.0);
     let (r1, _, b1, _) = pixel_at(&pm1, 5, 25, 1.0);
