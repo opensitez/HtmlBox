@@ -6,6 +6,8 @@ pub mod renderer;
 pub mod platform;
 pub mod dom;
 pub mod markdown;
+#[cfg(feature = "accessibility")]
+pub mod accessibility;
 
 #[cfg(test)]
 pub mod tests;

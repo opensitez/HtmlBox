@@ -1532,7 +1532,7 @@ impl HtmlBox {
 // ─── Document ─────────────────────────────────────────────────────────────────
 
 pub use crate::css::Stylesheet;
-use crate::dom::{Editor, EventListeners};
+use crate::dom::{Editor, EventListeners, HtmlEvent, HtmlEventType};
 use crate::layout::LayoutEngine;
 
 /// Active scrollbar drag state (set by `process_scrollbar_event`).
@@ -1994,6 +1994,79 @@ impl Document {
         self.scroll_y -= delta_y;
         // Detect a change (renderer clamps, so just signal redraw whenever delta != 0)
         self.scroll_y != old || delta_y != 0.0
+    }
+
+    /// Move keyboard focus to the next focusable element (Tab key).
+    pub fn focus_next(&mut self) -> bool { self.shift_tab_focus(false) }
+
+    /// Move keyboard focus to the previous focusable element (Shift+Tab).
+    pub fn focus_prev(&mut self) -> bool { self.shift_tab_focus(true) }
+
+    fn shift_tab_focus(&mut self, reverse: bool) -> bool {
+        let mut focusable: Vec<*const HtmlBox> = Vec::new();
+        collect_focusable(&self.root, &mut focusable);
+        if focusable.is_empty() { return false; }
+
+        let current = self.focused_box;
+        let pos = focusable.iter().position(|&p| p == current);
+        let next = match pos {
+            None => if reverse { focusable.len() - 1 } else { 0 },
+            Some(i) => {
+                if reverse {
+                    if i == 0 { focusable.len() - 1 } else { i - 1 }
+                } else {
+                    if i + 1 >= focusable.len() { 0 } else { i + 1 }
+                }
+            }
+        };
+        let new_focus = focusable[next];
+        let old_focus = self.focused_box;
+        if new_focus == old_focus { return false; }
+
+        self.focused_box = new_focus;
+        if !old_focus.is_null() {
+            let mut e = HtmlEvent::new(HtmlEventType::Blur);
+            e.target = old_focus; e.related_target = new_focus;
+            self.events.dispatch(&self.root, e);
+            let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
+            e.target = old_focus; e.related_target = new_focus;
+            self.events.dispatch(&self.root, e);
+        }
+        if !new_focus.is_null() {
+            let mut e = HtmlEvent::new(HtmlEventType::Focus);
+            e.target = new_focus; e.related_target = old_focus;
+            self.events.dispatch(&self.root, e);
+            let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
+            e.target = new_focus; e.related_target = old_focus;
+            self.events.dispatch(&self.root, e);
+        }
+        let ss = self.stylesheet.clone();
+        self.hovered_box = std::ptr::null();
+        self.active_box  = std::ptr::null();
+        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, self.focused_box);
+        true
+    }
+}
+
+/// Collect all keyboard-focusable boxes in document order.
+fn collect_focusable(node: &HtmlBox, out: &mut Vec<*const HtmlBox>) {
+    if matches!(node.style.display, Display::None) { return; }
+    if !node.style.visibility { return; }
+    let tag = node.tag.as_str();
+    let is_focusable = matches!(tag, "button" | "input" | "textarea" | "select")
+        || (tag == "a" && node.attributes.contains_key("href"))
+        || node.attributes.get("tabindex")
+            .and_then(|v| v.parse::<i32>().ok())
+            .map(|n| n >= 0)
+            .unwrap_or(false)
+        || node.attributes.get("contenteditable")
+            .map(|v| v == "true" || v == "")
+            .unwrap_or(false);
+    if is_focusable {
+        out.push(node as *const HtmlBox);
+    }
+    for child in &node.children {
+        collect_focusable(child, out);
     }
 }
 

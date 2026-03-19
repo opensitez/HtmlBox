@@ -27,6 +27,7 @@ pub struct Renderer {
     shape_buf: Option<Buffer>,
     // ── Internal state for handle_window_event ────────────────────────────────
     ctrl_held:       bool,
+    shift_held:      bool,
     touches:         std::collections::HashMap<u64, (f64, f64)>,
     pinch_dist:      Option<f32>,
     touch_centroid:  Option<(f32, f32)>,
@@ -44,6 +45,7 @@ impl Renderer {
             scale: 1.0,
             shape_buf: None,
             ctrl_held:       false,
+            shift_held:      false,
             touches:         std::collections::HashMap::new(),
             pinch_dist:      None,
             touch_centroid:  None,
@@ -69,7 +71,8 @@ impl Renderer {
     pub fn handle_window_event(&mut self, event: &WindowEvent, mut doc: Option<&mut crate::types::Document>) -> bool {
         match event {
             WindowEvent::ModifiersChanged(mods) => {
-                self.ctrl_held = mods.state().control_key();
+                self.ctrl_held  = mods.state().control_key();
+                self.shift_held = mods.state().shift_key();
                 false
             }
 
@@ -255,6 +258,22 @@ impl Renderer {
                     events.dispatch(&doc.root, evt);
                 }
                 false // host still needs to call platform.resize() / re-layout
+            }
+
+            // ── Tab / Shift+Tab → keyboard focus navigation ───────────────────
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == winit::event::ElementState::Pressed =>
+            {
+                if let Key::Named(winit::keyboard::NamedKey::Tab) = &event.logical_key {
+                    if let Some(doc) = doc {
+                        return if self.shift_held {
+                            doc.focus_prev()
+                        } else {
+                            doc.focus_next()
+                        };
+                    }
+                }
+                false
             }
 
             _ => false,

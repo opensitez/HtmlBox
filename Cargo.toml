@@ -40,7 +40,12 @@ path = "examples/transform_filter_demo.rs"
 name = "event_playground"
 path = "examples/event_playground.rs"
 
+[features]
+accessibility = ["dep:accesskit", "dep:accesskit_winit"]
+
 [dependencies]
+accesskit        = { version = "0.17", optional = true }
+accesskit_winit  = { version = "0.22", optional = true, features = ["rwh_06"] }
 tiny-skia = "0.12"
 winit = "0.30"
 softbuffer = "0.4"
