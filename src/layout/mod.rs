@@ -263,13 +263,16 @@ impl LayoutEngine {
     /// Main entry point: layout the full document.
     pub fn layout(&mut self, doc: &mut Document, viewport_width: f32) {
         self.viewport_w = viewport_width;
+        // Keep viewport in doc so focus-change recascades use the correct size.
+        doc.viewport_w = self.viewport_w;
+        doc.viewport_h = self.viewport_h;
         let root_font_px = self.root_font_px;
 
         // Re-run CSS cascade with current viewport so @media queries reflect the real window size.
         let ss = doc.stylesheet.clone();
         crate::css::apply_cascade_vp(
             &mut doc.root, &ss, None, root_font_px,
-            self.viewport_w, self.viewport_h, doc.focused_box,
+            self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
         );
 
         self.layout_geometry(doc, viewport_width, root_font_px);

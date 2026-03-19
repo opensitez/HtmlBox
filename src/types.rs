@@ -1594,6 +1594,11 @@ pub struct Document {
     pub drag_active:       bool,
     /// Set of link hrefs the user has clicked (for :visited pseudo-class).
     pub visited_urls:    std::collections::HashSet<String>,
+    /// Last known logical viewport size — kept in sync by LayoutEngine::layout.
+    pub viewport_w:      f32,
+    pub viewport_h:      f32,
+    /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
+    pub keyboard_focus:  bool,
 }
 
 impl Document {
@@ -1618,6 +1623,9 @@ impl Document {
             drag_start_doc_pt: (0.0, 0.0),
             drag_active:       false,
             visited_urls:      std::collections::HashSet::new(),
+            viewport_w:        0.0,
+            viewport_h:        0.0,
+            keyboard_focus:    false,
         }
     }
 
@@ -1632,7 +1640,10 @@ impl Document {
         self.active_box  = std::ptr::null();
         let ss = self.stylesheet.clone();
         let focused = self.focused_box;
-        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, focused);
+        crate::css::apply_cascade_vp(
+            &mut self.root, &ss, None, 16.0,
+            self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
+        );
     }
 
     /// Re-apply cascade with an explicit focused element pointer.
@@ -1641,7 +1652,10 @@ impl Document {
         self.hovered_box = std::ptr::null();
         self.active_box  = std::ptr::null();
         let ss = self.stylesheet.clone();
-        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, focused);
+        crate::css::apply_cascade_vp(
+            &mut self.root, &ss, None, 16.0,
+            self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
+        );
     }
 
     /// High-level mouse event entry point.
@@ -1697,27 +1711,41 @@ impl Document {
                     self.drag_start_doc_pt = doc_pt;
                     self.drag_active       = false;
                 }
-                // Focus change → Blur/FocusOut on old, Focus/FocusIn on new.
-                if etype == HtmlEventType::MouseDown && self.focused_box != hit_ptr {
-                    let old_focus = self.focused_box;
-                    self.focused_box = hit_ptr;
-                    if !old_focus.is_null() {
-                        let mut e = HtmlEvent::new(HtmlEventType::Blur);
-                        e.target = old_focus; e.related_target = hit_ptr;
-                        self.events.dispatch(&self.root, e);
-                        let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
-                        e.target = old_focus; e.related_target = hit_ptr;
-                        self.events.dispatch(&self.root, e);
+                // Focus change on click.
+                // Only interactive (focusable) elements receive focus on click.
+                // Clicking a non-focusable element blurs the current focus.
+                if etype == HtmlEventType::MouseDown {
+                    let click_focusable = !hit_ptr.is_null()
+                        && is_focusable_node(unsafe { &*hit_ptr });
+                    let new_focus = if click_focusable { hit_ptr } else { std::ptr::null() };
+                    if self.focused_box != new_focus {
+                        let old_focus = self.focused_box;
+                        self.keyboard_focus = false;
+                        self.focused_box = new_focus;
+                        if !old_focus.is_null() {
+                            let mut e = HtmlEvent::new(HtmlEventType::Blur);
+                            e.target = old_focus; e.related_target = new_focus;
+                            self.events.dispatch(&self.root, e);
+                            let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
+                            e.target = old_focus; e.related_target = new_focus;
+                            self.events.dispatch(&self.root, e);
+                        }
+                        if !new_focus.is_null() {
+                            let mut e = HtmlEvent::new(HtmlEventType::Focus);
+                            e.target = new_focus; e.related_target = old_focus;
+                            self.events.dispatch(&self.root, e);
+                            let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
+                            e.target = new_focus; e.related_target = old_focus;
+                            self.events.dispatch(&self.root, e);
+                        }
+                        // Always recascade when focus changes so :focus/:focus-visible update.
+                        let ss = self.stylesheet.clone();
+                        crate::css::apply_cascade_vp(
+                            &mut self.root, &ss, None, 16.0,
+                            self.viewport_w, self.viewport_h, self.focused_box, false,
+                        );
+                        redraw = true;
                     }
-                    if !hit_ptr.is_null() {
-                        let mut e = HtmlEvent::new(HtmlEventType::Focus);
-                        e.target = hit_ptr; e.related_target = old_focus;
-                        self.events.dispatch(&self.root, e);
-                        let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
-                        e.target = hit_ptr; e.related_target = old_focus;
-                        self.events.dispatch(&self.root, e);
-                    }
-                    redraw = true;
                 }
             }
             HtmlEventType::MouseUp | HtmlEventType::PointerUp => {
@@ -2003,8 +2031,15 @@ impl Document {
     pub fn focus_prev(&mut self) -> bool { self.shift_tab_focus(true) }
 
     fn shift_tab_focus(&mut self, reverse: bool) -> bool {
-        let mut focusable: Vec<*const HtmlBox> = Vec::new();
-        collect_focusable(&self.root, &mut focusable);
+        // Build the tab order: elements with explicit tabindex > 0 come first
+        // (sorted ascending), then native-focusable and tabindex=0 in document order.
+        // Elements with tabindex=-1 are excluded (focusable by script, not keyboard).
+        let mut positive: Vec<(*const HtmlBox, i32)> = Vec::new();
+        let mut normal:   Vec<*const HtmlBox>         = Vec::new();
+        collect_focusable_ordered(&self.root, &mut positive, &mut normal);
+        positive.sort_by_key(|&(_, idx)| idx);
+        let mut focusable: Vec<*const HtmlBox> =
+            positive.into_iter().map(|(p, _)| p).chain(normal).collect();
         if focusable.is_empty() { return false; }
 
         let current = self.focused_box;
@@ -2023,6 +2058,7 @@ impl Document {
         let old_focus = self.focused_box;
         if new_focus == old_focus { return false; }
 
+        self.keyboard_focus = true;
         self.focused_box = new_focus;
         if !old_focus.is_null() {
             let mut e = HtmlEvent::new(HtmlEventType::Blur);
@@ -2043,30 +2079,65 @@ impl Document {
         let ss = self.stylesheet.clone();
         self.hovered_box = std::ptr::null();
         self.active_box  = std::ptr::null();
-        crate::css::apply_cascade_vp(&mut self.root, &ss, None, 16.0, 0.0, 0.0, self.focused_box);
+        crate::css::apply_cascade_vp(
+            &mut self.root, &ss, None, 16.0,
+            self.viewport_w, self.viewport_h, self.focused_box, true,
+        );
         true
     }
 }
 
-/// Collect all keyboard-focusable boxes in document order.
-fn collect_focusable(node: &HtmlBox, out: &mut Vec<*const HtmlBox>) {
-    if matches!(node.style.display, Display::None) { return; }
-    if !node.style.visibility { return; }
+/// Returns true if `node` is a focusable element (native or via tabindex/contenteditable).
+/// tabindex=-1 elements return true (focusable by script/click) but are excluded from
+/// the *tab* order by `collect_focusable_ordered`.
+pub fn is_focusable_node(node: &HtmlBox) -> bool {
+    if matches!(node.style.display, Display::None) { return false; }
+    if !node.style.visibility { return false; }
     let tag = node.tag.as_str();
-    let is_focusable = matches!(tag, "button" | "input" | "textarea" | "select")
+    matches!(tag, "button" | "input" | "textarea" | "select")
         || (tag == "a" && node.attributes.contains_key("href"))
         || node.attributes.get("tabindex")
             .and_then(|v| v.parse::<i32>().ok())
-            .map(|n| n >= 0)
+            .is_some()                          // any explicit tabindex (incl. -1)
+        || node.attributes.get("contenteditable")
+            .map(|v| v == "true" || v == "")
             .unwrap_or(false)
+}
+
+/// Walk the box tree and split focusable elements into two buckets for tab ordering:
+/// - `positive`: elements with explicit `tabindex > 0`, paired with their index value
+/// - `normal`:   native-focusable elements and `tabindex=0` elements, in document order
+///
+/// Elements with `tabindex=-1` are excluded (programmatically focusable only).
+fn collect_focusable_ordered(
+    node: &HtmlBox,
+    positive: &mut Vec<(*const HtmlBox, i32)>,
+    normal:   &mut Vec<*const HtmlBox>,
+) {
+    if matches!(node.style.display, Display::None) { return; }
+    if !node.style.visibility { return; }
+    let tag = node.tag.as_str();
+
+    let tabindex = node.attributes.get("tabindex")
+        .and_then(|v| v.parse::<i32>().ok());
+
+    // Determine whether this element is in the tab order.
+    let native = matches!(tag, "button" | "input" | "textarea" | "select")
+        || (tag == "a" && node.attributes.contains_key("href"))
         || node.attributes.get("contenteditable")
             .map(|v| v == "true" || v == "")
             .unwrap_or(false);
-    if is_focusable {
-        out.push(node as *const HtmlBox);
+
+    match tabindex {
+        Some(n) if n > 0  => positive.push((node as *const HtmlBox, n)),
+        Some(0)           => normal.push(node as *const HtmlBox),
+        Some(_)           => {} // tabindex < 0: excluded from tab order
+        None if native    => normal.push(node as *const HtmlBox),
+        None              => {}
     }
+
     for child in &node.children {
-        collect_focusable(child, out);
+        collect_focusable_ordered(child, positive, normal);
     }
 }
 

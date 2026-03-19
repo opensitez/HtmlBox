@@ -10,5 +10,6 @@ mod test_floats;
 pub mod test_dom_events;
 pub mod test_render;
 pub mod test_caret;
+pub mod test_focus;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;

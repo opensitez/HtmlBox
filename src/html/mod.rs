@@ -1292,6 +1292,9 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
         drag_start_doc_pt: (0.0, 0.0),
         drag_active:       false,
         visited_urls:      std::collections::HashSet::new(),
+        viewport_w:        0.0,
+        viewport_h:        0.0,
+        keyboard_focus:    false,
     };
 
     // Apply cascade

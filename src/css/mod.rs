@@ -50,6 +50,8 @@ pub struct AncestorInfo {
 pub struct MatchContext<'a> {
     /// Raw pointer to the focused element (null = none).
     pub focused_box:        *const crate::types::HtmlBox,
+    /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
+    pub keyboard_focus:     bool,
     /// 0-based position among same-tag siblings.
     pub type_child_index:   usize,
     /// Count of same-tag siblings (including this element).
@@ -104,6 +106,7 @@ impl CssSelector {
     pub fn matches_box(&self, b: &HtmlBox) -> bool {
         let ctx = MatchContext {
             focused_box: std::ptr::null(),
+            keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
@@ -121,6 +124,7 @@ impl CssSelector {
     ) -> bool {
         let ctx = MatchContext {
             focused_box: std::ptr::null(),
+            keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
@@ -195,6 +199,7 @@ fn matches_selector_with_ancestors(
                     for (i, anc) in ancestors.iter().enumerate() {
                         let anc_ctx = MatchContext {
                             focused_box: ctx.focused_box,
+                            keyboard_focus: ctx.keyboard_focus,
                             type_child_index: anc.type_child_index,
                             type_sibling_count: anc.type_sibling_count,
                             html_box: None,
@@ -217,6 +222,7 @@ fn matches_selector_with_ancestors(
                         let parent_ancestors = &ancestors[..ancestors.len() - 1];
                         let parent_ctx = MatchContext {
                             focused_box: ctx.focused_box,
+                            keyboard_focus: ctx.keyboard_focus,
                             type_child_index: parent.type_child_index,
                             type_sibling_count: parent.type_sibling_count,
                             html_box: None,
@@ -301,11 +307,23 @@ fn matches_part_with_context(
                 "root"         => tag.eq_ignore_ascii_case("html"),
                 "empty"        => false, // can't tell from style alone
                 // Focus
-                "focus" | "focus-visible" => {
+                "focus" => {
                     if !ctx.focused_box.is_null() {
                         if let Some(b) = ctx.html_box {
                             std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box)
                         } else { false }
+                    } else { false }
+                }
+                // :focus-visible matches when focus arrived via keyboard, OR when the
+                // element is a text-entry control (input, textarea, contenteditable) —
+                // matching browser behaviour where the caret always needs a visible ring.
+                "focus-visible" => {
+                    if ctx.focused_box.is_null() { return false; }
+                    if let Some(b) = ctx.html_box {
+                        if !std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box) {
+                            return false;
+                        }
+                        ctx.keyboard_focus || is_text_entry(b)
                     } else { false }
                 }
                 "focus-within" => {
@@ -355,6 +373,21 @@ fn matches_part_with_context(
     }
 }
 
+/// Returns true for text-entry controls — these always show :focus-visible even
+/// when focused by mouse, because the cursor position needs to be visible.
+fn is_text_entry(b: &crate::types::HtmlBox) -> bool {
+    match b.tag.as_str() {
+        "textarea" => true,
+        "input" => !matches!(
+            b.attributes.get("type").map(|s| s.as_str()),
+            Some("button" | "submit" | "reset" | "checkbox" | "radio" | "range" | "color" | "hidden")
+        ),
+        _ => b.attributes.get("contenteditable")
+                .map(|v| v == "true" || v.is_empty())
+                .unwrap_or(false),
+    }
+}
+
 /// Check if `b` or any of its descendants is the focused element.
 fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: *const crate::types::HtmlBox) -> bool {
     for child in &b.children {
@@ -377,6 +410,7 @@ fn has_descendant_matching(
     for child in &node.children {
         let ctx = MatchContext {
             focused_box,
+            keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(child),
@@ -3342,10 +3376,13 @@ fn parse_media_px(s: &str) -> f32 {
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
 pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
-    apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null());
+    apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null(), false);
 }
 
 /// Apply a stylesheet with viewport size and focused element for media queries and :focus selectors.
+///
+/// `keyboard_focus` controls whether `:focus-visible` matches: pass `true` only when
+/// focus was moved by keyboard (Tab/Shift+Tab), `false` for mouse-click focus.
 pub fn apply_cascade_vp(
     root: &mut crate::types::HtmlBox,
     stylesheet: &Stylesheet,
@@ -3354,8 +3391,9 @@ pub fn apply_cascade_vp(
     vw: f32,
     vh: f32,
     focused_box: *const crate::types::HtmlBox,
+    keyboard_focus: bool,
 ) {
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &[], 0, 1, 0, 1, vw, vh, focused_box);
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &[], 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3372,6 +3410,7 @@ fn apply_cascade_inner(
     vw: f32,
     vh: f32,
     focused_box: *const crate::types::HtmlBox,
+    keyboard_focus: bool,
 ) {
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
@@ -3464,6 +3503,7 @@ fn apply_cascade_inner(
     // Build MatchContext for this element
     let match_ctx = MatchContext {
         focused_box,
+        keyboard_focus,
         type_child_index,
         type_sibling_count,
         html_box: Some(root),
@@ -3684,7 +3724,7 @@ fn apply_cascade_inner(
             child, stylesheet, Some(&style), root_font_px,
             &child_ancestors, i, n_children,
             type_counts[i], type_totals[i],
-            vw, vh, focused_box,
+            vw, vh, focused_box, keyboard_focus,
         );
     }
 }
@@ -3784,4 +3824,10 @@ bdo { unicode-bidi: bidi-override; }
 bdi { unicode-bidi: isolate; }
 ruby { display: ruby; }
 rt   { display: ruby-text; font-size: 0.5em; }
+:focus-visible {
+  outline-width: 2px;
+  outline-style: solid;
+  outline-color: #005fcc;
+  outline-offset: 2px;
+}
 "##;
