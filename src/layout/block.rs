@@ -289,6 +289,23 @@ pub fn layout_block_with_fc(
     };
     let content_w = raw_w.max(min_w).min(max_w);
 
+    // ── Scrollbar width reservation ───────────────────────────────────────────
+    // A vertical scrollbar (10px wide) overlays the right edge of the content box.
+    // Without reserving that space, children are laid out at full content_w and
+    // their rightmost 10px gets painted over by the scrollbar.
+    //
+    // • overflow-y: scroll → scrollbar is always present: always reserve.
+    // • overflow-y: auto with max-height → scrollbar appears when content
+    //   overflows max-height, which is the common case for demo panels; reserve
+    //   proactively.  (A full two-pass layout would be needed for perfect accuracy
+    //   but is unnecessary for the demos that trigger this path.)
+    const SBW: f32 = 10.0; // must match renderer::SCROLLBAR_WIDTH
+    let reserve_v_scrollbar =
+        matches!(node.style.overflow_y, Overflow::Scroll)
+        || (matches!(node.style.overflow_y, Overflow::Auto)
+            && !node.style.max_height.is_none());
+    let child_content_w = if reserve_v_scrollbar { (content_w - SBW).max(0.0) } else { content_w };
+
     // Auto margin centering (CSS 2.1 §10.3.3)
     let left_is_auto  = node.style.margin_left.is_auto();
     let right_is_auto = node.style.margin_right.is_auto();
@@ -387,13 +404,13 @@ pub fn layout_block_with_fc(
             seen_float = true;
             // Layout float to get natural size
             engine.layout_box(
-                &mut node.children[i], content_w, content_x, content_y + child_y,
+                &mut node.children[i], child_content_w, content_x, content_y + child_y,
                 font_px, root_font_px
             );
             // Shrink-to-fit for auto-width floats
             if node.children[i].style.width.is_auto() {
                 let intrinsic_w = compute_intrinsic_width(&node.children[i]);
-                if intrinsic_w > 0.0 && intrinsic_w < content_w {
+                if intrinsic_w > 0.0 && intrinsic_w < child_content_w {
                     let irb = &node.children[i];
                     let shrink_w = intrinsic_w
                         + irb.resolved_pad_left + irb.resolved_pad_right
@@ -408,14 +425,14 @@ pub fn layout_block_with_fc(
             let float_w = node.children[i].margin_rect.w;
             let float_h = node.children[i].margin_rect.h;
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
-            let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, content_w, side);
+            let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, child_content_w, side);
             let dx = content_x + placed.x - node.children[i].margin_rect.x;
             let dy = content_y + placed.y - node.children[i].margin_rect.y;
             shift_rects(&mut node.children[i], dx, dy);
 
             if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                 let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
+                apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
             }
             continue;
         }
@@ -423,7 +440,7 @@ pub fn layout_block_with_fc(
         if node.children[i].style.is_block_level() {
             // Layout child to get its geometry
             engine.layout_box(
-                &mut node.children[i], content_w, content_x, content_y,
+                &mut node.children[i], child_content_w, content_x, content_y,
                 font_px, root_font_px
             );
 
@@ -446,8 +463,8 @@ pub fn layout_block_with_fc(
             // Check available width from floats
             let child_h = node.children[i].margin_rect.h;
             let mut left_edge = 0.0f32;
-            let mut right_edge = content_w;
-            fc.available_width(content_y + child_y - fc.origin_y, child_h, content_w, &mut left_edge, &mut right_edge);
+            let mut right_edge = child_content_w;
+            fc.available_width(content_y + child_y - fc.origin_y, child_h, child_content_w, &mut left_edge, &mut right_edge);
 
             // Rebuild rects at correct position using cached resolved values
             let child_margin_left  = node.children[i].resolved_margin_left;
@@ -479,7 +496,7 @@ pub fn layout_block_with_fc(
 
             if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                 let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
+                apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
             }
 
             child_y = node.children[i].margin_rect.y - content_y
@@ -499,7 +516,7 @@ pub fn layout_block_with_fc(
                 && node.children[i].text.chars().all(|c| c.is_ascii_whitespace());
             if node.line_cache.is_empty() && !is_whitespace_only_text {
                 engine.layout_box(
-                    &mut node.children[i], content_w, content_x, content_y + child_y,
+                    &mut node.children[i], child_content_w, content_x, content_y + child_y,
                     font_px, root_font_px
                 );
                 let child_content_h = node.children[i].content_rect.h;
@@ -528,7 +545,7 @@ pub fn layout_block_with_fc(
 
                 if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                     let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                    apply_relative_offset(&mut node.children[i], rel_font_px, content_w, root_font_px);
+                    apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
                 }
             }
             // else: skip — already positioned by LayoutInlines (line_cache exists)

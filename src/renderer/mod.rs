@@ -34,6 +34,9 @@ pub struct Renderer {
     touch_centroid:  Option<(f32, f32)>,
     /// Last known cursor position in physical pixels (for hover hit-testing).
     cursor_physical: (f32, f32),
+    /// Logical viewport height (layout pixels) — kept in sync by `render()` so
+    /// that `vh` units and `flex-stretch` heights work on every repaint.
+    viewport_h: f32,
 }
 
 impl Renderer {
@@ -51,6 +54,7 @@ impl Renderer {
             pinch_dist:      None,
             touch_centroid:  None,
             cursor_physical: (0.0, 0.0),
+            viewport_h: 700.0,
         }
     }
 
@@ -307,6 +311,7 @@ impl Renderer {
         let mut engine = crate::layout::LayoutEngine::new();
         engine.font_system = Some(&mut self.font_system as *mut _);
         engine.component_registry = self.component_registry.clone();
+        engine.viewport_h = self.viewport_h;
         engine.scale = self.scale;
         engine
     }
@@ -369,6 +374,10 @@ impl Renderer {
         // Logical viewport dimensions (physical pixels / DPI scale).
         let w = pixmap.width()  as f32 / self.scale;
         let h = pixmap.height() as f32 / self.scale;
+        // Keep viewport_h in sync with the actual window height so that vh units
+        // and flex-stretch heights are correct on the next layout call.
+        let view_h = h / self.zoom.clamp(0.1, 8.0);
+        self.viewport_h = view_h;
         // Visible portion of the document (in layout/logical coordinates).
         // At zoom=1 this equals the full viewport; at zoom=2 it's half as large.
         let view_w = w / zoom;
@@ -763,12 +772,14 @@ impl Renderer {
         }
 
         // ── Inline content (text lines + selection) ───────────────────────────
+        // Use child_sx/child_sy so the element's own scroll_top/scroll_left shifts
+        // the text, and child_mask so overflow clips apply to inline content too.
         if !node.line_cache.is_empty() {
             let flat = collect_flat_text(node);
             self.draw_inline_content(
-                node, eff_style, &flat, pixmap, eff_sx, eff_sy,
+                node, eff_style, &flat, pixmap, child_sx, child_sy,
                 sel_start, sel_end, sel_box_ptr,
-                eff_mask,
+                child_mask,
             );
         }
 
@@ -840,17 +851,41 @@ impl Renderer {
                 .collect();
             positioned.sort_by_key(|c| c.style.z_index);
             for child in positioned {
-                let (csx, csy) = if child.style.position == Position::Fixed {
-                    (0.0, 0.0)
-                } else {
-                    (child_sx, child_sy)
-                };
-                // Fixed/absolute positioned children are not constrained by overflow clip
-                self.render_box(
-                    child, pixmap, csx, csy,
-                    clip, eff_mask,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
-                );
+                match child.style.position {
+                    Position::Fixed => {
+                        // Fixed: always renders relative to viewport, never clipped by overflow.
+                        self.render_box(
+                            child, pixmap, 0.0, 0.0,
+                            clip, eff_mask,
+                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        );
+                    }
+                    Position::Absolute => {
+                        // Absolute: escapes overflow clip of non-positioned ancestors,
+                        // but IS clipped by the nearest positioned overflow ancestor
+                        // (which is this element if it has overflow != visible).
+                        // Current node is its containing block only if positioned.
+                        let (c, m) = if overflow_clips {
+                            (&child_clip, child_mask)
+                        } else {
+                            (clip, eff_mask)
+                        };
+                        self.render_box(
+                            child, pixmap, child_sx, child_sy,
+                            c, m,
+                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        );
+                    }
+                    _ => {
+                        // Relative / sticky: stays in flow visually, MUST be clipped by
+                        // parent overflow just like a normal in-flow child.
+                        self.render_box(
+                            child, pixmap, child_sx, child_sy,
+                            &child_clip, child_mask,
+                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        );
+                    }
+                }
             }
         }
 
@@ -2018,42 +2053,49 @@ impl Renderer {
         let track_col = node.style.scrollbar_track_color.unwrap_or(Color::rgba(128, 128, 128, 40));
 
         let cr = node.content_rect;
-        let cx = cr.x - sx;
-        let cy = cr.y - sy;
+        let pr = node.padding_rect;
+        // Screen-space top-left of the padding box (used to anchor the scrollbar
+        // at the right/bottom edge of the visible border-box interior).
+        let prx = pr.x - sx;
+        let pry = pr.y - sy;
+        let cy = cr.y - sy;  // content rect top (for track start / scroll math)
+        let ts = Transform::from_scale(self.scale, self.scale);
 
         if show_v && node.scroll_height > cr.h {
             let track_h = cr.h;
             let thumb_h = (track_h * track_h / node.scroll_height).max(20.0);
             let max_s   = node.scroll_height - cr.h;
             let thumb_y = if max_s > 0.0 { node.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
-            let track_x = cx + cr.w - SCROLLBAR_WIDTH;
+            // Align to the right edge of the padding box.
+            let track_x = prx + pr.w - SCROLLBAR_WIDTH;
             let mut paint = Paint::default();
             paint.set_color(track_col.to_tiny_skia());
             if let Some(r) = SkRect::from_xywh(track_x, cy, SCROLLBAR_WIDTH, track_h) {
-                pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), None);
+                pixmap.fill_rect(r, &paint, ts, None);
             }
             paint.set_color(thumb_col.to_tiny_skia());
             if let Some(path) = rounded_rect_path(track_x + 1.0, cy + thumb_y + 1.0,
                     SCROLLBAR_WIDTH - 2.0, thumb_h - 2.0, 3.0) {
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::from_scale(self.scale, self.scale), None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
 
         if show_h && node.scroll_width > cr.w {
-            let track_w = cr.w - if show_v { SCROLLBAR_WIDTH } else { 0.0 };
+            let track_w = pr.w - if show_v { SCROLLBAR_WIDTH } else { 0.0 };
             let thumb_w = (track_w * track_w / node.scroll_width).max(20.0);
             let max_s   = node.scroll_width - cr.w;
             let thumb_x = if max_s > 0.0 { node.scroll_left * (track_w - thumb_w) / max_s } else { 0.0 };
-            let track_y = cy + cr.h - SCROLLBAR_WIDTH;
+            // Align to the bottom edge of the padding box.
+            let track_y = pry + pr.h - SCROLLBAR_WIDTH;
             let mut paint = Paint::default();
             paint.set_color(track_col.to_tiny_skia());
-            if let Some(r) = SkRect::from_xywh(cx, track_y, track_w, SCROLLBAR_WIDTH) {
-                pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), None);
+            if let Some(r) = SkRect::from_xywh(prx, track_y, track_w, SCROLLBAR_WIDTH) {
+                pixmap.fill_rect(r, &paint, ts, None);
             }
             paint.set_color(thumb_col.to_tiny_skia());
-            if let Some(path) = rounded_rect_path(cx + thumb_x + 1.0, track_y + 1.0,
+            if let Some(path) = rounded_rect_path(prx + thumb_x + 1.0, track_y + 1.0,
                     thumb_w - 2.0, SCROLLBAR_WIDTH - 2.0, 3.0) {
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::from_scale(self.scale, self.scale), None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
     }

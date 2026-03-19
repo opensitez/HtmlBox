@@ -867,10 +867,17 @@ impl HtmlParser {
                         // Per the HTML spec, a single newline immediately after the
                         // opening tag of a pre element is stripped.
                         if t.starts_with('\n') { t[1..].to_string() } else { t }
+                    } else if t.trim().is_empty() && t.contains('\n') {
+                        // Whitespace-only inter-element text that contains a newline —
+                        // keep as "\n" so `white-space: pre` parents get a line break.
+                        "\n".to_string()
                     } else {
                         collapse_whitespace(&t)
                     };
-                    if !text_val.trim().is_empty() || text_val == " " {
+                    let keep = !text_val.trim().is_empty()
+                        || text_val == " "
+                        || text_val == "\n";
+                    if keep {
                         let mut node = HtmlBox::new("#text");
                         node.text = text_val;
                         children.push(node);
@@ -1024,17 +1031,21 @@ impl HtmlParser {
 }
 
 fn collapse_whitespace(s: &str) -> String {
+    // Collapse any run of ASCII whitespace (including newlines) to a single space.
+    // This is correct for normal (non-pre) HTML content. Whitespace-only text
+    // nodes that need to act as line-breaks in `white-space: pre` parents are
+    // handled by the call sites, not here.
     let mut out = String::with_capacity(s.len());
-    let mut prev_ws = false;
+    let mut in_ws = false;
     for ch in s.chars() {
-        if ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ' {
-            if !prev_ws { out.push(' '); }
-            prev_ws = true;
+        if ch.is_ascii_whitespace() {
+            if !in_ws { in_ws = true; }
         } else {
+            if in_ws { out.push(' '); in_ws = false; }
             out.push(ch);
-            prev_ws = false;
         }
     }
+    if in_ws { out.push(' '); }
     out
 }
 

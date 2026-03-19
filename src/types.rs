@@ -2418,15 +2418,17 @@ fn scrollbar_hit_test(
     }
 
     let cr = node.content_rect;
-    let cx = cr.x - sx;
+    let pr = node.padding_rect;
+    let prx = pr.x - sx;
     let cy = cr.y - sy;
 
     let show_v = node.style.overflow_y == Overflow::Scroll
         || (node.style.overflow_y == Overflow::Auto && node.scroll_height > cr.h);
 
     if show_v && node.scroll_height > cr.h {
-        let track_x = cx + cr.w - sbw;
-        if screen_x >= track_x && screen_x < cx + cr.w
+        // Scrollbar is at the right edge of the padding box (matches draw_scrollbars).
+        let track_x = prx + pr.w - sbw;
+        if screen_x >= track_x && screen_x < prx + pr.w
             && screen_y >= cy && screen_y < cy + cr.h
         {
             let track_h     = cr.h;
