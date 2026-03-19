@@ -67,17 +67,26 @@ fn ptr_to_id(ptr: *const HtmlBox) -> NodeId {
 /// that change when the box tree is reconstructed.
 #[cfg(feature = "accessibility")]
 pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
-    // Pre-pass: build id→NodeId and id→text maps for cross-reference resolution
-    // (aria-labelledby, aria-describedby, aria-controls, aria-owns).
+    // Pre-pass 1: id→NodeId and id→text for aria-labelledby/describedby/controls/owns.
     let mut id_to_nid: HashMap<&str, NodeId> = HashMap::new();
     let mut id_to_text: HashMap<&str, String> = HashMap::new();
     collect_id_maps(&doc.root, &mut id_to_nid, &mut id_to_text);
+
+    // Pre-pass 2: <label> associations.
+    //   for_label_map:     element-id → label text  (from <label for="id">)
+    //   wrapped_label_map: input-ptr  → label text  (from <label> wrapping the control)
+    let mut for_label_map:     HashMap<&str, String>           = HashMap::new();
+    let mut wrapped_label_map: HashMap<*const HtmlBox, String> = HashMap::new();
+    collect_label_maps(&doc.root, &mut for_label_map, &mut wrapped_label_map);
 
     let mut nodes: Vec<(NodeId, Node)> = Vec::new();
     let focused_ptr = doc.focused_box;
 
     // Walk the real root element.
-    let real_root_id = walk(&doc.root, scale, &mut nodes, focused_ptr, &id_to_nid, &id_to_text);
+    let real_root_id = walk(
+        &doc.root, scale, &mut nodes, focused_ptr,
+        &id_to_nid, &id_to_text, &for_label_map, &wrapped_label_map,
+    );
 
     // Synthetic document root that owns the real root element.
     let mut doc_root = Node::new(Role::Window);
@@ -116,6 +125,74 @@ fn collect_id_maps<'a>(
     }
 }
 
+/// Pre-pass: collect `<label>` associations.
+///
+/// Two forms of HTML label association:
+/// - `<label for="id">` → stores `id → label_text` in `for_label_map`
+/// - `<label>` wrapping a control → stores `control_ptr → label_text` in `wrapped_label_map`
+#[cfg(feature = "accessibility")]
+fn collect_label_maps<'a>(
+    node: &'a HtmlBox,
+    for_label_map:     &mut HashMap<&'a str, String>,
+    wrapped_label_map: &mut HashMap<*const HtmlBox, String>,
+) {
+    if node.tag == "label" {
+        // Collect the label's visible text, excluding embedded controls whose
+        // own text would confusingly appear in their own name.
+        let text = collect_label_text(node);
+        if !text.is_empty() {
+            if let Some(for_id) = node.attributes.get("for") {
+                if !for_id.is_empty() {
+                    for_label_map.insert(for_id.as_str(), text);
+                }
+            } else if let Some(ptr) = find_labelable_descendant(node) {
+                wrapped_label_map.insert(ptr, text);
+            }
+        }
+    }
+    for child in &node.children {
+        collect_label_maps(child, for_label_map, wrapped_label_map);
+    }
+}
+
+/// Collect text from a `<label>`, skipping embedded labelable controls so they
+/// don't contribute their own placeholder/value to the computed name.
+#[cfg(feature = "accessibility")]
+fn collect_label_text(node: &HtmlBox) -> String {
+    let mut s = node.text.trim().to_string();
+    for child in &node.children {
+        if matches!(child.tag.as_str(), "input" | "textarea" | "select" | "button") {
+            continue; // skip embedded controls
+        }
+        if !matches!(child.style.display, Display::None) && child.style.visibility {
+            let ct = collect_label_text(child);
+            if !ct.is_empty() {
+                if !s.is_empty() { s.push(' '); }
+                s.push_str(&ct);
+            }
+        }
+    }
+    s.trim().to_string()
+}
+
+/// Find the first labelable descendant (for implicit `<label>` wrapping).
+/// Returns the raw pointer to the control so it can be used as a map key.
+#[cfg(feature = "accessibility")]
+fn find_labelable_descendant(node: &HtmlBox) -> Option<*const HtmlBox> {
+    for child in &node.children {
+        let tag = child.tag.as_str();
+        let labelable = matches!(tag, "button" | "input" | "meter" | "output" | "progress" | "select" | "textarea")
+            && child.attributes.get("type").map(|t| t != "hidden").unwrap_or(true);
+        if labelable {
+            return Some(child as *const HtmlBox);
+        }
+        if let Some(ptr) = find_labelable_descendant(child) {
+            return Some(ptr);
+        }
+    }
+    None
+}
+
 /// Resolve a space-separated list of idrefs (aria-labelledby etc.) to NodeIds.
 #[cfg(feature = "accessibility")]
 fn resolve_idrefs<'a>(refs: &str, id_to_nid: &HashMap<&'a str, NodeId>) -> Vec<NodeId> {
@@ -144,6 +221,8 @@ fn walk(
     focused_ptr: *const HtmlBox,
     id_to_nid: &HashMap<&str, NodeId>,
     id_to_text: &HashMap<&str, String>,
+    for_label_map: &HashMap<&str, String>,
+    wrapped_label_map: &HashMap<*const HtmlBox, String>,
 ) -> NodeId {
     let id = ptr_to_id(node as *const HtmlBox);
     let role = resolve_role(node);
@@ -166,10 +245,10 @@ fn walk(
             ak.set_label(text);
             let nids = resolve_idrefs(refs, id_to_nid);
             if !nids.is_empty() { ak.set_labelled_by(nids); }
-        } else if let Some(name) = compute_name(node, id_to_text) {
+        } else if let Some(name) = compute_name(node, id_to_text, for_label_map, wrapped_label_map) {
             ak.set_label(name);
         }
-    } else if let Some(name) = compute_name(node, id_to_text) {
+    } else if let Some(name) = compute_name(node, id_to_text, for_label_map, wrapped_label_map) {
         ak.set_label(name);
     }
 
@@ -447,7 +526,7 @@ fn walk(
                 && c.style.visibility
                 && !c.attributes.get("aria-hidden").map(|v| v == "true").unwrap_or(false)
         })
-        .map(|c| walk(c, scale, nodes, focused_ptr, id_to_nid, id_to_text))
+        .map(|c| walk(c, scale, nodes, focused_ptr, id_to_nid, id_to_text, for_label_map, wrapped_label_map))
         .collect();
     if !child_ids.is_empty() {
         ak.set_children(child_ids);
@@ -626,33 +705,98 @@ fn resolve_role(node: &HtmlBox) -> Role {
     }
 }
 
-/// Compute the accessible name (ARIA name-from-content algorithm, simplified).
-/// Checks aria-labelledby text first, then aria-label, then element-specific,
-/// then text content, then title as last resort.
+/// Compute the accessible name following the AccName algorithm
+/// (https://www.w3.org/TR/accname-1.1/), simplified for HTML elements.
+///
+/// Priority order:
+/// 1. `aria-labelledby` (handled by caller — already resolved before this is called)
+/// 2. `aria-label`
+/// 3. `<label for="id">` or wrapping `<label>`
+/// 4. Element-specific native name: `alt` for images, child caption/legend/figcaption
+/// 5. Name-from-content (buttons, links, headings…)
+/// 6. `placeholder` for unlabelled text inputs
+/// 7. `title` as last resort
 #[cfg(feature = "accessibility")]
-fn compute_name(node: &HtmlBox, id_to_text: &HashMap<&str, String>) -> Option<String> {
-    // 1. aria-labelledby — collect text from referenced elements
-    if let Some(refs) = node.attributes.get("aria-labelledby") {
-        let text = text_from_idrefs(refs, id_to_text);
-        if !text.is_empty() { return Some(text); }
-    }
-    // 2. aria-label (direct string)
+fn compute_name(
+    node: &HtmlBox,
+    id_to_text: &HashMap<&str, String>,
+    for_label_map: &HashMap<&str, String>,
+    wrapped_label_map: &HashMap<*const HtmlBox, String>,
+) -> Option<String> {
+    // 1. aria-labelledby handled by caller before reaching here.
+
+    // 2. aria-label
     if let Some(label) = node.attributes.get("aria-label") {
         if !label.is_empty() { return Some(label.clone()); }
     }
-    // 3. Element-specific native semantics
+
+    // 3a. <label for="this-id">
+    if let Some(id) = node.attributes.get("id") {
+        if let Some(text) = for_label_map.get(id.as_str()) {
+            if !text.is_empty() { return Some(text.clone()); }
+        }
+    }
+
+    // 3b. Wrapping <label>
+    if let Some(text) = wrapped_label_map.get(&(node as *const HtmlBox)) {
+        if !text.is_empty() { return Some(text.clone()); }
+    }
+
+    // 4. Element-specific native semantics
     match node.tag.as_str() {
+        // Images: alt attribute
         "img" | "area" => {
             if let Some(alt) = node.attributes.get("alt") {
                 return Some(alt.clone());
             }
         }
+        // <figure>: name from <figcaption> child
+        "figure" => {
+            if let Some(cap) = node.children.iter().find(|c| c.tag == "figcaption") {
+                let text = collect_text(cap);
+                if !text.is_empty() { return Some(text); }
+            }
+        }
+        // <table>: name from <caption> child
+        "table" => {
+            if let Some(cap) = node.children.iter()
+                .flat_map(|c| std::iter::once(c).chain(c.children.iter()))
+                .find(|c| c.tag == "caption")
+            {
+                let text = collect_text(cap);
+                if !text.is_empty() { return Some(text); }
+            }
+        }
+        // <fieldset>: name from <legend> child
+        "fieldset" => {
+            if let Some(leg) = node.children.iter().find(|c| c.tag == "legend") {
+                let text = collect_text(leg);
+                if !text.is_empty() { return Some(text); }
+            }
+        }
         _ => {}
     }
-    // 4. Text content (buttons, links, headings, labels…)
-    let text = collect_text(node);
-    if !text.is_empty() { return Some(text); }
-    // 5. title attribute as last resort
+
+    // 5. Name from text content — only for roles that derive their name from content.
+    //    Replaced/form elements (input, textarea, select) don't have meaningful
+    //    text children; container-named elements already handled above.
+    let has_name_from_content = !matches!(
+        node.tag.as_str(),
+        "input" | "textarea" | "select" | "figure" | "table" | "fieldset"
+    );
+    if has_name_from_content {
+        let text = collect_text(node);
+        if !text.is_empty() { return Some(text); }
+    }
+
+    // 6. placeholder — fallback name for text inputs with no other label
+    if matches!(node.tag.as_str(), "input" | "textarea") {
+        if let Some(ph) = node.attributes.get("placeholder") {
+            if !ph.is_empty() { return Some(ph.clone()); }
+        }
+    }
+
+    // 7. title as last resort
     node.attributes.get("title").filter(|s| !s.is_empty()).cloned()
 }
 

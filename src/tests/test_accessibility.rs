@@ -724,3 +724,173 @@ fn aria_table_row_col_counts() {
     assert_eq!(cell.row_index(), Some(1));
     assert_eq!(cell.column_index(), Some(1));
 }
+
+// ── 19. Computed accessible name — <label for> association ───────────────────
+
+#[test]
+fn label_for_names_input() {
+    let doc = load_html(
+        r#"<html><body>
+            <label for="email">Email address</label>
+            <input type="email" id="email">
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::EmailInput).expect("email input");
+    assert_eq!(
+        input.label(),
+        Some("Email address"),
+        "<label for> must become the input's accessible name"
+    );
+}
+
+#[test]
+fn wrapping_label_names_input() {
+    let doc = load_html(
+        r#"<html><body>
+            <label>Username <input type="text"></label>
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::TextInput).expect("text input");
+    assert_eq!(
+        input.label(),
+        Some("Username"),
+        "wrapping <label> text must name the embedded input"
+    );
+}
+
+#[test]
+fn label_text_excludes_embedded_input() {
+    // The label says "Search" with an embedded input — the input itself
+    // must not contribute its own placeholder to the label text.
+    let doc = load_html(
+        r#"<html><body>
+            <label>Search <input type="search" placeholder="type here"></label>
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::SearchInput).expect("search input");
+    // Label text should be "Search", not "Search type here".
+    assert_eq!(input.label(), Some("Search"));
+}
+
+// ── 20. Computed accessible name — child element naming ───────────────────────
+
+#[test]
+fn figure_named_by_figcaption() {
+    let doc = load_html(
+        r#"<html><body>
+            <figure>
+                <img alt="chart">
+                <figcaption>Monthly revenue</figcaption>
+            </figure>
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let fig = find_role(&tree, Role::Figure).expect("figure node");
+    assert_eq!(
+        fig.label(),
+        Some("Monthly revenue"),
+        "<figure> must be named by its <figcaption>"
+    );
+}
+
+#[test]
+fn table_named_by_caption() {
+    let doc = load_html(
+        r#"<html><body>
+            <table>
+                <caption>Sales data</caption>
+                <tr><td>Cell</td></tr>
+            </table>
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let table = find_role(&tree, Role::Table).expect("table node");
+    assert_eq!(
+        table.label(),
+        Some("Sales data"),
+        "<table> must be named by its <caption>"
+    );
+}
+
+#[test]
+fn fieldset_named_by_legend() {
+    let doc = load_html(
+        r#"<html><body>
+            <fieldset>
+                <legend>Shipping address</legend>
+                <input type="text" id="addr">
+            </fieldset>
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let group = find_role(&tree, Role::Group).expect("fieldset node");
+    assert_eq!(
+        group.label(),
+        Some("Shipping address"),
+        "<fieldset> must be named by its <legend>"
+    );
+}
+
+// ── 21. Computed accessible name — placeholder fallback ───────────────────────
+
+#[test]
+fn placeholder_used_as_fallback_name() {
+    let doc = load_html(
+        "<html><body><input type=\"text\" placeholder=\"Search…\"></body></html>",
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::TextInput).expect("text input");
+    assert_eq!(
+        input.label(),
+        Some("Search…"),
+        "placeholder must be used as accessible name when no label exists"
+    );
+}
+
+#[test]
+fn explicit_label_beats_placeholder() {
+    let doc = load_html(
+        r#"<html><body>
+            <label for="q">Search</label>
+            <input type="text" id="q" placeholder="type here">
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::TextInput).expect("text input");
+    assert_eq!(
+        input.label(),
+        Some("Search"),
+        "<label for> must take precedence over placeholder"
+    );
+}
+
+// ── 22. Computed accessible name — aria-label beats everything except labelledby
+
+#[test]
+fn aria_label_beats_html_label() {
+    let doc = load_html(
+        r#"<html><body>
+            <label for="x">HTML label</label>
+            <input type="text" id="x" aria-label="ARIA label">
+        </body></html>"#,
+        800.0,
+    );
+    let tree = build_tree(&doc, 1.0);
+    let input = find_role(&tree, Role::TextInput).expect("text input");
+    assert_eq!(
+        input.label(),
+        Some("ARIA label"),
+        "aria-label must override <label for>"
+    );
+}
