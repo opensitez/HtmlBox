@@ -517,6 +517,20 @@ pub fn layout_flex(
                 }
                 0.0
             } else {
+                // For column direction with Center/FlexStart/FlexEnd: shrink auto-width
+                // children to their intrinsic (max-content) width, matching browser behavior.
+                if !is_row {
+                    let child_width_is_auto = node.children[items[item_idx].idx].style.width.is_auto();
+                    if child_width_is_auto {
+                        let child = &mut node.children[items[item_idx].idx];
+                        let intrinsic_w = crate::layout::block::compute_intrinsic_width(child).min(content_w);
+                        if intrinsic_w < items[item_idx].cross_size - 0.5 {
+                            engine.layout_box(child, intrinsic_w, content_x, content_y, font_px, root_font_px);
+                            items[item_idx].cross_size = child.margin_rect.w;
+                        }
+                    }
+                }
+                let cross_extra = items[item_idx].cross_size;
                 match eff_align {
                     AlignItems::FlexEnd => lc - cross_extra,
                     AlignItems::Center  => (lc - cross_extra) / 2.0,
