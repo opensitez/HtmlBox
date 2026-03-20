@@ -1364,6 +1364,8 @@ where
         prev_styles:           std::collections::HashMap::new(),
         animation_overrides:   std::collections::HashMap::new(),
         needs_animation_frame: false,
+        hover_changed:         false,
+        cascade_styles:        std::collections::HashMap::new(),
         pending_announcements:    Vec::new(),
         live_region_snapshots:    std::collections::HashMap::new(),
         live_regions_initialized: false,

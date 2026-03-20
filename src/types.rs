@@ -1354,9 +1354,11 @@ impl ComputedStyle {
                 | Display::InlineGrid | Display::InlineBlock | Display::Table)
     }
 
-    /// Resolved font size in px (needs parent px for em, root px for rem).
+    /// Resolved font size in px (needs parent px for em/%, root px for rem).
     pub fn font_size_px(&self, parent_px: f32, root_px: f32) -> f32 {
-        self.font_size.resolve(parent_px, 0.0, root_px).max(1.0)
+        // For font-size, `%` is relative to the parent font size, not the containing block width.
+        // Pass parent_px as both the em base and the percentage base.
+        self.font_size.resolve(parent_px, parent_px, root_px).max(1.0)
     }
 }
 
@@ -1765,11 +1767,17 @@ pub struct Document {
     pub(crate) transition_states: HashMap<usize, Vec<TransitionState>>,
     /// Previous transitionable style values per element, for change detection.
     pub(crate) prev_styles: HashMap<usize, HashMap<String, String>>,
+    /// Clean cascade-time style snapshot, keyed by element pointer.
+    /// Populated when the cascade runs; never mutated by animation overrides.
+    /// Used by sync_transitions so hover-out correctly reads the base (not overridden) values.
+    pub(crate) cascade_styles: HashMap<usize, HashMap<String, String>>,
     /// Interpolated CSS property overrides produced by `tick_animations`.
     /// Applied on top of the cascade result before geometry runs.
     pub(crate) animation_overrides: HashMap<usize, Vec<(String, String)>>,
     /// Set by `tick_animations`; tells the host to request another render frame.
     pub needs_animation_frame: bool,
+    /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
+    pub(crate) hover_changed: bool,
 
     // ── aria-live region machinery ─────────────────────────────────────────────
     /// Announcements queued since the last call to `take_announcements()`.
@@ -1812,8 +1820,10 @@ impl Document {
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
             prev_styles:           HashMap::new(),
+            cascade_styles:        HashMap::new(),
             animation_overrides:   HashMap::new(),
             needs_animation_frame: false,
+            hover_changed:         false,
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
             live_regions_initialized: false,
@@ -1869,6 +1879,7 @@ impl Document {
             HtmlEventType::MouseMove => {
                 if self.hovered_box != hit_ptr {
                     self.hovered_box = hit_ptr;
+                    self.hover_changed = true;
                     redraw = true;
                 }
                 // Drag: if mouse button held and moved past threshold, fire DragStart/Drag.
@@ -2229,17 +2240,56 @@ impl Document {
     }
 
     /// Detect CSS property changes caused by the cascade and start transitions.
-    /// Call this right after a cascade pass (when computed styles may have changed).
-    pub fn sync_transitions(&mut self, now: std::time::Instant) {
+    /// `cascade_ran`: true when the full cascade just ran (node.style is clean).
+    /// When false (hover-only change), base values are read from `cascade_styles`
+    /// so animation-overridden node.style values don't pollute change detection.
+    pub fn sync_transitions(&mut self, now: std::time::Instant, cascade_ran: bool) {
+        let hovered = self.hovered_box;
         let mut current: Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
-        fn collect(node: &HtmlBox, out: &mut Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)>) {
+        fn collect(
+            node: &HtmlBox,
+            hovered: *const HtmlBox,
+            cascade_ran: bool,
+            cascade_styles: &HashMap<usize, HashMap<String, String>>,
+            out: &mut Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)>,
+        ) {
             let id = node as *const HtmlBox as usize;
             if !node.style.transitions.is_empty() {
-                out.push((id, node.style.transitions.clone(), extract_transitionable(node)));
+                // Base values: use the clean cascade snapshot when available, so that
+                // animation_overrides applied to node.style don't corrupt detection.
+                let base = if cascade_ran {
+                    extract_transitionable(node)
+                } else {
+                    cascade_styles.get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| extract_transitionable(node))
+                };
+                let mut vals = base.clone();
+                // When hovered, overlay hover_style to get the "target" state.
+                if !hovered.is_null() && subtree_contains_ptr(node, hovered) {
+                    if let Some(hs) = &node.style.hover_style {
+                        let hover_vals = extract_transitionable_style(hs);
+                        for (k, v) in hover_vals { vals.insert(k, v); }
+                    }
+                }
+                out.push((id, node.style.transitions.clone(), vals));
             }
-            for child in &node.children { collect(child, out); }
+            for child in &node.children {
+                collect(child, hovered, cascade_ran, cascade_styles, out);
+            }
         }
-        collect(&self.root, &mut current);
+        collect(&self.root, hovered, cascade_ran, &self.cascade_styles, &mut current);
+
+        // When cascade ran, save the clean base styles for hover-only frames.
+        if cascade_ran {
+            fn snapshot(node: &HtmlBox, out: &mut HashMap<usize, HashMap<String, String>>) {
+                if !node.style.transitions.is_empty() {
+                    out.insert(node as *const HtmlBox as usize, extract_transitionable(node));
+                }
+                for child in &node.children { snapshot(child, out); }
+            }
+            snapshot(&self.root, &mut self.cascade_styles);
+        }
 
         for (elem_id, trs, cur_vals) in &current {
             let prev = self.prev_styles.get(elem_id).cloned().unwrap_or_default();
@@ -2255,7 +2305,10 @@ impl Document {
                 for prop in props {
                     let cur = match cur_vals.get(prop) { Some(v) => v.as_str(), None => continue };
                     let prv = match prev.get(prop) { Some(v) => v.as_str(), None => { continue; } };
-                    if prv == cur { continue; }
+                    if prv == cur {
+                        // Uncomment to debug: eprintln!("[TR-SKIP] {} same={:?}", prop, cur);
+                        continue;
+                    }
 
                     // Already transitioning to this value?
                     let already = self.transition_states
@@ -2263,11 +2316,19 @@ impl Document {
                         .iter().any(|t| t.property == prop && t.to_value == cur);
                     if already { continue; }
 
+                    // If a transition is already running for this property, start the
+                    // new one from the current animated value (not from prev_styles) to
+                    // avoid a visual jump to the original from/to endpoint.
+                    let from_val = self.animation_overrides
+                        .get(elem_id)
+                        .and_then(|ov| ov.iter().find(|(p, _)| p == prop))
+                        .map(|(_, v)| v.as_str())
+                        .unwrap_or(prv);
                     let entry = self.transition_states.entry(*elem_id).or_default();
                     entry.retain(|t| t.property != prop);
                     entry.push(TransitionState {
                         property:    prop.to_string(),
-                        from_value:  prv.to_string(),
+                        from_value:  from_val.to_string(),
                         to_value:    cur.to_string(),
                         start_time:  now,
                         duration_ms: tr.duration_ms,
@@ -2367,7 +2428,17 @@ impl Document {
                 if tr.duration_ms <= 0.0 { done_trs.push(i); continue; }
 
                 let progress = (delayed_ms / tr.duration_ms).min(1.0);
-                if progress >= 1.0 { done_trs.push(i); continue; }
+                if progress >= 1.0 {
+                    // Write the final value into animation_overrides so that
+                    // transitioning_ids still contains this element for the
+                    // completion frame.  Without this, has_transition becomes
+                    // false while is_hovered may still be true, causing the
+                    // renderer to pick hover_style's color instead of the
+                    // correctly-reverted base color.
+                    let entry = self.animation_overrides.entry(*elem_id).or_default();
+                    entry.push((tr.property.clone(), tr.to_value.clone()));
+                    done_trs.push(i); continue;
+                }
 
                 still_running = true;
                 let eased  = apply_easing(&tr.timing_fn, progress);
@@ -2917,8 +2988,19 @@ fn scrollbar_hit_test(
 
 /// Extract the CSS properties that can participate in transitions from a style.
 /// Values are serialised to `rgba(…)` or `Npx` strings for comparison/interpolation.
+pub(crate) fn subtree_contains_ptr(node: &HtmlBox, target: *const HtmlBox) -> bool {
+    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
+    for child in &node.children {
+        if subtree_contains_ptr(child, target) { return true; }
+    }
+    false
+}
+
 pub(crate) fn extract_transitionable(node: &HtmlBox) -> HashMap<String, String> {
-    let s = &node.style;
+    extract_transitionable_style(&node.style)
+}
+
+pub(crate) fn extract_transitionable_style(s: &ComputedStyle) -> HashMap<String, String> {
     let mut m = HashMap::new();
     m.insert("opacity".into(),          format!("{}", s.opacity));
     m.insert("color".into(),            color_to_rgba(s.color));
@@ -2972,7 +3054,44 @@ pub(crate) fn interpolate_keyframe_stops(stops: &[KeyframeStop], t: f32) -> Vec<
 /// Handles `rgba(…)` colors and strings containing numbers.
 pub(crate) fn interpolate_value(from: &str, to: &str, t: f32) -> String {
     if let Some(c) = interpolate_color(from, to, t) { return c; }
-    interpolate_numeric(from, to, t)
+    // For transforms, if one side is empty/none, synthesize the identity form.
+    let (from, to) = if from.is_empty() || from == "none" {
+        (transform_identity(to).into(), to.to_string())
+    } else if to.is_empty() || to == "none" {
+        (from.to_string(), transform_identity(from).into())
+    } else {
+        (from.to_string(), to.to_string())
+    };
+    interpolate_numeric(&from, &to, t)
+}
+
+/// Given a CSS transform string like `rotate(180deg)`, return the identity form
+/// with the same function and matching zero-ish arguments: `rotate(0deg)`.
+fn transform_identity(transform: &str) -> String {
+    let s = transform.trim();
+    if s.is_empty() || s == "none" { return String::new(); }
+    // Find the function name and argument count.
+    if let Some(open) = s.find('(') {
+        let func = &s[..open];
+        let inner = s[open+1..].trim_end_matches(')');
+        let arg_count = inner.split(',').count();
+        // scale identity is 1, everything else is 0.
+        let identity_val = if func.starts_with("scale") { "1" } else { "0" };
+        // Preserve units from the original arguments.
+        let units: Vec<&str> = inner.split(',').map(|a| {
+            let a = a.trim();
+            // Strip leading minus/digits/dot to find the unit suffix.
+            let num_end = a.bytes().position(|b| b.is_ascii_alphabetic())
+                .unwrap_or(a.len());
+            &a[num_end..]
+        }).collect();
+        let args: Vec<String> = (0..arg_count).map(|i| {
+            format!("{}{}", identity_val, units.get(i).unwrap_or(&""))
+        }).collect();
+        format!("{}({})", func, args.join(", "))
+    } else {
+        String::new()
+    }
 }
 
 fn interpolate_color(from: &str, to: &str, t: f32) -> Option<String> {

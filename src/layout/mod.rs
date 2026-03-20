@@ -391,7 +391,9 @@ impl LayoutEngine {
         // ── CSS animation / transition runtime ─────────────────────────────
         let now = std::time::Instant::now();
         doc.sync_animations(now);
-        if did_cascade { doc.sync_transitions(now); }
+        let hover_changed = doc.hover_changed;
+        doc.hover_changed = false;
+        if did_cascade || hover_changed { doc.sync_transitions(now, did_cascade); }
         doc.tick_animations(now);
         if !doc.animation_overrides.is_empty() {
             let overrides = doc.animation_overrides.clone();

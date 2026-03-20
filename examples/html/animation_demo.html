@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0f0f13;
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+  padding: 32px;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  color: #888;
+  font-size: 14px;
+  margin-bottom: 40px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 24px;
+}
+
+.card {
+  background: #1a1a22;
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #2a2a35;
+}
+
+.card h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── Spin ──────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spinner {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border-top: 3px solid #7c6af7;
+  border-right: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 3px solid transparent;
+  animation: spin 1s linear infinite;
+}
+
+/* ── Pulse ─────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { transform: scale(1);    opacity: 1;   }
+  50%       { transform: scale(1.25); opacity: 0.6; }
+}
+.pulse-dot {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #f74a7c;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Bounce ────────────────────────────── */
+@keyframes bounce {
+  0%, 100% { transform: translateY(0);   }
+  50%       { transform: translateY(-30px); }
+}
+.bouncer {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #4af7a0;
+  animation: bounce 0.9s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
+}
+
+/* ── Fade in / out ─────────────────────── */
+@keyframes fade {
+  0%, 100% { opacity: 0.1; }
+  50%       { opacity: 1;   }
+}
+.fader {
+  width: 120px;
+  height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #7c6af7, #f74a7c);
+  animation: fade 2s ease-in-out infinite;
+}
+
+/* ── Slide in ──────────────────────────── */
+@keyframes slide-in {
+  from { transform: translateX(-60px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.slider {
+  width: 110px;
+  height: 36px;
+  border-radius: 8px;
+  background: #f7a84a;
+  animation: slide-in 1.2s ease-out infinite alternate;
+}
+
+/* ── Color cycle ───────────────────────── */
+@keyframes colorshift {
+  0%   { background-color: #7c6af7; }
+  33%  { background-color: #f74a7c; }
+  66%  { background-color: #4af7a0; }
+  100% { background-color: #7c6af7; }
+}
+.colorbox {
+  width: 80px;
+  height: 80px;
+  border-radius: 16px;
+  background-color: #7c6af7;
+  animation: colorshift 3s linear infinite;
+}
+
+/* ── Loading dots ──────────────────────── */
+@keyframes dot-scale {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+  40%            { transform: scale(1.0); opacity: 1.0; }
+}
+.dots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #7c6af7;
+}
+.dot:nth-child(1) { animation: dot-scale 1.4s ease-in-out 0s    infinite; }
+.dot:nth-child(2) { animation: dot-scale 1.4s ease-in-out 0.2s  infinite; }
+.dot:nth-child(3) { animation: dot-scale 1.4s ease-in-out 0.4s  infinite; }
+
+/* ── Ripple ────────────────────────────── */
+@keyframes ripple {
+  0%   { transform: scale(0.5); opacity: 0.8; }
+  100% { transform: scale(2.0); opacity: 0;   }
+}
+.ripple-wrap {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ripple-ring {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #4af7a0;
+  animation: ripple 1.6s linear infinite;
+}
+.ripple-ring:nth-child(2) { animation-delay: 0.8s; }
+.ripple-center {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4af7a0;
+}
+
+/* ── Heartbeat ─────────────────────────── */
+@keyframes heartbeat {
+  0%   { transform: scale(1);    }
+  14%  { transform: scale(1.3);  }
+  28%  { transform: scale(1);    }
+  42%  { transform: scale(1.3);  }
+  70%  { transform: scale(1);    }
+  100% { transform: scale(1);    }
+}
+.heart {
+  font-size: 48px;
+  animation: heartbeat 1.5s ease-in-out infinite;
+}
+
+/* ── Shake ─────────────────────────────── */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  15%       { transform: translateX(-8px); }
+  30%       { transform: translateX(8px); }
+  45%       { transform: translateX(-6px); }
+  60%       { transform: translateX(6px); }
+  75%       { transform: translateX(-3px); }
+  90%       { transform: translateX(3px); }
+}
+.shaker {
+  width: 100px;
+  height: 40px;
+  background: #f74a7c;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  animation: shake 2s ease-in-out infinite;
+}
+</style>
+</head>
+<body>
+  <h1>CSS Animations</h1>
+  <p class="subtitle">@keyframes runtime — all driven by the rhtmledit engine</p>
+
+  <div class="grid">
+
+    <div class="card">
+      <h2>Spin</h2>
+      <div class="spinner"></div>
+    </div>
+
+    <div class="card">
+      <h2>Pulse</h2>
+      <div class="pulse-dot"></div>
+    </div>
+
+    <div class="card">
+      <h2>Bounce</h2>
+      <div class="bouncer"></div>
+    </div>
+
+    <div class="card">
+      <h2>Fade</h2>
+      <div class="fader"></div>
+    </div>
+
+    <div class="card">
+      <h2>Slide (alternate)</h2>
+      <div class="slider"></div>
+    </div>
+
+    <div class="card">
+      <h2>Color Cycle</h2>
+      <div class="colorbox"></div>
+    </div>
+
+    <div class="card">
+      <h2>Loading Dots</h2>
+      <div class="dots">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ripple</h2>
+      <div class="ripple-wrap">
+        <div class="ripple-ring"></div>
+        <div class="ripple-ring"></div>
+        <div class="ripple-center"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Heartbeat</h2>
+      <div class="heart">♥</div>
+    </div>
+
+  </div>
+</body>
+</html>

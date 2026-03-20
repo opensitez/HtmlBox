@@ -748,4 +748,31 @@ fn debug_sidebar_box_sizing() {
         "sidebar border_rect.w should be 170 (border-box), got {}", sidebar.border_rect.w);
 }
 
+/// Flex-column with align-items:center must shrink auto-width children to their
+/// intrinsic width. If the h2 fills the full container it will be left-aligned;
+/// if it shrinks to text width it will be centered (non-zero cross_pos offset).
+#[test]
+fn layout_flex_column_center_shrinks_child_to_intrinsic_width() {
+    use super::harness::{find_box, parse_and_layout};
+    // 400px-wide column, centered. The h2 text "Hi" is much narrower than 400px.
+    let doc = parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; }
+        .col { display: flex; flex-direction: column; align-items: center; width: 400px; }
+        h2 { font-size: 16px; }
+        </style>
+        <div class="col"><h2>Hi</h2></div>
+    "#, 800.0);
+    let col = find_box(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "col").unwrap_or(false)
+    }).unwrap();
+    let h2 = find_box(col, &|b| b.tag == "h2").unwrap();
+    // With centering, h2 must be narrower than the 400px container and have
+    // a non-zero left offset (margin_rect.x > col.content_rect.x).
+    assert!(h2.margin_rect.w < 380.0,
+        "h2 should shrink to text width, not fill 400px; got w={}", h2.margin_rect.w);
+    assert!(h2.margin_rect.x > col.content_rect.x + 1.0,
+        "h2 should be shifted right (centered); x={} col.content_rect.x={}",
+        h2.margin_rect.x, col.content_rect.x);
+}
 

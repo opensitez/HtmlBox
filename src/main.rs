@@ -93,15 +93,16 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
 "##;
 
 struct App {
-    window:   Option<Arc<Window>>,
-    platform: Option<Platform>,
-    renderer: Renderer,
-    doc:      Option<Document>,
-    width:    f32,
-    height:   f32,
-    scale:    f32,
-    mouse_x:  f32,
-    mouse_y:  f32,
+    window:        Option<Arc<Window>>,
+    platform:      Option<Platform>,
+    renderer:      Renderer,
+    doc:           Option<Document>,
+    width:         f32,
+    height:        f32,
+    scale:         f32,
+    mouse_x:       f32,
+    mouse_y:       f32,
+    initial_html:  String,
 }
 
 impl App {
@@ -123,7 +124,7 @@ impl ApplicationHandler for App {
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
         self.renderer.set_scale(self.scale);
-        let mut doc = load_html(DEMO_HTML, self.width);
+        let mut doc = load_html(&self.initial_html, self.width);
         self.renderer.layout_engine().layout(&mut doc, self.width);
         self.doc   = Some(doc);
 
@@ -278,6 +279,10 @@ fn winit_key_to_code(key: &Key) -> u32 {
 }
 
 fn main() {
+    let initial_html = std::env::args().nth(1)
+        .and_then(|path| std::fs::read_to_string(&path).ok())
+        .unwrap_or_else(|| DEMO_HTML.to_string());
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
@@ -285,6 +290,7 @@ fn main() {
         renderer: Renderer::new(),
         doc: None, width: 900.0, height: 700.0,
         scale: 1.0, mouse_x: 0.0, mouse_y: 0.0,
+        initial_html,
     };
     event_loop.run_app(&mut app).expect("Failed to run app");
 }

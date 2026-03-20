@@ -37,6 +37,10 @@ pub struct Renderer {
     /// Logical viewport height (layout pixels) — kept in sync by `render()` so
     /// that `vh` units and `flex-stretch` heights work on every repaint.
     viewport_h: f32,
+    /// Element IDs (HtmlBox pointer as usize) that currently have active transitions
+    /// or animation overrides. When set, the renderer uses node.style (already has
+    /// the interpolated values applied) rather than hover_style for these elements.
+    transitioning_ids: std::collections::HashSet<usize>,
 }
 
 impl Renderer {
@@ -55,6 +59,7 @@ impl Renderer {
             touch_centroid:  None,
             cursor_physical: (0.0, 0.0),
             viewport_h: 700.0,
+            transitioning_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -411,6 +416,9 @@ impl Renderer {
         let hovered_ptr   = doc.hovered_box;
         let active_ptr    = doc.active_box;
         let visited_hrefs = &doc.visited_urls;
+        // Collect element IDs that have active transitions so render_box can
+        // use node.style (already has interpolated overrides) instead of hover_style.
+        self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -525,7 +533,12 @@ impl Renderer {
         // ── Hover / active / visited check ───────────────────────────────────
         // CSS :hover/:active apply to an element whenever the pointer is over
         // it OR any of its descendants, so we check the whole subtree.
-        let is_hovered = !hovered_ptr.is_null()
+        // If a transition is running, node.style already has the interpolated values
+        // applied via animation_overrides — skip hover_style so the transition shows.
+        let node_id = node as *const HtmlBox as usize;
+        let has_transition = self.transitioning_ids.contains(&node_id);
+        let is_hovered = !has_transition
+            && !hovered_ptr.is_null()
             && node.style.hover_style.is_some()
             && Self::subtree_contains(node, hovered_ptr);
         let is_active = !active_ptr.is_null()
@@ -789,6 +802,7 @@ impl Renderer {
                         node, eff_style, &flat, &mut temp, child_sx, child_sy,
                         sel_start, sel_end, sel_box_ptr,
                         None, // mask applied at composite time
+                        is_hovered, is_active,
                     );
                     // T maps temp pixel coords → main pixel coords:
                     //   T = scale(sc) ∘ css_t ∘ scale(1/sc)
@@ -809,6 +823,7 @@ impl Renderer {
                     node, eff_style, &flat, pixmap, child_sx, child_sy,
                     sel_start, sel_end, sel_box_ptr,
                     child_mask,
+                    is_hovered, is_active,
                 );
             }
         }
@@ -1249,6 +1264,8 @@ impl Renderer {
         sel_end:    Option<usize>,
         sel_box_ptr: *const HtmlBox,
         mask:       Option<&Mask>,
+        is_hovered: bool,
+        is_active:  bool,
     ) {
         if node.line_cache.is_empty() || flat.is_empty() { return; }
 
@@ -1465,9 +1482,16 @@ impl Renderer {
                     }
                 }
 
-                // Text color: use effective state style's color if run-level style
-                // matches the node's base style; otherwise trust the run's own style.
-                let run_color = if std::ptr::eq(style_ref as *const _, &node.style as *const _) {
+                // Text color: use effective state style's color when:
+                // 1. The run IS the node's own style (ptr::eq), or
+                // 2. The node is hovered/active and the run's color equals the node's
+                //    base cascade color — meaning the run inherited its color from this
+                //    node and should pick up the hover/transition color.
+                //    Runs with an explicit own color (e.g. <a> links) differ from
+                //    node.style.color and correctly keep their own value.
+                let run_color = if std::ptr::eq(style_ref as *const _, &node.style as *const _)
+                    || ((is_hovered || is_active) && style_ref.color == node.style.color)
+                {
                     eff_style.color
                 } else {
                     style_ref.color

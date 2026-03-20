@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0f0f13;
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+  padding: 32px;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  color: #888;
+  font-size: 14px;
+  margin-bottom: 40px;
+}
+
+/* ── Sections ─────────────────────────── */
+.section {
+  margin-bottom: 48px;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #555;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #1e1e28;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
+/* ── Buttons ──────────────────────────── */
+.btn {
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+}
+
+.btn-primary {
+  background: #7c6af7;
+  transition: background-color 0.3s ease, transform 0.15s ease;
+}
+.btn-primary:hover {
+  background: #9d8fff;
+  transform: translateY(-2px);
+}
+.btn-primary:active {
+  background: #5a4bd4;
+  transform: translateY(0);
+}
+
+.btn-danger {
+  background: #f74a7c;
+  transition: background-color 0.25s ease-out, transform 0.15s ease;
+}
+.btn-danger:hover  { background: #ff6e99; transform: scale(1.05); }
+.btn-danger:active { background: #c9365e; transform: scale(0.98); }
+
+.btn-success {
+  background: #1d9b5d;
+  transition: background-color 0.3s ease, opacity 0.2s ease;
+}
+.btn-success:hover  { background: #24c275; opacity: 0.9; }
+.btn-success:active { background: #158248; }
+
+.btn-outline {
+  background: transparent;
+  border: 2px solid #7c6af7;
+  color: #7c6af7;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+.btn-outline:hover {
+  background: #7c6af7;
+  color: #fff;
+}
+
+/* ── Cards ────────────────────────────── */
+.cards-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.card {
+  background: #1a1a22;
+  border: 1px solid #2a2a35;
+  border-radius: 14px;
+  padding: 20px;
+  width: 160px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.card:hover {
+  transform: translateY(-6px);
+  border-color: #7c6af7;
+}
+
+.card-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.card-desc {
+  font-size: 12px;
+  color: #666;
+}
+
+/* ── Opacity fade elements ────────────── */
+.fade-box {
+  width: 140px;
+  height: 80px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.4s ease;
+}
+
+.fade-box-1 { background: #7c6af7; }
+.fade-box-1:hover { opacity: 0.3; }
+
+.fade-box-2 { background: #f74a7c; opacity: 0.3; }
+.fade-box-2:hover { opacity: 1; }
+
+.fade-box-3 { background: #4af7a0; color: #0f0f13; }
+.fade-box-3:hover { opacity: 0; }
+
+/* ── Color transitions ────────────────── */
+.color-swatch {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #fff;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px;
+  font-weight: 600;
+  transition: background-color 0.5s ease-in-out;
+}
+
+.swatch-a { background-color: #7c6af7; }
+.swatch-a:hover { background-color: #f74a7c; }
+
+.swatch-b { background-color: #f7a84a; }
+.swatch-b:hover { background-color: #4af7f0; }
+
+.swatch-c { background-color: #1d9b5d; }
+.swatch-c:hover { background-color: #f74a7c; }
+
+.swatch-d { background-color: #222; }
+.swatch-d:hover { background-color: #fff; color: #000; }
+
+/* ── Transform transitions ────────────── */
+.xform-box {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  background: #1a1a22;
+  border: 2px solid #2a2a35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  cursor: pointer;
+}
+
+.xform-scale  { transition: transform 0.3s ease; }
+.xform-scale:hover  { transform: scale(1.4); }
+
+.xform-rotate { transition: transform 0.5s ease-in-out; }
+.xform-rotate:hover { transform: rotate(180deg); }
+
+.xform-slide  { transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.xform-slide:hover  { transform: translateY(-20px); }
+
+.xform-skew   { transition: transform 0.4s ease; }
+.xform-skew:hover   { transform: skewX(20deg); }
+
+/* ── Nav-link underline ───────────────── */
+.nav {
+  display: flex;
+  gap: 32px;
+  padding: 12px 0;
+}
+
+.nav-link {
+  font-size: 15px;
+  font-weight: 500;
+  color: #888;
+  cursor: pointer;
+  padding-bottom: 6px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.nav-link:hover {
+  color: #fff;
+  border-color: #7c6af7;
+}
+
+/* ── Input focus glow ─────────────────── */
+.inputs { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
+
+.input-field {
+  background: #1a1a22;
+  border: 1px solid #2a2a35;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+.input-field:focus {
+  border-color: #7c6af7;
+}
+
+/* ── Toggle / switch ──────────────────── */
+.toggle-group { display: flex; flex-direction: column; gap: 12px; }
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #888;
+}
+
+.toggle {
+  width: 44px;
+  height: 24px;
+  background: #2a2a35;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.25s ease;
+}
+.toggle:hover { background: #7c6af7; }
+
+.toggle-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.25s ease;
+}
+.toggle:hover .toggle-knob {
+  transform: translateX(20px);
+}
+</style>
+</head>
+<body>
+  <h1>CSS Transitions</h1>
+  <p class="subtitle">Hover over elements to see smooth property transitions</p>
+
+  <!-- Buttons -->
+  <div class="section">
+    <div class="section-title">Button states</div>
+    <div class="row">
+      <div class="btn btn-primary">Primary</div>
+      <div class="btn btn-danger">Danger</div>
+      <div class="btn btn-success">Success</div>
+      <div class="btn btn-outline">Outline</div>
+    </div>
+  </div>
+
+  <!-- Cards -->
+  <div class="section">
+    <div class="section-title">Lift cards</div>
+    <div class="cards-row">
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <div class="card-title">Performance</div>
+        <div class="card-desc">GPU-accelerated</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎨</div>
+        <div class="card-title">Design</div>
+        <div class="card-desc">Pixel perfect</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">🦀</div>
+        <div class="card-title">Rust</div>
+        <div class="card-desc">Memory safe</div>
+      </div>
+      <div class="card">
+        <div class="card-icon">✨</div>
+        <div class="card-title">Animated</div>
+        <div class="card-desc">Smooth curves</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Opacity -->
+  <div class="section">
+    <div class="section-title">Opacity transitions</div>
+    <div class="row">
+      <div class="fade-box fade-box-1">Fade out</div>
+      <div class="fade-box fade-box-2">Fade in</div>
+      <div class="fade-box fade-box-3">Vanish</div>
+    </div>
+  </div>
+
+  <!-- Color swatches -->
+  <div class="section">
+    <div class="section-title">Color transitions (0.5s ease-in-out)</div>
+    <div class="row">
+      <div class="color-swatch swatch-a">A</div>
+      <div class="color-swatch swatch-b">B</div>
+      <div class="color-swatch swatch-c">C</div>
+      <div class="color-swatch swatch-d">D</div>
+    </div>
+  </div>
+
+  <!-- Transform -->
+  <div class="section">
+    <div class="section-title">Transform transitions</div>
+    <div class="row">
+      <div class="xform-box xform-scale">Scale</div>
+      <div class="xform-box xform-rotate">Rotate</div>
+      <div class="xform-box xform-slide">Slide</div>
+      <div class="xform-box xform-skew">Skew</div>
+    </div>
+  </div>
+
+  <!-- Nav links -->
+  <div class="section">
+    <div class="section-title">Underline nav</div>
+    <div class="nav">
+      <div class="nav-link">Home</div>
+      <div class="nav-link">Products</div>
+      <div class="nav-link">Docs</div>
+      <div class="nav-link">Blog</div>
+      <div class="nav-link">Contact</div>
+    </div>
+  </div>
+
+  <!-- Toggles -->
+  <div class="section">
+    <div class="section-title">Toggle switch (hover)</div>
+    <div class="toggle-group">
+      <div class="toggle-row">
+        <div class="toggle"><div class="toggle-knob"></div></div>
+        <span>Dark mode</span>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle"><div class="toggle-knob"></div></div>
+        <span>Notifications</span>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle"><div class="toggle-knob"></div></div>
+        <span>Animations</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

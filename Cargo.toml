@@ -13,6 +13,14 @@ name = "rhtmledit"
 path = "src/main.rs"
 
 [[example]]
+name = "animation_demo"
+path = "examples/animation_demo.rs"
+
+[[example]]
+name = "transitions_demo"
+path = "examples/transitions_demo.rs"
+
+[[example]]
 name = "contenteditable_demo"
 path = "examples/contenteditable_demo.rs"
 
@@ -40,6 +48,10 @@ path = "examples/transform_filter_demo.rs"
 name = "event_playground"
 path = "examples/event_playground.rs"
 
+[[example]]
+name = "snapshot"
+path = "examples/snapshot.rs"
+
 [features]
 accessibility = ["dep:accesskit", "dep:accesskit_winit"]
 
@@ -57,3 +69,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 resvg = "0.44"
 encoding_rs = "0.8"
 rand = "0.8"
+
+[dev-dependencies]
+ureq = "2"

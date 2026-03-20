@@ -648,8 +648,10 @@ impl Stylesheet {
 
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
     pub fn parse_and_add(&mut self, css: &str) {
-        // Extract :root CSS variables first
+        // Extract :root CSS variables first, then pre-resolve any var() references
+        // within the variable values so every lookup is O(1) with no recursion.
         extract_root_variables(css, &mut self.variables);
+        pre_resolve_variables(&mut self.variables);
         // Extract @font-face declarations
         extract_font_faces(css, &mut self.font_faces);
         // Extract @keyframes blocks
@@ -887,7 +889,7 @@ fn tokenize_anim(s: &str) -> Vec<String> {
     for ch in s.chars() {
         match ch {
             '(' => { depth += 1; current.push(ch); }
-            ')' => { depth -= 1; current.push(ch); }
+            ')' => { depth = depth.saturating_sub(1); current.push(ch); }
             ' ' | '\t' if depth == 0 => {
                 if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
             }
@@ -936,6 +938,40 @@ fn extract_root_variables(css: &str, vars: &mut HashMap<String, String>) {
                     let val = decl[colon+1..].trim().to_string();
                     vars.insert(prop.to_string(), val);
                 }
+            }
+        }
+    }
+}
+
+/// Expand `var()` references within the variable map itself so all values are concrete.
+/// Handles chains (--a: var(--b), --b: 1rem) and circular refs (uses fallback or "").
+fn pre_resolve_variables(vars: &mut HashMap<String, String>) {
+    // Collect keys to avoid borrowing issues
+    let keys: Vec<String> = vars.keys().cloned().collect();
+    for _ in 0..keys.len().min(8) {
+        // Keep resolving until stable or limit reached
+        let mut changed = false;
+        let snapshot = vars.clone();
+        for key in &keys {
+            if let Some(val) = vars.get(key) {
+                if val.contains("var(") {
+                    let resolved = resolve_var_pass(val, &snapshot);
+                    if resolved != *val {
+                        vars.insert(key.clone(), resolved);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    // Final pass: replace any still-unresolved var() with their fallback or "".
+    let keys: Vec<String> = vars.keys().cloned().collect();
+    for key in &keys {
+        if let Some(val) = vars.get(key) {
+            if val.contains("var(") {
+                let resolved = resolve_var_pass(val, &HashMap::new());
+                vars.insert(key.clone(), resolved);
             }
         }
     }
@@ -1413,15 +1449,59 @@ pub fn apply_animation_overrides(
         for (prop, val) in props {
             apply_property(&mut node.style, prop, val);
         }
+        // Propagate inherited properties (like `color`) to descendant text nodes.
+        // Text nodes have no explicit CSS rules — they inherit everything — so their
+        // cloned style must track the parent's animated values.  Without this, runs
+        // built by collect_items carry the stale pre-animation cascade color.
+        let inherited: Vec<(&str, &str)> = props.iter()
+            .filter(|(p, _)| is_inherited_css_prop(p))
+            .map(|(p, v)| (p.as_str(), v.as_str()))
+            .collect();
+        if !inherited.is_empty() {
+            propagate_to_text_descendants(&mut node.children, &inherited);
+        }
     }
     for child in &mut node.children {
         apply_animation_overrides(child, overrides);
     }
 }
 
+/// CSS properties that are inherited and must be propagated to text-node descendants.
+fn is_inherited_css_prop(prop: &str) -> bool {
+    matches!(prop,
+        "color" | "font-size" | "font-weight" | "font-style" | "font-family" |
+        "letter-spacing" | "word-spacing" | "line-height" | "text-transform" |
+        "text-indent" | "visibility" | "cursor"
+    )
+}
+
+/// Walk `children` recursively and apply `props` to any text-node (`#text`) descendants.
+/// Non-text nodes are recursed into so that nested inline elements (e.g. `<span><em>`)
+/// also have their text-node leaves updated.  Nodes that have their own entry in
+/// `animation_overrides` will be handled separately; here we only touch text nodes,
+/// which never have transitions of their own.
+fn propagate_to_text_descendants(children: &mut Vec<HtmlBox>, props: &[(&str, &str)]) {
+    for child in children {
+        if child.is_text_node() {
+            for &(prop, val) in props {
+                apply_property(&mut child.style, prop, val);
+            }
+        } else {
+            propagate_to_text_descendants(&mut child.children, props);
+        }
+    }
+}
+
 /// Apply a single CSS property/value pair to a ComputedStyle.
 pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
     let v = value.trim();
+    // `inherit` means "use the parent's computed value". For inherited properties,
+    // `inherit_from` already copied the parent value before rules are applied, so
+    // skipping the application keeps the inherited value intact. For non-inherited
+    // properties this is also the safest default (avoids incorrect fallback).
+    if v == "inherit" { return; }
+    // `initial` / `revert` / `unset` — treat as reset to default (skip for now, close enough).
+    if matches!(v, "initial" | "revert" | "unset" | "revert-layer") { return; }
     match prop {
         "display" => {
             style.display = match v {
@@ -2930,7 +3010,16 @@ fn parse_css_filter(v: &str) -> crate::types::CssFilters {
 }
 
 /// Resolve `var(--name)` and `var(--name, fallback)` references in a CSS value.
+/// Variables in the map are pre-resolved by `pre_resolve_variables`, so one pass suffices.
+/// Any still-unresolved var() (unknown custom property with no fallback) is dropped.
 pub fn resolve_var_references(val: &str, variables: &HashMap<String, String>) -> String {
+    if !val.contains("var(") { return val.to_string(); }
+    let resolved = resolve_var_pass(val, variables);
+    // Drop any remaining unresolved var() by substituting with fallback or "".
+    if resolved.contains("var(") { resolve_var_pass(&resolved, &HashMap::new()) } else { resolved }
+}
+
+fn resolve_var_pass(val: &str, variables: &HashMap<String, String>) -> String {
     if !val.contains("var(") {
         return val.to_string();
     }
