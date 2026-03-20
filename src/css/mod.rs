@@ -639,11 +639,19 @@ pub struct Stylesheet {
     pub font_faces: Vec<FontFaceDecl>,
     /// Parsed `@keyframes` blocks, keyed by animation name.
     pub keyframes:  HashMap<String, Vec<KeyframeStop>>,
+    /// Selector index: rule indices bucketed by the key selector's id/class/tag.
+    /// Built lazily before cascade; avoids O(rules) scan per element.
+    idx_by_id:    HashMap<String, Vec<usize>>,
+    idx_by_class: HashMap<String, Vec<usize>>,
+    idx_by_tag:   HashMap<String, Vec<usize>>,
+    idx_universal: Vec<usize>,  // rules with * or no specific key selector
+    idx_dirty:    bool,
 }
 
 impl Stylesheet {
     pub fn add_rule(&mut self, rule: CssRule) {
         self.rules.push(rule);
+        self.idx_dirty = true;
     }
 
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
@@ -661,8 +669,90 @@ impl Stylesheet {
             for r in rules {
                 self.rules.push(r);
             }
+            self.idx_dirty = true;
         }
     }
+
+    /// Rebuild the selector index if dirty.  Called once before each cascade pass.
+    pub fn rebuild_index(&mut self) {
+        if !self.idx_dirty { return; }
+        self.idx_by_id.clear();
+        self.idx_by_class.clear();
+        self.idx_by_tag.clear();
+        self.idx_universal.clear();
+        for (i, rule) in self.rules.iter().enumerate() {
+            let key = rule_key_selector(rule);
+            match key {
+                SelectorKey::Id(s)    => self.idx_by_id.entry(s).or_default().push(i),
+                SelectorKey::Class(s) => self.idx_by_class.entry(s).or_default().push(i),
+                SelectorKey::Tag(s)   => self.idx_by_tag.entry(s).or_default().push(i),
+                SelectorKey::Universal => self.idx_universal.push(i),
+            }
+        }
+        self.idx_dirty = false;
+    }
+
+    /// Get candidate rule indices for an element with given tag, id, and classes.
+    /// Returns an iterator over rule indices that *might* match (still need full matching).
+    pub fn candidate_rules(&self, tag: &str, id: Option<&str>, classes: &[&str]) -> Vec<usize> {
+        let mut candidates: Vec<usize> = Vec::new();
+        // Add universal rules (always candidates)
+        candidates.extend_from_slice(&self.idx_universal);
+        // Add tag-matched rules
+        let tag_lower = tag.to_ascii_lowercase();
+        if let Some(indices) = self.idx_by_tag.get(&tag_lower) {
+            candidates.extend_from_slice(indices);
+        }
+        // Add id-matched rules
+        if let Some(id) = id {
+            if let Some(indices) = self.idx_by_id.get(id) {
+                candidates.extend_from_slice(indices);
+            }
+        }
+        // Add class-matched rules
+        for cls in classes {
+            if let Some(indices) = self.idx_by_class.get(*cls) {
+                candidates.extend_from_slice(indices);
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+}
+
+/// Key extracted from the rightmost simple selector of a rule.
+enum SelectorKey {
+    Id(String),
+    Class(String),
+    Tag(String),
+    Universal,
+}
+
+/// Extract the most specific key selector from a rule's first selector.
+/// Prefers id > class > tag for best index selectivity.
+fn rule_key_selector(rule: &CssRule) -> SelectorKey {
+    // Use the first selector (all selectors in a rule match the same declarations,
+    // but for indexing we just need one representative key).
+    if let Some(sel) = rule.selectors.first() {
+        // Walk from right to left, skip combinators, find the rightmost id/class/tag.
+        let mut best_id = None;
+        let mut best_class = None;
+        let mut best_tag = None;
+        for part in sel.parts.iter().rev() {
+            match part {
+                SelectorPart::Combinator(_) => break, // stop at first combinator from right
+                SelectorPart::Id(s)    => { best_id = Some(s.clone()); break; }
+                SelectorPart::Class(s) => { if best_class.is_none() { best_class = Some(s.clone()); } }
+                SelectorPart::Tag(t) if t != "*" => { if best_tag.is_none() { best_tag = Some(t.to_ascii_lowercase()); } }
+                _ => {}
+            }
+        }
+        if let Some(id)  = best_id    { return SelectorKey::Id(id); }
+        if let Some(cls) = best_class { return SelectorKey::Class(cls); }
+        if let Some(tag) = best_tag   { return SelectorKey::Tag(tag); }
+    }
+    SelectorKey::Universal
 }
 
 // ─── @keyframes extraction ────────────────────────────────────────────────────
@@ -913,33 +1003,61 @@ fn is_timing_fn(s: &str) -> bool {
 }
 
 /// Extract CSS custom properties (--name: value) from `:root { }` blocks.
+/// Extract CSS custom properties (--*) from rule blocks.
+/// Collects from any rule block, since custom properties can be set on any element
+/// and are inherited. This matches the common patterns: `:root`, `html`, `html.class`,
+/// `body`, and element-level overrides.
 fn extract_root_variables(css: &str, vars: &mut HashMap<String, String>) {
+    extract_root_variables_inner(css, vars);
+}
+
+fn extract_root_variables_inner(css: &str, vars: &mut HashMap<String, String>) {
     let cleaned = strip_css_comments(css);
     let mut s = cleaned.as_str();
-    loop {
+    while !s.is_empty() {
         s = s.trim_start();
         if s.is_empty() { break; }
-        // Find ":root"
-        let root_pos = match s.find(":root") {
-            Some(p) => p,
-            None    => break,
-        };
-        s = &s[root_pos + 5..];
-        s = s.trim_start();
-        if !s.starts_with('{') { continue; }
-        let (block, rest) = consume_block(s);
-        s = rest;
-        // Parse declarations for --variables
-        for decl in block.split(';') {
-            let decl = decl.trim();
-            if let Some(colon) = decl.find(':') {
-                let prop = decl[..colon].trim();
-                if prop.starts_with("--") {
-                    let val = decl[colon+1..].trim().to_string();
-                    vars.insert(prop.to_string(), val);
+        if s.starts_with('@') {
+            let lower = s.to_ascii_lowercase();
+            if lower.starts_with("@media") {
+                if let Some(brace) = s.find('{') {
+                    let (block, rest) = consume_block(&s[brace..]);
+                    extract_root_variables_inner(&block, vars);
+                    s = rest;
+                } else { break; }
+                continue;
+            }
+            // Other @-rules: skip
+            if let Some(brace) = s.find('{') {
+                let (_, rest) = consume_block(&s[brace..]);
+                s = rest;
+            } else { break; }
+            continue;
+        }
+        if let Some(brace) = s.find('{') {
+            let selector = s[..brace].trim();
+            let (block, rest) = consume_block(&s[brace..]);
+            // Only extract custom properties from :root and html selectors
+            // (universal scope). Selector-specific variables are handled
+            // by the per-element cascade via inherited_vars.
+            let sel_lower = selector.to_ascii_lowercase();
+            let is_root = sel_lower == ":root" || sel_lower == "html"
+                || sel_lower.starts_with(":root ")
+                || sel_lower.starts_with("html ");
+            if is_root && block.contains("--") {
+                for decl in block.split(';') {
+                    let decl = decl.trim();
+                    if let Some(colon) = decl.find(':') {
+                        let prop = decl[..colon].trim();
+                        if prop.starts_with("--") {
+                            let val = decl[colon+1..].trim().to_string();
+                            vars.insert(prop.to_string(), val);
+                        }
+                    }
                 }
             }
-        }
+            s = rest;
+        } else { break; }
     }
 }
 
@@ -1427,8 +1545,9 @@ fn parse_attr_selector(s: &str) -> (String, AttrOp, String) {
 
 fn strip_quotes(s: &str) -> String {
     let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"'))
+            || (s.starts_with('\'') && s.ends_with('\'')))
     {
         s[1..s.len()-1].to_string()
     } else {
@@ -4268,7 +4387,7 @@ fn apply_container_cascade_inner(
 // ─── CSS Cascade ─────────────────────────────────────────────────────────────
 
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
-pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
+pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &mut Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
     apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null(), false);
 }
@@ -4279,7 +4398,7 @@ pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
 /// focus was moved by keyboard (Tab/Shift+Tab), `false` for mouse-click focus.
 pub fn apply_cascade_vp(
     root: &mut crate::types::HtmlBox,
-    stylesheet: &Stylesheet,
+    stylesheet: &mut Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
     vw: f32,
@@ -4287,11 +4406,12 @@ pub fn apply_cascade_vp(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
 ) {
+    stylesheet.rebuild_index();
     // A single Vec is reused for the entire tree traversal (push/pop per node)
     // instead of cloning the ancestor list at every level — O(depth) allocations
     // instead of O(nodes × depth).
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus);
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4311,6 +4431,7 @@ fn apply_cascade_inner(
     vh: f32,
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
+    inherited_vars: &HashMap<String, String>,
 ) {
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
@@ -4418,7 +4539,16 @@ fn apply_cascade_inner(
     let mut after_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut selection_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
     let mut marker_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
-    for rule in &stylesheet.rules {
+
+    // Use selector index to narrow down candidate rules instead of scanning all rules.
+    let tag = &root.tag;
+    let id = root.attributes.get("id").map(|s| s.as_str());
+    let class_attr = root.attributes.get("class").cloned().unwrap_or_default();
+    let classes: Vec<&str> = class_attr.split_whitespace().collect();
+    let candidates = stylesheet.candidate_rules(tag, id, &classes);
+
+    for rule_idx in &candidates {
+        let rule = &stylesheet.rules[*rule_idx];
         // Skip rules whose @media condition doesn't match the viewport
         if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
             continue;
@@ -4462,9 +4592,30 @@ fn apply_cascade_inner(
         }
     }
     matched.sort_by_key(|(sp, _)| *sp);
+    // Build variable scope: inherited from parent + any --custom-properties from matched rules.
+    // Only clone the map when new custom properties are actually defined — most elements
+    // don't define any, so we avoid O(vars) cloning at every node.
+    let has_new_vars = matched.iter().any(|(_, decls)| decls.keys().any(|p| p.starts_with("--")));
+    let local_vars_owned;
+    let local_vars: &HashMap<String, String> = if has_new_vars {
+        let mut vars = inherited_vars.clone();
+        for (_, decls) in &matched {
+            for (prop, val) in decls {
+                if prop.starts_with("--") {
+                    vars.insert(prop.clone(), val.clone());
+                }
+            }
+        }
+        pre_resolve_variables(&mut vars);
+        local_vars_owned = vars;
+        &local_vars_owned
+    } else {
+        inherited_vars
+    };
     for (_, decls) in &matched {
         for (prop, val) in decls {
-            let resolved = resolve_var_references(val, &stylesheet.variables);
+            if prop.starts_with("--") { continue; }
+            let resolved = resolve_var_references(val, &local_vars);
             apply_property(&mut style, prop, &resolved);
         }
     }
@@ -4474,7 +4625,7 @@ fn apply_cascade_inner(
         let mut hs = style.clone();
         for (_, decls) in &hover_matched {
             for (prop, val) in decls {
-                let resolved = resolve_var_references(val, &stylesheet.variables);
+                let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut hs, prop, &resolved);
             }
         }
@@ -4488,7 +4639,7 @@ fn apply_cascade_inner(
         let mut as_ = style.clone();
         for (_, decls) in &active_matched {
             for (prop, val) in decls {
-                let resolved = resolve_var_references(val, &stylesheet.variables);
+                let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut as_, prop, &resolved);
             }
         }
@@ -4501,7 +4652,7 @@ fn apply_cascade_inner(
         let mut vs = style.clone();
         for (_, decls) in &visited_matched {
             for (prop, val) in decls {
-                let resolved = resolve_var_references(val, &stylesheet.variables);
+                let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut vs, prop, &resolved);
             }
         }
@@ -4513,7 +4664,7 @@ fn apply_cascade_inner(
     if let Some(inline_style) = root.attributes.get("style").cloned() {
         let decls = parse_declarations(&inline_style);
         for (prop, val) in &decls {
-            let resolved = resolve_var_references(val, &stylesheet.variables);
+            let resolved = resolve_var_references(val, &local_vars);
             apply_property(&mut style, prop, &resolved);
         }
     }
@@ -4585,18 +4736,18 @@ fn apply_cascade_inner(
         Some((content, Box::new(ps)))
     };
 
-    if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &stylesheet.variables) {
+    if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &local_vars) {
         root.style.before_content = txt;
         root.style.before_style   = Some(ps);
     }
-    if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &stylesheet.variables) {
+    if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &local_vars) {
         root.style.after_content = txt;
         root.style.after_style   = Some(ps);
     }
-    if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &stylesheet.variables) {
+    if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &local_vars) {
         root.style.selection_style = Some(ps);
     }
-    if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &stylesheet.variables) {
+    if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &local_vars) {
         root.style.marker_style = Some(ps);
     }
 
@@ -4650,6 +4801,7 @@ fn apply_cascade_inner(
             ancestors, ci, ns,
             type_counts[i], type_totals[i],
             vw, vh, focused_box, keyboard_focus,
+            &local_vars,
         );
     }
 
@@ -4742,8 +4894,10 @@ button, input[type=submit], input[type=button], input[type=reset] {
   padding-left: 6px; padding-right: 6px; cursor: default;
 }
 input[type=hidden] { display: none; }
-input { display: inline-block; }
-select { display: inline-block; }
+input[type=radio], input[type=checkbox] { display: inline-block; width: 13px; height: 13px; }
+label { display: inline-block; }
+input { display: inline-block; height: 1.4em; }
+select { display: inline-block; height: 1.4em; }
 textarea { display: inline-block; white-space: pre-wrap; }
 fieldset { display: block; margin-left: 2px; margin-right: 2px; padding-top: 0.35em; padding-bottom: 0.625em; padding-left: 0.75em; padding-right: 0.75em; border: 2px groove #ccc; }
 legend { padding-left: 2px; padding-right: 2px; }

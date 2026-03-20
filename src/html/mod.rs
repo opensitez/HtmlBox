@@ -45,33 +45,54 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
         let mut svg_tag = html[svg_start..tag_end].to_string();
         // Patch in xmlns if missing
         if !svg_tag.contains("xmlns=") {
-            // Insert before closing '>'
             if let Some(insert_pos) = svg_tag.rfind('>') {
                 svg_tag.insert_str(insert_pos, " xmlns=\"http://www.w3.org/2000/svg\"");
             }
         }
+        let svg_body = &html[tag_end..svg_end];
+        // Patch in xmlns:xlink if the body uses xlink: but the tag doesn't declare it
+        if svg_body.contains("xlink:") && !svg_tag.contains("xmlns:xlink") {
+            if let Some(insert_pos) = svg_tag.rfind('>') {
+                svg_tag.insert_str(insert_pos, " xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+            }
+        }
         // Rebuild svg_markup with patched tag
-        let svg_markup = format!("{}{}", svg_tag, &html[tag_end..svg_end]);
+        let svg_markup = format!("{}{}", svg_tag, svg_body);
 
-        let vb = parse_svg_viewbox(&svg_tag);
-        let w = parse_svg_attr(&svg_tag, "width")
-            .or_else(|| vb.map(|(w, _)| w))
-            .unwrap_or(200);
-        let h = parse_svg_attr(&svg_tag, "height")
-            .or_else(|| vb.map(|(_, h)| h))
-            .unwrap_or(150);
-        let class_attr = parse_svg_class(&svg_tag)
-            .map(|c| format!(" class=\"{}\"", c))
-            .unwrap_or_default();
+        // Parse all attributes from the SVG opening tag in one pass
+        let tag_content = svg_tag.trim_start_matches('<').trim_end_matches('>');
+        let (_, attrs) = parse_tag_attrs(tag_content);
+
+        let vb = parse_viewbox_value(attrs.get("viewbox").map(|s| s.as_str()));
+        // Inline style width/height take precedence over HTML attributes
+        let style_w = attrs.get("style").and_then(|s| style_px(s, "width"));
+        let style_h = attrs.get("style").and_then(|s| style_px(s, "height"));
+        let attr_w = attrs.get("width").and_then(|s| parse_px(s));
+        let attr_h = attrs.get("height").and_then(|s| parse_px(s));
+        let explicit_w = style_w.or(attr_w);
+        let explicit_h = style_h.or(attr_h);
+
+        let (w, h) = resolve_replaced_size(explicit_w, explicit_h, vb);
 
         let key = format!("__svg_{}__", svg_idx);
         svg_idx += 1;
         svg_map.insert(key.clone(), svg_markup);
 
-        result.push_str(&format!(
-            "<img src=\"{}\" width=\"{}\" height=\"{}\" data-svg-w=\"{}\" data-svg-h=\"{}\"{}>",
-            key, w, h, w, h, class_attr
-        ));
+        // Build <img> with all SVG attributes forwarded as data-svg-* plus sizing
+        let mut img_tag = format!(
+            "<img src=\"{}\" width=\"{}\" height=\"{}\" data-svg-w=\"{}\" data-svg-h=\"{}\"",
+            key, w, h, w, h
+        );
+        for (k, v) in &attrs {
+            match k.as_str() {
+                "width" | "height" | "xmlns" | "xmlns:xlink" | "version" => {}
+                _ => {
+                    img_tag.push_str(&format!(" data-svg-{}=\"{}\"", k, v));
+                }
+            }
+        }
+        img_tag.push('>');
+        result.push_str(&img_tag);
 
         pos = svg_end;
     }
@@ -79,34 +100,25 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
     (result, svg_map)
 }
 
-/// Parse an integer attribute value from an SVG opening tag string.
-fn parse_svg_attr(tag: &str, attr: &str) -> Option<u32> {
-    let lower = tag.to_ascii_lowercase();
-    let needle = format!("{}=", attr);
-    let idx = lower.find(&needle)?;
-    let after_eq = idx + needle.len();
-    let rest = &tag[after_eq..];
-    // Skip optional quote
-    let rest = rest.trim_start();
-    let (rest, _quote) = if rest.starts_with('"') || rest.starts_with('\'') {
-        (&rest[1..], Some(rest.as_bytes()[0]))
-    } else {
-        (rest, None)
-    };
-    // Collect digits
-    let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    num_str.parse().ok()
+/// Parse leading integer pixels from a string like "20px", "512", "20px;height:10px".
+fn parse_px(s: &str) -> Option<u32> {
+    let num: String = s.trim().chars().take_while(|c| c.is_ascii_digit()).collect();
+    if num.is_empty() { None } else { num.parse().ok() }
 }
 
-/// Parse a `viewBox="min-x min-y width height"` attribute and return (width, height).
-fn parse_svg_viewbox(tag: &str) -> Option<(u32, u32)> {
-    let lower = tag.to_ascii_lowercase();
-    let idx = lower.find("viewbox=")?;
-    let after_eq = idx + "viewbox=".len();
-    let rest = tag[after_eq..].trim_start();
-    let rest = rest.trim_start_matches(|c| c == '"' || c == '\'');
-    // viewBox has 4 numbers: min-x min-y width height
-    let parts: Vec<f32> = rest
+/// Extract a CSS pixel value for `prop` from an inline style string (e.g. "width:20px;height:20px").
+fn style_px(style: &str, prop: &str) -> Option<u32> {
+    let lower = style.to_ascii_lowercase();
+    let needle = format!("{}:", prop);
+    let idx = lower.find(&needle)?;
+    let after = style[idx + needle.len()..].trim_start();
+    parse_px(after)
+}
+
+/// Parse a viewBox attribute value "min-x min-y width height" → (width, height).
+fn parse_viewbox_value(val: Option<&str>) -> Option<(u32, u32)> {
+    let val = val?;
+    let parts: Vec<f32> = val
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse().ok())
@@ -118,21 +130,35 @@ fn parse_svg_viewbox(tag: &str) -> Option<(u32, u32)> {
     }
 }
 
-/// Extract the `class` attribute value from an SVG opening tag string.
-fn parse_svg_class(tag: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    let idx = lower.find("class=")?;
-    let after_eq = idx + "class=".len();
-    let rest = tag[after_eq..].trim_start();
-    if rest.starts_with('"') {
-        let end = rest[1..].find('"')? + 1;
-        Some(rest[1..end].to_string())
-    } else if rest.starts_with('\'') {
-        let end = rest[1..].find('\'')? + 1;
-        Some(rest[1..end].to_string())
-    } else {
-        let val: String = rest.chars().take_while(|c| !c.is_whitespace() && *c != '>').collect();
-        if val.is_empty() { None } else { Some(val) }
+/// Resolve replaced element dimensions per CSS Images §5.2.
+/// With both explicit → use them. One explicit + viewBox ratio → derive the other.
+/// Neither explicit → fit viewBox ratio into 300×150 default object size.
+fn resolve_replaced_size(ew: Option<u32>, eh: Option<u32>, vb: Option<(u32, u32)>) -> (u32, u32) {
+    match (ew, eh) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => {
+            let h = vb.map(|(vw, vh)| (w as f64 * vh as f64 / vw.max(1) as f64) as u32)
+                .unwrap_or(w);
+            (w, h)
+        }
+        (None, Some(h)) => {
+            let w = vb.map(|(vw, vh)| (h as f64 * vw as f64 / vh.max(1) as f64) as u32)
+                .unwrap_or(h);
+            (w, h)
+        }
+        (None, None) => {
+            if let Some((vw, vh)) = vb {
+                let ratio = vw as f64 / vh.max(1) as f64;
+                let (fw, fh) = if ratio > (300.0 / 150.0) {
+                    (300, (300.0 / ratio).round() as u32)
+                } else {
+                    ((150.0 * ratio).round() as u32, 150)
+                };
+                (fw.max(1), fh.max(1))
+            } else {
+                (300, 150)
+            }
+        }
     }
 }
 
@@ -1373,8 +1399,8 @@ where
 
     // Apply cascade
     let root_font_px = 16.0;
-    let ss = doc.stylesheet.clone();
-    apply_cascade(&mut doc.root, &ss, None, root_font_px);
+    let mut ss = doc.stylesheet.clone();
+    apply_cascade(&mut doc.root, &mut ss, None, root_font_px);
 
     // Post-cascade: fix summary display and details open/closed state
     // (cascade overwrites our pre-cascade settings with UA rules)

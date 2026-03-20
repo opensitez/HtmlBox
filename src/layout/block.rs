@@ -214,10 +214,14 @@ pub fn build_box_rects(
         node.padding_rect.w + rbox.border_left + rbox.border_right,
         node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
+    // For the margin-rect width, negative margins can collapse it to zero or less.
+    // Clamp to at least the border-box width so floats with negative margins
+    // (e.g. float:left; width:320px; margin-left:-320px) occupy their visual width.
+    let mr_w = (node.border_rect.w + margin_left + margin_right).max(node.border_rect.w);
     node.margin_rect = Rect::new(
         node.border_rect.x - margin_left,
         node.border_rect.y - rbox.margin_top,
-        node.border_rect.w + margin_left + margin_right,
+        mr_w,
         node.border_rect.h + rbox.margin_top + rbox.margin_bottom,
     );
     node.baseline = content_y + content_h;
@@ -363,7 +367,11 @@ pub fn layout_block_with_fc(
         let content_h = content_h.max(min_h).min(max_h).max(0.0);
         build_box_rects(node, rbox, content_x, content_y, content_w, content_h, margin_left, margin_right);
         // Absolute/fixed children
-        let containing_rect = node.padding_rect;
+        let containing_rect = if !matches!(node.style.position, Position::Static) {
+            node.padding_rect
+        } else {
+            engine.pos_cb.get()
+        };
         for &i in &abs_children {
             let child = &mut node.children[i];
             layout_positioned(engine, child, containing_rect, font_px, root_font_px);
@@ -422,8 +430,14 @@ pub fn layout_block_with_fc(
                     );
                 }
             }
-            let float_w = node.children[i].margin_rect.w;
-            let float_h = node.children[i].margin_rect.h;
+            // For float placement, use the effective margin-box width including
+            // negative margins.  A float with width:320px; margin-left:-320px
+            // occupies 0px of horizontal space (Holy Grail pattern).
+            let ch = &node.children[i];
+            let effective_w = ch.border_rect.w
+                + ch.resolved_margin_left + ch.resolved_margin_right;
+            let float_w = effective_w.max(0.0);
+            let float_h = ch.margin_rect.h;
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
             let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, child_content_w, side);
             let dx = content_x + placed.x - node.children[i].margin_rect.x;
@@ -650,7 +664,11 @@ pub fn layout_block_with_fc(
     // Use the padding box as the containing block for positioned children
     // (CSS: containing block for absolutely positioned elements is the padding box
     //  of the nearest positioned ancestor).
-    let containing_rect = node.padding_rect;
+    let containing_rect = if !matches!(node.style.position, Position::Static) {
+        node.padding_rect
+    } else {
+        engine.pos_cb.get()
+    };
     for &i in &abs_children {
         layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
         // For abs children with all insets auto, clamp to containing block's top-left.

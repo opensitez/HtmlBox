@@ -222,9 +222,9 @@ fn mouse_focus_does_not_show_outline() {
     doc.focused_box = btn_ptr;
     doc.keyboard_focus = false;
     // Recascade with keyboard_focus=false.
-    let ss = doc.stylesheet.clone();
+    let mut ss = doc.stylesheet.clone();
     crate::css::apply_cascade_vp(
-        &mut doc.root, &ss, None, 16.0,
+        &mut doc.root, &mut ss, None, 16.0,
         doc.viewport_w, doc.viewport_h, doc.focused_box, false,
     );
 
@@ -283,9 +283,9 @@ fn mouse_focused_text_input_shows_outline() {
     let inp_ptr = crate::dom::query_selector(&doc.root, "#inp").map(|n| n as *const _).unwrap();
     doc.focused_box = inp_ptr;
     doc.keyboard_focus = false;
-    let ss = doc.stylesheet.clone();
+    let mut ss = doc.stylesheet.clone();
     apply_cascade_vp(
-        &mut doc.root, &ss, None, 16.0,
+        &mut doc.root, &mut ss, None, 16.0,
         doc.viewport_w, doc.viewport_h, doc.focused_box, false,
     );
 
@@ -305,9 +305,9 @@ fn mouse_focused_button_no_outline() {
     let btn_ptr = crate::dom::query_selector(&doc.root, "#btn").map(|n| n as *const _).unwrap();
     doc.focused_box = btn_ptr;
     doc.keyboard_focus = false;
-    let ss = doc.stylesheet.clone();
+    let mut ss = doc.stylesheet.clone();
     apply_cascade_vp(
-        &mut doc.root, &ss, None, 16.0,
+        &mut doc.root, &mut ss, None, 16.0,
         doc.viewport_w, doc.viewport_h, doc.focused_box, false,
     );
 

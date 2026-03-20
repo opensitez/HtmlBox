@@ -6,6 +6,7 @@ pub mod grid;
 pub mod table;
 pub mod hit_test;
 
+use std::cell::Cell;
 use crate::types::*;
 
 // ─── Font loading helpers ──────────────────────────────────────────────────────
@@ -280,6 +281,9 @@ pub struct LayoutEngine {
     cached_has_media_q: bool,
     /// Whether any @container rules exist — cached to avoid O(n) scan every layout.
     cached_has_container_q: bool,
+    /// Containing block rect for the nearest positioned (non-static) ancestor.
+    /// Used by abs-pos children to resolve their containing block correctly.
+    pub pos_cb: Cell<Rect>,
 }
 
 impl LayoutEngine {
@@ -295,6 +299,7 @@ impl LayoutEngine {
             last_geometry_viewport_h: f32::NAN, // NAN forces full layout on first call
             cached_has_media_q: false,
             cached_has_container_q: false,
+            pos_cb: Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)),
         }
     }
 
@@ -353,7 +358,7 @@ impl LayoutEngine {
         doc.viewport_h = self.viewport_h;
         let root_font_px = self.root_font_px;
 
-        let ss = doc.stylesheet.clone();
+        let mut ss = doc.stylesheet.clone();
 
         // Cache @media / @container presence so we don't O(n)-scan rules every layout.
         // Reset the cache when the stylesheet changes (detected by rule count changing).
@@ -379,7 +384,7 @@ impl LayoutEngine {
 
         let did_cascade = if needs_cascade {
             crate::css::apply_cascade_vp(
-                &mut doc.root, &ss, None, root_font_px,
+                &mut doc.root, &mut ss, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
             );
             self.last_cascade_vw = viewport_width;
@@ -457,6 +462,7 @@ impl LayoutEngine {
         doc.root.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
         doc.root.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
 
+        self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
         self.layout_box(&mut doc.root, content_w, 0.0, 0.0, root_font_px, root_font_px);
 
         // Update root geometry with final height
@@ -576,7 +582,17 @@ impl LayoutEngine {
             return node.margin_rect.h;
         }
 
-        match node.style.display {
+        // Track the nearest positioned ancestor's padding rect for abs children.
+        let old_pos_cb = self.pos_cb.get();
+        if !matches!(node.style.position, Position::Static) {
+            let est_padding_x = x + rbox.margin_left + rbox.border_left;
+            let est_padding_y = y + rbox.margin_top  + rbox.border_top;
+            let est_content_w = rbox.content_width.unwrap_or((containing_w - rbox.h_space()).max(0.0));
+            let est_padding_w = est_content_w + rbox.padding_left + rbox.padding_right;
+            self.pos_cb.set(Rect::new(est_padding_x, est_padding_y, est_padding_w, self.viewport_h));
+        }
+
+        let h = match node.style.display {
             Display::Flex | Display::InlineFlex => {
                 flex::layout_flex(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
             }
@@ -594,7 +610,10 @@ impl LayoutEngine {
                     inline_layout::layout_inline_block(self, node, &rbox, containing_w, x, y, font_px, root_font_px, None)
                 }
             }
-        }
+        };
+
+        self.pos_cb.set(old_pos_cb);
+        h
     }
 
     /// Layout a box in inline context — returns (width, height, baseline).

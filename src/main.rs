@@ -1,5 +1,6 @@
 mod platform;
 
+use std::io::Read as _;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -7,7 +8,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window;
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use rhtmledit::{load_html_with_base, Document, Renderer, HtmlEventType};
 use platform::Platform;
 
 const DEMO_HTML: &str = r##"<!DOCTYPE html>
@@ -103,6 +104,7 @@ struct App {
     mouse_x:       f32,
     mouse_y:       f32,
     initial_html:  String,
+    base_url:      String,
 }
 
 impl App {
@@ -124,8 +126,7 @@ impl ApplicationHandler for App {
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
         self.renderer.set_scale(self.scale);
-        let mut doc = load_html(&self.initial_html, self.width);
-        self.renderer.layout_engine().layout(&mut doc, self.width);
+        let doc = load_html_with_base(&self.initial_html, &self.base_url, self.width, self.height);
         self.doc   = Some(doc);
 
         self.window   = Some(window);
@@ -279,9 +280,30 @@ fn winit_key_to_code(key: &Key) -> u32 {
 }
 
 fn main() {
-    let initial_html = std::env::args().nth(1)
-        .and_then(|path| std::fs::read_to_string(&path).ok())
-        .unwrap_or_else(|| DEMO_HTML.to_string());
+    let arg = std::env::args().nth(1);
+    let (initial_html, base_url) = if let Some(ref path) = arg {
+        if path.starts_with("http://") || path.starts_with("https://") {
+            // URL — fetch content, use URL as base
+            let html = ureq::get(path)
+                .timeout(std::time::Duration::from_secs(15))
+                .call().ok()
+                .and_then(|r| {
+                    let mut buf = Vec::new();
+                    r.into_reader().read_to_end(&mut buf).ok()?;
+                    Some(String::from_utf8(buf)
+                        .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
+                })
+                .unwrap_or_else(|| format!("<h2>Failed to fetch {path}</h2>"));
+            (html, path.clone())
+        } else {
+            // File path
+            let html = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| format!("<h2>Error reading {path}</h2><p>{e}</p>"));
+            (html, String::new())
+        }
+    } else {
+        (DEMO_HTML.to_string(), String::new())
+    };
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -291,6 +313,7 @@ fn main() {
         doc: None, width: 900.0, height: 700.0,
         scale: 1.0, mouse_x: 0.0, mouse_y: 0.0,
         initial_html,
+        base_url,
     };
     event_loop.run_app(&mut app).expect("Failed to run app");
 }

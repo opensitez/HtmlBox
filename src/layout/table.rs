@@ -628,7 +628,11 @@ pub fn layout_table(
     let result = finish_table(node, rbox, content_x, content_y, table_width, table_height);
 
     // Absolute children
-    let containing_rect = node.content_rect;
+    let containing_rect = if !matches!(node.style.position, Position::Static) {
+        node.padding_rect
+    } else {
+        engine.pos_cb.get()
+    };
     for &i in &abs_children {
         layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
     }

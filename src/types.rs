@@ -1839,10 +1839,10 @@ impl Document {
         // after HtmlBox trees are rebuilt or re-allocated during parsing.
         self.hovered_box = std::ptr::null();
         self.active_box  = std::ptr::null();
-        let ss = self.stylesheet.clone();
+        let mut ss = self.stylesheet.clone();
         let focused = self.focused_box;
         crate::css::apply_cascade_vp(
-            &mut self.root, &ss, None, 16.0,
+            &mut self.root, &mut ss, None, 16.0,
             self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
         );
     }
@@ -1852,9 +1852,9 @@ impl Document {
         self.focused_box = focused;
         self.hovered_box = std::ptr::null();
         self.active_box  = std::ptr::null();
-        let ss = self.stylesheet.clone();
+        let mut ss = self.stylesheet.clone();
         crate::css::apply_cascade_vp(
-            &mut self.root, &ss, None, 16.0,
+            &mut self.root, &mut ss, None, 16.0,
             self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
         );
     }
@@ -1941,9 +1941,9 @@ impl Document {
                             self.events.dispatch(&self.root, e);
                         }
                         // Always recascade when focus changes so :focus/:focus-visible update.
-                        let ss = self.stylesheet.clone();
+                        let mut ss = self.stylesheet.clone();
                         crate::css::apply_cascade_vp(
-                            &mut self.root, &ss, None, 16.0,
+                            &mut self.root, &mut ss, None, 16.0,
                             self.viewport_w, self.viewport_h, self.focused_box, false,
                         );
                         redraw = true;
@@ -2630,11 +2630,11 @@ impl Document {
             e.target = new_focus; e.related_target = old_focus;
             self.events.dispatch(&self.root, e);
         }
-        let ss = self.stylesheet.clone();
+        let mut ss = self.stylesheet.clone();
         self.hovered_box = std::ptr::null();
         self.active_box  = std::ptr::null();
         crate::css::apply_cascade_vp(
-            &mut self.root, &ss, None, 16.0,
+            &mut self.root, &mut ss, None, 16.0,
             self.viewport_w, self.viewport_h, self.focused_box, true,
         );
         true

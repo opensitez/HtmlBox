@@ -425,3 +425,95 @@ fn css_radial_gradient_bare_colors() {
     assert_eq!(style.gradient_stops[1].color, Color::rgb(0, 0, 255));
     assert!((style.gradient_stops[1].position - 1.0).abs() < 0.01);
 }
+
+// ── CSS Variable Inheritance ─────────────────────────────────────────────────
+
+#[test]
+fn css_var_inherited_from_root() {
+    // Variables defined on :root should be inherited by child elements.
+    let doc = parse_and_layout(r#"<html><head><style>
+        :root { --main-color: red; }
+        p { color: var(--main-color); }
+    </style></head><body><p>hello</p></body></html>"#, 800.0);
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    assert_eq!(p.style.color, Color::rgb(255, 0, 0), "var(--main-color) should resolve to red");
+}
+
+#[test]
+fn css_var_fallback_when_undefined() {
+    // var(--undefined, blue) should use the fallback.
+    let doc = parse_and_layout(r#"<html><head><style>
+        p { color: var(--nope, blue); }
+    </style></head><body><p>hello</p></body></html>"#, 800.0);
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    assert_eq!(p.style.color, Color::rgb(0, 0, 255), "fallback blue should be used");
+}
+
+#[test]
+fn css_var_scoped_to_matching_selector() {
+    // Variables on a class-qualified selector should only apply when the class matches.
+    // .theme-a defines --fg: green, .theme-b defines --fg: red.
+    // Only .theme-a is on the div, so --fg should be green.
+    let doc = parse_and_layout(r#"<html><head><style>
+        .theme-a { --fg: green; }
+        .theme-b { --fg: red; }
+        span { color: var(--fg, black); }
+    </style></head><body>
+        <div class="theme-a"><span>A</span></div>
+    </body></html>"#, 800.0);
+    let span = find_box(&doc.root, &|b| b.tag == "span").unwrap();
+    assert_eq!(span.style.color, Color::rgb(0, 128, 0), "should inherit --fg:green from .theme-a");
+}
+
+#[test]
+fn css_var_self_referential_with_fallback() {
+    // Pattern from Wikipedia: --x: var(--x, 1rem) — self-referential with fallback.
+    // Should resolve to the fallback since there's no prior definition.
+    let doc = parse_and_layout(r#"<html><head><style>
+        html { --sz: var(--sz, 20px); }
+        p { font-size: var(--sz); }
+    </style></head><body><p>text</p></body></html>"#, 800.0);
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    assert_eq!(p.style.font_size, CssLength::Px(20.0), "self-ref var should use fallback 20px");
+}
+
+#[test]
+fn css_var_inherited_through_nested_elements() {
+    // Variables should be inherited through the DOM tree.
+    let doc = parse_and_layout(r#"<html><head><style>
+        .outer { --gap: 8px; }
+        .inner { margin-left: var(--gap); }
+    </style></head><body>
+        <div class="outer"><div><div class="inner">deep</div></div></div>
+    </body></html>"#, 800.0);
+    let inner = find_box(&doc.root, &|b| b.attributes.get("class").map(|c| c == "inner").unwrap_or(false)).unwrap();
+    assert_eq!(inner.style.margin_left, CssLength::Px(8.0), "var(--gap) should inherit through nested elements");
+}
+
+#[test]
+fn css_var_override_in_child() {
+    // A child can override a variable defined by a parent.
+    let doc = parse_and_layout(r#"<html><head><style>
+        :root { --c: red; }
+        .override { --c: blue; }
+        span { color: var(--c); }
+    </style></head><body>
+        <div><span id="a">A</span></div>
+        <div class="override"><span id="b">B</span></div>
+    </body></html>"#, 800.0);
+    let a = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "a").unwrap_or(false)).unwrap();
+    let b = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "b").unwrap_or(false)).unwrap();
+    assert_eq!(a.style.color, Color::rgb(255, 0, 0), "span A should get --c:red from :root");
+    assert_eq!(b.style.color, Color::rgb(0, 0, 255), "span B should get --c:blue from .override parent");
+}
+
+#[test]
+fn css_var_chain_resolution() {
+    // Variables can reference other variables: --a: var(--b), --b: 10px.
+    let doc = parse_and_layout(r#"<html><head><style>
+        :root { --b: 10px; --a: var(--b); }
+        p { padding-left: var(--a); }
+    </style></head><body><p>text</p></body></html>"#, 800.0);
+    let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
+    assert_eq!(p.style.padding_left, CssLength::Px(10.0), "chained var(--a) -> var(--b) -> 10px");
+}

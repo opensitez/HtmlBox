@@ -2,6 +2,7 @@ use crate::types::*;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Stretch, Style as CTextStyle, Weight};
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
 use crate::layout::block::{collapse_two, compute_intrinsic_width};
+use crate::layout::has_block_children;
 use crate::layout::text::resolve_bidi_line;
 
 /// Lay out a box whose children are inline-level (text runs, inline-block).
@@ -85,6 +86,10 @@ pub fn layout_inline_block(
 
     // ── 0. Pre-layout atomic inline-block and float children so sizes are known ──
     //    Mirrors C++ LayoutInlines(): LayoutBox(*run.atomicBox, …) before line-breaking
+    //    Also recurse into inline children to pre-layout nested inline-blocks (e.g.
+    //    <input type="radio"> inside a <label>).
+    prelayout_nested_inline_blocks(engine, node, content_w, font_px, root_font_px);
+
     for ci in 0..node.children.len() {
         if matches!(node.children[ci].style.display,
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
@@ -99,9 +104,17 @@ pub fn layout_inline_block(
                 let max_line_w = node.children[ci].line_cache.iter()
                     .map(|l| l.width)
                     .fold(0.0_f32, f32::max);
-                if max_line_w > 0.0 {
+                // For block-container inline-blocks (e.g. ul/div with block children),
+                // line_cache is empty — fall back to compute_intrinsic_width which
+                // recurses into block children to find max content width.
+                let intrinsic_w = if max_line_w > 0.0 {
+                    max_line_w
+                } else {
+                    compute_intrinsic_width(&node.children[ci])
+                };
+                if intrinsic_w > 0.0 {
                     let irb = &node.children[ci];
-                    let shrink_w = max_line_w
+                    let shrink_w = intrinsic_w
                         + irb.resolved_pad_left + irb.resolved_pad_right
                         + irb.resolved_border_left + irb.resolved_border_right
                         + irb.resolved_margin_left + irb.resolved_margin_right;
@@ -111,6 +124,13 @@ pub fn layout_inline_block(
                     }
                 }
             }
+        } else if node.children[ci].style.is_inline_level()
+                  && has_block_children(&node.children[ci]) {
+            // Inline element containing block-level children (e.g. <a><strong style="display:block">).
+            // Per CSS, this creates an anonymous block formatting context. We approximate by
+            // pre-laying the element out as a block container so its children get proper dimensions.
+            engine.layout_box(&mut node.children[ci], content_w,
+                               0.0, 0.0, font_px, root_font_px);
         } else if !matches!(node.children[ci].style.float, crate::types::Float::None) {
             // Float children need to be laid out to get valid dimensions.
             engine.layout_box(&mut node.children[ci], content_w,
@@ -247,12 +267,27 @@ pub fn layout_inline_block(
                       rbox, margin_left, margin_right);
         node.inline_runs = runs;
         // Still need to lay out absolutely/fixed positioned children.
-        let containing_rect = node.padding_rect;
+        let containing_rect = if !matches!(node.style.position, Position::Static) {
+            node.padding_rect
+        } else {
+            engine.pos_cb.get()
+        };
         let abs_indices: Vec<usize> = (0..node.children.len())
             .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
             .collect();
         for i in abs_indices {
             layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+            // All-auto correction: when no insets are specified, place at containing block's origin.
+            let child = &mut node.children[i];
+            let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
+                        && child.style.top.is_auto()   && child.style.bottom.is_auto();
+            if all_auto && matches!(child.style.position, Position::Absolute) {
+                let dx = containing_rect.x - child.border_rect.x;
+                let dy = containing_rect.y - child.border_rect.y;
+                if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                    crate::layout::shift_rects(child, dx, dy);
+                }
+            }
         }
         return node.margin_rect.h;
     }
@@ -279,7 +314,8 @@ pub fn layout_inline_block(
             if let InlineItemKind::Float { child_idx } = items[item_idx].kind {
                 if let Some(ref mut fc) = float_ctx {
                     let child = &mut node.children[child_idx];
-                    let float_w = child.margin_rect.w;
+                    let float_w = (child.border_rect.w
+                        + child.resolved_margin_left + child.resolved_margin_right).max(0.0);
                     let float_h = child.margin_rect.h;
                     let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
                     let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
@@ -330,7 +366,8 @@ pub fn layout_inline_block(
             if let InlineItemKind::Float { child_idx } = items[i].kind {
                 if let Some(ref mut fc) = float_ctx {
                     let child = &mut node.children[child_idx];
-                    let float_w = child.margin_rect.w;
+                    let float_w = (child.border_rect.w
+                        + child.resolved_margin_left + child.resolved_margin_right).max(0.0);
                     let float_h = child.margin_rect.h;
                     let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
                     let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
@@ -632,12 +669,27 @@ pub fn layout_inline_block(
     //    Inline containers can still be containing blocks for absolutely-positioned
     //    children (e.g. a `position:relative` div whose only visible in-flow content
     //    is text while its absolutely-placed children are out-of-flow).
-    let containing_rect = node.padding_rect;
+    let containing_rect = if !matches!(node.style.position, Position::Static) {
+        node.padding_rect
+    } else {
+        engine.pos_cb.get()
+    };
     let abs_indices: Vec<usize> = (0..node.children.len())
         .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
         .collect();
     for i in abs_indices {
         layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+        // All-auto correction: when no insets are specified, place at containing block's origin.
+        let child = &mut node.children[i];
+        let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
+                    && child.style.top.is_auto()   && child.style.bottom.is_auto();
+        if all_auto && matches!(child.style.position, Position::Absolute) {
+            let dx = containing_rect.x - child.border_rect.x;
+            let dy = containing_rect.y - child.border_rect.y;
+            if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                crate::layout::shift_rects(child, dx, dy);
+            }
+        }
     }
 
     node.margin_rect.h
@@ -664,10 +716,11 @@ fn set_box_rects(
         node.padding_rect.w + rbox.border_left + rbox.border_right,
         node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
+    let mr_w = (node.border_rect.w + margin_left + margin_right).max(node.border_rect.w);
     node.margin_rect = Rect::new(
         node.border_rect.x - margin_left,
         node.border_rect.y - rbox.margin_top,
-        node.border_rect.w + margin_left + margin_right,
+        mr_w,
         node.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
     );
     node.baseline = content_y + content_h;
@@ -813,7 +866,15 @@ pub fn collect_items(
     }
 
     // ── Atomic inline-block ───────────────────────────────────────────────
-    if matches!(node.style.display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+    // Also treat inline elements that contain block-level children as atomic.
+    // This handles the "block inside inline" case (e.g. <a><strong display:block>).
+    let is_inline_with_block_children = is_direct_child
+        && node.style.is_inline_level()
+        && !node.is_text_node()
+        && has_block_children(node);
+    if matches!(node.style.display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
+        || is_inline_with_block_children
+    {
         // Use the pre-laid-out margin-rect width (set by the pre-layout pass)
         let box_w = if node.margin_rect.w > 0.0 { node.margin_rect.w } else { 50.0 };
         let box_h = if node.margin_rect.h > 0.0 { node.margin_rect.h } else { font_px * 1.2 };
@@ -1371,5 +1432,49 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
         // (collect_flat_text is called separately on each positioned box for its own content.)
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         collect_flat_text_inner(child, out, false);
+    }
+}
+
+// ─── Recursive inline-block pre-layout ───────────────────────────────────────
+
+/// Recursively walk inline children and pre-layout any nested inline-block
+/// elements (e.g. `<input>` inside `<label>`).  This ensures that when
+/// `collect_items` encounters an `InlineBlock`, its `margin_rect` is non-zero
+/// so the item gets the correct advance width and ascent.
+fn prelayout_nested_inline_blocks(
+    engine:       &LayoutEngine,
+    node:         &mut HtmlBox,
+    content_w:    f32,
+    font_px:      f32,
+    root_font_px: f32,
+) {
+    for ci in 0..node.children.len() {
+        if matches!(node.children[ci].style.display, Display::None) { continue; }
+        if matches!(node.children[ci].style.position, Position::Absolute | Position::Fixed) { continue; }
+        if matches!(node.children[ci].style.display,
+                    Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+            // Already handled by the direct-child loop in step 0; skip.
+            continue;
+        }
+        // Inline children: recurse to find nested inline-blocks.
+        if matches!(node.children[ci].style.display, Display::Inline) {
+            let child_font_px = node.children[ci].style.font_size_px(font_px, root_font_px);
+            // Pre-layout any inline-block grandchildren inside this inline child.
+            for gci in 0..node.children[ci].children.len() {
+                let grandchild_display = node.children[ci].children[gci].style.display;
+                if matches!(grandchild_display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+                    engine.layout_box(
+                        &mut node.children[ci].children[gci],
+                        content_w, 0.0, 0.0, child_font_px, root_font_px,
+                    );
+                } else if matches!(grandchild_display, Display::Inline) {
+                    // One more level: recurse for deeper nesting.
+                    prelayout_nested_inline_blocks(
+                        engine, &mut node.children[ci].children[gci],
+                        content_w, child_font_px, root_font_px,
+                    );
+                }
+            }
+        }
     }
 }

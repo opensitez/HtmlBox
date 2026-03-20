@@ -330,7 +330,13 @@ impl Renderer {
 
     /// Like [`load_html`] but with explicit viewport height (for `vh`/`100vh` layouts).
     pub fn load_html_vp(&mut self, html: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
-        let mut doc = crate::html::parse_html(html);
+        self.load_html_with_base(html, "", viewport_width, viewport_height)
+    }
+
+    /// Like [`load_html_vp`] but with a base URL for resolving external resources.
+    pub fn load_html_with_base(&mut self, html: &str, base_url: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
+        let mut doc = crate::load_html_with_base(html, base_url, viewport_width, viewport_height);
+        // Re-layout with the renderer's font metrics so glyph widths match rendering.
         let mut engine = self.layout_engine();
         engine.viewport_h = viewport_height;
         engine.layout(&mut doc, viewport_width);
