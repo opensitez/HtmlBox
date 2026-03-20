@@ -681,43 +681,48 @@ impl Stylesheet {
         self.idx_by_tag.clear();
         self.idx_universal.clear();
         for (i, rule) in self.rules.iter().enumerate() {
-            let key = rule_key_selector(rule);
-            match key {
-                SelectorKey::Id(s)    => self.idx_by_id.entry(s).or_default().push(i),
-                SelectorKey::Class(s) => self.idx_by_class.entry(s).or_default().push(i),
-                SelectorKey::Tag(s)   => self.idx_by_tag.entry(s).or_default().push(i),
-                SelectorKey::Universal => self.idx_universal.push(i),
+            let keys = rule_key_selectors(rule);
+            if keys.is_empty() {
+                self.idx_universal.push(i);
+            } else {
+                for key in keys {
+                    match key {
+                        SelectorKey::Id(s)    => self.idx_by_id.entry(s).or_default().push(i),
+                        SelectorKey::Class(s) => self.idx_by_class.entry(s).or_default().push(i),
+                        SelectorKey::Tag(s)   => self.idx_by_tag.entry(s).or_default().push(i),
+                        SelectorKey::Universal => self.idx_universal.push(i),
+                    }
+                }
             }
         }
         self.idx_dirty = false;
     }
 
     /// Get candidate rule indices for an element with given tag, id, and classes.
-    /// Returns an iterator over rule indices that *might* match (still need full matching).
-    pub fn candidate_rules(&self, tag: &str, id: Option<&str>, classes: &[&str]) -> Vec<usize> {
-        let mut candidates: Vec<usize> = Vec::new();
+    /// Writes into a reusable buffer to avoid per-element allocation.
+    pub fn candidate_rules(&self, tag: &str, id: Option<&str>, classes: &[&str], out: &mut Vec<usize>) {
+        out.clear();
         // Add universal rules (always candidates)
-        candidates.extend_from_slice(&self.idx_universal);
+        out.extend_from_slice(&self.idx_universal);
         // Add tag-matched rules
         let tag_lower = tag.to_ascii_lowercase();
         if let Some(indices) = self.idx_by_tag.get(&tag_lower) {
-            candidates.extend_from_slice(indices);
+            out.extend_from_slice(indices);
         }
         // Add id-matched rules
         if let Some(id) = id {
             if let Some(indices) = self.idx_by_id.get(id) {
-                candidates.extend_from_slice(indices);
+                out.extend_from_slice(indices);
             }
         }
         // Add class-matched rules
         for cls in classes {
             if let Some(indices) = self.idx_by_class.get(*cls) {
-                candidates.extend_from_slice(indices);
+                out.extend_from_slice(indices);
             }
         }
-        candidates.sort_unstable();
-        candidates.dedup();
-        candidates
+        out.sort_unstable();
+        out.dedup();
     }
 }
 
@@ -729,12 +734,11 @@ enum SelectorKey {
     Universal,
 }
 
-/// Extract the most specific key selector from a rule's first selector.
-/// Prefers id > class > tag for best index selectivity.
-fn rule_key_selector(rule: &CssRule) -> SelectorKey {
-    // Use the first selector (all selectors in a rule match the same declarations,
-    // but for indexing we just need one representative key).
-    if let Some(sel) = rule.selectors.first() {
+/// Extract key selectors from ALL selectors in a rule (handles comma-separated selectors).
+/// Each selector produces one key (id > class > tag > universal).
+fn rule_key_selectors(rule: &CssRule) -> Vec<SelectorKey> {
+    let mut keys = Vec::new();
+    for sel in &rule.selectors {
         // Walk from right to left, skip combinators, find the rightmost id/class/tag.
         let mut best_id = None;
         let mut best_class = None;
@@ -748,11 +752,18 @@ fn rule_key_selector(rule: &CssRule) -> SelectorKey {
                 _ => {}
             }
         }
-        if let Some(id)  = best_id    { return SelectorKey::Id(id); }
-        if let Some(cls) = best_class { return SelectorKey::Class(cls); }
-        if let Some(tag) = best_tag   { return SelectorKey::Tag(tag); }
+        let key = if let Some(id) = best_id {
+            SelectorKey::Id(id)
+        } else if let Some(cls) = best_class {
+            SelectorKey::Class(cls)
+        } else if let Some(tag) = best_tag {
+            SelectorKey::Tag(tag)
+        } else {
+            SelectorKey::Universal
+        };
+        keys.push(key);
     }
-    SelectorKey::Universal
+    keys
 }
 
 // ─── @keyframes extraction ────────────────────────────────────────────────────
@@ -4387,7 +4398,7 @@ fn apply_container_cascade_inner(
 // ─── CSS Cascade ─────────────────────────────────────────────────────────────
 
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
-pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &mut Stylesheet,
+pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
     apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null(), false);
 }
@@ -4396,9 +4407,11 @@ pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &mut Styleshe
 ///
 /// `keyboard_focus` controls whether `:focus-visible` matches: pass `true` only when
 /// focus was moved by keyboard (Tab/Shift+Tab), `false` for mouse-click focus.
+///
+/// **Note**: call `stylesheet.rebuild_index()` before this if rules were added since last cascade.
 pub fn apply_cascade_vp(
     root: &mut crate::types::HtmlBox,
-    stylesheet: &mut Stylesheet,
+    stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
     vw: f32,
@@ -4406,12 +4419,12 @@ pub fn apply_cascade_vp(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
 ) {
-    stylesheet.rebuild_index();
     // A single Vec is reused for the entire tree traversal (push/pop per node)
     // instead of cloning the ancestor list at every level — O(depth) allocations
     // instead of O(nodes × depth).
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables);
+    let mut candidates_buf: Vec<usize> = Vec::new();
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4432,6 +4445,7 @@ fn apply_cascade_inner(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
     inherited_vars: &HashMap<String, String>,
+    candidates_buf: &mut Vec<usize>,
 ) {
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
@@ -4531,24 +4545,25 @@ fn apply_cascade_inner(
     };
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
-    let mut matched:           Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut hover_matched:   Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut active_matched:  Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut visited_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut before_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut after_matched:     Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut selection_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
-    let mut marker_matched:    Vec<(u32, HashMap<String, String>)> = Vec::new();
+    // Store (specificity, rule_index) — avoid cloning declaration HashMaps per match.
+    let mut matched:           Vec<(u32, usize)> = Vec::new();
+    let mut hover_matched:   Vec<(u32, usize)> = Vec::new();
+    let mut active_matched:  Vec<(u32, usize)> = Vec::new();
+    let mut visited_matched: Vec<(u32, usize)> = Vec::new();
+    let mut before_matched:    Vec<(u32, usize)> = Vec::new();
+    let mut after_matched:     Vec<(u32, usize)> = Vec::new();
+    let mut selection_matched: Vec<(u32, usize)> = Vec::new();
+    let mut marker_matched:    Vec<(u32, usize)> = Vec::new();
 
     // Use selector index to narrow down candidate rules instead of scanning all rules.
     let tag = &root.tag;
     let id = root.attributes.get("id").map(|s| s.as_str());
     let class_attr = root.attributes.get("class").cloned().unwrap_or_default();
     let classes: Vec<&str> = class_attr.split_whitespace().collect();
-    let candidates = stylesheet.candidate_rules(tag, id, &classes);
+    stylesheet.candidate_rules(tag, id, &classes, candidates_buf);
 
-    for rule_idx in &candidates {
-        let rule = &stylesheet.rules[*rule_idx];
+    for &rule_idx in candidates_buf.iter() {
+        let rule = &stylesheet.rules[rule_idx];
         // Skip rules whose @media condition doesn't match the viewport
         if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
             continue;
@@ -4571,20 +4586,20 @@ fn apply_cascade_inner(
                     .collect();
                 let base_sel = CssSelector { parts: base_parts };
                 if base_sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
-                    if has_hover   { hover_matched.push((rule.specificity, rule.declarations.clone())); }
-                    if has_active  { active_matched.push((rule.specificity, rule.declarations.clone())); }
-                    if has_visited { visited_matched.push((rule.specificity, rule.declarations.clone())); }
+                    if has_hover   { hover_matched.push((rule.specificity, rule_idx)); }
+                    if has_active  { active_matched.push((rule.specificity, rule_idx)); }
+                    if has_visited { visited_matched.push((rule.specificity, rule_idx)); }
                     break;
                 }
                 continue;
             }
             if sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
                 match rule.pseudo_element {
-                    PseudoElement::Before     => before_matched.push((rule.specificity, rule.declarations.clone())),
-                    PseudoElement::After      => after_matched.push((rule.specificity, rule.declarations.clone())),
-                    PseudoElement::Selection  => selection_matched.push((rule.specificity, rule.declarations.clone())),
-                    PseudoElement::Marker     => marker_matched.push((rule.specificity, rule.declarations.clone())),
-                    PseudoElement::None       => matched.push((rule.specificity, rule.declarations.clone())),
+                    PseudoElement::Before     => before_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::After      => after_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::Selection  => selection_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::Marker     => marker_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::None       => matched.push((rule.specificity, rule_idx)),
                     PseudoElement::Ignored    => {}
                 }
                 break;
@@ -4595,12 +4610,12 @@ fn apply_cascade_inner(
     // Build variable scope: inherited from parent + any --custom-properties from matched rules.
     // Only clone the map when new custom properties are actually defined — most elements
     // don't define any, so we avoid O(vars) cloning at every node.
-    let has_new_vars = matched.iter().any(|(_, decls)| decls.keys().any(|p| p.starts_with("--")));
+    let has_new_vars = matched.iter().any(|(_, ri)| stylesheet.rules[*ri].declarations.keys().any(|p| p.starts_with("--")));
     let local_vars_owned;
     let local_vars: &HashMap<String, String> = if has_new_vars {
         let mut vars = inherited_vars.clone();
-        for (_, decls) in &matched {
-            for (prop, val) in decls {
+        for &(_, ri) in &matched {
+            for (prop, val) in &stylesheet.rules[ri].declarations {
                 if prop.starts_with("--") {
                     vars.insert(prop.clone(), val.clone());
                 }
@@ -4612,8 +4627,8 @@ fn apply_cascade_inner(
     } else {
         inherited_vars
     };
-    for (_, decls) in &matched {
-        for (prop, val) in decls {
+    for &(_, ri) in &matched {
+        for (prop, val) in &stylesheet.rules[ri].declarations {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, &local_vars);
             apply_property(&mut style, prop, &resolved);
@@ -4623,8 +4638,8 @@ fn apply_cascade_inner(
     if !hover_matched.is_empty() {
         hover_matched.sort_by_key(|(sp, _)| *sp);
         let mut hs = style.clone();
-        for (_, decls) in &hover_matched {
-            for (prop, val) in decls {
+        for &(_, ri) in &hover_matched {
+            for (prop, val) in &stylesheet.rules[ri].declarations {
                 let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut hs, prop, &resolved);
             }
@@ -4637,8 +4652,8 @@ fn apply_cascade_inner(
     if !active_matched.is_empty() {
         active_matched.sort_by_key(|(sp, _)| *sp);
         let mut as_ = style.clone();
-        for (_, decls) in &active_matched {
-            for (prop, val) in decls {
+        for &(_, ri) in &active_matched {
+            for (prop, val) in &stylesheet.rules[ri].declarations {
                 let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut as_, prop, &resolved);
             }
@@ -4650,8 +4665,8 @@ fn apply_cascade_inner(
     if !visited_matched.is_empty() {
         visited_matched.sort_by_key(|(sp, _)| *sp);
         let mut vs = style.clone();
-        for (_, decls) in &visited_matched {
-            for (prop, val) in decls {
+        for &(_, ri) in &visited_matched {
+            for (prop, val) in &stylesheet.rules[ri].declarations {
                 let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut vs, prop, &resolved);
             }
@@ -4711,9 +4726,10 @@ fn apply_cascade_inner(
 
     // Build full ComputedStyle for ::before / ::after pseudo-elements.
     // Each inherits from the element's computed style, then has its own declarations applied.
-    let build_pseudo_style = |matched: &mut Vec<(u32, HashMap<String, String>)>,
+    let build_pseudo_style = |matched: &mut Vec<(u32, usize)>,
                                base: &ComputedStyle,
-                               vars: &HashMap<String, String>|
+                               vars: &HashMap<String, String>,
+                               rules: &[CssRule]|
      -> Option<(String, Box<ComputedStyle>)> {
         if matched.is_empty() { return None; }
         matched.sort_by_key(|(sp, _)| *sp);
@@ -4723,8 +4739,8 @@ fn apply_cascade_inner(
         ps.before_content = String::new();
         ps.after_content  = String::new();
         let mut content = String::new();
-        for (_, decls) in matched.iter() {
-            for (prop, val) in decls {
+        for &(_, ri) in matched.iter() {
+            for (prop, val) in &rules[ri].declarations {
                 let resolved = resolve_var_references(val, vars);
                 if prop == "content" {
                     content = resolve_content_value(&resolved);
@@ -4736,18 +4752,18 @@ fn apply_cascade_inner(
         Some((content, Box::new(ps)))
     };
 
-    if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &local_vars) {
+    if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &local_vars, &stylesheet.rules) {
         root.style.before_content = txt;
         root.style.before_style   = Some(ps);
     }
-    if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &local_vars) {
+    if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &local_vars, &stylesheet.rules) {
         root.style.after_content = txt;
         root.style.after_style   = Some(ps);
     }
-    if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &local_vars) {
+    if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &local_vars, &stylesheet.rules) {
         root.style.selection_style = Some(ps);
     }
-    if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &local_vars) {
+    if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &local_vars, &stylesheet.rules) {
         root.style.marker_style = Some(ps);
     }
 
@@ -4802,6 +4818,7 @@ fn apply_cascade_inner(
             type_counts[i], type_totals[i],
             vw, vh, focused_box, keyboard_focus,
             &local_vars,
+            candidates_buf,
         );
     }
 

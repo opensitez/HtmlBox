@@ -154,6 +154,17 @@ impl FloatContext {
     }
 }
 
+/// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
+/// dirty too.  Returns `true` if the node (or any descendant) is dirty.
+fn propagate_dirty(node: &mut HtmlBox) -> bool {
+    let mut child_dirty = false;
+    for child in &mut node.children {
+        if propagate_dirty(child) { child_dirty = true; }
+    }
+    if child_dirty { node.layout_dirty = true; }
+    node.layout_dirty
+}
+
 // ─── Resolved box model ───────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -358,25 +369,17 @@ impl LayoutEngine {
         doc.viewport_h = self.viewport_h;
         let root_font_px = self.root_font_px;
 
-        let mut ss = doc.stylesheet.clone();
+        // Rebuild selector index if rules changed (lazy, skips if already up-to-date).
+        doc.stylesheet.rebuild_index();
 
         // Cache @media / @container presence so we don't O(n)-scan rules every layout.
-        // Reset the cache when the stylesheet changes (detected by rule count changing).
-        self.cached_has_media_q     = ss.rules.iter().any(|r| !r.media_condition.is_empty());
-        self.cached_has_container_q = ss.rules.iter().any(|r| !r.container_condition.is_empty());
+        self.cached_has_media_q     = doc.stylesheet.rules.iter().any(|r| !r.media_condition.is_empty());
+        self.cached_has_container_q = doc.stylesheet.rules.iter().any(|r| !r.container_condition.is_empty());
 
         // Skip the CSS cascade on resize when nothing media-query-relevant changed.
-        //
-        // The cascade is O(elements × rules) with string allocations — expensive.  It only
-        // needs to re-run when:
-        //   • first layout (last_cascade_vw is NAN), OR
-        //   • a @media rule flips its boolean result (a breakpoint was crossed).
-        //
-        // Pure @container rules are handled after geometry, not here.
-        // Viewport units (vw/vh) in property VALUES are resolved in layout_box, not cascade.
         let needs_cascade = self.last_cascade_vw.is_nan()
             || (self.cached_has_media_q
-                && ss.rules.iter().any(|r| {
+                && doc.stylesheet.rules.iter().any(|r| {
                     !r.media_condition.is_empty()
                         && crate::css::evaluate_media(&r.media_condition, self.last_cascade_vw, self.viewport_h)
                             != crate::css::evaluate_media(&r.media_condition, viewport_width, self.viewport_h)
@@ -384,7 +387,7 @@ impl LayoutEngine {
 
         let did_cascade = if needs_cascade {
             crate::css::apply_cascade_vp(
-                &mut doc.root, &mut ss, None, root_font_px,
+                &mut doc.root, &doc.stylesheet, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
             );
             self.last_cascade_vw = viewport_width;
@@ -414,7 +417,7 @@ impl LayoutEngine {
         // re-layout so the updated styles take effect.
         if self.cached_has_container_q {
             let changed = crate::css::apply_container_cascade_tree(
-                &mut doc.root, &ss, &[], &[], 0, 1, 0, 1,
+                &mut doc.root, &doc.stylesheet, &[], &[], 0, 1, 0, 1,
                 root_font_px, self.viewport_w, self.viewport_h,
                 doc.focused_box, doc.keyboard_focus,
             );
@@ -454,6 +457,10 @@ impl LayoutEngine {
     }
 
     fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
+        // Propagate layout_dirty upward: if any descendant is dirty, mark
+        // ancestors dirty so the subtree-pruning check doesn't skip them.
+        propagate_dirty(&mut doc.root);
+
         // Set up root geometry
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
@@ -504,6 +511,27 @@ impl LayoutEngine {
         }
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
+
+        // <img> aspect ratio: when one dimension is auto and the natural
+        // dimensions are known, compute the auto dimension to preserve the
+        // image's intrinsic aspect ratio (CSS Images §5.1).
+        if node.tag == "img" && node.image_width > 0 && node.image_height > 0 {
+            let iw = node.image_width as f32;
+            let ih = node.image_height as f32;
+            if node.style.width.is_auto() && !node.style.height.is_auto() {
+                let h = node.style.height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
+                let w = (h * iw / ih).round();
+                node.style.width = CssLength::Px(w);
+            } else if node.style.height.is_auto() && !node.style.width.is_auto() {
+                let w = node.style.width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                let h = (w * ih / iw).round();
+                node.style.height = CssLength::Px(h);
+            } else if node.style.width.is_auto() && node.style.height.is_auto() {
+                node.style.width  = CssLength::Px(iw);
+                node.style.height = CssLength::Px(ih);
+            }
+        }
+
         let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
 
         // Auto-margin centering (CSS 2.1 §10.3.3) — applies to any element with an

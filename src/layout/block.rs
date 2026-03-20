@@ -363,7 +363,10 @@ pub fn layout_block_with_fc(
         let content_h = match rbox.content_height { Some(h) => h, None => col_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
         let max_h = if node.style.max_height.is_none() { f32::MAX }
-                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+                    else {
+                        let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                        if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
+                    };
         let content_h = content_h.max(min_h).min(max_h).max(0.0);
         build_box_rects(node, rbox, content_x, content_y, content_w, content_h, margin_left, margin_right);
         // Absolute/fixed children
@@ -603,7 +606,10 @@ pub fn layout_block_with_fc(
     // Apply min/max-height
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
     let max_h = if node.style.max_height.is_none() { f32::MAX }
-                else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+                else {
+                    let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                    if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
+                };
     let content_h = content_h.max(min_h).min(max_h).max(0.0);
 
     // Apply aspect-ratio: if height is auto and aspect_ratio is set, derive height from width

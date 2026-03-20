@@ -575,15 +575,20 @@ fn find_tag_end(html: &str, start: usize) -> usize {
     let bytes = html.as_bytes();
     let mut i = start + 1;
     let mut in_q: Option<u8> = None;
+    let mut prev_meaningful: u8 = 0; // last non-whitespace byte
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = in_q {
             if b == q { in_q = None; }
-        } else if b == b'"' || b == b'\'' {
+        } else if (b == b'"' || b == b'\'') && prev_meaningful == b'=' {
+            // Only enter quoted mode for attribute values (after '=').
+            // Stray quotes (e.g. <div " class="...">) must not toggle
+            // quote tracking, which would hide the closing '>'.
             in_q = Some(b);
         } else if b == b'>' {
             return i + 1;
         }
+        if !b.is_ascii_whitespace() { prev_meaningful = b; }
         i += 1;
     }
     html.len()
@@ -980,12 +985,22 @@ impl HtmlParser {
                     node.image_data   = Some(data);
                     node.image_width  = w;
                     node.image_height = h;
-                    // If no CSS width/height set, use intrinsic dimensions
-                    if node.style.width.is_auto() {
-                        apply_property(&mut node.style, "width", &format!("{}px", w));
-                    }
-                    if node.style.height.is_auto() {
+                    let w_auto = node.style.width.is_auto();
+                    let h_auto = node.style.height.is_auto();
+                    if w_auto && h_auto {
+                        // Both auto: use natural dimensions
+                        apply_property(&mut node.style, "width",  &format!("{}px", w));
                         apply_property(&mut node.style, "height", &format!("{}px", h));
+                    } else if w_auto && h > 0 {
+                        // Height specified, width auto: maintain aspect ratio
+                        let specified_h = node.style.height.resolve(16.0, 0.0, 16.0);
+                        let ratio_w = (specified_h * w as f32 / h as f32).round() as u32;
+                        apply_property(&mut node.style, "width", &format!("{}px", ratio_w));
+                    } else if h_auto && w > 0 {
+                        // Width specified, height auto: maintain aspect ratio
+                        let specified_w = node.style.width.resolve(16.0, 0.0, 16.0);
+                        let ratio_h = (specified_w * h as f32 / w as f32).round() as u32;
+                        apply_property(&mut node.style, "height", &format!("{}px", ratio_h));
                     }
                 }
             }
@@ -1399,8 +1414,8 @@ where
 
     // Apply cascade
     let root_font_px = 16.0;
-    let mut ss = doc.stylesheet.clone();
-    apply_cascade(&mut doc.root, &mut ss, None, root_font_px);
+    doc.stylesheet.rebuild_index();
+    apply_cascade(&mut doc.root, &doc.stylesheet, None, root_font_px);
 
     // Post-cascade: fix summary display and details open/closed state
     // (cascade overwrites our pre-cascade settings with UA rules)

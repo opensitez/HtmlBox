@@ -156,15 +156,16 @@ pub fn layout_inline_block(
         ps.and_then(|s| { let f = s.font_size.resolve(font_px, 0.0, root_font_px); if f > 0.0 { Some(f) } else { None } })
           .unwrap_or(font_px)
     };
+    let scale = engine.scale;
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let before_w = if !node.style.before_content.is_empty() {
         let bfpx = pseudo_font_px(node.style.before_style.as_deref());
-        measure_text_width(&node.style.before_content, bfpx, font_system)
+        measure_text_width_scaled(&node.style.before_content, bfpx, font_system, scale)
     } else { 0.0 };
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let after_w = if !node.style.after_content.is_empty() {
         let afpx = pseudo_font_px(node.style.after_style.as_deref());
-        measure_text_width(&node.style.after_content, afpx, font_system)
+        measure_text_width_scaled(&node.style.after_content, afpx, font_system, scale)
     } else { 0.0 };
 
     // ── 2. Collect flat inline items from all inline children ─────────────────
@@ -254,7 +255,11 @@ pub fn layout_inline_block(
         let placeholder_h = if add_placeholder { font_px * 1.2 } else { br_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
         let max_h = if node.style.max_height.is_none() { f32::MAX }
-                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+                    else {
+                        let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                        // Percentage max-height against unknown (0) containing height → treat as none
+                        if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
+                    };
         let content_h = if let Some(h) = rbox.content_height {
             h
         } else if let Some(ratio) = node.style.aspect_ratio {
@@ -510,7 +515,10 @@ pub fn layout_inline_block(
                 let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
                 let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
                 let max_h = if node.style.max_height.is_none() { f32::MAX }
-                            else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+                            else {
+                                let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                                if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
+                            };
                 let content_h = content_h.max(min_h).min(max_h);
                 set_box_rects(node, content_x, content_y, content_w, content_h,
                               rbox, margin_left, margin_right);
@@ -615,7 +623,10 @@ pub fn layout_inline_block(
     let raw_h = inline_h.max(float_bottom);
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
     let max_h = if node.style.max_height.is_none() { f32::MAX }
-                else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+                else {
+                    let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                    if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
+                };
     let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
     let content_h = content_h.max(min_h).min(max_h);
 
@@ -948,7 +959,7 @@ fn tokenize_text(
         if (at_end || is_space || is_nl) && i > word_start {
             // Emit word
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style);
+            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style, engine.scale);
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + word_start,
@@ -996,7 +1007,7 @@ fn tokenize_text(
             // (Previously all consecutive spaces were collapsed to one rendered item,
             //  causing the caret to drift right while text stayed left.)
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style);
+            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style, engine.scale);
             // In white-space:pre / pre-wrap, spaces are significant (not collapsible).
             // Mark them as non-space so break_one_line doesn't strip leading whitespace,
             // and non-breakable in pre mode (only \n breaks lines).
@@ -1212,8 +1223,12 @@ pub(crate) fn weight_from_style(weight: FontWeight, var: &[(String, f32)]) -> We
 // ─── Text measurement ─────────────────────────────────────────────────────────
 
 pub fn measure_text_width(text: &str, font_px: f32, font_system: Option<&mut cosmic_text::FontSystem>) -> f32 {
+    measure_text_width_scaled(text, font_px, font_system, 1.0)
+}
+
+pub fn measure_text_width_scaled(text: &str, font_px: f32, font_system: Option<&mut cosmic_text::FontSystem>, scale: f32) -> f32 {
     if let Some(fs) = font_system {
-        measure_text_width_fs(fs, text, font_px)
+        measure_text_width_fs(fs, text, font_px, scale)
     } else {
         measure_text_width_ts(text, font_px, 8)
     }
@@ -1225,6 +1240,7 @@ pub fn measure_text_width_weighted(
     font_system: Option<&mut cosmic_text::FontSystem>,
     weight:      FontWeight,
     style:       FontStyle,
+    scale:       f32,
 ) -> f32 {
     if let Some(fs) = font_system {
         let ct_weight = Weight(weight.value());
@@ -1233,7 +1249,7 @@ pub fn measure_text_width_weighted(
             FontStyle::Oblique => CTextStyle::Oblique,
             FontStyle::Normal  => CTextStyle::Normal,
         };
-        measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style)
+        measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style, scale)
     } else {
         let w = measure_text_width_ts(text, font_px, 8);
         // Bold/semi-bold text is typically ~15% wider than normal weight.
@@ -1243,19 +1259,28 @@ pub fn measure_text_width_weighted(
     }
 }
 
-pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_px: f32) -> f32 {
-    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal)
+pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_px: f32, scale: f32) -> f32 {
+    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal, scale)
 }
 
+/// Measure text width by shaping at physical pixel size (font_px * scale) and
+/// scaling the result back to logical pixels.  This matches the renderer which
+/// also shapes at physical size, ensuring line-breaking decisions agree with
+/// the actual rendered glyph widths.
 pub fn measure_text_width_fs_attrs(
     fs:     &mut cosmic_text::FontSystem,
     text:   &str,
     font_px: f32,
     weight: Weight,
     style:  CTextStyle,
+    scale:  f32,
 ) -> f32 {
     if text.is_empty() { return 0.0; }
-    let metrics = Metrics::new(font_px, font_px * 1.2);
+    // Shape at physical pixel size to match renderer glyph widths, then
+    // convert back to logical pixels.  At scale=1 this is a no-op.
+    let phys_px = font_px * scale.max(1.0);
+    let inv     = if scale > 1.0 { 1.0 / scale } else { 1.0 };
+    let metrics = Metrics::new(phys_px, phys_px * 1.2);
     let mut buffer = Buffer::new(fs, metrics);
     let attrs = Attrs::new().weight(weight).style(style);
     buffer.set_text(fs, text, &attrs, Shaping::Advanced, None);
@@ -1265,7 +1290,7 @@ pub fn measure_text_width_fs_attrs(
     for run in buffer.layout_runs() {
         if run.line_w > max_w { max_w = run.line_w; }
     }
-    max_w
+    max_w * inv
 }
 
 pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {
