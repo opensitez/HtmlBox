@@ -1330,6 +1330,7 @@ where
     for (k, v) in parser.stylesheet.variables {
         stylesheet.variables.insert(k, v);
     }
+    stylesheet.keyframes.extend(parser.stylesheet.keyframes);
 
     let title = parser.title.clone();
     let linked_stylesheets = parser.linked_stylesheets.clone();
@@ -1358,6 +1359,11 @@ where
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,
+        active_animations:     Vec::new(),
+        transition_states:     std::collections::HashMap::new(),
+        prev_styles:           std::collections::HashMap::new(),
+        animation_overrides:   std::collections::HashMap::new(),
+        needs_animation_frame: false,
         pending_announcements:    Vec::new(),
         live_region_snapshots:    std::collections::HashMap::new(),
         live_regions_initialized: false,

@@ -686,5 +686,34 @@ fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, 
         .collect();
     for i in indices {
         layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+
+        // For absolutely-positioned children with all insets auto, apply the CSS
+        // "static position" AFTER layout_positioned: where the item would go if it
+        // were a normal flex item.  abs children are skipped by the flex pass so
+        // layout_positioned leaves them at (0,0); we correct that here.
+        let child = &mut node.children[i];
+        let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
+                    && child.style.top.is_auto()   && child.style.bottom.is_auto();
+        if all_auto && matches!(child.style.position, Position::Absolute) {
+            let cw = child.border_rect.w;
+            let ch = child.border_rect.h;
+            // X: driven by justify-content of the flex container.
+            let target_x = match node.style.justify_content {
+                JustifyContent::Center  => containing_rect.x + (containing_rect.w - cw) / 2.0,
+                JustifyContent::FlexEnd => containing_rect.x + containing_rect.w - cw,
+                _                       => containing_rect.x,
+            };
+            // Y: driven by align-items of the flex container.
+            let target_y = match node.style.align_items {
+                AlignItems::Center  => containing_rect.y + (containing_rect.h - ch) / 2.0,
+                AlignItems::FlexEnd => containing_rect.y + containing_rect.h - ch,
+                _                   => containing_rect.y,
+            };
+            let dx = target_x - child.border_rect.x;
+            let dy = target_y - child.border_rect.y;
+            if dx != 0.0 || dy != 0.0 {
+                crate::layout::shift_rects(child, dx, dy);
+            }
+        }
     }
 }

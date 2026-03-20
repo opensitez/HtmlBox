@@ -637,6 +637,8 @@ pub struct Stylesheet {
     pub rules:      Vec<CssRule>,
     pub variables:  HashMap<String, String>,  // CSS custom properties from :root
     pub font_faces: Vec<FontFaceDecl>,
+    /// Parsed `@keyframes` blocks, keyed by animation name.
+    pub keyframes:  HashMap<String, Vec<KeyframeStop>>,
 }
 
 impl Stylesheet {
@@ -650,12 +652,262 @@ impl Stylesheet {
         extract_root_variables(css, &mut self.variables);
         // Extract @font-face declarations
         extract_font_faces(css, &mut self.font_faces);
+        // Extract @keyframes blocks
+        let kf = extract_keyframes(css);
+        self.keyframes.extend(kf);
         if let Some(rules) = parse_stylesheet(css) {
             for r in rules {
                 self.rules.push(r);
             }
         }
     }
+}
+
+// ─── @keyframes extraction ────────────────────────────────────────────────────
+
+/// Parse all `@keyframes` (and `@-webkit-keyframes`) blocks from a CSS string.
+pub fn extract_keyframes(css: &str) -> HashMap<String, Vec<KeyframeStop>> {
+    let mut out: HashMap<String, Vec<KeyframeStop>> = HashMap::new();
+    let cleaned = strip_css_comments(css);
+    let mut s = cleaned.as_str().trim();
+
+    while !s.is_empty() {
+        s = s.trim_start();
+        if s.is_empty() { break; }
+
+        if !s.starts_with('@') {
+            // Skip regular rules without recursing
+            if let Some(brace) = s.find('{') {
+                let (_, rest) = consume_block(&s[brace..]);
+                s = rest;
+            } else { break; }
+            continue;
+        }
+
+        let at_lower = s.to_ascii_lowercase();
+
+        // Handle no-block @ rules
+        if at_lower.starts_with("@import") || at_lower.starts_with("@charset") {
+            if let Some(semi) = s.find(';') { s = &s[semi + 1..]; } else { break; }
+            continue;
+        }
+
+        let brace = match s.find('{') {
+            Some(p) => p,
+            None => { if let Some(semi) = s.find(';') { s = &s[semi+1..]; } else { break; } continue; }
+        };
+        let at_header = s[..brace].trim();
+        let rest_from_brace = &s[brace..];
+        let (inner_block, after_block) = consume_block(rest_from_brace);
+
+        if at_lower.starts_with("@keyframes") || at_lower.starts_with("@-webkit-keyframes") {
+            let prefix_len = if at_lower.starts_with("@-webkit-keyframes") {
+                "@-webkit-keyframes".len()
+            } else {
+                "@keyframes".len()
+            };
+            let name = at_header[prefix_len..].trim().to_string();
+            if !name.is_empty() {
+                out.insert(name, parse_keyframe_stops(inner_block));
+            }
+        } else if at_lower.starts_with("@media") || at_lower.starts_with("@container") {
+            // Recurse for nested @keyframes (rare but spec-valid)
+            out.extend(extract_keyframes(inner_block));
+        }
+
+        s = after_block;
+    }
+    out
+}
+
+/// Parse the body of a `@keyframes` block into a sorted list of stops.
+fn parse_keyframe_stops(block: &str) -> Vec<KeyframeStop> {
+    let mut stops: Vec<KeyframeStop> = Vec::new();
+    let mut s = block.trim();
+
+    while !s.is_empty() {
+        s = s.trim_start();
+        if s.is_empty() { break; }
+
+        let brace = match s.find('{') { Some(p) => p, None => break };
+        let selector = s[..brace].trim();
+        let (decl_block, rest) = consume_block(&s[brace..]);
+        s = rest;
+
+        let props = parse_declarations(decl_block);
+        let prop_vec: Vec<(String, String)> = props.into_iter().map(|(k, v)| {
+            // Normalize color values to rgba() so interpolation works.
+            let is_color_prop = matches!(k.as_str(),
+                "color" | "background-color" | "border-color" |
+                "border-top-color" | "border-right-color" |
+                "border-bottom-color" | "border-left-color" |
+                "outline-color" | "fill" | "stroke"
+            );
+            if is_color_prop {
+                if let Some(c) = parse_color(&v) {
+                    return (k, format!("rgba({},{},{},{})", c.r, c.g, c.b,
+                        (c.a as f32 / 255.0 * 1000.0).round() / 1000.0));
+                }
+            }
+            (k, v)
+        }).collect();
+
+        for sel in selector.split(',') {
+            let sel = sel.trim();
+            let offset: f32 = match sel {
+                "from" => 0.0,
+                "to"   => 1.0,
+                s if s.ends_with('%') => {
+                    s[..s.len()-1].trim().parse::<f32>().unwrap_or(0.0) / 100.0
+                }
+                _ => continue,
+            };
+            stops.push(KeyframeStop { offset, properties: prop_vec.clone() });
+        }
+    }
+
+    stops.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+    stops
+}
+
+// ─── Animation / transition shorthand parsers ─────────────────────────────────
+
+/// Parse an `animation-timing-function` value into an `EasingFn`.
+pub fn parse_easing(s: &str) -> EasingFn {
+    let s = s.trim();
+    match s {
+        "linear"      => EasingFn::Linear,
+        "ease"        => EasingFn::Ease,
+        "ease-in"     => EasingFn::EaseIn,
+        "ease-out"    => EasingFn::EaseOut,
+        "ease-in-out" => EasingFn::EaseInOut,
+        "step-start"  => EasingFn::StepStart,
+        "step-end"    => EasingFn::StepEnd,
+        s if s.starts_with("cubic-bezier(") => {
+            let inner = s.strip_prefix("cubic-bezier(").unwrap_or("")
+                         .strip_suffix(')').unwrap_or("");
+            let parts: Vec<f32> = inner.split(',')
+                .filter_map(|p| p.trim().parse().ok()).collect();
+            if parts.len() == 4 { EasingFn::CubicBezier(parts[0], parts[1], parts[2], parts[3]) }
+            else { EasingFn::Ease }
+        }
+        s if s.starts_with("steps(") => {
+            let inner = s.strip_prefix("steps(").unwrap_or("")
+                         .strip_suffix(')').unwrap_or("");
+            let mut it = inner.splitn(2, ',');
+            let count = it.next().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(1);
+            let jump  = it.next()
+                .map(|p| matches!(p.trim(), "start" | "jump-start"))
+                .unwrap_or(false);
+            EasingFn::Steps(count, jump)
+        }
+        _ => EasingFn::Ease,
+    }
+}
+
+/// Parse an `animation` shorthand value (comma-separated list of animations).
+pub fn parse_animation_shorthand(s: &str) -> Vec<ParsedAnimation> {
+    s.split(',').filter_map(|part| parse_single_animation(part.trim())).collect()
+}
+
+fn parse_single_animation(s: &str) -> Option<ParsedAnimation> {
+    let mut name              = String::new();
+    let mut duration_ms       = 0.0f32;
+    let mut delay_ms          = 0.0f32;
+    let mut timing_fn         = EasingFn::Ease;
+    let mut iteration_count   = 1.0f32;
+    let mut direction         = AnimDirection::Normal;
+    let mut fill_mode         = FillMode::None;
+    let mut play_state_paused = false;
+    let mut got_duration      = false;
+
+    for tok in tokenize_anim(s) {
+        if tok.is_empty() { continue; }
+        if let Some(ms) = parse_time_ms(&tok) {
+            if !got_duration { duration_ms = ms; got_duration = true; }
+            else             { delay_ms = ms; }
+            continue;
+        }
+        if is_timing_fn(&tok) { timing_fn = parse_easing(&tok); continue; }
+        match tok.as_str() {
+            "normal"           => { direction = AnimDirection::Normal; continue; }
+            "reverse"          => { direction = AnimDirection::Reverse; continue; }
+            "alternate"        => { direction = AnimDirection::Alternate; continue; }
+            "alternate-reverse"=> { direction = AnimDirection::AlternateReverse; continue; }
+            "none"             => { fill_mode = FillMode::None; continue; }
+            "forwards"         => { fill_mode = FillMode::Forwards; continue; }
+            "backwards"        => { fill_mode = FillMode::Backwards; continue; }
+            "both"             => { fill_mode = FillMode::Both; continue; }
+            "running"          => { play_state_paused = false; continue; }
+            "paused"           => { play_state_paused = true; continue; }
+            "infinite"         => { iteration_count = f32::INFINITY; continue; }
+            _ => {}
+        }
+        if let Ok(n) = tok.parse::<f32>() { iteration_count = n; continue; }
+        if name.is_empty() { name = tok.clone(); }
+    }
+
+    if name.is_empty() || name == "none" { return None; }
+    Some(ParsedAnimation { name, duration_ms, delay_ms, timing_fn,
+                           iteration_count, direction, fill_mode, play_state_paused })
+}
+
+/// Parse a `transition` shorthand value (comma-separated list of transitions).
+pub fn parse_transition_shorthand(s: &str) -> Vec<ParsedTransition> {
+    s.split(',').filter_map(|part| parse_single_transition(part.trim())).collect()
+}
+
+fn parse_single_transition(s: &str) -> Option<ParsedTransition> {
+    let mut property    = String::new();
+    let mut duration_ms = 0.0f32;
+    let mut delay_ms    = 0.0f32;
+    let mut timing_fn   = EasingFn::Ease;
+    let mut got_duration = false;
+
+    for tok in tokenize_anim(s) {
+        if tok.is_empty() { continue; }
+        if let Some(ms) = parse_time_ms(&tok) {
+            if !got_duration { duration_ms = ms; got_duration = true; }
+            else             { delay_ms = ms; }
+            continue;
+        }
+        if is_timing_fn(&tok) { timing_fn = parse_easing(&tok); continue; }
+        if property.is_empty() { property = tok.clone(); }
+    }
+
+    if property.is_empty() || property == "none" { return None; }
+    Some(ParsedTransition { property, duration_ms, delay_ms, timing_fn })
+}
+
+/// Split an animation/transition shorthand token (handles `cubic-bezier(…)` as one token).
+fn tokenize_anim(s: &str) -> Vec<String> {
+    let mut tokens  = Vec::new();
+    let mut current = String::new();
+    let mut depth   = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '(' => { depth += 1; current.push(ch); }
+            ')' => { depth -= 1; current.push(ch); }
+            ' ' | '\t' if depth == 0 => {
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() { tokens.push(current); }
+    tokens
+}
+
+fn parse_time_ms(s: &str) -> Option<f32> {
+    if let Some(ms)  = s.strip_suffix("ms") { ms.trim().parse::<f32>().ok() }
+    else if let Some(sec) = s.strip_suffix('s') { sec.trim().parse::<f32>().ok().map(|v| v * 1000.0) }
+    else { None }
+}
+
+fn is_timing_fn(s: &str) -> bool {
+    matches!(s, "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end")
+    || s.starts_with("cubic-bezier(")
+    || s.starts_with("steps(")
 }
 
 /// Extract CSS custom properties (--name: value) from `:root { }` blocks.
@@ -1149,6 +1401,23 @@ fn strip_quotes(s: &str) -> String {
 }
 
 // ─── CSS Property Application ─────────────────────────────────────────────────
+
+/// Walk the box tree and apply `animation_overrides` (from `Document::tick_animations`)
+/// on top of the cascaded computed styles.
+pub fn apply_animation_overrides(
+    node:      &mut HtmlBox,
+    overrides: &HashMap<usize, Vec<(String, String)>>,
+) {
+    let ptr = node as *const HtmlBox as usize;
+    if let Some(props) = overrides.get(&ptr) {
+        for (prop, val) in props {
+            apply_property(&mut node.style, prop, val);
+        }
+    }
+    for child in &mut node.children {
+        apply_animation_overrides(child, overrides);
+    }
+}
 
 /// Apply a single CSS property/value pair to a ComputedStyle.
 pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
@@ -2311,15 +2580,54 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "backdrop-filter" => { style.backdrop_filter = v.to_string(); }
 
         // ── Transition / animation ────────────────────────────────────────────
-        "transition" => { style.transition = v.to_string(); }
-        "transition-property" | "transition-duration" | "transition-timing-function" | "transition-delay" => {
-            // Sub-properties stored collectively in transition string
+        "transition" => {
+            style.transitions = parse_transition_shorthand(v);
         }
-        "animation" => { style.animation = v.to_string(); }
+        "transition-property" | "transition-duration" | "transition-timing-function" | "transition-delay" => {
+            // Sub-properties: rebuild the transitions list by patching index 0.
+            if style.transitions.is_empty() {
+                style.transitions.push(ParsedTransition {
+                    property: String::new(), duration_ms: 0.0,
+                    delay_ms: 0.0, timing_fn: EasingFn::Ease,
+                });
+            }
+            for tr in &mut style.transitions {
+                match prop {
+                    "transition-property"         => tr.property    = v.to_string(),
+                    "transition-duration"          => tr.duration_ms = parse_time_ms(v).unwrap_or(0.0),
+                    "transition-timing-function"   => tr.timing_fn   = parse_easing(v),
+                    "transition-delay"             => tr.delay_ms    = parse_time_ms(v).unwrap_or(0.0),
+                    _ => {}
+                }
+            }
+        }
+        "animation" => {
+            style.animations = parse_animation_shorthand(v);
+        }
         "animation-name" | "animation-duration" | "animation-timing-function"
         | "animation-delay" | "animation-iteration-count" | "animation-direction"
         | "animation-fill-mode" | "animation-play-state" => {
-            // Sub-properties — not fully implemented
+            if style.animations.is_empty() {
+                style.animations.push(ParsedAnimation {
+                    name: String::new(), duration_ms: 0.0, delay_ms: 0.0,
+                    timing_fn: EasingFn::Ease, iteration_count: 1.0,
+                    direction: AnimDirection::Normal, fill_mode: FillMode::None,
+                    play_state_paused: false,
+                });
+            }
+            for anim in &mut style.animations {
+                match prop {
+                    "animation-name"             => anim.name              = v.to_string(),
+                    "animation-duration"         => anim.duration_ms       = parse_time_ms(v).unwrap_or(0.0),
+                    "animation-timing-function"  => anim.timing_fn         = parse_easing(v),
+                    "animation-delay"            => anim.delay_ms          = parse_time_ms(v).unwrap_or(0.0),
+                    "animation-iteration-count"  => anim.iteration_count   = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) },
+                    "animation-direction"        => anim.direction         = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal },
+                    "animation-fill-mode"        => anim.fill_mode         = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None },
+                    "animation-play-state"       => anim.play_state_paused = v == "paused",
+                    _ => {}
+                }
+            }
         }
         "will-change" => {
             style.will_change = v.to_string();
@@ -4232,10 +4540,25 @@ fn apply_cascade_inner(
         *type_running.get(tag.as_str()).unwrap_or(&0)
     }).collect();
 
+    // CSS :nth-child / :first-child / :last-child count only element children,
+    // not text nodes (#text).  Pre-compute the element-only index for each child.
+    let n_elem_children = root.children.iter().filter(|c| c.tag != "#text").count();
+    let mut elem_pos = 0usize;
+    let elem_indices: Vec<usize> = root.children.iter().map(|c| {
+        if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+    }).collect();
+
     for (i, child) in root.children.iter_mut().enumerate() {
+        // For element nodes use their position among element siblings only.
+        // Text nodes won't match any element selector anyway, so their index is irrelevant.
+        let (ci, ns) = if child.tag == "#text" {
+            (i, n_children)
+        } else {
+            (elem_indices[i], n_elem_children)
+        };
         apply_cascade_inner(
             child, stylesheet, Some(&style), root_font_px,
-            ancestors, i, n_children,
+            ancestors, ci, ns,
             type_counts[i], type_totals[i],
             vw, vh, focused_box, keyboard_focus,
         );

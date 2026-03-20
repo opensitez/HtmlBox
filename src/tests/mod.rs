@@ -1,4 +1,5 @@
 pub mod harness;
+pub mod test_animation;
 pub mod test_css;
 pub mod test_selectors;
 pub mod test_box_model;

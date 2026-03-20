@@ -377,13 +377,27 @@ impl LayoutEngine {
                             != crate::css::evaluate_media(&r.media_condition, viewport_width, self.viewport_h)
                 }));
 
-        if needs_cascade {
+        let did_cascade = if needs_cascade {
             crate::css::apply_cascade_vp(
                 &mut doc.root, &ss, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
             );
             self.last_cascade_vw = viewport_width;
+            true
+        } else {
+            false
+        };
+
+        // ── CSS animation / transition runtime ─────────────────────────────
+        let now = std::time::Instant::now();
+        doc.sync_animations(now);
+        if did_cascade { doc.sync_transitions(now); }
+        doc.tick_animations(now);
+        if !doc.animation_overrides.is_empty() {
+            let overrides = doc.animation_overrides.clone();
+            crate::css::apply_animation_overrides(&mut doc.root, &overrides);
         }
+        // ──────────────────────────────────────────────────────────────────
 
         self.layout_geometry(doc, viewport_width, root_font_px);
         self.last_geometry_viewport_h = self.viewport_h;
@@ -398,6 +412,11 @@ impl LayoutEngine {
                 doc.focused_box, doc.keyboard_focus,
             );
             if changed {
+                // Re-apply animation overrides after container-query cascade.
+                if !doc.animation_overrides.is_empty() {
+                    let overrides = doc.animation_overrides.clone();
+                    crate::css::apply_animation_overrides(&mut doc.root, &overrides);
+                }
                 self.layout_geometry(doc, viewport_width, root_font_px);
                 self.last_geometry_viewport_h = self.viewport_h;
             }

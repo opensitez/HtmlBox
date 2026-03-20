@@ -541,6 +541,188 @@ fn debug_graph_sidebar_and_button() {
     }
 }
 
+// ── Gradient opacity is applied ───────────────────────────────────────────────
+
+/// Regression: draw_gradient ignored node.style.opacity, so `opacity` animation
+/// had no visual effect on elements with gradient backgrounds (fade animation bug).
+#[test]
+fn render_gradient_opacity_applied() {
+    // A solid-red gradient at opacity:0.5 over white body.
+    // The center pixel should appear as a half-alpha blend (~pink), not full red.
+    let pm = render_html(r#"
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: white; }
+        .box { width: 100px; height: 100px;
+               background: linear-gradient(red, red);
+               opacity: 0.5; }
+        </style>
+        <div class="box"></div>
+    "#, 150, 120);
+    let (r, g, b, _) = pixel(&pm, 50, 50);
+    // red at 50% opacity over white → composited ~(255, 127, 127)
+    assert!(r > 200, "red channel should be high (blend of red+white), got {r}");
+    assert!(g > 80,  "green channel should be elevated by white blend (opacity=0.5), got {g}");
+    assert!(b > 80,  "blue channel should be elevated by white blend (opacity=0.5), got {b}");
+}
+
+// ── Absolute all-auto insets inside flex container: positioned inside container ──
+
+/// Regression: position:absolute children with all insets auto inside a flex container
+/// were placed at document origin (0,0) instead of following the static position.
+/// After the fix they should stay inside their containing flex box.
+#[test]
+fn layout_abs_all_auto_in_flex_inside_container() {
+    use super::harness::find_box;
+    let doc = super::harness::parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { padding-top: 80px; }
+        .wrap { position: relative; display: flex;
+                align-items: center; justify-content: center;
+                width: 100px; height: 100px; }
+        .ring { position: absolute; width: 60px; height: 60px; }
+        </style>
+        <div class="wrap"><div class="ring"></div></div>
+    "#, 300.0);
+    let wrap = find_box(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "wrap").unwrap_or(false)
+    }).expect("wrap not found");
+    let ring = find_box(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "ring").unwrap_or(false)
+    }).expect("ring not found");
+    // ring must be inside wrap (not at document origin ~0,0)
+    assert!(ring.border_rect.y >= wrap.border_rect.y - 1.0,
+        "ring y ({}) should be >= wrap y ({}) — ring should not be at document origin",
+        ring.border_rect.y, wrap.border_rect.y);
+    assert!(ring.border_rect.x >= wrap.border_rect.x - 1.0,
+        "ring x ({}) should be >= wrap x ({})", ring.border_rect.x, wrap.border_rect.x);
+}
+
+/// Absolute child with all-auto insets inside a centered flex container should
+/// be centered (follow the static position from justify-content/align-items).
+#[test]
+fn layout_abs_all_auto_in_flex_centered() {
+    use super::harness::find_box;
+    let doc = super::harness::parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .wrap { position: relative; display: flex;
+                align-items: center; justify-content: center;
+                width: 200px; height: 200px; }
+        .child { position: absolute; width: 40px; height: 40px; }
+        </style>
+        <div class="wrap"><div class="child"></div></div>
+    "#, 300.0);
+    let child = find_box(&doc.root, &|b| {
+        b.attributes.get("class").map(|c| c == "child").unwrap_or(false)
+    }).expect("child not found");
+    // Container 200x200 at origin, child 40x40 → centered at (80, 80)
+    assert!((child.border_rect.x - 80.0).abs() < 2.0,
+        "abs child x should be ~80 (centered), got {}", child.border_rect.x);
+    assert!((child.border_rect.y - 80.0).abs() < 2.0,
+        "abs child y should be ~80 (centered), got {}", child.border_rect.y);
+}
+
+// ── Border-radius per-side arc: top-only border on a circle ──────────────────
+
+/// Regression: spinner (.spinner { border-radius:50%; border-top:3px solid purple; })
+/// rendered a visible border only in the screen-space top half (via clip mask),
+/// not as a proper arc path. After the fix, arc paths are used so rotation works.
+/// This test verifies the arc shape: border pixels should appear at the TOP of
+/// the circle and NOT at the BOTTOM center.
+#[test]
+fn render_border_radius_top_only_renders_top_arc() {
+    let pm = render_html(r#"
+        <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; }
+        .spinner {
+          width: 80px; height: 80px; border-radius: 50%;
+          border-top:    4px solid #fff;
+          border-right:  4px solid transparent;
+          border-bottom: 4px solid transparent;
+          border-left:   4px solid transparent;
+        }
+        </style>
+        <div class="spinner"></div>
+    "#, 200, 200);
+
+    // Top center of the spinner (x=40, y≈2) should have a white arc pixel
+    let top_has_border = (2u32..10).any(|y| {
+        let (r, g, b, a) = pixel(&pm, 40, y);
+        a > 30 && r > 100 && g > 100 && b > 100
+    });
+    assert!(top_has_border, "top center of spinner should have a white border arc pixel");
+
+    // Bottom center (x=40, y≈76) should have NO border (transparent → black background)
+    let bottom_has_border = (70u32..80).any(|y| {
+        let (r, g, b, a) = pixel(&pm, 40, y);
+        a > 30 && r > 100 && g > 100 && b > 100
+    });
+    assert!(!bottom_has_border,
+        "bottom center of spinner should be black (no border-bottom), but found border pixels");
+}
+
+// ── CSS scale() transform applies to text (heartbeat fix) ────────────────────
+
+/// Regression: CSS `transform: scale()` was applied to backgrounds/borders but
+/// NOT to text content — draw_inline_content bypassed elem_ts entirely.
+/// After the fix, text is rendered to a temp pixmap and composited with the
+/// CSS transform, so a scale(2) element has text that spans twice as many pixels.
+#[test]
+fn render_css_scale_transform_affects_text() {
+    // Red text "I" at scale(1) — measure its pixel width.
+    let pm_normal = render_html(r#"
+        <style>
+        * { margin: 0; padding: 0; }
+        body { background: white; }
+        .t { font-size: 20px; color: red; display: inline-block; }
+        </style>
+        <div class="t">I</div>
+    "#, 200, 60);
+
+    // Same text at scale(2) — should span approximately twice as many red pixels.
+    let pm_scaled = render_html(r#"
+        <style>
+        * { margin: 0; padding: 0; }
+        body { background: white; }
+        .t { font-size: 20px; color: red; display: inline-block;
+             transform: scale(2); transform-origin: 0 0; }
+        </style>
+        <div class="t">I</div>
+    "#, 200, 60);
+
+    // Count non-white pixels in top row band (y=5..30) for both renders.
+    fn count_red_pixels(pm: &tiny_skia::Pixmap, y_range: std::ops::Range<u32>) -> u32 {
+        let mut n = 0u32;
+        for y in y_range {
+            for x in 0..pm.width() {
+                let (r, g, b, a) = {
+                    let idx = (y * pm.width() + x) as usize * 4;
+                    let d = pm.data();
+                    let a = d[idx + 3];
+                    if a == 0 { (0u8, 0u8, 0u8, 0u8) } else {
+                        let r = ((d[idx]     as u32 * 255) / a as u32) as u8;
+                        let g = ((d[idx + 1] as u32 * 255) / a as u32) as u8;
+                        let b = ((d[idx + 2] as u32 * 255) / a as u32) as u8;
+                        (r, g, b, a)
+                    }
+                };
+                if a > 10 && r > 150 && g < 100 && b < 100 { n += 1; }
+            }
+        }
+        n
+    }
+
+    let normal_red = count_red_pixels(&pm_normal, 5..30);
+    let scaled_red = count_red_pixels(&pm_scaled, 5..55);
+
+    assert!(normal_red > 0, "baseline render should have some red text pixels");
+    assert!(scaled_red > normal_red,
+        "scale(2) text should cover more pixels than scale(1); normal={normal_red} scaled={scaled_red}");
+}
+
 #[test]
 fn debug_sidebar_box_sizing() {
     use super::harness::{find_box, parse_and_layout};

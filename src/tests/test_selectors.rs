@@ -399,3 +399,89 @@ fn selectors_specificity() {
     assert!(sel1.specificity() > sel2.specificity());
     assert!(sel2.specificity() > sel3.specificity());
 }
+
+// ── :nth-child ignores #text siblings ────────────────────────────────────────
+
+/// Regression: the HTML parser creates #text nodes for whitespace between
+/// elements.  If these are counted for :nth-child, the indices are wrong and
+/// selectors like .dot:nth-child(1/2/3) match the wrong (or no) elements.
+/// The cascade must count only element siblings, not text nodes.
+#[test]
+fn nth_child_ignores_text_node_siblings() {
+    use super::harness::parse_and_layout;
+
+    // Three divs separated by whitespace — the parser creates #text nodes
+    // between them.  The :nth-child selectors must still use element-only index.
+    let doc = parse_and_layout(r#"
+        <style>
+        .box:nth-child(1) { background: red; }
+        .box:nth-child(2) { background: green; }
+        .box:nth-child(3) { background: blue; }
+        </style>
+        <div id="wrap">
+          <div class="box" id="b1"></div>
+          <div class="box" id="b2"></div>
+          <div class="box" id="b3"></div>
+        </div>
+    "#, 400.0);
+
+    let b1 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "b1").unwrap_or(false))
+        .expect("b1 not found");
+    let b2 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "b2").unwrap_or(false))
+        .expect("b2 not found");
+    let b3 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "b3").unwrap_or(false))
+        .expect("b3 not found");
+
+    // Red = (255,0,0), Green = (0,128,0), Blue = (0,0,255)
+    let red   = crate::css::parse_color("red").unwrap();
+    let green = crate::css::parse_color("green").unwrap();
+    let blue  = crate::css::parse_color("blue").unwrap();
+
+    assert_eq!(b1.style.background_color.r, red.r,
+        "b1 (nth-child 1) should have red background, got {:?}", b1.style.background_color);
+    assert_eq!(b2.style.background_color.g, green.g,
+        "b2 (nth-child 2) should have green background, got {:?}", b2.style.background_color);
+    assert_eq!(b3.style.background_color.b, blue.b,
+        "b3 (nth-child 3) should have blue background, got {:?}", b3.style.background_color);
+}
+
+/// Regression: loading dots animation — each .dot:nth-child(n) rule sets a
+/// different animation-delay.  With text-node counting off, all three nth-child
+/// rules miss all three dots (they fall on whitespace positions) so only the
+/// element that accidentally matches gets an animation.
+#[test]
+fn nth_child_animation_delay_per_dot() {
+    use super::harness::parse_and_layout;
+
+    let doc = parse_and_layout(r#"
+        <style>
+        @keyframes pulse { from { opacity: 0; } to { opacity: 1; } }
+        .dot:nth-child(1) { animation: pulse 1s linear 0s    infinite; }
+        .dot:nth-child(2) { animation: pulse 1s linear 0.2s  infinite; }
+        .dot:nth-child(3) { animation: pulse 1s linear 0.4s  infinite; }
+        </style>
+        <div class="dots">
+          <div class="dot" id="d1"></div>
+          <div class="dot" id="d2"></div>
+          <div class="dot" id="d3"></div>
+        </div>
+    "#, 400.0);
+
+    let d1 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "d1").unwrap_or(false))
+        .expect("d1 not found");
+    let d2 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "d2").unwrap_or(false))
+        .expect("d2 not found");
+    let d3 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "d3").unwrap_or(false))
+        .expect("d3 not found");
+
+    assert_eq!(d1.style.animations.len(), 1, "d1 should have 1 animation");
+    assert_eq!(d2.style.animations.len(), 1, "d2 should have 1 animation");
+    assert_eq!(d3.style.animations.len(), 1, "d3 should have 1 animation");
+
+    assert!((d1.style.animations[0].delay_ms -   0.0).abs() < 1.0,
+        "d1 delay should be 0ms, got {}", d1.style.animations[0].delay_ms);
+    assert!((d2.style.animations[0].delay_ms - 200.0).abs() < 1.0,
+        "d2 delay should be 200ms, got {}", d2.style.animations[0].delay_ms);
+    assert!((d3.style.animations[0].delay_ms - 400.0).abs() < 1.0,
+        "d3 delay should be 400ms, got {}", d3.style.animations[0].delay_ms);
+}

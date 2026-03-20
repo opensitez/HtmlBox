@@ -574,14 +574,14 @@ impl Renderer {
         // ── CSS transform ─────────────────────────────────────────────────────
         // Compute the element-level transform (CSS transform + DPI scale).
         let has_css_transform = !node.style.css_transform.ops.is_empty();
-        let elem_ts: Transform = if has_css_transform {
+        let (elem_ts, css_t_for_text): (Transform, Option<Transform>) = if has_css_transform {
             let ox = px + node.style.transform_origin_x * pw;
             let oy = py + node.style.transform_origin_y * ph;
             let css_t = build_css_transform(&node.style.css_transform, ox, oy);
             // Combine: first apply CSS transform in logical coords, then scale to physical
-            Transform::from_scale(self.scale, self.scale).pre_concat(css_t)
+            (Transform::from_scale(self.scale, self.scale).pre_concat(css_t), Some(css_t))
         } else {
-            Transform::from_scale(self.scale, self.scale)
+            (Transform::from_scale(self.scale, self.scale), None)
         };
 
         // ── Clip-path ─────────────────────────────────────────────────────────
@@ -681,7 +681,7 @@ impl Renderer {
         }
 
         // ── Borders ──────────────────────────────────────────────────────────
-        self.draw_borders_masked(node, eff_style, pixmap, eff_sx, eff_sy, eff_mask);
+        self.draw_borders_masked(node, eff_style, pixmap, eff_sx, eff_sy, elem_ts, eff_mask);
 
         // ── Outline ──────────────────────────────────────────────────────────
         if eff_style.outline_width > 0.0 && eff_style.outline_style != BorderStyle::None {
@@ -774,13 +774,43 @@ impl Renderer {
         // ── Inline content (text lines + selection) ───────────────────────────
         // Use child_sx/child_sy so the element's own scroll_top/scroll_left shifts
         // the text, and child_mask so overflow clips apply to inline content too.
+        //
+        // When a CSS transform is active (e.g. scale() in heartbeat animation),
+        // render text to a temporary pixmap first, then composite with the transform.
+        // This ensures glyphs scale/rotate correctly — just drawing at a shifted x/y
+        // position does not change glyph size.
         if !node.line_cache.is_empty() {
             let flat = collect_flat_text(node);
-            self.draw_inline_content(
-                node, eff_style, &flat, pixmap, child_sx, child_sy,
-                sel_start, sel_end, sel_box_ptr,
-                child_mask,
-            );
+            if let Some(css_t) = css_t_for_text {
+                // Render inline content into a transparent temp pixmap (same size).
+                let sc = self.scale;
+                if let Some(mut temp) = Pixmap::new(pixmap.width(), pixmap.height()) {
+                    self.draw_inline_content(
+                        node, eff_style, &flat, &mut temp, child_sx, child_sy,
+                        sel_start, sel_end, sel_box_ptr,
+                        None, // mask applied at composite time
+                    );
+                    // T maps temp pixel coords → main pixel coords:
+                    //   T = scale(sc) ∘ css_t ∘ scale(1/sc)
+                    // In tiny_skia pre_concat (pre_concat(b) applies b first):
+                    //   scale(sc).pre_concat(css_t).pre_concat(scale(1/sc))
+                    let temp_to_main = Transform::from_scale(sc, sc)
+                        .pre_concat(css_t)
+                        .pre_concat(Transform::from_scale(1.0 / sc, 1.0 / sc));
+                    pixmap.draw_pixmap(
+                        0, 0, temp.as_ref(),
+                        &tiny_skia::PixmapPaint::default(),
+                        temp_to_main,
+                        eff_mask,
+                    );
+                }
+            } else {
+                self.draw_inline_content(
+                    node, eff_style, &flat, pixmap, child_sx, child_sy,
+                    sel_start, sel_end, sel_box_ptr,
+                    child_mask,
+                );
+            }
         }
 
         // ── ::after pseudo-element ────────────────────────────────────────────
@@ -923,6 +953,7 @@ impl Renderer {
         pixmap: &mut Pixmap,
         sx:     f32,
         sy:     f32,
+        elem_ts: Transform,
         mask:   Option<&Mask>,
     ) {
         let br      = node.border_rect;
@@ -954,16 +985,82 @@ impl Renderer {
                 if let Some(path) = rounded_rect_path(
                     rx + tw/2.0, ry + tw/2.0, br.w - tw, br.h - tw, radius,
                 ) {
-                    pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
+                    pixmap.stroke_path(&path, &paint, &stroke, elem_ts, mask);
                 }
             } else if let Some(path) = rect_path(rx, ry, br.w, br.h) {
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
+                pixmap.stroke_path(&path, &paint, &stroke, elem_ts, mask);
+            }
+        } else if radius > 0.0 {
+            // Per-side with border-radius: build separate arc path for each side using
+            // PathBuilder so that CSS transforms (including rotation) work correctly.
+            // The clip-mask approach breaks under rotation because masks live in screen space.
+            const K: f32 = 0.5522847498; // cubic bezier factor for quarter-circle approximation
+
+            let sides = [
+                (Side::Top,    &style.border_top_width,    style.border_top_style,    style.border_top_color),
+                (Side::Bottom, &style.border_bottom_width, style.border_bottom_style, style.border_bottom_color),
+                (Side::Left,   &style.border_left_width,   style.border_left_style,   style.border_left_color),
+                (Side::Right,  &style.border_right_width,  style.border_right_style,  style.border_right_color),
+            ];
+
+            for (side, width_l, bstyle, color) in &sides {
+                if *bstyle == BorderStyle::None || *bstyle == BorderStyle::Hidden { continue; }
+                let ca = ((color.a as f32) * opacity) as u8;
+                if ca == 0 { continue; }
+                let w = width_l.resolve(font_px, br.w, 16.0);
+                if w < 0.5 { continue; }
+
+                let ax = rx + w / 2.0;
+                let ay = ry + w / 2.0;
+                let aw = br.w - w;
+                let ah = br.h - w;
+                let r = radius.min(aw / 2.0).min(ah / 2.0);
+
+                let mut pb = PathBuilder::new();
+                match side {
+                    Side::Top => {
+                        // top-left corner arc + top edge + top-right corner arc
+                        pb.move_to(ax, ay + r);
+                        pb.cubic_to(ax, ay + r - K*r, ax + r - K*r, ay, ax + r, ay);
+                        pb.line_to(ax + aw - r, ay);
+                        pb.cubic_to(ax + aw - r + K*r, ay, ax + aw, ay + r - K*r, ax + aw, ay + r);
+                    }
+                    Side::Bottom => {
+                        // bottom-right corner arc + bottom edge + bottom-left corner arc
+                        pb.move_to(ax + aw, ay + ah - r);
+                        pb.cubic_to(ax + aw, ay + ah - r + K*r, ax + aw - r + K*r, ay + ah, ax + aw - r, ay + ah);
+                        pb.line_to(ax + r, ay + ah);
+                        pb.cubic_to(ax + r - K*r, ay + ah, ax, ay + ah - r + K*r, ax, ay + ah - r);
+                    }
+                    Side::Left => {
+                        // straight left edge between corner arcs (corners owned by top/bottom)
+                        pb.move_to(ax, ay + r);
+                        pb.line_to(ax, ay + ah - r);
+                    }
+                    Side::Right => {
+                        // straight right edge between corner arcs
+                        pb.move_to(ax + aw, ay + r);
+                        pb.line_to(ax + aw, ay + ah - r);
+                    }
+                }
+
+                let path = match pb.finish() {
+                    Some(p) => p,
+                    None => continue,
+                };
+
+                let mut paint = Paint::default();
+                paint.set_color(Color::rgba(color.r, color.g, color.b, ca).to_tiny_skia());
+                paint.anti_alias = true;
+                let mut stroke = Stroke::default();
+                stroke.width = w;
+                pixmap.stroke_path(&path, &paint, &stroke, elem_ts, mask);
             }
         } else {
-            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Top,    opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Right,  opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Bottom, opacity, mask);
-            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Left,   opacity, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Top,    opacity, elem_ts, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Right,  opacity, elem_ts, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Bottom, opacity, elem_ts, mask);
+            self.draw_border_side_masked(pixmap, sx, sy, node, style, Side::Left,   opacity, elem_ts, mask);
         }
     }
 
@@ -976,6 +1073,7 @@ impl Renderer {
         style:   &ComputedStyle,
         side:    Side,
         opacity: f32,
+        elem_ts: Transform,
         mask:    Option<&Mask>,
     ) {
         let (bstyle, color, width_l) = match side {
@@ -1017,7 +1115,7 @@ impl Renderer {
                 let mut s2 = Stroke::default();
                 s2.width = third;
                 if let Some(path) = line_path(x1, y1, x2, y2) {
-                    pixmap.stroke_path(&path, &paint, &s2, Transform::from_scale(self.scale, self.scale), mask);
+                    pixmap.stroke_path(&path, &paint, &s2, elem_ts, mask);
                 }
                 let (ix1, iy1, ix2, iy2) = match side {
                     Side::Top    => (x1, y1 + 2.0*third, x2, y2 + 2.0*third),
@@ -1026,12 +1124,12 @@ impl Renderer {
                     Side::Right  => (x1 - 2.0*third, y1, x2 - 2.0*third, y2),
                 };
                 if let Some(path) = line_path(ix1, iy1, ix2, iy2) {
-                    pixmap.stroke_path(&path, &paint, &s2, Transform::from_scale(self.scale, self.scale), mask);
+                    pixmap.stroke_path(&path, &paint, &s2, elem_ts, mask);
                 }
             }
             _ => {
                 if let Some(path) = line_path(x1, y1, x2, y2) {
-                    pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
+                    pixmap.stroke_path(&path, &paint, &stroke, elem_ts, mask);
                 }
             }
         }
@@ -1055,12 +1153,13 @@ impl Renderer {
 
         if pw <= 0.0 || ph <= 0.0 { return; }
 
-        // Convert our gradient stops to tiny-skia's format.
+        // Convert our gradient stops to tiny-skia's format, applying element opacity.
+        let opacity = node.style.opacity;
         let sk_stops: Vec<SkStop> = node.style.gradient_stops.iter()
-            .map(|s| SkStop::new(
-                s.position,
-                tiny_skia::Color::from_rgba8(s.color.r, s.color.g, s.color.b, s.color.a),
-            ))
+            .map(|s| {
+                let a = ((s.color.a as f32) * opacity) as u8;
+                SkStop::new(s.position, tiny_skia::Color::from_rgba8(s.color.r, s.color.g, s.color.b, a))
+            })
             .collect();
         if sk_stops.len() < 2 { return; }
 

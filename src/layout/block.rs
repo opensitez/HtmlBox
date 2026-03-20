@@ -652,8 +652,20 @@ pub fn layout_block_with_fc(
     //  of the nearest positioned ancestor).
     let containing_rect = node.padding_rect;
     for &i in &abs_children {
+        layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+        // For abs children with all insets auto, clamp to containing block's top-left.
+        // layout_positioned leaves them at wherever layout_box placed them (origin 0,0)
+        // which is inside the containing block only if the containing block is at 0,0.
         let child = &mut node.children[i];
-        layout_positioned(engine, child, containing_rect, font_px, root_font_px);
+        let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
+                    && child.style.top.is_auto()   && child.style.bottom.is_auto();
+        if all_auto && matches!(child.style.position, Position::Absolute) {
+            let dx = containing_rect.x - child.border_rect.x;
+            let dy = containing_rect.y - child.border_rect.y;
+            if dx != 0.0 || dy != 0.0 {
+                crate::layout::shift_rects(child, dx, dy);
+            }
+        }
     }
 
     // ─── Relative offsets ─────────────────────────────────────────────────────

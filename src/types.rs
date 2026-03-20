@@ -827,9 +827,9 @@ pub struct ComputedStyle {
     // Text underline offset
     pub text_underline_offset: CssLength,
 
-    // Transition / animation (stored for future use)
-    pub transition: String,
-    pub animation:  String,
+    // Parsed CSS animations and transitions for this element
+    pub animations:  Vec<ParsedAnimation>,
+    pub transitions: Vec<ParsedTransition>,
     pub will_change: String,
 
     // Misc
@@ -1267,8 +1267,8 @@ impl Default for ComputedStyle {
 
             text_underline_offset: CssLength::Auto,
 
-            transition:  String::new(),
-            animation:   String::new(),
+            animations:  Vec::new(),
+            transitions: Vec::new(),
             will_change: String::new(),
 
             scroll_behavior: ScrollBehavior::Auto,
@@ -1615,6 +1615,84 @@ pub enum ScrollbarDragKind {
 unsafe impl Send for ScrollbarDragKind {}
 unsafe impl Sync for ScrollbarDragKind {}
 
+// ─── CSS Animation / Transition types ─────────────────────────────────────────
+
+/// A single keyframe stop inside a `@keyframes` block.
+#[derive(Clone, Debug)]
+pub struct KeyframeStop {
+    /// Progress point in the animation (0.0 = `from` / `0%`, 1.0 = `to` / `100%`).
+    pub offset: f32,
+    /// CSS property/value pairs declared at this stop.
+    pub properties: Vec<(String, String)>,
+}
+
+/// CSS easing function (timing function).
+#[derive(Clone, Debug, PartialEq)]
+pub enum EasingFn {
+    Linear,
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    CubicBezier(f32, f32, f32, f32),
+    StepStart,
+    StepEnd,
+    Steps(u32, bool),  // (count, jump_start)
+}
+impl Default for EasingFn { fn default() -> Self { Self::Ease } }
+
+/// CSS `animation-direction` values.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum AnimDirection { #[default] Normal, Reverse, Alternate, AlternateReverse }
+
+/// CSS `animation-fill-mode` values.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum FillMode { #[default] None, Forwards, Backwards, Both }
+
+/// A fully parsed CSS `animation` shorthand or sub-property group.
+#[derive(Clone, Debug)]
+pub struct ParsedAnimation {
+    pub name:              String,
+    pub duration_ms:       f32,
+    pub delay_ms:          f32,
+    pub timing_fn:         EasingFn,
+    /// `f32::INFINITY` for `animation-iteration-count: infinite`.
+    pub iteration_count:   f32,
+    pub direction:         AnimDirection,
+    pub fill_mode:         FillMode,
+    pub play_state_paused: bool,
+}
+
+/// A fully parsed CSS `transition` shorthand or sub-property group.
+#[derive(Clone, Debug)]
+pub struct ParsedTransition {
+    pub property:    String,
+    pub duration_ms: f32,
+    pub delay_ms:    f32,
+    pub timing_fn:   EasingFn,
+}
+
+/// Runtime state for one active CSS animation on one element.
+#[derive(Clone, Debug)]
+pub struct AnimState {
+    /// The HtmlBox raw pointer, stored as `usize` for Hash/Eq.
+    pub element_id: usize,
+    pub animation:  ParsedAnimation,
+    pub start_time: std::time::Instant,
+}
+
+/// Runtime state for one active CSS transition on one property of one element.
+#[derive(Clone, Debug)]
+pub struct TransitionState {
+    pub property:    String,
+    pub from_value:  String,
+    pub to_value:    String,
+    pub start_time:  std::time::Instant,
+    pub duration_ms: f32,
+    pub delay_ms:    f32,
+    pub timing_fn:   EasingFn,
+}
+
 // ─── aria-live announcement types ─────────────────────────────────────────────
 
 /// How urgently an aria-live announcement should be delivered.
@@ -1680,6 +1758,19 @@ pub struct Document {
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
     pub keyboard_focus:  bool,
 
+    // ── CSS animation / transition runtime ────────────────────────────────────
+    /// All currently running CSS animations (one entry per animation per element).
+    pub active_animations: Vec<AnimState>,
+    /// Per-element active transitions, keyed by HtmlBox pointer (as usize).
+    pub(crate) transition_states: HashMap<usize, Vec<TransitionState>>,
+    /// Previous transitionable style values per element, for change detection.
+    pub(crate) prev_styles: HashMap<usize, HashMap<String, String>>,
+    /// Interpolated CSS property overrides produced by `tick_animations`.
+    /// Applied on top of the cascade result before geometry runs.
+    pub(crate) animation_overrides: HashMap<usize, Vec<(String, String)>>,
+    /// Set by `tick_animations`; tells the host to request another render frame.
+    pub needs_animation_frame: bool,
+
     // ── aria-live region machinery ─────────────────────────────────────────────
     /// Announcements queued since the last call to `take_announcements()`.
     pub pending_announcements: Vec<Announcement>,
@@ -1718,6 +1809,11 @@ impl Document {
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
+            active_animations:     Vec::new(),
+            transition_states:     HashMap::new(),
+            prev_styles:           HashMap::new(),
+            animation_overrides:   HashMap::new(),
+            needs_animation_frame: false,
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
             live_regions_initialized: false,
@@ -2096,6 +2192,195 @@ impl Document {
 
         self.live_regions_initialized = true;
         self.pending_announcements.extend(new_ann);
+    }
+
+    // ── CSS Animation / Transition runtime ────────────────────────────────────
+
+    /// Walk the tree and ensure an `AnimState` exists for every element that
+    /// currently has an `animation` property.  Call this after each cascade pass.
+    pub fn sync_animations(&mut self, now: std::time::Instant) {
+        let mut current: Vec<(usize, ParsedAnimation)> = Vec::new();
+        fn collect(node: &HtmlBox, out: &mut Vec<(usize, ParsedAnimation)>) {
+            let id = node as *const HtmlBox as usize;
+            for a in &node.style.animations {
+                out.push((id, a.clone()));
+            }
+            for child in &node.children { collect(child, out); }
+        }
+        collect(&self.root, &mut current);
+
+        // Start animations that aren't tracked yet.
+        for (id, anim) in &current {
+            let running = self.active_animations.iter()
+                .any(|s| s.element_id == *id && s.animation.name == anim.name);
+            if !running && !anim.name.is_empty() && anim.name != "none" {
+                self.active_animations.push(AnimState {
+                    element_id: *id,
+                    animation:  anim.clone(),
+                    start_time: now,
+                });
+            }
+        }
+
+        // Remove animations whose element no longer carries that animation name.
+        self.active_animations.retain(|s| {
+            current.iter().any(|(id, a)| *id == s.element_id && a.name == s.animation.name)
+        });
+    }
+
+    /// Detect CSS property changes caused by the cascade and start transitions.
+    /// Call this right after a cascade pass (when computed styles may have changed).
+    pub fn sync_transitions(&mut self, now: std::time::Instant) {
+        let mut current: Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
+        fn collect(node: &HtmlBox, out: &mut Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)>) {
+            let id = node as *const HtmlBox as usize;
+            if !node.style.transitions.is_empty() {
+                out.push((id, node.style.transitions.clone(), extract_transitionable(node)));
+            }
+            for child in &node.children { collect(child, out); }
+        }
+        collect(&self.root, &mut current);
+
+        for (elem_id, trs, cur_vals) in &current {
+            let prev = self.prev_styles.get(elem_id).cloned().unwrap_or_default();
+
+            for tr in trs {
+                if tr.duration_ms <= 0.0 { continue; }
+                let props: Vec<&str> = if tr.property == "all" {
+                    cur_vals.keys().map(|s| s.as_str()).collect()
+                } else {
+                    vec![tr.property.as_str()]
+                };
+
+                for prop in props {
+                    let cur = match cur_vals.get(prop) { Some(v) => v.as_str(), None => continue };
+                    let prv = match prev.get(prop) { Some(v) => v.as_str(), None => { continue; } };
+                    if prv == cur { continue; }
+
+                    // Already transitioning to this value?
+                    let already = self.transition_states
+                        .entry(*elem_id).or_default()
+                        .iter().any(|t| t.property == prop && t.to_value == cur);
+                    if already { continue; }
+
+                    let entry = self.transition_states.entry(*elem_id).or_default();
+                    entry.retain(|t| t.property != prop);
+                    entry.push(TransitionState {
+                        property:    prop.to_string(),
+                        from_value:  prv.to_string(),
+                        to_value:    cur.to_string(),
+                        start_time:  now,
+                        duration_ms: tr.duration_ms,
+                        delay_ms:    tr.delay_ms,
+                        timing_fn:   tr.timing_fn.clone(),
+                    });
+                }
+            }
+            self.prev_styles.insert(*elem_id, cur_vals.clone());
+        }
+    }
+
+    /// Advance all running animations and transitions to time `now`.
+    /// Populates `animation_overrides` with interpolated CSS values.
+    /// Sets `needs_animation_frame = true` if any animation/transition is still running.
+    pub fn tick_animations(&mut self, now: std::time::Instant) {
+        self.animation_overrides.clear();
+        let keyframes = self.stylesheet.keyframes.clone();
+        let mut still_running = false;
+
+        // ── CSS Animations ───────────────────────────────────────────────────
+        let mut done: Vec<usize> = Vec::new();
+        for (idx, state) in self.active_animations.iter().enumerate() {
+            let elapsed_ms = now.duration_since(state.start_time).as_secs_f32() * 1000.0;
+            let delayed_ms = elapsed_ms - state.animation.delay_ms;
+
+            if delayed_ms < 0.0 {
+                // Delay phase: apply backwards fill if needed.
+                if matches!(state.animation.fill_mode, FillMode::Backwards | FillMode::Both) {
+                    if let Some(kf) = keyframes.get(&state.animation.name) {
+                        if let Some(first) = kf.first() {
+                            let entry = self.animation_overrides.entry(state.element_id).or_default();
+                            entry.extend(first.properties.clone());
+                        }
+                    }
+                }
+                still_running = true;
+                continue;
+            }
+
+            let duration = state.animation.duration_ms;
+            if duration <= 0.0 { done.push(idx); continue; }
+
+            let total_progress = delayed_ms / duration;
+            let iteration      = total_progress.floor();
+            let t_frac         = total_progress.fract();
+
+            if iteration >= state.animation.iteration_count {
+                // Finished: apply forwards fill if needed.
+                if matches!(state.animation.fill_mode, FillMode::Forwards | FillMode::Both) {
+                    if let Some(kf) = keyframes.get(&state.animation.name) {
+                        let final_t = match state.animation.direction {
+                            AnimDirection::Reverse | AnimDirection::AlternateReverse => 0.0,
+                            _ => 1.0,
+                        };
+                        let props = interpolate_keyframe_stops(kf, final_t);
+                        let entry = self.animation_overrides.entry(state.element_id).or_default();
+                        entry.extend(props);
+                    }
+                }
+                done.push(idx);
+                continue;
+            }
+            still_running = true;
+
+            let effective_t = match state.animation.direction {
+                AnimDirection::Normal          => t_frac,
+                AnimDirection::Reverse         => 1.0 - t_frac,
+                AnimDirection::Alternate       => if (iteration as u32) % 2 == 0 { t_frac } else { 1.0 - t_frac },
+                AnimDirection::AlternateReverse => if (iteration as u32) % 2 == 0 { 1.0 - t_frac } else { t_frac },
+            };
+            let eased = apply_easing(&state.animation.timing_fn, effective_t);
+
+            if let Some(kf) = keyframes.get(&state.animation.name) {
+                let props = interpolate_keyframe_stops(kf, eased);
+                let entry = self.animation_overrides.entry(state.element_id).or_default();
+                entry.extend(props);
+            }
+        }
+        for idx in done.into_iter().rev() { self.active_animations.remove(idx); }
+
+        // ── CSS Transitions ──────────────────────────────────────────────────
+        let mut empty_elems: Vec<usize> = Vec::new();
+        for (elem_id, trs) in &mut self.transition_states {
+            let mut done_trs: Vec<usize> = Vec::new();
+            for (i, tr) in trs.iter().enumerate() {
+                let elapsed_ms = now.duration_since(tr.start_time).as_secs_f32() * 1000.0;
+                let delayed_ms = elapsed_ms - tr.delay_ms;
+
+                if delayed_ms < 0.0 {
+                    // Apply "from" value during delay.
+                    let entry = self.animation_overrides.entry(*elem_id).or_default();
+                    entry.push((tr.property.clone(), tr.from_value.clone()));
+                    still_running = true;
+                    continue;
+                }
+                if tr.duration_ms <= 0.0 { done_trs.push(i); continue; }
+
+                let progress = (delayed_ms / tr.duration_ms).min(1.0);
+                if progress >= 1.0 { done_trs.push(i); continue; }
+
+                still_running = true;
+                let eased  = apply_easing(&tr.timing_fn, progress);
+                let interp = interpolate_value(&tr.from_value, &tr.to_value, eased);
+                let entry  = self.animation_overrides.entry(*elem_id).or_default();
+                entry.push((tr.property.clone(), interp));
+            }
+            for idx in done_trs.into_iter().rev() { trs.remove(idx); }
+            if trs.is_empty() { empty_elems.push(*elem_id); }
+        }
+        for eid in empty_elems { self.transition_states.remove(&eid); }
+
+        self.needs_animation_frame = still_running;
     }
 
     /// Handle a mouse event for scrollbars (click, drag, release).
@@ -2626,4 +2911,177 @@ fn scrollbar_hit_test(
     }
 
     false
+}
+
+// ─── CSS Animation helpers ────────────────────────────────────────────────────
+
+/// Extract the CSS properties that can participate in transitions from a style.
+/// Values are serialised to `rgba(…)` or `Npx` strings for comparison/interpolation.
+pub(crate) fn extract_transitionable(node: &HtmlBox) -> HashMap<String, String> {
+    let s = &node.style;
+    let mut m = HashMap::new();
+    m.insert("opacity".into(),          format!("{}", s.opacity));
+    m.insert("color".into(),            color_to_rgba(s.color));
+    m.insert("background-color".into(), color_to_rgba(s.background_color));
+    m.insert("border-color".into(),     color_to_rgba(s.border_top_color));
+    m.insert("transform".into(),        s.transform.clone());
+    m.insert("font-size".into(),        format!("{}px", s.font_size_px(16.0, 16.0)));
+    m
+}
+
+fn color_to_rgba(c: Color) -> String {
+    format!("rgba({},{},{},{:.4})", c.r, c.g, c.b, c.a as f32 / 255.0)
+}
+
+/// Find the two surrounding keyframe stops for `t` and return interpolated properties.
+pub(crate) fn interpolate_keyframe_stops(stops: &[KeyframeStop], t: f32) -> Vec<(String, String)> {
+    if stops.is_empty() { return Vec::new(); }
+    if stops.len() == 1 { return stops[0].properties.clone(); }
+
+    // Find surrounding stops.
+    let (from, to, local_t) = if t <= stops[0].offset {
+        (&stops[0], &stops[0], 0.0f32)
+    } else if t >= stops[stops.len() - 1].offset {
+        let last = &stops[stops.len() - 1];
+        (last, last, 1.0f32)
+    } else {
+        let mut fi = 0usize;
+        for i in 0..stops.len() - 1 {
+            if t >= stops[i].offset && t <= stops[i + 1].offset {
+                fi = i; break;
+            }
+        }
+        let ti = fi + 1;
+        let range = stops[ti].offset - stops[fi].offset;
+        let lt = if range > 1e-6 { (t - stops[fi].offset) / range } else { 0.0 };
+        (&stops[fi], &stops[ti], lt)
+    };
+
+    let mut result = Vec::new();
+    for (prop, from_val) in &from.properties {
+        let to_val = to.properties.iter()
+            .find(|(p, _)| p == prop)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or(from_val.as_str());
+        result.push((prop.clone(), interpolate_value(from_val, to_val, local_t)));
+    }
+    result
+}
+
+/// Interpolate between two CSS value strings.
+/// Handles `rgba(…)` colors and strings containing numbers.
+pub(crate) fn interpolate_value(from: &str, to: &str, t: f32) -> String {
+    if let Some(c) = interpolate_color(from, to, t) { return c; }
+    interpolate_numeric(from, to, t)
+}
+
+fn interpolate_color(from: &str, to: &str, t: f32) -> Option<String> {
+    let (fr, fg, fb, fa) = parse_rgba(from)?;
+    let (tr, tg, tb, ta) = parse_rgba(to)?;
+    let r = lerp(fr, tr, t).round() as u8;
+    let g = lerp(fg, tg, t).round() as u8;
+    let b = lerp(fb, tb, t).round() as u8;
+    let a = lerp(fa, ta, t);
+    Some(format!("rgba({},{},{},{:.4})", r, g, b, a))
+}
+
+fn parse_rgba(s: &str) -> Option<(f32, f32, f32, f32)> {
+    let s = s.trim();
+    let inner = s.strip_prefix("rgba(")?.strip_suffix(')')?;
+    let mut it = inner.split(',');
+    let r = it.next()?.trim().parse::<f32>().ok()?;
+    let g = it.next()?.trim().parse::<f32>().ok()?;
+    let b = it.next()?.trim().parse::<f32>().ok()?;
+    let a = it.next()?.trim().parse::<f32>().ok()?;
+    Some((r, g, b, a))
+}
+
+/// Interpolate by extracting all decimal numbers from both strings and lerping them.
+fn interpolate_numeric(from: &str, to: &str, t: f32) -> String {
+    let from_nums = extract_nums(from);
+    let to_nums   = extract_nums(to);
+
+    if from_nums.is_empty() || from_nums.len() != to_nums.len() {
+        return if t < 0.5 { from.to_string() } else { to.to_string() };
+    }
+
+    let mut result = from.to_string();
+    // Replace in reverse order so byte offsets remain valid.
+    for ((start, end, fv), (_, _, tv)) in from_nums.iter().zip(to_nums.iter()).rev() {
+        let v = lerp(*fv, *tv, t);
+        let s = if v == v.floor() && v.abs() < 1e9 {
+            format!("{}", v as i64)
+        } else {
+            format!("{:.4}", v)
+        };
+        result.replace_range(start..end, &s);
+    }
+    result
+}
+
+/// Extract `(start_byte, end_byte, value)` for every number in `s`.
+fn extract_nums(s: &str) -> Vec<(usize, usize, f32)> {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let neg = bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit();
+        if bytes[i].is_ascii_digit() || neg {
+            let start = i;
+            if neg { i += 1; }
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') { i += 1; }
+            if let Ok(v) = s[start..i].parse::<f32>() {
+                result.push((start, i, v));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    result
+}
+
+#[inline] fn lerp(a: f32, b: f32, t: f32) -> f32 { a + (b - a) * t }
+
+/// Apply an easing function to a linear progress value in 0.0..=1.0.
+pub(crate) fn apply_easing(easing: &EasingFn, t: f32) -> f32 {
+    match easing {
+        EasingFn::Linear     => t,
+        EasingFn::Ease       => cubic_bezier(0.25, 0.1, 0.25, 1.0, t),
+        EasingFn::EaseIn     => cubic_bezier(0.42, 0.0, 1.0,  1.0, t),
+        EasingFn::EaseOut    => cubic_bezier(0.0,  0.0, 0.58, 1.0, t),
+        EasingFn::EaseInOut  => cubic_bezier(0.42, 0.0, 0.58, 1.0, t),
+        EasingFn::CubicBezier(x1, y1, x2, y2) => cubic_bezier(*x1, *y1, *x2, *y2, t),
+        EasingFn::StepStart  => if t <= 0.0 { 0.0 } else { 1.0 },
+        EasingFn::StepEnd    => if t < 1.0 { 0.0 } else { 1.0 },
+        EasingFn::Steps(n, jump_start) => {
+            let n = *n as f32;
+            if *jump_start { ((t * n).ceil() / n).min(1.0) }
+            else           { ((t * n).floor() / n).min(1.0) }
+        }
+    }
+}
+
+/// CSS cubic-bezier evaluation via Newton-Raphson.
+fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    let mut u = t;
+    for _ in 0..8 {
+        let bx = bcoord(x1, x2, u) - t;
+        let db = bderiv(x1, x2, u);
+        if db.abs() < 1e-6 { break; }
+        u = (u - bx / db).clamp(0.0, 1.0);
+    }
+    bcoord(y1, y2, u)
+}
+
+fn bcoord(p1: f32, p2: f32, t: f32) -> f32 {
+    let t2 = t * t; let t3 = t2 * t;
+    3.0 * (1.0 - t) * (1.0 - t) * t * p1
+        + 3.0 * (1.0 - t) * t2 * p2
+        + t3
+}
+
+fn bderiv(p1: f32, p2: f32, t: f32) -> f32 {
+    3.0 * (1.0 - t) * (1.0 - t) * p1
+        + 6.0 * (1.0 - t) * t * (p2 - p1)
+        + 3.0 * t * t * (1.0 - p2)
 }

@@ -12,7 +12,9 @@ pub mod accessibility;
 #[cfg(test)]
 pub mod tests;
 
-pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, Announcement};
+pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, Announcement,
+                KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
+                AnimState, TransitionState};
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;
