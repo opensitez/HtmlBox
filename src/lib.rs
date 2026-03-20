@@ -91,21 +91,101 @@ pub fn load_html_with_registry(
         }
     }
 
+    // Batch-fetch remote images in parallel (deferred from parsing).
+    let t_img = std::time::Instant::now();
+    let img_count = batch_fetch_images(&mut doc.root);
+    if img_count > 0 {
+        eprintln!("Images: {:.0}ms ({} fetched)", t_img.elapsed().as_millis(), img_count);
+    }
+
     // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
     // are evaluated against the actual window size rather than the default vw=0, vh=0.
     let t2 = std::time::Instant::now();
     doc.stylesheet.rebuild_index();
+    eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
     css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, std::ptr::null(), false);
+    eprintln!("  Cascade: {:.0}ms", t2.elapsed().as_millis());
+
+    // Post-cascade: load background images (now that cascade has set background_image_url)
+    html::load_background_images(&mut doc.root, &doc.base_url.clone());
+
+    let t3 = std::time::Instant::now();
     let mut engine = LayoutEngine::new();
     engine.viewport_w = viewport_width;
     engine.viewport_h = viewport_height;
     engine.component_registry = registry;
     engine.layout(&mut doc, viewport_width);
-    eprintln!("Cascade+Layout: {:.0}ms", t2.elapsed().as_millis());
+    eprintln!("  Layout: {:.0}ms", t3.elapsed().as_millis());
     // Fire DOMContentLoaded — listeners registered before load_html can react.
     let evt = dom::HtmlEvent::new(dom::HtmlEventType::DOMContentLoaded);
     doc.events.dispatch(&doc.root, evt);
     doc
+}
+
+/// Walk the DOM tree, find all <img> nodes with remote `_resolved_src`,
+/// fetch them all in parallel threads, then set the decoded image data.
+fn batch_fetch_images(root: &mut types::HtmlBox) -> usize {
+    // 1. Collect (node_path, url) for all remote images
+    let mut pending: Vec<(Vec<usize>, String)> = Vec::new();
+    collect_remote_images(root, &mut Vec::new(), &mut pending);
+    if pending.is_empty() { return 0; }
+
+    // 2. Spawn parallel fetches
+    let mut handles: Vec<(Vec<usize>, std::thread::JoinHandle<Option<(Vec<u8>, u32, u32)>>)> = Vec::new();
+    for (path, url) in pending {
+        let handle = std::thread::spawn(move || {
+            let bytes = ureq::get(&url)
+                .timeout(std::time::Duration::from_secs(10))
+                .call().ok()
+                .and_then(|r| {
+                    let mut buf = Vec::new();
+                    r.into_reader().read_to_end(&mut buf).ok()?;
+                    Some(buf)
+                })?;
+            html::decode_image_bytes(&bytes)
+        });
+        handles.push((path, handle));
+    }
+
+    // 3. Collect results and set image data on nodes
+    let mut count = 0;
+    for (path, handle) in handles {
+        if let Ok(Some((data, w, h))) = handle.join() {
+            if let Some(node) = find_node_by_path(root, &path) {
+                html::set_image_on_node(node, data, w, h);
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn collect_remote_images(
+    node: &types::HtmlBox,
+    path: &mut Vec<usize>,
+    pending: &mut Vec<(Vec<usize>, String)>,
+) {
+    if node.tag == "img" && node.image_data.is_none() {
+        if let Some(url) = node.attributes.get("_resolved_src") {
+            if url.starts_with("http://") || url.starts_with("https://") {
+                pending.push((path.clone(), url.clone()));
+            }
+        }
+    }
+    for (i, child) in node.children.iter().enumerate() {
+        path.push(i);
+        collect_remote_images(child, path, pending);
+        path.pop();
+    }
+}
+
+fn find_node_by_path<'a>(root: &'a mut types::HtmlBox, path: &[usize]) -> Option<&'a mut types::HtmlBox> {
+    let mut node = root;
+    for &idx in path {
+        if idx >= node.children.len() { return None; }
+        node = &mut node.children[idx];
+    }
+    Some(node)
 }
 
 fn resolve_css_url(base: &str, href: &str) -> String {

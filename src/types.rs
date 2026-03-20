@@ -1452,6 +1452,11 @@ pub struct HtmlBox {
     pub image_width:  u32,
     pub image_height: u32,
 
+    // Background image pixel data (RGBA8, row-major)
+    pub bg_image_data:   Option<Vec<u8>>,
+    pub bg_image_width:  u32,
+    pub bg_image_height: u32,
+
     // SVG source markup (for round-trip and re-rasterization)
     pub svg_markup: Option<String>,
 
@@ -1497,6 +1502,10 @@ impl HtmlBox {
             image_data:   None,
             image_width:  0,
             image_height: 0,
+
+            bg_image_data:   None,
+            bg_image_width:  0,
+            bg_image_height: 0,
 
             svg_markup: None,
 

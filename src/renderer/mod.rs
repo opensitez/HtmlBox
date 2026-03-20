@@ -525,16 +525,16 @@ impl Renderer {
         let pw      = pr.w;
         let ph      = pr.h;
         let font_px = node.style.font_size_px(16.0, 16.0);
-        let radius  = {
-            let r = node.style.border_radius.resolve(font_px, pr.w, 16.0);
-            if r > 0.0 { r } else {
-                // Fallback to corners if shorthand is zero
-                node.style.border_top_left_radius.resolve(font_px, pr.w, 16.0)
-                    .max(node.style.border_top_right_radius.resolve(font_px, pr.w, 16.0))
-                    .max(node.style.border_bottom_left_radius.resolve(font_px, pr.w, 16.0))
-                    .max(node.style.border_bottom_right_radius.resolve(font_px, pr.w, 16.0))
-            }
-        };
+        let r_shorthand = node.style.border_radius.resolve(font_px, pr.w, 16.0);
+        let r_tl = if r_shorthand > 0.0 { r_shorthand }
+            else { node.style.border_top_left_radius.resolve(font_px, pr.w, 16.0) };
+        let r_tr = if r_shorthand > 0.0 { r_shorthand }
+            else { node.style.border_top_right_radius.resolve(font_px, pr.w, 16.0) };
+        let r_br = if r_shorthand > 0.0 { r_shorthand }
+            else { node.style.border_bottom_right_radius.resolve(font_px, pr.w, 16.0) };
+        let r_bl = if r_shorthand > 0.0 { r_shorthand }
+            else { node.style.border_bottom_left_radius.resolve(font_px, pr.w, 16.0) };
+        let radius = r_tl.max(r_tr).max(r_br).max(r_bl);
 
         // ── Hover / active / visited check ───────────────────────────────────
         // CSS :hover/:active apply to an element whenever the pointer is over
@@ -634,7 +634,7 @@ impl Renderer {
                     paint.set_color(sc.to_tiny_skia());
                     paint.anti_alias = true;
                     if radius > 0.0 {
-                        if let Some(path) = rounded_rect_path(sx2, sy2, sw2, sh2, radius) {
+                        if let Some(path) = rounded_rect_path_corners(sx2, sy2, sw2, sh2, r_tl, r_tr, r_br, r_bl) {
                             pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, eff_mask);
                         }
                     } else if let Some(r) = SkRect::from_xywh(sx2, sy2, sw2, sh2) {
@@ -656,7 +656,7 @@ impl Renderer {
                 paint.anti_alias = true;
                 paint.blend_mode = css_blend_mode(node.style.mix_blend_mode);
                 if radius > 0.0 {
-                    if let Some(path) = rounded_rect_path(px, py, pw, ph, radius) {
+                    if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, r_tl, r_tr, r_br, r_bl) {
                         pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, eff_mask);
                     }
                 } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
@@ -669,7 +669,19 @@ impl Renderer {
         if node.style.gradient_type != GradientType::None
             && node.style.gradient_stops.len() >= 2
         {
-            self.draw_gradient(node, pixmap, px, py, pw, ph, radius, elem_ts, eff_mask);
+            self.draw_gradient(node, pixmap, px, py, pw, ph, radius, r_tl, r_tr, r_br, r_bl, elem_ts, eff_mask);
+        }
+
+        // ── Background image ─────────────────────────────────────────────────
+        if let Some(ref bg_data) = node.bg_image_data {
+            if node.bg_image_width > 0 && node.bg_image_height > 0 {
+                self.draw_background_image(
+                    bg_data, node.bg_image_width, node.bg_image_height,
+                    &node.style, px, py, pw, ph, font_px,
+                    radius, r_tl, r_tr, r_br, r_bl,
+                    pixmap, elem_ts, eff_mask,
+                );
+            }
         }
 
         // ── Inset box-shadow (after background, before borders) ───────────────
@@ -979,7 +991,16 @@ impl Renderer {
     ) {
         let br      = node.border_rect;
         let font_px = style.font_size_px(16.0, 16.0);
-        let radius  = style.border_radius.resolve(font_px, br.w, 16.0);
+        let r_shorthand = style.border_radius.resolve(font_px, br.w, 16.0);
+        let r_tl = if r_shorthand > 0.0 { r_shorthand }
+            else { style.border_top_left_radius.resolve(font_px, br.w, 16.0) };
+        let r_tr = if r_shorthand > 0.0 { r_shorthand }
+            else { style.border_top_right_radius.resolve(font_px, br.w, 16.0) };
+        let r_br = if r_shorthand > 0.0 { r_shorthand }
+            else { style.border_bottom_right_radius.resolve(font_px, br.w, 16.0) };
+        let r_bl = if r_shorthand > 0.0 { r_shorthand }
+            else { style.border_bottom_left_radius.resolve(font_px, br.w, 16.0) };
+        let radius = r_tl.max(r_tr).max(r_br).max(r_bl);
         let rx      = br.x - sx;
         let ry      = br.y - sy;
 
@@ -1003,8 +1024,8 @@ impl Renderer {
             stroke.width = tw;
 
             if radius > 0.0 {
-                if let Some(path) = rounded_rect_path(
-                    rx + tw/2.0, ry + tw/2.0, br.w - tw, br.h - tw, radius,
+                if let Some(path) = rounded_rect_path_corners(
+                    rx + tw/2.0, ry + tw/2.0, br.w - tw, br.h - tw, r_tl, r_tr, r_br, r_bl,
                 ) {
                     pixmap.stroke_path(&path, &paint, &stroke, elem_ts, mask);
                 }
@@ -1163,7 +1184,7 @@ impl Renderer {
         node: &HtmlBox,
         pixmap: &mut Pixmap,
         px: f32, py: f32, pw: f32, ph: f32,
-        radius: f32,
+        radius: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32,
         elem_ts: Transform,
         mask: Option<&Mask>,
     ) {
@@ -1248,7 +1269,7 @@ impl Renderer {
         // Draw via fill_path / fill_rect so elem_ts (CSS transform + DPI scale)
         // is applied automatically — gradients now transform correctly.
         if radius > 0.0 {
-            if let Some(path) = rounded_rect_path(px, py, pw, ph, radius) {
+            if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, r_tl, r_tr, r_br, r_bl) {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, elem_ts, mask);
             }
         } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
@@ -1519,19 +1540,42 @@ impl Renderer {
                     draw_text.clone()
                 };
 
-                // Text shadow (advance not needed)
+                // Text shadow (with blur approximation)
                 if let Some(ref ts) = style_ref.text_shadow {
-                    let sh = CTextColor::rgba(ts.color.r, ts.color.g, ts.color.b, ts.color.a);
-                    self.draw_text_run_ex(
-                        &final_text,
-                        cursor_x + ts.offset_x, ly + ts.offset_y,
-                        run_font_px, run_line_h,
-                        style_ref.font_weight, effective_font_style,
-                        &style_ref.font_family,
-                        style_ref.font_stretch,
-                        &style_ref.font_variation_settings,
-                        sh, pixmap, mask,
-                    );
+                    let blur = ts.blur.max(0.0);
+                    if blur < 1.0 {
+                        // No blur — single pass
+                        let sh = CTextColor::rgba(ts.color.r, ts.color.g, ts.color.b, ts.color.a);
+                        self.draw_text_run_ex(
+                            &final_text,
+                            cursor_x + ts.offset_x, ly + ts.offset_y,
+                            run_font_px, run_line_h,
+                            style_ref.font_weight, effective_font_style,
+                            &style_ref.font_family,
+                            style_ref.font_stretch,
+                            &style_ref.font_variation_settings,
+                            sh, pixmap, mask,
+                        );
+                    } else {
+                        // Approximate blur with multiple offset passes
+                        let steps = (blur / 1.5).ceil().min(5.0) as i32;
+                        let alpha_div = (steps * 2 + 1) as u16;
+                        let layer_a = ((ts.color.a as u16 * 2) / alpha_div).max(1) as u8;
+                        let sh = CTextColor::rgba(ts.color.r, ts.color.g, ts.color.b, layer_a);
+                        for dy in -steps..=steps {
+                            let oy = ts.offset_y + (dy as f32) * (blur / steps as f32) * 0.5;
+                            self.draw_text_run_ex(
+                                &final_text,
+                                cursor_x + ts.offset_x, ly + oy,
+                                run_font_px, run_line_h,
+                                style_ref.font_weight, effective_font_style,
+                                &style_ref.font_family,
+                                style_ref.font_stretch,
+                                &style_ref.font_variation_settings,
+                                sh, pixmap, mask,
+                            );
+                        }
+                    }
                 }
 
                 // Main text — returns the actual cosmic-text advance (logical pixels).
@@ -2169,6 +2213,159 @@ impl Renderer {
         );
     }
 
+    // ─── Background image ─────────────────────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_background_image(
+        &self,
+        data:     &[u8],
+        img_w:    u32,
+        img_h:    u32,
+        style:    &ComputedStyle,
+        px: f32, py: f32, pw: f32, ph: f32,
+        font_px: f32,
+        radius: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32,
+        pixmap:   &mut Pixmap,
+        elem_ts:  Transform,
+        mask:     Option<&Mask>,
+    ) {
+        let iw = img_w as f32;
+        let ih = img_h as f32;
+        if iw <= 0.0 || ih <= 0.0 { return; }
+
+        // Compute drawn image dimensions based on background-size
+        let (draw_w, draw_h) = match style.background_size {
+            BackgroundSize::Cover => {
+                let scale = (pw / iw).max(ph / ih);
+                (iw * scale, ih * scale)
+            }
+            BackgroundSize::Contain => {
+                let scale = (pw / iw).min(ph / ih);
+                (iw * scale, ih * scale)
+            }
+            BackgroundSize::Explicit => {
+                let w = if style.background_size_w.is_auto() { iw }
+                    else { style.background_size_w.resolve(font_px, pw, 16.0) };
+                let h = if style.background_size_h.is_auto() { ih }
+                    else { style.background_size_h.resolve(font_px, ph, 16.0) };
+                (w, h)
+            }
+            BackgroundSize::Auto => (iw, ih),
+        };
+        if draw_w <= 0.0 || draw_h <= 0.0 { return; }
+
+        // Compute position
+        let pos_x = px + style.background_position_x.resolve(font_px, pw - draw_w, 16.0);
+        let pos_y = py + style.background_position_y.resolve(font_px, ph - draw_h, 16.0);
+
+        // Build source pixmap
+        let mut src_pm = match Pixmap::new(img_w, img_h) {
+            Some(p) => p,
+            None => return,
+        };
+        {
+            let pix = src_pm.pixels_mut();
+            let src_len = (img_w * img_h * 4) as usize;
+            if data.len() < src_len { return; }
+            for (i, px_out) in pix.iter_mut().enumerate() {
+                let base = i * 4;
+                let r = data[base] as u32;
+                let g = data[base + 1] as u32;
+                let b = data[base + 2] as u32;
+                let a = data[base + 3];
+                let pr = ((r * a as u32 + 127) / 255) as u8;
+                let pg = ((g * a as u32 + 127) / 255) as u8;
+                let pb = ((b * a as u32 + 127) / 255) as u8;
+                *px_out = tiny_skia::PremultipliedColorU8::from_rgba(pr, pg, pb, a)
+                    .unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
+            }
+        }
+
+        // Build clip mask for the padding box (background-clip: padding-box default)
+        let clip_mask_storage;
+        let final_mask: Option<&Mask>;
+        {
+            let pmw = pixmap.width();
+            let pmh = pixmap.height();
+            if let Some(mut combined) = Mask::new(pmw, pmh) {
+                if radius > 0.0 {
+                    if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, r_tl, r_tr, r_br, r_bl) {
+                        combined.fill_path(&path, FillRule::Winding, true, Transform::from_scale(self.scale, self.scale));
+                    }
+                } else {
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(px, py);
+                    pb.line_to(px + pw, py);
+                    pb.line_to(px + pw, py + ph);
+                    pb.line_to(px, py + ph);
+                    pb.close();
+                    if let Some(clip_path) = pb.finish() {
+                        combined.fill_path(&clip_path, FillRule::Winding, true, Transform::from_scale(self.scale, self.scale));
+                    }
+                }
+                if let Some(m) = mask {
+                    let src_mask = m.data();
+                    let dst = combined.data_mut();
+                    for (d, &s) in dst.iter_mut().zip(src_mask.iter()) {
+                        *d = ((*d as u16 * s as u16) / 255) as u8;
+                    }
+                }
+                clip_mask_storage = Some(combined);
+                final_mask = clip_mask_storage.as_ref();
+            } else {
+                final_mask = mask;
+                clip_mask_storage = None;
+            }
+        }
+        let _ = clip_mask_storage;
+
+        // Determine tiles based on background-repeat
+        let repeat_x = matches!(style.background_repeat, BackgroundRepeat::Repeat | BackgroundRepeat::RepeatX);
+        let repeat_y = matches!(style.background_repeat, BackgroundRepeat::Repeat | BackgroundRepeat::RepeatY);
+
+        let start_x = if repeat_x {
+            let mut sx = pos_x;
+            while sx > px { sx -= draw_w; }
+            sx
+        } else {
+            pos_x
+        };
+        let start_y = if repeat_y {
+            let mut sy = pos_y;
+            while sy > py { sy -= draw_h; }
+            sy
+        } else {
+            pos_y
+        };
+
+        let end_x = if repeat_x { px + pw } else { start_x + draw_w };
+        let end_y = if repeat_y { py + ph } else { start_y + draw_h };
+
+        let scale_x = draw_w / iw;
+        let scale_y = draw_h / ih;
+
+        let mut tile_y = start_y;
+        while tile_y < end_y {
+            let mut tile_x = start_x;
+            while tile_x < end_x {
+                let transform = Transform::from_scale(scale_x, scale_y)
+                    .pre_concat(Transform::from_translate(tile_x / scale_x, tile_y / scale_y));
+                let final_transform = elem_ts.pre_concat(transform);
+                pixmap.draw_pixmap(
+                    0, 0,
+                    src_pm.as_ref(),
+                    &tiny_skia::PixmapPaint::default(),
+                    final_transform,
+                    final_mask,
+                );
+                tile_x += draw_w;
+                if !repeat_x { break; }
+            }
+            tile_y += draw_h;
+            if !repeat_y { break; }
+        }
+    }
+
     // ─── Scrollbars ──────────────────────────────────────────────────────────
 
     fn draw_scrollbars(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
@@ -2449,27 +2646,47 @@ fn rect_path(x: f32, y: f32, w: f32, h: f32) -> Option<tiny_skia::Path> {
 }
 
 fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
-    let r = r.min(w / 2.0).min(h / 2.0);
-    if r <= 0.0 { return rect_path(x, y, w, h); }
-    let k = r * 0.5522848;  // kappa for quarter-circle approximation
+    rounded_rect_path_corners(x, y, w, h, r, r, r, r)
+}
+
+fn rounded_rect_path_corners(x: f32, y: f32, w: f32, h: f32,
+    tl: f32, tr: f32, br: f32, bl: f32,
+) -> Option<tiny_skia::Path> {
+    let max_r = (w / 2.0).min(h / 2.0);
+    let tl = tl.min(max_r);
+    let tr = tr.min(max_r);
+    let br = br.min(max_r);
+    let bl = bl.min(max_r);
+    if tl <= 0.0 && tr <= 0.0 && br <= 0.0 && bl <= 0.0 {
+        return rect_path(x, y, w, h);
+    }
+    let k = 0.5522848_f32;  // kappa for quarter-circle approximation
     let mut pb = PathBuilder::new();
     // Top edge
-    pb.move_to(x + r, y);
-    pb.line_to(x + w - r, y);
+    pb.move_to(x + tl, y);
+    pb.line_to(x + w - tr, y);
     // Top-right corner
-    pb.cubic_to(x + w - r + k, y,          x + w, y + r - k,      x + w, y + r);
+    if tr > 0.0 {
+        pb.cubic_to(x + w - tr + tr*k, y,  x + w, y + tr - tr*k,  x + w, y + tr);
+    }
     // Right edge
-    pb.line_to(x + w, y + h - r);
+    pb.line_to(x + w, y + h - br);
     // Bottom-right corner
-    pb.cubic_to(x + w, y + h - r + k,      x + w - r + k, y + h,  x + w - r, y + h);
+    if br > 0.0 {
+        pb.cubic_to(x + w, y + h - br + br*k,  x + w - br + br*k, y + h,  x + w - br, y + h);
+    }
     // Bottom edge
-    pb.line_to(x + r, y + h);
+    pb.line_to(x + bl, y + h);
     // Bottom-left corner
-    pb.cubic_to(x + r - k, y + h,          x, y + h - r + k,      x, y + h - r);
+    if bl > 0.0 {
+        pb.cubic_to(x + bl - bl*k, y + h,  x, y + h - bl + bl*k,  x, y + h - bl);
+    }
     // Left edge
-    pb.line_to(x, y + r);
+    pb.line_to(x, y + tl);
     // Top-left corner
-    pb.cubic_to(x, y + r - k,              x + r - k, y,           x + r, y);
+    if tl > 0.0 {
+        pb.cubic_to(x, y + tl - tl*k,  x + tl - tl*k, y,  x + tl, y);
+    }
     pb.close();
     pb.finish()
 }

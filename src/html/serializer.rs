@@ -450,6 +450,11 @@ fn serialize_rule(rule: &CssRule) -> String {
     for (prop, val) in props {
         decls.push_str(&format!("  {}: {};\n", prop, val));
     }
+    let mut imp_props: Vec<(&String, &String)> = rule.important_declarations.iter().collect();
+    imp_props.sort_by_key(|(k, _)| k.as_str());
+    for (prop, val) in imp_props {
+        decls.push_str(&format!("  {}: {} !important;\n", prop, val));
+    }
 
     format!("{} {{\n{}}}\n", sel_text, decls)
 }

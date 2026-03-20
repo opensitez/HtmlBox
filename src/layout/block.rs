@@ -112,18 +112,32 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
                     + ch.resolved_border_left + ch.resolved_border_right
                     + ch.resolved_margin_left + ch.resolved_margin_right;
                 if total > w { w = total; }
+            } else if !ch.is_text_node() && node.line_cache.is_empty() {
+                // In a block context with mixed block/inline children, line_cache is
+                // empty so inline children aren't captured there.  Recurse to get
+                // their intrinsic width (e.g. <a> wrapping an <img width=200>).
+                let cw = compute_intrinsic_width(ch);
+                let total = cw
+                    + ch.resolved_pad_left + ch.resolved_pad_right
+                    + ch.resolved_border_left + ch.resolved_border_right
+                    + ch.resolved_margin_left + ch.resolved_margin_right;
+                if total > w { w = total; }
             }
-            // Non-text inline elements (e.g. <b>, <span>, <a>) inside block containers
-            // are part of the parent's inline flow and already captured in the parent's
-            // line_cache. Their margin_rect.x is stale after shift_rects moves the
-            // parent box to its final position, so using it produces spuriously large
-            // values that grow on each layout pass. Skip them.
+            // When line_cache IS populated, non-text inline elements are already
+            // captured there. Their margin_rect.x is stale after shift_rects, so skip.
             continue;
         }
         // Block children with auto width: their marginRect is inflated to containing width.
         // Recurse to get real content width.
         // Skip this for flex/grid containers — their children are already correctly positioned
         // by the flex/grid algorithm and margin_rect reflects the final layout.
+        // Floated children are positioned by the float algorithm (not stacked
+        // vertically), so use their laid-out right edge for intrinsic width.
+        if !matches!(ch.style.float, Float::None) {
+            let right = (ch.margin_rect.x - origin) + ch.margin_rect.w;
+            if right > w { w = right; }
+            continue;
+        }
         let is_auto_width_block = !is_flex_or_grid
             && ch.style.width.is_auto()
             && matches!(ch.style.display,
@@ -141,6 +155,16 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
             // offsets across re-renders (via shift_rects), producing spuriously large widths.
             if is_flex_or_grid && ch.is_text_node()
                 && ch.text.chars().all(|c| c.is_ascii_whitespace())
+            {
+                continue;
+            }
+            // InlineBlock/InlineFlex/InlineGrid children inside inline flow are already
+            // captured as Atomic items in the parent's line_cache widths.  Their
+            // margin_rect.x includes text-align centering offsets which would inflate
+            // the intrinsic width.  Skip them when line_cache is non-empty.
+            if !node.line_cache.is_empty()
+                && matches!(ch.style.display,
+                    Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
             {
                 continue;
             }
@@ -392,6 +416,9 @@ pub fn layout_block_with_fc(
     let mut first_in_flow_idx: Option<usize> = None;
     let mut last_in_flow_idx:  Option<usize> = None;
     let mut seen_float = false;
+    // Inline flow state for anonymous inline formatting contexts
+    let mut inline_x = 0.0f32;
+    let mut inline_line_h = 0.0f32;
 
     for i in 0..node.children.len() {
         let child_display  = node.children[i].style.display;
@@ -409,6 +436,15 @@ pub fn layout_block_with_fc(
                 child_y = fc.clear_y(content_y + child_y - fc.origin_y, clear) - (content_y - fc.origin_y);
                 prev_bottom_margin = 0.0;
             }
+        }
+
+        // Flush any pending inline line before a block or float child
+        if (node.children[i].style.is_block_level() || !matches!(child_float, Float::None))
+            && inline_line_h > 0.0
+        {
+            child_y += inline_line_h;
+            inline_x = 0.0;
+            inline_line_h = 0.0;
         }
 
         if !matches!(child_float, Float::None) {
@@ -477,11 +513,18 @@ pub fn layout_block_with_fc(
             }
             let _ = is_first_in_flow;
 
-            // Check available width from floats
+            // Check available width from floats.
+            // Per CSS §9.5.1, only BFC-establishing blocks must not overlap float
+            // margin boxes.  Normal in-flow blocks extend to full container width;
+            // their *inline content* wraps around floats (handled by the float
+            // context during line breaking).
             let child_h = node.children[i].margin_rect.h;
             let mut left_edge = 0.0f32;
             let mut right_edge = child_content_w;
-            fc.available_width(content_y + child_y - fc.origin_y, child_h, child_content_w, &mut left_edge, &mut right_edge);
+            let child_is_bfc = establishes_bfc(&node.children[i].style);
+            if child_is_bfc {
+                fc.available_width(content_y + child_y - fc.origin_y, child_h, child_content_w, &mut left_edge, &mut right_edge);
+            }
 
             // Rebuild rects at correct position using cached resolved values
             let child_margin_left  = node.children[i].resolved_margin_left;
@@ -523,42 +566,61 @@ pub fn layout_block_with_fc(
             is_first_in_flow = false;
 
         } else if node.children[i].style.is_inline_level() {
-            // Skip atomic inline-run boxes (positioned by LayoutInlines via inlineContent).
-            // In the Rust architecture these appear as children when inline content
-            // is processed; simply skip them here as in C++ isAtomicInlineRun check.
-            // (If there is no inline content, lay them out as block-like items.)
-            // Skip whitespace-only text nodes — they appear between block tags in HTML
-            // source but contribute no visual output and must not advance child_y.
+            // Inline-level children in a block container with mixed content form an
+            // anonymous inline formatting context (CSS §9.2.1.1).  Lay them out with
+            // horizontal flow, wrapping to the next line when they exceed the container.
             let is_whitespace_only_text = node.children[i].is_text_node()
                 && node.children[i].text.chars().all(|c| c.is_ascii_whitespace());
             if node.line_cache.is_empty() && !is_whitespace_only_text {
+                // Layout to get dimensions
                 engine.layout_box(
                     &mut node.children[i], child_content_w, content_x, content_y + child_y,
                     font_px, root_font_px
                 );
-                let child_content_h = node.children[i].content_rect.h;
-                let child_rbox_copy = ResolvedBox {
-                    margin_top:    node.children[i].resolved_margin_top,
-                    margin_right:  node.children[i].resolved_margin_right,
-                    margin_bottom: node.children[i].resolved_margin_bottom,
-                    margin_left:   node.children[i].resolved_margin_left,
-                    border_top:    node.children[i].resolved_border_top,
-                    border_right:  node.children[i].resolved_border_right,
-                    border_bottom: node.children[i].resolved_border_bottom,
-                    border_left:   node.children[i].resolved_border_left,
-                    padding_top:   node.children[i].resolved_pad_top,
-                    padding_right: node.children[i].resolved_pad_right,
-                    padding_bottom:node.children[i].resolved_pad_bottom,
-                    padding_left:  node.children[i].resolved_pad_left,
-                    content_width: Some(node.children[i].resolved_content_width),
-                    content_height:Some(child_content_h),
-                };
-                let cx = content_x + child_rbox_copy.border_left + child_rbox_copy.padding_left;
-                let cy = content_y + child_y + child_rbox_copy.border_top + child_rbox_copy.padding_top;
-                let dx = cx - node.children[i].content_rect.x;
-                let dy = cy - node.children[i].content_rect.y;
-                shift_rects(&mut node.children[i], dx, dy);
-                child_y += node.children[i].margin_rect.h;
+                // Shrink-to-fit for auto-width InlineBlock children (CSS §10.3.9)
+                if node.children[i].style.width.is_auto()
+                    && matches!(node.children[i].style.display,
+                        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
+                {
+                    let max_line_w = node.children[i].line_cache.iter()
+                        .map(|l| l.width).fold(0.0_f32, f32::max);
+                    let intrinsic_w = if max_line_w > 0.0 { max_line_w }
+                                      else { compute_intrinsic_width(&node.children[i]) };
+                    if intrinsic_w > 0.0 {
+                        let irb = &node.children[i];
+                        let shrink_w = intrinsic_w
+                            + irb.resolved_pad_left + irb.resolved_pad_right
+                            + irb.resolved_border_left + irb.resolved_border_right
+                            + irb.resolved_margin_left + irb.resolved_margin_right;
+                        if shrink_w < child_content_w {
+                            engine.layout_box(
+                                &mut node.children[i], shrink_w, content_x, content_y + child_y,
+                                font_px, root_font_px
+                            );
+                        }
+                    }
+                }
+
+                let child_mw = node.children[i].margin_rect.w;
+                let child_mh = node.children[i].margin_rect.h;
+
+                // Horizontal flow: wrap to next line if this child doesn't fit
+                if inline_x > 0.0 && inline_x + child_mw > child_content_w {
+                    // Wrap: advance to next line
+                    child_y += inline_line_h;
+                    inline_x = 0.0;
+                    inline_line_h = 0.0;
+                }
+
+                // Position child at (content_x + inline_x, content_y + child_y)
+                let dx = content_x + inline_x - node.children[i].margin_rect.x;
+                let dy = content_y + child_y  - node.children[i].margin_rect.y;
+                if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                    shift_rects(&mut node.children[i], dx, dy);
+                }
+
+                inline_x += child_mw;
+                if child_mh > inline_line_h { inline_line_h = child_mh; }
 
                 if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
                     let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
@@ -567,6 +629,11 @@ pub fn layout_block_with_fc(
             }
             // else: skip — already positioned by LayoutInlines (line_cache exists)
         }
+    }
+
+    // Flush trailing inline line
+    if inline_line_h > 0.0 {
+        child_y += inline_line_h;
     }
 
     // ─── Parent-last-child bottom margin collapsing ───────────────────────────

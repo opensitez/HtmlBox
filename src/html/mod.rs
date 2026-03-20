@@ -1,6 +1,7 @@
 pub mod serializer;
 
 use std::collections::HashMap;
+use std::io::Read as _;
 use crate::types::{HtmlBox, Document, Display, ListStyleType};
 use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
@@ -9,15 +10,18 @@ use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 /// Pre-pass: extract `<svg>…</svg>` blocks and replace with `<img>` placeholders.
 /// Returns (processed_html, map_of_key→svg_markup).
 fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
+    // Quick check: skip lowercasing and allocation if no SVGs present
+    if crate::css::find_case_insensitive(html, "<svg") .is_none() {
+        return (String::new(), HashMap::new());
+    }
     let mut result = String::with_capacity(html.len());
     let mut svg_map: HashMap<String, String> = HashMap::new();
-    let lower = html.to_ascii_lowercase();
     let mut pos = 0usize;
     let mut svg_idx = 0u32;
 
     while pos < html.len() {
-        // Find next <svg
-        let svg_start = match lower[pos..].find("<svg") {
+        // Find next <svg (case-insensitive, no full-string lowercase)
+        let svg_start = match crate::css::find_case_insensitive(&html[pos..], "<svg") {
             Some(offset) => pos + offset,
             None => {
                 result.push_str(&html[pos..]);
@@ -29,7 +33,7 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
         result.push_str(&html[pos..svg_start]);
 
         // Find closing </svg>
-        let svg_end = match lower[svg_start..].find("</svg>") {
+        let svg_end = match crate::css::find_case_insensitive(&html[svg_start..], "</svg>") {
             Some(offset) => svg_start + offset + 6, // include </svg>
             None => {
                 // Malformed: no closing tag, emit rest as-is
@@ -164,6 +168,22 @@ fn resolve_replaced_size(ew: Option<u32>, eh: Option<u32>, vb: Option<(u32, u32)
 
 /// Post-pass: walk the box tree, find `<img>` placeholders with `__svg_N__` src,
 /// rasterize the SVG to RGBA pixel data, and store it on the box.
+/// Post-cascade pass: load background images for elements whose
+/// background-image URL was set by CSS rules (not just inline styles).
+pub fn load_background_images(node: &mut HtmlBox, base_url: &str) {
+    if node.bg_image_data.is_none() && !node.style.background_image_url.is_empty() {
+        let url = node.style.background_image_url.clone();
+        if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
+            node.bg_image_data   = Some(data);
+            node.bg_image_width  = w;
+            node.bg_image_height = h;
+        }
+    }
+    for child in &mut node.children {
+        load_background_images(child, base_url);
+    }
+}
+
 fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
     if node.tag == "img" {
         if let Some(src) = node.attributes.get("src") {
@@ -346,6 +366,60 @@ pub fn parse_html_bytes_with_base(data: &[u8], base_url: &str) -> Document {
 
 // ─── Image loading ─────────────────────────────────────────────────────────
 
+/// Resolve a URL against a base URL.
+fn resolve_url(src: &str, base_url: &str) -> String {
+    if src.contains("://") {
+        return src.to_string();
+    }
+    if base_url.starts_with("http://") || base_url.starts_with("https://") {
+        if src.starts_with("//") {
+            // Protocol-relative URL
+            let scheme = if base_url.starts_with("https") { "https:" } else { "http:" };
+            return format!("{}{}", scheme, src);
+        }
+        if src.starts_with('/') {
+            if let Some(slash3) = base_url.find("://").and_then(|i| base_url[i+3..].find('/').map(|j| i+3+j)) {
+                return format!("{}{}", &base_url[..slash3], src);
+            }
+            return format!("{}{}", base_url.trim_end_matches('/'), src);
+        }
+        // Relative path
+        if let Some(last_slash) = base_url.rfind('/') {
+            return format!("{}{}", &base_url[..=last_slash], src);
+        }
+    }
+    if src.starts_with('/') || base_url.is_empty() {
+        return src.to_string();
+    }
+    let base_dir = std::path::Path::new(base_url)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if base_dir.is_empty() { src.to_string() }
+    else { format!("{}/{}", base_dir, src) }
+}
+
+/// Set decoded image data on a node, applying width/height/aspect-ratio.
+pub fn set_image_on_node(node: &mut HtmlBox, data: Vec<u8>, w: u32, h: u32) {
+    node.image_data   = Some(data);
+    node.image_width  = w;
+    node.image_height = h;
+    let w_auto = node.style.width.is_auto();
+    let h_auto = node.style.height.is_auto();
+    if w_auto && h_auto {
+        apply_property(&mut node.style, "width",  &format!("{}px", w));
+        apply_property(&mut node.style, "height", &format!("{}px", h));
+    } else if w_auto && h > 0 {
+        let specified_h = node.style.height.resolve(16.0, 0.0, 16.0);
+        let ratio_w = (specified_h * w as f32 / h as f32).round() as u32;
+        apply_property(&mut node.style, "width", &format!("{}px", ratio_w));
+    } else if h_auto && w > 0 {
+        let specified_w = node.style.width.resolve(16.0, 0.0, 16.0);
+        let ratio_h = (specified_w * h as f32 / w as f32).round() as u32;
+        apply_property(&mut node.style, "height", &format!("{}px", ratio_h));
+    }
+}
+
 /// Try to load an image from a file path or data URL.
 /// Returns (rgba_bytes, width, height) or None on failure.
 pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>, u32, u32)> {
@@ -354,25 +428,19 @@ pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>,
         return load_image_data_url(src);
     }
 
-    // Resolve path: if relative, join with base_url directory
-    let path = if src.starts_with('/') || src.contains("://") || base_url.is_empty() {
-        src.to_string()
-    } else {
-        // Base URL could be a file path; get its directory
-        let base_dir = std::path::Path::new(base_url)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        if base_dir.is_empty() {
-            src.to_string()
-        } else {
-            format!("{}/{}", base_dir, src)
-        }
-    };
+    let path = resolve_url(src, base_url);
 
-    // Skip http/https for now — can't fetch at parse time without async
+    // Fetch remote images via HTTP
     if path.starts_with("http://") || path.starts_with("https://") {
-        return None;
+        let bytes = ureq::get(&path)
+            .timeout(std::time::Duration::from_secs(10))
+            .call().ok()
+            .and_then(|r| {
+                let mut buf = Vec::new();
+                r.into_reader().read_to_end(&mut buf).ok()?;
+                Some(buf)
+            })?;
+        return decode_image_bytes(&bytes);
     }
 
     let bytes = std::fs::read(&path).ok()?;
@@ -388,10 +456,67 @@ fn load_image_data_url(src: &str) -> Option<(Vec<u8>, u32, u32)> {
     if !is_base64 { return None; }
     // Decode base64
     let bytes = base64_decode(encoded)?;
+    // SVG: the image crate can't decode SVGs, so extract dimensions from XML
+    if header.contains("svg") {
+        return parse_svg_dimensions(&bytes);
+    }
     decode_image_bytes(&bytes)
 }
 
-fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+/// Extract width/height from an SVG's root element attributes or viewBox.
+/// Returns a 1×1 transparent RGBA pixel with the SVG's declared dimensions.
+fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    // Find the <svg ...> opening tag
+    let svg_start = text.find("<svg")?;
+    let svg_end = text[svg_start..].find('>')? + svg_start;
+    let svg_tag = &text[svg_start..=svg_end];
+
+    // Try to extract width="N" and height="N" attributes
+    let mut w: Option<f32> = None;
+    let mut h: Option<f32> = None;
+
+    for attr in ["width", "height"] {
+        let pattern = format!("{}=\"", attr);
+        if let Some(pos) = svg_tag.find(&pattern) {
+            let val_start = pos + pattern.len();
+            if let Some(val_end) = svg_tag[val_start..].find('"') {
+                let val_str = &svg_tag[val_start..val_start + val_end];
+                // Strip units like "px"
+                let num_str = val_str.trim_end_matches("px").trim();
+                if let Ok(n) = num_str.parse::<f32>() {
+                    if attr == "width" { w = Some(n); }
+                    else { h = Some(n); }
+                }
+            }
+        }
+    }
+
+    // Fallback: try viewBox="minX minY width height"
+    if w.is_none() || h.is_none() {
+        if let Some(pos) = svg_tag.find("viewBox=\"") {
+            let val_start = pos + 9;
+            if let Some(val_end) = svg_tag[val_start..].find('"') {
+                let vb = &svg_tag[val_start..val_start + val_end];
+                let parts: Vec<f32> = vb.split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                if parts.len() == 4 {
+                    if w.is_none() { w = Some(parts[2]); }
+                    if h.is_none() { h = Some(parts[3]); }
+                }
+            }
+        }
+    }
+
+    let wi = w? as u32;
+    let hi = h? as u32;
+    if wi == 0 || hi == 0 { return None; }
+    // Return a 1×1 transparent pixel — we only need the dimensions
+    Some((vec![0u8; 4], wi, hi))
+}
+
+pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     use image::ImageReader;
     use std::io::Cursor;
     let reader = ImageReader::new(Cursor::new(bytes))
@@ -470,7 +595,7 @@ fn resolve_entity(name: &str) -> String {
         "quot"  => "\"", "apos"  => "'",  "nbsp"  => "\u{00A0}",
         "copy"  => "©",  "reg"   => "®",  "trade" => "™",
         "mdash" => "—",  "ndash" => "–",  "hellip"=> "…",
-        "laquo" => "«",  "raquo" => "»",
+        "laquo" => "«",  "raquo" => "»",  "lsaquo"=> "‹",  "rsaquo"=> "›",
         "lsquo" => "\u{2018}", "rsquo" => "\u{2019}",
         "ldquo" => "\u{201C}", "rdquo" => "\u{201D}",
         "bull"  => "•",  "middot"=> "·",
@@ -513,7 +638,7 @@ fn tokenize(html: &str) -> Vec<Token> {
                 i = end;
                 continue;
             }
-            if html[i..].to_ascii_lowercase().starts_with("<!doctype") {
+            if i + 9 <= bytes.len() && bytes[i..i+9].eq_ignore_ascii_case(b"<!doctype") {
                 let end = html[i..].find('>').map(|e| i + e + 1).unwrap_or(html.len());
                 tokens.push(Token::Doctype);
                 i = end;
@@ -539,10 +664,7 @@ fn tokenize(html: &str) -> Vec<Token> {
             // Collect everything until the matching close tag as a single Text token.
             if (tag == "style" || tag == "script") && !(self_closing || is_void) {
                 let close_pat = format!("</{}", tag);
-                let remaining = &html[i..];
-                let raw_end = remaining
-                    .to_ascii_lowercase()
-                    .find(&close_pat)
+                let raw_end = crate::css::find_case_insensitive(&html[i..], &close_pat)
                     .map(|e| i + e)
                     .unwrap_or(html.len());
                 let raw_text = &html[i..raw_end];
@@ -980,29 +1102,34 @@ impl HtmlParser {
 
         // Load image data for <img> elements
         if tag == "img" {
+            // Swap data-src into src for lazy-loaded images (the real URL replaces the placeholder)
+            if let Some(ds) = node.attributes.get("data-src").cloned() {
+                if !ds.is_empty() {
+                    node.attributes.insert("src".to_string(), ds);
+                }
+            }
             if let Some(src) = node.attributes.get("src").cloned() {
-                if let Some((data, w, h)) = load_image_from_src(&src, &self.base_url) {
-                    node.image_data   = Some(data);
-                    node.image_width  = w;
-                    node.image_height = h;
-                    let w_auto = node.style.width.is_auto();
-                    let h_auto = node.style.height.is_auto();
-                    if w_auto && h_auto {
-                        // Both auto: use natural dimensions
-                        apply_property(&mut node.style, "width",  &format!("{}px", w));
-                        apply_property(&mut node.style, "height", &format!("{}px", h));
-                    } else if w_auto && h > 0 {
-                        // Height specified, width auto: maintain aspect ratio
-                        let specified_h = node.style.height.resolve(16.0, 0.0, 16.0);
-                        let ratio_w = (specified_h * w as f32 / h as f32).round() as u32;
-                        apply_property(&mut node.style, "width", &format!("{}px", ratio_w));
-                    } else if h_auto && w > 0 {
-                        // Width specified, height auto: maintain aspect ratio
-                        let specified_w = node.style.width.resolve(16.0, 0.0, 16.0);
-                        let ratio_h = (specified_w * h as f32 / w as f32).round() as u32;
-                        apply_property(&mut node.style, "height", &format!("{}px", ratio_h));
+                let resolved = resolve_url(&src, &self.base_url);
+                let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
+                // Only load non-remote images during parsing; remote images
+                // are batch-fetched in parallel after parsing (see lib.rs).
+                if !is_remote {
+                    if let Some((data, w, h)) = load_image_from_src(&src, &self.base_url) {
+                        set_image_on_node(&mut node, data, w, h);
                     }
                 }
+                // Store the resolved URL for deferred loading
+                node.attributes.insert("_resolved_src".to_string(), resolved);
+            }
+        }
+
+        // Load background image data for any element with background-image: url(...)
+        if !node.style.background_image_url.is_empty() {
+            let url = node.style.background_image_url.clone();
+            if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
+                node.bg_image_data   = Some(data);
+                node.bg_image_width  = w;
+                node.bg_image_height = h;
             }
         }
 
@@ -1412,16 +1539,29 @@ where
         live_regions_initialized: false,
     };
 
-    // Apply cascade
+    // NOTE: External CSS fetching, cascade, layout, and image loading are
+    // handled by the caller (lib.rs load_html_with_registry) which does
+    // parallel CSS fetching and batch image loading. We only do a minimal
+    // cascade here for the standalone parse_html / parse_html_with_base paths.
+    //
+    // Fetch local-only linked stylesheets (file:// paths).
+    // Remote stylesheets are handled by lib.rs in parallel.
+    for href in &doc.linked_stylesheets.clone() {
+        let url = resolve_url(href, base_url);
+        if !url.starts_with("http://") && !url.starts_with("https://") && !url.is_empty() {
+            if let Ok(css_text) = std::fs::read_to_string(&url) {
+                doc.stylesheet.parse_and_add(&css_text);
+            }
+        }
+    }
+
+    // Apply cascade (basic pass — lib.rs re-runs with viewport dimensions)
     let root_font_px = 16.0;
     doc.stylesheet.rebuild_index();
     apply_cascade(&mut doc.root, &doc.stylesheet, None, root_font_px);
 
-    // Post-cascade: fix summary display and details open/closed state
-    // (cascade overwrites our pre-cascade settings with UA rules)
+    // Post-cascade fixes
     apply_details_summary_post_cascade(&mut doc.root);
-
-    // Number ordered list items
     number_lists(&mut doc.root);
 
     // Post-pass: rasterize SVG placeholders into image data

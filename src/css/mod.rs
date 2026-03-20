@@ -482,6 +482,7 @@ impl Default for PseudoElement {
 pub struct CssRule {
     pub selectors:           Vec<CssSelector>,
     pub declarations:        HashMap<String, String>,
+    pub important_declarations: HashMap<String, String>,
     pub specificity:         u32,     // max of all selectors
     pub media_condition:     String,  // non-empty if inside @media
     pub container_condition: String,  // non-empty if inside @container
@@ -496,6 +497,7 @@ impl Default for CssRule {
         Self {
             selectors:           Vec::new(),
             declarations:        HashMap::new(),
+            important_declarations: HashMap::new(),
             specificity:         0,
             media_condition:     String::new(),
             container_condition: String::new(),
@@ -656,16 +658,19 @@ impl Stylesheet {
 
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
     pub fn parse_and_add(&mut self, css: &str) {
+        // Strip comments once, share the cleaned string across all extractors.
+        let cleaned = strip_css_comments(css);
+        let cleaned = cleaned.as_str();
         // Extract :root CSS variables first, then pre-resolve any var() references
         // within the variable values so every lookup is O(1) with no recursion.
-        extract_root_variables(css, &mut self.variables);
+        extract_root_variables_cleaned(cleaned, &mut self.variables);
         pre_resolve_variables(&mut self.variables);
         // Extract @font-face declarations
-        extract_font_faces(css, &mut self.font_faces);
+        extract_font_faces_cleaned(cleaned, &mut self.font_faces);
         // Extract @keyframes blocks
-        let kf = extract_keyframes(css);
+        let kf = extract_keyframes_cleaned(cleaned);
         self.keyframes.extend(kf);
-        if let Some(rules) = parse_stylesheet(css) {
+        if let Some(rules) = parse_stylesheet_cleaned(cleaned) {
             for r in rules {
                 self.rules.push(r);
             }
@@ -770,9 +775,13 @@ fn rule_key_selectors(rule: &CssRule) -> Vec<SelectorKey> {
 
 /// Parse all `@keyframes` (and `@-webkit-keyframes`) blocks from a CSS string.
 pub fn extract_keyframes(css: &str) -> HashMap<String, Vec<KeyframeStop>> {
-    let mut out: HashMap<String, Vec<KeyframeStop>> = HashMap::new();
     let cleaned = strip_css_comments(css);
-    let mut s = cleaned.as_str().trim();
+    extract_keyframes_cleaned(&cleaned)
+}
+
+fn extract_keyframes_cleaned(css: &str) -> HashMap<String, Vec<KeyframeStop>> {
+    let mut out: HashMap<String, Vec<KeyframeStop>> = HashMap::new();
+    let mut s = css.trim();
 
     while !s.is_empty() {
         s = s.trim_start();
@@ -787,7 +796,9 @@ pub fn extract_keyframes(css: &str) -> HashMap<String, Vec<KeyframeStop>> {
             continue;
         }
 
-        let at_lower = s.to_ascii_lowercase();
+        // Only lowercase a small prefix to identify the @-rule type
+        let prefix = &s[..s.len().min(30)];
+        let at_lower: String = prefix.to_ascii_lowercase();
 
         // Handle no-block @ rules
         if at_lower.starts_with("@import") || at_lower.starts_with("@charset") {
@@ -815,7 +826,7 @@ pub fn extract_keyframes(css: &str) -> HashMap<String, Vec<KeyframeStop>> {
             }
         } else if at_lower.starts_with("@media") || at_lower.starts_with("@container") {
             // Recurse for nested @keyframes (rare but spec-valid)
-            out.extend(extract_keyframes(inner_block));
+            out.extend(extract_keyframes_cleaned(inner_block));
         }
 
         s = after_block;
@@ -1019,17 +1030,22 @@ fn is_timing_fn(s: &str) -> bool {
 /// and are inherited. This matches the common patterns: `:root`, `html`, `html.class`,
 /// `body`, and element-level overrides.
 fn extract_root_variables(css: &str, vars: &mut HashMap<String, String>) {
+    let cleaned = strip_css_comments(css);
+    extract_root_variables_cleaned(&cleaned, vars);
+}
+
+fn extract_root_variables_cleaned(css: &str, vars: &mut HashMap<String, String>) {
     extract_root_variables_inner(css, vars);
 }
 
 fn extract_root_variables_inner(css: &str, vars: &mut HashMap<String, String>) {
-    let cleaned = strip_css_comments(css);
-    let mut s = cleaned.as_str();
+    let mut s = css;
     while !s.is_empty() {
         s = s.trim_start();
         if s.is_empty() { break; }
         if s.starts_with('@') {
-            let lower = s.to_ascii_lowercase();
+            let prefix = &s[..s.len().min(30)];
+            let lower: String = prefix.to_ascii_lowercase();
             if lower.starts_with("@media") {
                 if let Some(brace) = s.find('{') {
                     let (block, rest) = consume_block(&s[brace..]);
@@ -1107,14 +1123,18 @@ fn pre_resolve_variables(vars: &mut HashMap<String, String>) {
 }
 
 /// Extract @font-face declarations from a CSS string.
-fn extract_font_faces(css: &str, faces: &mut Vec<FontFaceDecl>) {
+pub fn extract_font_faces(css: &str, faces: &mut Vec<FontFaceDecl>) {
     let cleaned = strip_css_comments(css);
-    let mut s = cleaned.as_str();
+    extract_font_faces_cleaned(&cleaned, faces);
+}
+
+fn extract_font_faces_cleaned(css: &str, faces: &mut Vec<FontFaceDecl>) {
+    let mut s = css;
     loop {
         s = s.trim_start();
         if s.is_empty() { break; }
-        let at_lower = s.to_ascii_lowercase();
-        let pos = match at_lower.find("@font-face") {
+        // Search for @font-face case-insensitively without lowercasing entire string
+        let pos = match find_case_insensitive(s, "@font-face") {
             Some(p) => p,
             None    => break,
         };
@@ -1155,13 +1175,17 @@ fn extract_font_faces(css: &str, faces: &mut Vec<FontFaceDecl>) {
 /// Parse a full stylesheet text into rules.
 /// `parent_media` is non-empty when called recursively from inside an @media block.
 pub fn parse_stylesheet(css: &str) -> Option<Vec<CssRule>> {
+    let cleaned = strip_css_comments(css);
+    parse_stylesheet_cleaned(&cleaned)
+}
+
+fn parse_stylesheet_cleaned(css: &str) -> Option<Vec<CssRule>> {
     parse_stylesheet_inner(css, "")
 }
 
 fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>> {
     let mut rules = Vec::new();
-    let cleaned = strip_css_comments(css);
-    let mut s = cleaned.as_str().trim();
+    let mut s = css.trim();
 
     while !s.is_empty() {
         s = s.trim_start();
@@ -1169,7 +1193,9 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
 
         // @rules
         if s.starts_with('@') {
-            let at_lower = s.to_ascii_lowercase();
+            // Only lowercase a small prefix (enough to identify the @-rule type)
+            let prefix_len = s.len().min(30);
+            let at_lower: String = s[..prefix_len].to_ascii_lowercase();
 
             // @import / @charset — skip to semicolon (no block)
             if at_lower.starts_with("@import") || at_lower.starts_with("@charset") {
@@ -1218,6 +1244,16 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
                     }
                     for r in inner_rules { rules.push(r); }
                 }
+            } else if at_lower.starts_with("@supports") {
+                // @supports — parse inner rules (assume all features are supported)
+                if let Some(inner_rules) = parse_stylesheet_inner(inner_block, parent_media) {
+                    for r in inner_rules { rules.push(r); }
+                }
+            } else if at_lower.starts_with("@layer") {
+                // @layer — parse inner rules (ignore layer ordering for now)
+                if let Some(inner_rules) = parse_stylesheet_inner(inner_block, parent_media) {
+                    for r in inner_rules { rules.push(r); }
+                }
             }
             // else: @keyframes, @font-face, etc. — skip the block
 
@@ -1235,8 +1271,8 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
         let (decl_block, rest) = consume_block(&s[brace_pos..]);
         s = rest;
 
-        let declarations = parse_declarations(decl_block);
-        if declarations.is_empty() { continue; }
+        let (declarations, important_declarations) = parse_declarations_important(decl_block);
+        if declarations.is_empty() && important_declarations.is_empty() { continue; }
 
         // Split comma-separated selectors
         for sel_str in selector_text.split(',') {
@@ -1268,6 +1304,7 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
             let mut rule = CssRule::default();
             rule.selectors        = vec![sel];
             rule.declarations     = declarations.clone();
+            rule.important_declarations = important_declarations.clone();
             rule.specificity      = sp;
             rule.media_condition  = parent_media.to_string();
             rule.original_selector = original_selector;
@@ -1296,6 +1333,24 @@ fn strip_css_comments(css: &str) -> String {
         }
     }
     out
+}
+
+/// Case-insensitive substring search without allocating a lowercased copy.
+pub fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let needle_bytes = needle.as_bytes();
+    let nlen = needle_bytes.len();
+    if nlen == 0 { return Some(0); }
+    let hbytes = haystack.as_bytes();
+    if hbytes.len() < nlen { return None; }
+    'outer: for i in 0..=(hbytes.len() - nlen) {
+        for j in 0..nlen {
+            if hbytes[i + j].to_ascii_lowercase() != needle_bytes[j].to_ascii_lowercase() {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
 }
 
 /// Detect and strip `::before` / `::after` (and CSS2 `:before`/`:after`) from
@@ -1363,17 +1418,59 @@ pub fn parse_declarations(block: &str) -> HashMap<String, String> {
         if decl.is_empty() { continue; }
         if let Some(colon) = decl.find(':') {
             let prop  = decl[..colon].trim().to_ascii_lowercase();
-            let value = decl[colon + 1..]
-                .trim()
-                .trim_end_matches("!important")
-                .trim()
-                .to_string();
+            let value = strip_important(decl[colon + 1..].trim());
             if !prop.is_empty() && !value.is_empty() {
                 map.insert(prop, value);
             }
         }
     }
     map
+}
+
+/// Parse declarations, splitting into (normal, important) maps.
+/// Properties with `!important` go into the second map.
+pub fn parse_declarations_important(block: &str) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut normal = HashMap::new();
+    let mut important = HashMap::new();
+    for decl in block.split(';') {
+        let decl = decl.trim();
+        if decl.is_empty() { continue; }
+        if let Some(colon) = decl.find(':') {
+            let prop = decl[..colon].trim().to_ascii_lowercase();
+            let raw_value = decl[colon + 1..].trim();
+            let is_important = has_important(raw_value);
+            let value = strip_important(raw_value);
+            if !prop.is_empty() && !value.is_empty() {
+                if is_important {
+                    important.insert(prop, value);
+                } else {
+                    normal.insert(prop, value);
+                }
+            }
+        }
+    }
+    (normal, important)
+}
+
+/// Check if a CSS value contains `!important` (with optional whitespace).
+fn has_important(val: &str) -> bool {
+    // Match !important, ! important, !  important etc.
+    if let Some(bang) = val.rfind('!') {
+        val[bang + 1..].trim().eq_ignore_ascii_case("important")
+    } else {
+        false
+    }
+}
+
+/// Strip `!important` (with optional whitespace) from a CSS value.
+fn strip_important(val: &str) -> String {
+    if let Some(bang) = val.rfind('!') {
+        let after = val[bang + 1..].trim();
+        if after.eq_ignore_ascii_case("important") {
+            return val[..bang].trim().to_string();
+        }
+    }
+    val.to_string()
 }
 
 /// Parse a single CSS selector string into a CssSelector.
@@ -3332,10 +3429,14 @@ fn extract_url(v: &str) -> Option<String> {
 fn parse_shadow_value(v: &str) -> (f32, f32, f32, Color) {
     let mut nums: Vec<f32> = Vec::new();
     let mut color = Color { r: 0, g: 0, b: 0, a: 255 };
-    for tok in v.split_whitespace() {
-        if let Some(c) = parse_color(tok) {
+    // Use paren-aware splitting so rgba(r, g, b, a) stays as one token
+    let tokens = split_paren_aware(v);
+    for tok in &tokens {
+        let t = tok.trim();
+        if t.is_empty() { continue; }
+        if let Some(c) = parse_color(t) {
             color = c;
-        } else if let Ok(n) = tok.trim_end_matches("px").parse::<f32>() {
+        } else if let Ok(n) = t.trim_end_matches("px").parse::<f32>() {
             nums.push(n);
         }
     }
@@ -3343,6 +3444,30 @@ fn parse_shadow_value(v: &str) -> (f32, f32, f32, Color) {
     let oy   = nums.get(1).copied().unwrap_or(0.0);
     let blur = nums.get(2).copied().unwrap_or(0.0);
     (ox, oy, blur, color)
+}
+
+/// Split a string on whitespace, but keep parenthesized groups together.
+/// e.g. "2px 2px rgba(0, 0, 0, 0.5)" → ["2px", "2px", "rgba(0, 0, 0, 0.5)"]
+fn split_paren_aware(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '(' => { depth += 1; current.push(c); }
+            ')' => { if depth > 0 { depth -= 1; } current.push(c); }
+            ' ' | '\t' if depth == 0 => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => { current.push(c); }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 /// Find the byte index of a space that is not nested inside parentheses.
@@ -4315,7 +4440,11 @@ fn apply_container_cascade_inner(
             for sel in &rule.selectors {
                 if sel.matches_with_ancestors_ctx(node, child_index, sibling_count, ancestors, &match_ctx) {
                     if rule.pseudo_element == PseudoElement::None {
-                        cont_matched.push((rule.specificity, rule.declarations.clone()));
+                        let mut merged = rule.declarations.clone();
+                        for (k, v) in &rule.important_declarations {
+                            merged.insert(k.clone(), v.clone());
+                        }
+                        cont_matched.push((rule.specificity, merged));
                     }
                     break;
                 }
@@ -4610,12 +4739,20 @@ fn apply_cascade_inner(
     // Build variable scope: inherited from parent + any --custom-properties from matched rules.
     // Only clone the map when new custom properties are actually defined — most elements
     // don't define any, so we avoid O(vars) cloning at every node.
-    let has_new_vars = matched.iter().any(|(_, ri)| stylesheet.rules[*ri].declarations.keys().any(|p| p.starts_with("--")));
+    let has_new_vars = matched.iter().any(|(_, ri)| {
+        stylesheet.rules[*ri].declarations.keys().any(|p| p.starts_with("--"))
+        || stylesheet.rules[*ri].important_declarations.keys().any(|p| p.starts_with("--"))
+    });
     let local_vars_owned;
     let local_vars: &HashMap<String, String> = if has_new_vars {
         let mut vars = inherited_vars.clone();
         for &(_, ri) in &matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
+                if prop.starts_with("--") {
+                    vars.insert(prop.clone(), val.clone());
+                }
+            }
+            for (prop, val) in &stylesheet.rules[ri].important_declarations {
                 if prop.starts_with("--") {
                     vars.insert(prop.clone(), val.clone());
                 }
@@ -4644,6 +4781,12 @@ fn apply_cascade_inner(
                 apply_property(&mut hs, prop, &resolved);
             }
         }
+        for &(_, ri) in &hover_matched {
+            for (prop, val) in &stylesheet.rules[ri].important_declarations {
+                let resolved = resolve_var_references(val, &local_vars);
+                apply_property(&mut hs, prop, &resolved);
+            }
+        }
         // Prevent infinite nesting: state styles don't carry their own state overrides.
         hs.hover_style = None; hs.active_style = None; hs.visited_style = None;
         style.hover_style = Some(Box::new(hs));
@@ -4654,6 +4797,12 @@ fn apply_cascade_inner(
         let mut as_ = style.clone();
         for &(_, ri) in &active_matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
+                let resolved = resolve_var_references(val, &local_vars);
+                apply_property(&mut as_, prop, &resolved);
+            }
+        }
+        for &(_, ri) in &active_matched {
+            for (prop, val) in &stylesheet.rules[ri].important_declarations {
                 let resolved = resolve_var_references(val, &local_vars);
                 apply_property(&mut as_, prop, &resolved);
             }
@@ -4671,17 +4820,41 @@ fn apply_cascade_inner(
                 apply_property(&mut vs, prop, &resolved);
             }
         }
+        for &(_, ri) in &visited_matched {
+            for (prop, val) in &stylesheet.rules[ri].important_declarations {
+                let resolved = resolve_var_references(val, &local_vars);
+                apply_property(&mut vs, prop, &resolved);
+            }
+        }
         vs.hover_style = None; vs.active_style = None; vs.visited_style = None;
         style.visited_style = Some(Box::new(vs));
     }
 
-    // Apply inline style attribute
-    if let Some(inline_style) = root.attributes.get("style").cloned() {
-        let decls = parse_declarations(&inline_style);
-        for (prop, val) in &decls {
+    // Apply inline style attribute (normal declarations)
+    let (_inline_normal, inline_important) = if let Some(inline_style) = root.attributes.get("style").cloned() {
+        let (n, i) = parse_declarations_important(&inline_style);
+        for (prop, val) in &n {
             let resolved = resolve_var_references(val, &local_vars);
             apply_property(&mut style, prop, &resolved);
         }
+        (n, i)
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
+
+    // Apply !important stylesheet declarations — these override inline styles
+    for &(_, ri) in &matched {
+        for (prop, val) in &stylesheet.rules[ri].important_declarations {
+            if prop.starts_with("--") { continue; }
+            let resolved = resolve_var_references(val, &local_vars);
+            apply_property(&mut style, prop, &resolved);
+        }
+    }
+
+    // Apply inline style !important declarations — highest priority
+    for (prop, val) in &inline_important {
+        let resolved = resolve_var_references(val, &local_vars);
+        apply_property(&mut style, prop, &resolved);
     }
 
     // Re-apply table layout HTML attributes after CSS rules so UA/author stylesheets
@@ -4741,6 +4914,16 @@ fn apply_cascade_inner(
         let mut content = String::new();
         for &(_, ri) in matched.iter() {
             for (prop, val) in &rules[ri].declarations {
+                let resolved = resolve_var_references(val, vars);
+                if prop == "content" {
+                    content = resolve_content_value(&resolved);
+                } else {
+                    apply_property(&mut ps, prop, &resolved);
+                }
+            }
+        }
+        for &(_, ri) in matched.iter() {
+            for (prop, val) in &rules[ri].important_declarations {
                 let resolved = resolve_var_references(val, vars);
                 if prop == "content" {
                     content = resolve_content_value(&resolved);

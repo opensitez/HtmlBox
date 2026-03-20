@@ -299,7 +299,7 @@ fn main() {
             // File path
             let html = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| format!("<h2>Error reading {path}</h2><p>{e}</p>"));
-            (html, String::new())
+            (html, path.clone())
         }
     } else {
         (DEMO_HTML.to_string(), String::new())

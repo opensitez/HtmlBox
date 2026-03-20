@@ -112,7 +112,7 @@ pub fn layout_inline_block(
                 } else {
                     compute_intrinsic_width(&node.children[ci])
                 };
-                if intrinsic_w > 0.0 {
+                {
                     let irb = &node.children[ci];
                     let shrink_w = intrinsic_w
                         + irb.resolved_pad_left + irb.resolved_pad_right
@@ -531,11 +531,14 @@ pub fn layout_inline_block(
             let mut cur_x = line_x;
             for item in line_items {
                 if let InlineItemKind::Atomic { child_idx } = &item.kind {
-                    // Vertical: bottom-align with line baseline
+                    // CSS baseline alignment: the inline-block's bottom margin
+                    // edge sits on the line baseline (cursor_y + line_asc).
                     let box_h = if *child_idx < node.children.len() {
                         node.children[*child_idx].margin_rect.h
                     } else { item.height };
-                    let ay = cursor_y + (line_h - box_h).max(0.0);
+                    let ay = cursor_y + line_asc - box_h;
+                    // Clamp so it doesn't go above line top
+                    let ay = ay.max(cursor_y);
                     atomic_pos.push((*child_idx, cur_x, ay));
                 }
                 cur_x += item.advance;
@@ -1492,6 +1495,24 @@ fn prelayout_nested_inline_blocks(
                         &mut node.children[ci].children[gci],
                         content_w, 0.0, 0.0, child_font_px, root_font_px,
                     );
+                    // Shrink-to-fit for auto-width nested inline-blocks
+                    if node.children[ci].children[gci].style.width.is_auto() {
+                        let max_line_w = node.children[ci].children[gci].line_cache.iter()
+                            .map(|l| l.width).fold(0.0_f32, f32::max);
+                        let intrinsic_w = if max_line_w > 0.0 { max_line_w }
+                            else { compute_intrinsic_width(&node.children[ci].children[gci]) };
+                        let gc = &node.children[ci].children[gci];
+                        let shrink_w = intrinsic_w
+                            + gc.resolved_pad_left + gc.resolved_pad_right
+                            + gc.resolved_border_left + gc.resolved_border_right
+                            + gc.resolved_margin_left + gc.resolved_margin_right;
+                        if shrink_w < content_w {
+                            engine.layout_box(
+                                &mut node.children[ci].children[gci],
+                                shrink_w, 0.0, 0.0, child_font_px, root_font_px,
+                            );
+                        }
+                    }
                 } else if matches!(grandchild_display, Display::Inline) {
                     // One more level: recurse for deeper nesting.
                     prelayout_nested_inline_blocks(
