@@ -857,6 +857,16 @@ impl LayoutEngine {
             return 0.0;
         }
 
+        // display:contents — the element itself generates no box.
+        // Its children are promoted to the parent's formatting context.
+        if matches!(node.style.display, Display::Contents) {
+            node.content_rect = Rect::default();
+            node.padding_rect = Rect::default();
+            node.border_rect  = Rect::default();
+            node.margin_rect  = Rect::default();
+            return 0.0;
+        }
+
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
         // <img> aspect ratio: when one dimension is auto and the natural

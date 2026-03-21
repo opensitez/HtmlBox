@@ -1,6 +1,37 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 
+/// Resolve a child by path through `display: contents` wrappers.
+fn child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
+    let mut n = node;
+    for &i in path { n = &n.children[i]; }
+    n
+}
+fn child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
+    let mut n = node;
+    for &i in path { n = &mut n.children[i]; }
+    n
+}
+
+/// Collect effective flex children, flattening `display: contents`.
+fn collect_flex_children(node: &HtmlBox) -> Vec<Vec<usize>> {
+    let mut result = Vec::new();
+    let mut path = Vec::new();
+    collect_inner(node, &mut path, &mut result);
+    result
+}
+fn collect_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+    for (idx, child) in node.children.iter().enumerate() {
+        path.push(idx);
+        if matches!(child.style.display, Display::Contents) {
+            collect_inner(child, path, result);
+        } else {
+            result.push(path.clone());
+        }
+        path.pop();
+    }
+}
+
 /// Flexbox layout (CSS Flexible Box).
 /// Faithful port of C++ LayoutFlex.
 pub fn layout_flex(
@@ -51,7 +82,7 @@ pub fn layout_flex(
     // ── Collect flex items ────────────────────────────────────────────────────
 
     struct FlexItem {
-        idx:         usize,
+        path:        Vec<usize>,
         order:       i32,
         flex_grow:   f32,
         flex_shrink: f32,
@@ -73,8 +104,10 @@ pub fn layout_flex(
     }
 
     let mut items: Vec<FlexItem> = Vec::new();
+    let child_paths = collect_flex_children(node);
 
-    for (idx, child) in node.children.iter_mut().enumerate() {
+    for path in &child_paths {
+        let child = child_mut(node, path);
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         // CSS Flexbox §4.1: whitespace-only anonymous flex items are not rendered
@@ -165,7 +198,7 @@ pub fn layout_flex(
         let hyp = basis_main.max(min_main).min(max_main);
 
         items.push(FlexItem {
-            idx,
+            path: path.clone(),
             order: child.style.order,
             flex_grow:   child.style.flex_grow,
             flex_shrink: child.style.flex_shrink,
@@ -296,7 +329,7 @@ pub fn layout_flex(
     // Mirror C++: set item.box->style.width/height = {cssW/cssH, Px} before LayoutBox
 
     for item in &mut items {
-        let child = &mut node.children[item.idx];
+        let child = child_mut(node, &item.path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
 
@@ -396,7 +429,7 @@ pub fn layout_flex(
         // Check for explicit auto margins on main axis
         let has_main_auto = items[lines[line_idx].start..lines[line_idx].start + lines[line_idx].count]
             .iter().any(|item| {
-                let child = &node.children[item.idx];
+                let child = child_ref(node, &item.path);
                 if is_row {
                     child.style.margin_left.is_auto() || child.style.margin_right.is_auto()
                 } else {
@@ -409,7 +442,7 @@ pub fn layout_flex(
             // overriding justify-content. Distribute evenly.
             let mut auto_count = 0usize;
             for j in 0..lines[line_idx].count {
-                let ci = &node.children[items[lines[line_idx].start + j].idx];
+                let ci = child_ref(node, &items[lines[line_idx].start + j].path);
                 if is_row {
                     if ci.style.margin_left.is_auto() { auto_count += 1; }
                     if ci.style.margin_right.is_auto() { auto_count += 1; }
@@ -429,7 +462,7 @@ pub fn layout_flex(
                 } else {
                     lines[line_idx].start + ii
                 };
-                let ci = &node.children[items[idx].idx];
+                let ci = child_ref(node, &items[idx].path);
                 if is_row {
                     if ci.style.margin_left.is_auto() { auto_pos += auto_margin_size; }
                 } else {
@@ -437,7 +470,7 @@ pub fn layout_flex(
                 }
                 items[idx].main_pos = auto_pos;
                 auto_pos += items[idx].main_used + items[idx].outer_extra;
-                let ci = &node.children[items[idx].idx];
+                let ci = child_ref(node, &items[idx].path);
                 if is_row {
                     if ci.style.margin_right.is_auto() { auto_pos += auto_margin_size; }
                 } else {
@@ -460,18 +493,18 @@ pub fn layout_flex(
             };
 
             let lc = lines[line_idx].cross_size;
-            let eff_align = effective_align_self(&node.children[items[item_idx].idx], node.style.align_items);
+            let eff_align = effective_align_self(child_ref(node, &items[item_idx].path), node.style.align_items);
 
             // Cross-axis: check auto margins (overrides align-items/align-self)
             let cross_start_auto = if is_row {
-                node.children[items[item_idx].idx].style.margin_top.is_auto()
+                child_ref(node, &items[item_idx].path).style.margin_top.is_auto()
             } else {
-                node.children[items[item_idx].idx].style.margin_left.is_auto()
+                child_ref(node, &items[item_idx].path).style.margin_left.is_auto()
             };
             let cross_end_auto = if is_row {
-                node.children[items[item_idx].idx].style.margin_bottom.is_auto()
+                child_ref(node, &items[item_idx].path).style.margin_bottom.is_auto()
             } else {
-                node.children[items[item_idx].idx].style.margin_right.is_auto()
+                child_ref(node, &items[item_idx].path).style.margin_right.is_auto()
             };
 
             // Cross-axis alignment
@@ -486,7 +519,7 @@ pub fn layout_flex(
                 } else { 0.0 }
             } else if eff_align == AlignItems::Stretch {
                 // Stretch: re-layout with explicit cross-axis size, mirrors C++
-                let child = &mut node.children[items[item_idx].idx];
+                let child = child_mut(node, &items[item_idx].path);
                 let child_font = child.style.font_size_px(font_px, root_font_px);
                 let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
                 let item_containing = if is_row { items[item_idx].main_used + items[item_idx].outer_extra } else { content_w };
@@ -522,9 +555,9 @@ pub fn layout_flex(
                 // For column direction with Center/FlexStart/FlexEnd: shrink auto-width
                 // children to their intrinsic (max-content) width, matching browser behavior.
                 if !is_row {
-                    let child_width_is_auto = node.children[items[item_idx].idx].style.width.is_auto();
+                    let child_width_is_auto = child_ref(node, &items[item_idx].path).style.width.is_auto();
                     if child_width_is_auto {
-                        let child = &mut node.children[items[item_idx].idx];
+                        let child = child_mut(node, &items[item_idx].path);
                         let intrinsic_w = crate::layout::block::compute_intrinsic_width(child).min(content_w);
                         if intrinsic_w < items[item_idx].cross_size - 0.5 {
                             engine.layout_box(child, intrinsic_w, content_x, content_y, font_px, root_font_px);
@@ -556,7 +589,7 @@ pub fn layout_flex(
     // ── Set final child positions ─────────────────────────────────────────────
 
     for item in &items {
-        let child = &mut node.children[item.idx];
+        let child = child_mut(node, &item.path);
         let (target_x, target_y) = if is_row {
             (content_x + item.main_pos, content_y + item.cross_pos)
         } else {
@@ -580,8 +613,8 @@ pub fn layout_flex(
     for item in &items {
         let sw = item.saved_width.clone();
         let sh = item.saved_height.clone();
-        node.children[item.idx].style.width  = sw;
-        node.children[item.idx].style.height = sh;
+        child_mut(node, &item.path).style.width  = sw;
+        child_mut(node, &item.path).style.height = sh;
     }
 
     // ── Content height ────────────────────────────────────────────────────────

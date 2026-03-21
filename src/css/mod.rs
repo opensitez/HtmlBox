@@ -2206,7 +2206,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
         "grid-template-columns" => {
-            let tracks = parse_track_list(v, &mut style.auto_repeat_columns);
+            let mut names = std::collections::HashMap::new();
+            let tracks = parse_track_list_with_names(v, &mut style.auto_repeat_columns, &mut names);
             if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
                 style.subgrid_columns = true;
                 style.grid_template_columns = Vec::new();
@@ -2214,10 +2215,12 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 style.subgrid_columns = false;
                 style.grid_template_columns = tracks;
             }
+            style.grid_col_line_names = names;
         }
         "grid-template-rows" => {
             let mut dummy = Vec::new();
-            let tracks = parse_track_list(v, &mut dummy);
+            let mut names = std::collections::HashMap::new();
+            let tracks = parse_track_list_with_names(v, &mut dummy, &mut names);
             if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
                 style.subgrid_rows = true;
                 style.grid_template_rows = Vec::new();
@@ -2225,6 +2228,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 style.subgrid_rows = false;
                 style.grid_template_rows = tracks;
             }
+            style.grid_row_line_names = names;
         }
         "grid-auto-columns" => {
             style.grid_auto_columns = parse_single_track(v);
@@ -2236,28 +2240,68 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             style.grid_template_areas = parse_grid_template_areas(v);
         }
         "grid-column" => {
-            // "start / end" or "span N"
             if let Some(slash) = v.find('/') {
-                style.grid_column_start = parse_grid_line(v[..slash].trim());
-                style.grid_column_end   = parse_grid_line(v[slash+1..].trim());
+                let (sv, sn) = parse_grid_line_named(v[..slash].trim());
+                let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
+                style.grid_column_start = sv;
+                style.grid_column_end   = ev;
+                style.grid_column_start_name = sn;
+                style.grid_column_end_name   = en;
             } else {
-                style.grid_column_start = parse_grid_line(v);
+                let (val, name) = parse_grid_line_named(v);
+                style.grid_column_start = val;
                 style.grid_column_end   = 0;
+                if !name.is_empty() {
+                    // "grid-column: <name>" → <name>-start / <name>-end
+                    style.grid_column_start_name = format!("{}-start", name);
+                    style.grid_column_end_name   = format!("{}-end", name);
+                } else {
+                    style.grid_column_start_name = String::new();
+                    style.grid_column_end_name   = String::new();
+                }
             }
         }
         "grid-row" => {
             if let Some(slash) = v.find('/') {
-                style.grid_row_start = parse_grid_line(v[..slash].trim());
-                style.grid_row_end   = parse_grid_line(v[slash+1..].trim());
+                let (sv, sn) = parse_grid_line_named(v[..slash].trim());
+                let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
+                style.grid_row_start = sv;
+                style.grid_row_end   = ev;
+                style.grid_row_start_name = sn;
+                style.grid_row_end_name   = en;
             } else {
-                style.grid_row_start = parse_grid_line(v);
+                let (val, name) = parse_grid_line_named(v);
+                style.grid_row_start = val;
                 style.grid_row_end   = 0;
+                if !name.is_empty() {
+                    style.grid_row_start_name = format!("{}-start", name);
+                    style.grid_row_end_name   = format!("{}-end", name);
+                } else {
+                    style.grid_row_start_name = String::new();
+                    style.grid_row_end_name   = String::new();
+                }
             }
         }
-        "grid-column-start" => { style.grid_column_start = parse_grid_line(v); }
-        "grid-column-end"   => { style.grid_column_end   = parse_grid_line(v); }
-        "grid-row-start"    => { style.grid_row_start    = parse_grid_line(v); }
-        "grid-row-end"      => { style.grid_row_end      = parse_grid_line(v); }
+        "grid-column-start" => {
+            let (val, name) = parse_grid_line_named(v);
+            style.grid_column_start = val;
+            style.grid_column_start_name = name;
+        }
+        "grid-column-end" => {
+            let (val, name) = parse_grid_line_named(v);
+            style.grid_column_end = val;
+            style.grid_column_end_name = name;
+        }
+        "grid-row-start" => {
+            let (val, name) = parse_grid_line_named(v);
+            style.grid_row_start = val;
+            style.grid_row_start_name = name;
+        }
+        "grid-row-end" => {
+            let (val, name) = parse_grid_line_named(v);
+            style.grid_row_end = val;
+            style.grid_row_end_name = name;
+        }
         "grid-area" => {
             // "1 / 2 / 3 / 4" → row-start / col-start / row-end / col-end
             let parts: Vec<&str> = v.splitn(4, '/').collect();
@@ -4083,23 +4127,43 @@ pub fn parse_single_track(v: &str) -> GridTrackSize {
 }
 
 /// Parse a grid-template-columns/rows value into Vec<GridTrackSize>.
+/// Also extracts named grid lines into line_names: name → Vec<line_index> (0-based).
 /// Handles repeat(), minmax(), fr, px, %, auto, min-content, max-content.
 /// auto_repeat_cols receives any auto-fill/auto-fit tracks.
-pub fn parse_track_list(v: &str, auto_repeat_cols: &mut Vec<GridTrackSize>) -> Vec<GridTrackSize> {
+pub fn parse_track_list(
+    v: &str,
+    auto_repeat_cols: &mut Vec<GridTrackSize>,
+) -> Vec<GridTrackSize> {
+    let mut line_names = std::collections::HashMap::new();
+    parse_track_list_with_names(v, auto_repeat_cols, &mut line_names)
+}
+
+/// Like parse_track_list but also populates a name→line-number map.
+pub fn parse_track_list_with_names(
+    v: &str,
+    auto_repeat_cols: &mut Vec<GridTrackSize>,
+    line_names: &mut std::collections::HashMap<String, Vec<usize>>,
+) -> Vec<GridTrackSize> {
     if v.is_empty() { return Vec::new(); }
     if v.trim() == "subgrid" { return vec![GridTrackSize::subgrid()]; }
-    // Tokenize respecting parens
     let tokens = tokenize_track_list(v);
     let mut result = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
         let t = tokens[i].trim();
-        if t.starts_with("repeat(") || (i + 1 < tokens.len() && t == "repeat") {
-            // Find the full repeat(...) span
+        if t.starts_with('[') && t.ends_with(']') {
+            // Named line: [name1 name2 ...]
+            let inner = &t[1..t.len()-1];
+            let line_idx = result.len(); // line is BEFORE the next track
+            for name in inner.split_whitespace() {
+                line_names.entry(name.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(line_idx);
+            }
+        } else if t.starts_with("repeat(") || (i + 1 < tokens.len() && t == "repeat") {
             let repeat_str = if t.starts_with("repeat(") && t.ends_with(')') {
                 t.to_string()
             } else {
-                // shouldn't happen with our tokenizer but handle gracefully
                 t.to_string()
             };
             let inner = repeat_str.trim_start_matches("repeat(").trim_end_matches(')');
@@ -4108,8 +4172,6 @@ pub fn parse_track_list(v: &str, auto_repeat_cols: &mut Vec<GridTrackSize>) -> V
             let track_str = inner[comma+1..].trim();
             let track = parse_single_track(track_str);
             if count_str == "auto-fill" || count_str == "auto-fit" {
-                // Store in auto_repeat_cols; actual expansion is done at layout time
-                // Do NOT push a placeholder: result stays empty when only auto-fill
                 auto_repeat_cols.push(track.clone());
             } else {
                 let count = count_str.parse::<usize>().unwrap_or(1);
@@ -4117,8 +4179,7 @@ pub fn parse_track_list(v: &str, auto_repeat_cols: &mut Vec<GridTrackSize>) -> V
                     result.push(track.clone());
                 }
             }
-        } else if !t.is_empty() && !t.starts_with('[') {
-            // Skip line names like [col-start]
+        } else if !t.is_empty() {
             result.push(parse_single_track(t));
         }
         i += 1;
@@ -4126,23 +4187,33 @@ pub fn parse_track_list(v: &str, auto_repeat_cols: &mut Vec<GridTrackSize>) -> V
     result
 }
 
-/// Tokenize a track list, keeping repeat(...) as single tokens.
+/// Tokenize a track list, keeping repeat(...) and [...] as single tokens.
 fn tokenize_track_list(v: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
-    let mut depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
     for ch in v.chars() {
         match ch {
-            '(' => { depth += 1; current.push(ch); }
-            ')' => {
-                if depth > 0 { depth -= 1; }
+            '[' => { bracket_depth += 1; current.push(ch); }
+            ']' => {
+                if bracket_depth > 0 { bracket_depth -= 1; }
                 current.push(ch);
-                if depth == 0 {
+                if bracket_depth == 0 && paren_depth == 0 {
                     tokens.push(current.trim().to_string());
                     current = String::new();
                 }
             }
-            ' ' | '\t' | '\n' if depth == 0 => {
+            '(' => { paren_depth += 1; current.push(ch); }
+            ')' => {
+                if paren_depth > 0 { paren_depth -= 1; }
+                current.push(ch);
+                if paren_depth == 0 && bracket_depth == 0 {
+                    tokens.push(current.trim().to_string());
+                    current = String::new();
+                }
+            }
+            ' ' | '\t' | '\n' if paren_depth == 0 && bracket_depth == 0 => {
                 let s = current.trim().to_string();
                 if !s.is_empty() { tokens.push(s); }
                 current = String::new();
@@ -4177,16 +4248,29 @@ pub fn parse_grid_template_areas(v: &str) -> Vec<Vec<String>> {
     rows
 }
 
-/// Parse a grid line value.
-/// "auto" → 0, "3" → 3, "span 2" → -2 (negative = span)
-pub fn parse_grid_line(v: &str) -> i32 {
+/// Parse a CSS grid line value.
+/// Returns: (numeric_value, named_reference)
+/// numeric: positive = explicit 1-based line, 0 = auto,
+/// negative > -10000 = negative line number, <= -10000 = span (encoded).
+/// named: non-empty if referencing a named line like "content-start" or area "content".
+pub fn parse_grid_line_named(v: &str) -> (i32, String) {
     let v = v.trim();
-    if v == "auto" { return 0; }
+    if v == "auto" || v.is_empty() { return (0, String::new()); }
     if v.starts_with("span ") {
-        let n: i32 = v[5..].trim().parse().unwrap_or(1);
-        return -n;  // negative = span
+        let rest = v[5..].trim();
+        let n: i32 = rest.parse().unwrap_or(1);
+        return (-(n + 10000), String::new());
     }
-    v.parse::<i32>().unwrap_or(0)
+    if let Ok(n) = v.parse::<i32>() {
+        return (n, String::new());
+    }
+    // Named line reference (e.g. "content", "content-start", "title-end")
+    (0, v.to_string())
+}
+
+/// Convenience wrapper for parse_grid_line_named that discards the name.
+pub fn parse_grid_line(v: &str) -> i32 {
+    parse_grid_line_named(v).0
 }
 
 // ─── Media Query Evaluator ───────────────────────────────────────────────────

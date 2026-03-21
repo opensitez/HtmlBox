@@ -4,6 +4,37 @@ use crate::layout::block::apply_relative_offset;
 #[allow(unused_imports)]
 use crate::css::parse_single_track;
 
+/// Resolve a child by path through `display: contents` wrappers.
+fn grid_child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
+    let mut n = node;
+    for &i in path { n = &n.children[i]; }
+    n
+}
+fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
+    let mut n = node;
+    for &i in path { n = &mut n.children[i]; }
+    n
+}
+
+/// Collect effective grid children, flattening `display: contents`.
+fn collect_grid_children(node: &HtmlBox) -> Vec<Vec<usize>> {
+    let mut result = Vec::new();
+    let mut path = Vec::new();
+    collect_grid_inner(node, &mut path, &mut result);
+    result
+}
+fn collect_grid_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+    for (idx, child) in node.children.iter().enumerate() {
+        path.push(idx);
+        if matches!(child.style.display, Display::Contents) {
+            collect_grid_inner(child, path, result);
+        } else {
+            result.push(path.clone());
+        }
+        path.pop();
+    }
+}
+
 // ─── Subgrid support ─────────────────────────────────────────────────────────
 
 /// Resolved track context passed from a parent grid into a subgrid child.
@@ -102,24 +133,30 @@ pub fn layout_grid_subgrid(
     let n_cols = col_px.len().max(1);
 
     // --- Collect visible items ---
-    let mut item_indices: Vec<usize> = node.children.iter().enumerate()
-        .filter(|(_, c)| !matches!(c.style.display, Display::None)
-            && !matches!(c.style.position, Position::Absolute | Position::Fixed)
-            && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace())))
-        .map(|(i, _)| i)
+    let mut item_indices: Vec<Vec<usize>> = collect_grid_children(node)
+        .into_iter()
+        .filter(|path| {
+            let c = grid_child_ref(node, path);
+            !matches!(c.style.display, Display::None)
+                && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace()))
+        })
         .collect();
-    item_indices.sort_by(|&a, &b| node.children[a].style.order.cmp(&node.children[b].style.order));
+    item_indices.sort_by(|a, b| grid_child_ref(node, a).style.order.cmp(&grid_child_ref(node, b).style.order));
     let n_items = item_indices.len();
 
     // --- Placement ---
     let area_map = build_area_map(&node.style.grid_template_areas);
+    let sub_col_names = node.style.grid_col_line_names.clone();
+    let sub_row_names = node.style.grid_row_line_names.clone();
     let mut placements: Vec<(usize, usize, usize, usize)> = vec![(0, 1, 0, 1); n_items];
     let mut max_row = 0usize;
     let mut max_col = n_cols;
 
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_cols);
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        let n_sub_rows = node.style.grid_template_rows.len();
+        let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_cols, n_sub_rows, &sub_col_names, &sub_row_names);
         placements[ii] = (cs, ce, rs, re);
         if ce > max_col { max_col = ce; }
         if re > max_row { max_row = re; }
@@ -127,9 +164,9 @@ pub fn layout_grid_subgrid(
 
     // Auto-place (row-flow)
     let mut occ: Vec<Vec<bool>> = vec![vec![false; max_col.max(1)]; (max_row + n_items + 1).max(1)];
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        if is_explicitly_placed(child, &area_map) {
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        if is_explicitly_placed(child, &area_map, &sub_col_names, &sub_row_names) {
             let (cs, ce, rs, re) = placements[ii];
             for r in rs..re {
                 ensure_row(&mut occ, r, max_col);
@@ -139,9 +176,9 @@ pub fn layout_grid_subgrid(
     }
     let mut auto_row = 0usize;
     let mut auto_col = 0usize;
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        if is_explicitly_placed(child, &area_map) { continue; }
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        if is_explicitly_placed(child, &area_map, &sub_col_names, &sub_row_names) { continue; }
         let span_col = get_span_col(child).min(n_cols);
         let span_row = get_span_row(child);
         'outer: loop {
@@ -175,12 +212,12 @@ pub fn layout_grid_subgrid(
         let rgap = engine.res_len(&node.style.row_gap, font_px, content_w, root_font_px);
         let mut heights = vec![0.0f32; n_rows];
         // First pass: measure children
-        for (ii, &idx) in item_indices.iter().enumerate() {
+        for (ii, path) in item_indices.iter().enumerate() {
             let (cs, ce, rs, re) = placements[ii];
             let cs = cs.min(n_cols.saturating_sub(1));
             let ce = ce.min(n_cols).max(cs + 1);
             let sw = span_width(&col_px, &col_x_local, cs, ce, col_gap, content_w);
-            let child = &mut node.children[idx];
+            let child = grid_child_mut(node, path);
             engine.layout_box(child, sw, content_x, 0.0, font_px, root_font_px);
             let cf = child.style.font_size_px(font_px, root_font_px);
             let cr = engine.res_box(&child.style, cf, sw, root_font_px);
@@ -206,7 +243,9 @@ pub fn layout_grid_subgrid(
     };
 
     // --- Second pass: position children ---
-    for (ii, &idx) in item_indices.iter().enumerate() {
+    let node_align_items   = node.style.align_items;
+    let node_justify_items = node.style.justify_items;
+    for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, rs, re) = placements[ii];
         let cs = cs.min(n_cols.saturating_sub(1));
         let ce = ce.min(n_cols).max(cs + 1);
@@ -219,9 +258,9 @@ pub fn layout_grid_subgrid(
         let ix = content_x + col_x_local.get(cs).copied().unwrap_or(0.0);
         let iy = content_y + row_y_local.get(rs).copied().unwrap_or(0.0);
 
-        let child = &mut node.children[idx];
+        let child = grid_child_mut(node, path);
         let cf = child.style.font_size_px(font_px, root_font_px);
-        let eff_align = effective_align_self_grid(child, node.style.align_items);
+        let eff_align = effective_align_self_grid(child, node_align_items);
         if eff_align == AlignItems::Stretch && child.style.height.is_auto() {
             let cr = engine.res_box(&child.style, cf, sw, root_font_px);
             let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
@@ -240,7 +279,7 @@ pub fn layout_grid_subgrid(
         }
 
         let cr = engine.res_box(&child.style, cf, sw, root_font_px);
-        let eff_justify = effective_justify_self(child, node.style.justify_items);
+        let eff_justify = effective_justify_self(child, node_justify_items);
         let cell_w = sw;
         let dx_align = match eff_justify {
             AlignItems::FlexEnd  => cell_w - child.border_rect.w - cr.margin_left - cr.margin_right,
@@ -302,14 +341,18 @@ pub fn layout_grid(
 
     // Collect visible items (non-abs-positioned)
     // CSS Grid §4: whitespace-only anonymous grid items are not rendered
-    let mut item_indices: Vec<usize> = node.children.iter().enumerate()
-        .filter(|(_, c)| !matches!(c.style.display, Display::None)
-            && !matches!(c.style.position, Position::Absolute | Position::Fixed)
-            && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace())))
-        .map(|(i, _)| i)
+    // display:contents wrappers are flattened so their children become grid items
+    let mut item_indices: Vec<Vec<usize>> = collect_grid_children(node)
+        .into_iter()
+        .filter(|path| {
+            let c = grid_child_ref(node, path);
+            !matches!(c.style.display, Display::None)
+                && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace()))
+        })
         .collect();
     // Sort by order property (CSS order: default 0)
-    item_indices.sort_by(|&a, &b| node.children[a].style.order.cmp(&node.children[b].style.order));
+    item_indices.sort_by(|a, b| grid_child_ref(node, a).style.order.cmp(&grid_child_ref(node, b).style.order));
 
     let n_items = item_indices.len();
     if n_items == 0 {
@@ -324,8 +367,11 @@ pub fn layout_grid(
 
     // Named area lookup
     let area_map = build_area_map(&node.style.grid_template_areas);
+    let col_line_names = node.style.grid_col_line_names.clone();
+    let row_line_names = node.style.grid_row_line_names.clone();
 
     let n_explicit_cols = col_tracks.len();
+    let n_explicit_rows = row_tracks.len();
 
     // Pre-compute area dimensions from grid-template-areas
     let area_cols = if !node.style.grid_template_areas.is_empty() {
@@ -340,25 +386,24 @@ pub fn layout_grid(
     let mut max_row = if area_rows > 0 { area_rows } else { 0 };
     let mut max_col = if n_explicit_cols > 0 { n_explicit_cols } else if area_cols > 0 { area_cols } else { 1 };
 
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_explicit_cols);
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_explicit_cols, n_explicit_rows, &col_line_names, &row_line_names);
         placements[ii] = (cs, ce, rs, re);
         if ce > max_col { max_col = ce; }
         if re > max_row { max_row = re; }
     }
 
     // Pass 2: Auto-place remaining items
-    // Occupation grid: row → set of occupied columns
     let col_flow = matches!(node.style.grid_auto_flow, GridAutoFlow::Column | GridAutoFlow::ColumnDense);
     let dense    = matches!(node.style.grid_auto_flow, GridAutoFlow::RowDense | GridAutoFlow::ColumnDense);
 
     let mut occ: Vec<Vec<bool>> = vec![vec![false; max_col.max(1)]; (max_row + n_items + 1).max(1)];
 
     // Mark explicitly placed items
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        if is_explicitly_placed(child, &area_map) {
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        if is_explicitly_placed(child, &area_map, &col_line_names, &row_line_names) {
             let (cs, ce, rs, re) = placements[ii];
             for r in rs..re {
                 ensure_row(&mut occ, r, max_col);
@@ -374,21 +419,20 @@ pub fn layout_grid(
     // The column cursor advances independently per row-start key.
     {
         let mut row_cursors: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-        for (ii, &idx) in item_indices.iter().enumerate() {
-            let child = &node.children[idx];
-            if is_explicitly_placed(child, &area_map) { continue; }
-            if child.style.grid_row_start <= 0 { continue; } // not row-locked
+        for (ii, path) in item_indices.iter().enumerate() {
+            let child = grid_child_ref(node, path);
+            if is_explicitly_placed(child, &area_map, &col_line_names, &row_line_names) { continue; }
+            // Row-locked: row_start is a definite line (positive/negative or named, not span/auto)
+            let (rs_is_span, rs_val) = decode_grid_line(child.style.grid_row_start);
+            let rs_has_name = !child.style.grid_row_start_name.is_empty()
+                && lookup_named_line(&child.style.grid_row_start_name, &row_line_names).is_some();
+            if !rs_has_name && (rs_is_span || rs_val == 0) { continue; } // not row-locked
 
             let span_col = get_span_col(child);
-            let rs = (child.style.grid_row_start as usize).saturating_sub(1);
-            let re_raw = child.style.grid_row_end;
-            let re = if re_raw > 0 {
-                (re_raw as usize).saturating_sub(1).max(rs + 1)
-            } else if re_raw < 0 {
-                rs + (-re_raw) as usize
-            } else {
-                rs + get_span_row(child)
-            };
+            let rs = resolve_line_start_named(child.style.grid_row_start,
+                &child.style.grid_row_start_name, n_explicit_rows, &row_line_names);
+            let re = resolve_line_end_named(child.style.grid_row_end,
+                &child.style.grid_row_end_name, rs, n_explicit_rows, &row_line_names);
 
             let mut col = row_cursors.get(&rs).copied().unwrap_or(0);
             loop {
@@ -418,14 +462,71 @@ pub fn layout_grid(
         }
     }
 
+    // Step 2.5: Column-locked items (explicit column, auto row).
+    // Use the column from resolve_placement (pass 1) and auto-place the row.
+    {
+        for (ii, path) in item_indices.iter().enumerate() {
+            let child = grid_child_ref(node, path);
+            if is_explicitly_placed(child, &area_map, &col_line_names, &row_line_names) { continue; }
+            // Check for row-locked (handled in step 2)
+            let (rs_is_span, rs_val) = decode_grid_line(child.style.grid_row_start);
+            let rs_has_name = !child.style.grid_row_start_name.is_empty()
+                && lookup_named_line(&child.style.grid_row_start_name, &row_line_names).is_some();
+            if !rs_is_span && rs_val != 0 { continue; }
+            if rs_has_name { continue; } // row-locked via name, handled in step 2
+            // Check if column IS explicitly set (via number or named line)
+            let (cs_is_span, cs_val) = decode_grid_line(child.style.grid_column_start);
+            let cs_has_name = !child.style.grid_column_start_name.is_empty()
+                && lookup_named_line(&child.style.grid_column_start_name, &col_line_names).is_some();
+            if !cs_has_name && (cs_is_span || cs_val == 0) { continue; } // not column-locked
+
+            // Use columns from pass 1 placement
+            let (cs, ce, _rs, _re) = placements[ii];
+            let span_row = get_span_row(child);
+
+            // Find first available row at these columns
+            let mut row = 0usize;
+            loop {
+                ensure_row(&mut occ, row + span_row, max_col);
+                let mut fits = true;
+                'chk3: for r in row..row + span_row {
+                    ensure_row(&mut occ, r, max_col);
+                    for c in cs..ce {
+                        if c < occ[r].len() && occ[r][c] { fits = false; break 'chk3; }
+                    }
+                }
+                if fits { break; }
+                row += 1;
+            }
+
+            placements[ii] = (cs, ce, row, row + span_row);
+            for r in row..row + span_row {
+                ensure_row(&mut occ, r, max_col);
+                for c in cs..ce {
+                    if c < occ[r].len() { occ[r][c] = true; }
+                }
+            }
+            if row + span_row > max_row { max_row = row + span_row; }
+        }
+    }
+
     // Step 3: Auto-place remaining (auto row AND auto column)
     let mut auto_row = 0usize;
     let mut auto_col = 0usize;
 
-    for (ii, &idx) in item_indices.iter().enumerate() {
-        let child = &node.children[idx];
-        if is_explicitly_placed(child, &area_map) { continue; }
-        if child.style.grid_row_start > 0 { continue; } // handled in step 2
+    for (ii, path) in item_indices.iter().enumerate() {
+        let child = grid_child_ref(node, path);
+        if is_explicitly_placed(child, &area_map, &col_line_names, &row_line_names) { continue; }
+        // Skip row-locked items (handled in step 2)
+        let (rs_is_span2, rs_val2) = decode_grid_line(child.style.grid_row_start);
+        let rs_has_name2 = !child.style.grid_row_start_name.is_empty()
+            && lookup_named_line(&child.style.grid_row_start_name, &row_line_names).is_some();
+        if rs_has_name2 || (!rs_is_span2 && rs_val2 != 0) { continue; }
+        // Skip column-locked items (handled in step 2.5)
+        let (cs_is_span2, cs_val2) = decode_grid_line(child.style.grid_column_start);
+        let cs_has_name2 = !child.style.grid_column_start_name.is_empty()
+            && lookup_named_line(&child.style.grid_column_start_name, &col_line_names).is_some();
+        if cs_has_name2 || (!cs_is_span2 && cs_val2 != 0) { continue; }
 
         let span_col = get_span_col(child);
         let span_row = get_span_row(child);
@@ -517,13 +618,13 @@ pub fn layout_grid(
 
     // Measure items for Auto track sizing
     let mut col_content_widths = vec![0.0f32; n_explicit_cols.max(max_col)];
-    for (ii, &idx) in item_indices.iter().enumerate() {
+    for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, _rs, _re) = placements[ii];
-        let child = &mut node.children[idx];
-        let _child_font = child.style.font_size_px(font_px, root_font_px);
-        // Dry run layout to find intrinsic width
-        engine.layout_box(child, 10000.0, 0.0, 0.0, font_px, root_font_px);
-        let intrinsic_w = crate::layout::block::compute_intrinsic_width(child);
+        let child = grid_child_ref(node, path);
+        let child_font = child.style.font_size_px(font_px, root_font_px);
+        // Use max_content_width instead of layout_box(10000) to avoid leaking dummy widths
+        let intrinsic_w = engine.max_content_width(child, font_px, root_font_px);
+        let _ = child_font; // suppress warning
         let span = (ce - cs).max(1);
         let w_per_col = intrinsic_w / span as f32;
         for c in cs..ce {
@@ -560,7 +661,7 @@ pub fn layout_grid(
 
     let mut row_heights: Vec<f32> = vec![0.0; n_rows];
 
-    for (ii, &idx) in item_indices.iter().enumerate() {
+    for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, rs, re) = placements[ii];
         let cs = cs.min(n_cols_actual.saturating_sub(1));
         let ce = ce.min(n_cols_actual).max(cs + 1);
@@ -568,7 +669,7 @@ pub fn layout_grid(
         // Compute span width
         let span_w = span_width(&col_px, &col_x, cs, ce, col_gap, content_w);
 
-        let child = &mut node.children[idx];
+        let child = grid_child_mut(node, path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
 
@@ -662,7 +763,9 @@ pub fn layout_grid(
 
     // ── Second pass: position items ─────────────────────────────────────────
 
-    for (ii, &idx) in item_indices.iter().enumerate() {
+    let node_align_items   = node.style.align_items;
+    let node_justify_items = node.style.justify_items;
+    for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, rs, re) = placements[ii];
         let cs = cs.min(n_cols_actual.saturating_sub(1));
         let ce = ce.min(n_cols_actual).max(cs + 1);
@@ -676,7 +779,7 @@ pub fn layout_grid(
         let ix = content_x + col_x.get(cs).copied().unwrap_or(0.0);
         let iy = content_y + row_y.get(rs).copied().unwrap_or(0.0);
 
-        let child = &mut node.children[idx];
+        let child = grid_child_mut(node, path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let crbox = engine.res_box(&child.style, child_font, span_w, root_font_px);
 
@@ -709,8 +812,8 @@ pub fn layout_grid(
         }
 
         // Handle justify-self / align-self
-        let eff_justify = effective_justify_self(child, node.style.justify_items);
-        let eff_align   = effective_align_self_grid(child, node.style.align_items);
+        let eff_justify = effective_justify_self(child, node_justify_items);
+        let eff_align   = effective_align_self_grid(child, node_align_items);
 
         // Stretch align-self: set explicit height and re-layout
         if eff_align == AlignItems::Stretch && child.style.height.is_auto() {
@@ -776,8 +879,9 @@ pub fn layout_grid(
     let ch = rbox.content_height.unwrap_or(total_h);
 
     // Save restored heights
-    for &idx in &item_indices {
-        node.children[idx].scroll_height = node.children[idx].content_rect.h;
+    for path in &item_indices {
+        let child = grid_child_mut(node, path);
+        child.scroll_height = child.content_rect.h;
     }
 
     // Collapsed margins: no pass-through
@@ -807,20 +911,108 @@ fn build_area_map(areas: &[Vec<String>]) -> std::collections::HashMap<String, (u
     map
 }
 
-fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<String, (usize,usize,usize,usize)>) -> bool {
+/// Decode a grid line value from parse_grid_line encoding.
+/// Returns (is_span, value) where:
+///   is_span=true, value=N  means "span N"
+///   is_span=false, value=N means explicit line N (1-based positive, or negative from end)
+///   value=0 means auto
+fn decode_grid_line(raw: i32) -> (bool, i32) {
+    if raw <= -10000 {
+        // Span encoding: -(span_count + 10000)
+        (true, -(raw + 10000))
+    } else {
+        (false, raw)
+    }
+}
+
+/// Look up a named line in the line-name map. Returns the first matching line index.
+fn lookup_named_line(name: &str, line_names: &std::collections::HashMap<String, Vec<usize>>) -> Option<usize> {
+    if name.is_empty() { return None; }
+    if let Some(indices) = line_names.get(name) {
+        return indices.first().copied();
+    }
+    None
+}
+
+/// Resolve a grid line start value to a 0-based column/row index.
+fn resolve_line_start(raw: i32, n_explicit: usize) -> usize {
+    let (is_span, val) = decode_grid_line(raw);
+    if is_span || val == 0 { return 0; } // span or auto → 0 (auto-placed later)
+    if val > 0 {
+        (val as usize).saturating_sub(1)
+    } else {
+        let from_end = (-val) as usize;
+        (n_explicit + 1).saturating_sub(from_end)
+    }
+}
+
+/// Resolve a grid line start, with named line fallback.
+fn resolve_line_start_named(raw: i32, name: &str, n_explicit: usize,
+    line_names: &std::collections::HashMap<String, Vec<usize>>) -> usize {
+    // Try named line first if numeric is auto
+    if raw == 0 && !name.is_empty() {
+        if let Some(idx) = lookup_named_line(name, line_names) {
+            return idx;
+        }
+    }
+    resolve_line_start(raw, n_explicit)
+}
+
+/// Resolve a grid line end value to a 0-based column/row index.
+fn resolve_line_end(raw: i32, start: usize, n_explicit: usize) -> usize {
+    let (is_span, val) = decode_grid_line(raw);
+    if is_span {
+        start + val as usize
+    } else if val == 0 {
+        start + 1 // auto
+    } else if val > 0 {
+        (val as usize).saturating_sub(1).max(start + 1)
+    } else {
+        let from_end = (-val) as usize;
+        let line = (n_explicit + 1).saturating_sub(from_end);
+        line.max(start + 1)
+    }
+}
+
+/// Resolve a grid line end, with named line fallback.
+fn resolve_line_end_named(raw: i32, name: &str, start: usize, n_explicit: usize,
+    line_names: &std::collections::HashMap<String, Vec<usize>>) -> usize {
+    // Try named line first if numeric is auto
+    if raw == 0 && !name.is_empty() {
+        if let Some(idx) = lookup_named_line(name, line_names) {
+            return idx.max(start + 1);
+        }
+    }
+    resolve_line_end(raw, start, n_explicit)
+}
+
+fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<String, (usize,usize,usize,usize)>,
+    col_line_names: &std::collections::HashMap<String, Vec<usize>>,
+    row_line_names: &std::collections::HashMap<String, Vec<usize>>,
+) -> bool {
     if !child.style.grid_area.is_empty() && area_map.contains_key(&child.style.grid_area) {
         return true;
     }
-    // Require BOTH axes to have explicit line numbers (positive = line, negative = span, 0 = auto).
-    // A span (negative) is NOT an explicit placement — it drives auto-placement like auto.
-    child.style.grid_column_start > 0 && child.style.grid_row_start > 0
+    let (cs_span, cs_val) = decode_grid_line(child.style.grid_column_start);
+    let (rs_span, rs_val) = decode_grid_line(child.style.grid_row_start);
+    // Column is definite if it has a numeric value OR a resolvable named line
+    let col_definite = (!cs_span && cs_val != 0)
+        || (!child.style.grid_column_start_name.is_empty()
+            && lookup_named_line(&child.style.grid_column_start_name, col_line_names).is_some());
+    let row_definite = (!rs_span && rs_val != 0)
+        || (!child.style.grid_row_start_name.is_empty()
+            && lookup_named_line(&child.style.grid_row_start_name, row_line_names).is_some());
+    col_definite && row_definite
 }
 
 /// Resolve placement to (col_start, col_end, row_start, row_end), all 0-based.
 fn resolve_placement(
     child: &HtmlBox,
     area_map: &std::collections::HashMap<String,(usize,usize,usize,usize)>,
-    _n_cols: usize,
+    n_cols: usize,
+    n_rows: usize,
+    col_line_names: &std::collections::HashMap<String, Vec<usize>>,
+    row_line_names: &std::collections::HashMap<String, Vec<usize>>,
 ) -> (usize, usize, usize, usize) {
     // Named grid area
     if !child.style.grid_area.is_empty() {
@@ -829,47 +1021,34 @@ fn resolve_placement(
         }
     }
 
-    let cs_raw = child.style.grid_column_start;
-    let ce_raw = child.style.grid_column_end;
-    let rs_raw = child.style.grid_row_start;
-    let re_raw = child.style.grid_row_end;
-
-    // col start
-    let cs = if cs_raw > 0 { (cs_raw as usize).saturating_sub(1) } else { 0 };
-    // col end
-    let ce = if ce_raw > 0 {
-        (ce_raw as usize).saturating_sub(1).max(cs + 1)
-    } else if ce_raw < 0 {
-        cs + (-ce_raw) as usize  // span
-    } else {
-        cs + 1
-    };
-    // row start
-    let rs = if rs_raw > 0 { (rs_raw as usize).saturating_sub(1) } else { 0 };
-    // row end
-    let re = if re_raw > 0 {
-        (re_raw as usize).saturating_sub(1).max(rs + 1)
-    } else if re_raw < 0 {
-        rs + (-re_raw) as usize
-    } else {
-        rs + 1
-    };
+    let cs = resolve_line_start_named(child.style.grid_column_start,
+        &child.style.grid_column_start_name, n_cols, col_line_names);
+    let ce = resolve_line_end_named(child.style.grid_column_end,
+        &child.style.grid_column_end_name, cs, n_cols, col_line_names);
+    let rs = resolve_line_start_named(child.style.grid_row_start,
+        &child.style.grid_row_start_name, n_rows, row_line_names);
+    let re = resolve_line_end_named(child.style.grid_row_end,
+        &child.style.grid_row_end_name, rs, n_rows, row_line_names);
 
     (cs, ce, rs, re)
 }
 
 fn get_span_col(child: &HtmlBox) -> usize {
-    if child.style.grid_column_end < 0 { (-child.style.grid_column_end) as usize }
-    else if child.style.grid_column_start < 0 { (-child.style.grid_column_start) as usize }
-    else if child.style.grid_column_end > 0 && child.style.grid_column_start > 0 {
+    let (end_is_span, end_val) = decode_grid_line(child.style.grid_column_end);
+    if end_is_span { return end_val as usize; }
+    let (start_is_span, start_val) = decode_grid_line(child.style.grid_column_start);
+    if start_is_span { return start_val as usize; }
+    if child.style.grid_column_end > 0 && child.style.grid_column_start > 0 {
         (child.style.grid_column_end - child.style.grid_column_start).max(1) as usize
     } else { 1 }
 }
 
 fn get_span_row(child: &HtmlBox) -> usize {
-    if child.style.grid_row_end < 0 { (-child.style.grid_row_end) as usize }
-    else if child.style.grid_row_start < 0 { (-child.style.grid_row_start) as usize }
-    else if child.style.grid_row_end > 0 && child.style.grid_row_start > 0 {
+    let (end_is_span, end_val) = decode_grid_line(child.style.grid_row_end);
+    if end_is_span { return end_val as usize; }
+    let (start_is_span, start_val) = decode_grid_line(child.style.grid_row_start);
+    if start_is_span { return start_val as usize; }
+    if child.style.grid_row_end > 0 && child.style.grid_row_start > 0 {
         (child.style.grid_row_end - child.style.grid_row_start).max(1) as usize
     } else { 1 }
 }
