@@ -605,6 +605,19 @@ impl Renderer {
             (Transform::from_scale(self.scale, self.scale), None)
         };
 
+        // ── Legacy clip: rect(top, right, bottom, left) ─────────────────────
+        // Applies to positioned elements; clips the element and its children.
+        if let Some(cr) = node.style.clip_rect {
+            let clip_right  = if cr[1] == f32::MAX { pw } else { cr[1] };
+            let clip_bottom = if cr[2] == f32::MAX { ph } else { cr[2] };
+            let cw = clip_right - cr[3];
+            let ch = clip_bottom - cr[0];
+            if cw <= 0.0 || ch <= 0.0 {
+                // Fully clipped (e.g. clip: rect(0,0,0,0)) — skip rendering
+                return;
+            }
+        }
+
         // ── Clip-path ─────────────────────────────────────────────────────────
         // Build a pixmap-sized clip mask from clip-path shape (if any).
         let clip_path_mask = make_clip_path_mask(pixmap, node, px, py, pw, ph, font_px, self.scale);

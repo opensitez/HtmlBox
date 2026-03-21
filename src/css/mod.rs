@@ -3513,7 +3513,15 @@ pub fn resolve_content_value(v: &str) -> String {
                         "open-quote"    => out.push('\u{201C}'),
                         "close-quote"   => out.push('\u{201D}'),
                         "no-open-quote" | "no-close-quote" => {}
-                        _ => {} // attr(), counter(), etc. — ignore for now
+                        _ => {
+                            // counter(name) → emit placeholder for later resolution
+                            if tok.starts_with("counter(") && tok.ends_with(')') {
+                                out.push('\x01');
+                                out.push_str(tok);
+                                out.push('\x01');
+                            }
+                            // attr(), counters(), etc. — ignore for now
+                        }
                     }
                     rest = &rest[end..];
                 }
@@ -3521,6 +3529,31 @@ pub fn resolve_content_value(v: &str) -> String {
             out
         }
     }
+}
+
+/// Resolve counter() and counters() function calls in ::before/::after content.
+fn resolve_counters_in_content(content: &str, counters: &HashMap<String, Vec<i32>>) -> String {
+    if !content.contains('\x01') { return content.to_string(); }
+    // Placeholder \x01counter(name)\x01 was inserted by resolve_content_value
+    let mut out = String::new();
+    let mut rest = content;
+    while let Some(start) = rest.find('\x01') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + 1..];
+        if let Some(end) = rest.find('\x01') {
+            let func = &rest[..end];
+            rest = &rest[end + 1..];
+            if let Some(inner) = func.strip_prefix("counter(").and_then(|s| s.strip_suffix(')')) {
+                let name = inner.split(',').next().unwrap_or("").trim();
+                let val = counters.get(name).and_then(|s| s.last()).copied().unwrap_or(0);
+                out.push_str(&val.to_string());
+            } else {
+                out.push_str(func);
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Parse CSS counter list: "name1 3 name2 name3 -1" → [(name1,3),(name2,1),(name3,-1)]
@@ -4883,7 +4916,8 @@ pub fn apply_cascade_vp(
     // instead of O(nodes × depth).
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
     let mut candidates_buf: Vec<usize> = Vec::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf);
+    let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4905,6 +4939,7 @@ fn apply_cascade_inner(
     keyboard_focus: bool,
     inherited_vars: &HashMap<String, String>,
     candidates_buf: &mut Vec<usize>,
+    counters: &mut HashMap<String, Vec<i32>>,
 ) {
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
@@ -5274,12 +5309,40 @@ fn apply_cascade_inner(
         Some((content, Box::new(ps)))
     };
 
+    // ── CSS counters: reset, increment, then resolve counter() in content ──
+    // Track which counters were reset at this level so we can pop them later.
+    let mut counters_pushed: Vec<String> = Vec::new();
+    for (name, val) in &root.style.counter_reset {
+        counters.entry(name.clone()).or_insert_with(Vec::new).push(*val);
+        counters_pushed.push(name.clone());
+    }
+    // `ol` implicitly resets the `list-item` counter
+    if root.tag == "ol" && root.style.counter_reset.is_empty() {
+        counters.entry("list-item".to_string()).or_insert_with(Vec::new).push(0);
+        counters_pushed.push("list-item".to_string());
+    }
+    for (name, val) in &root.style.counter_increment {
+        if let Some(stack) = counters.get_mut(name) {
+            if let Some(top) = stack.last_mut() {
+                *top += val;
+            }
+        }
+    }
+    // `li` implicitly increments the `list-item` counter
+    if root.tag == "li" && root.style.counter_increment.is_empty() {
+        if let Some(stack) = counters.get_mut("list-item") {
+            if let Some(top) = stack.last_mut() {
+                *top += 1;
+            }
+        }
+    }
+
     if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &local_vars, &stylesheet.rules) {
-        root.style.before_content = txt;
+        root.style.before_content = resolve_counters_in_content(&txt, counters);
         root.style.before_style   = Some(ps);
     }
     if let Some((txt, ps)) = build_pseudo_style(&mut after_matched, &root.style, &local_vars, &stylesheet.rules) {
-        root.style.after_content = txt;
+        root.style.after_content = resolve_counters_in_content(&txt, counters);
         root.style.after_style   = Some(ps);
     }
     if let Some((_, ps)) = build_pseudo_style(&mut selection_matched, &root.style, &local_vars, &stylesheet.rules) {
@@ -5287,6 +5350,45 @@ fn apply_cascade_inner(
     }
     if let Some((_, ps)) = build_pseudo_style(&mut marker_matched, &root.style, &local_vars, &stylesheet.rules) {
         root.style.marker_style = Some(ps);
+    }
+
+    // For grid/flex containers, ::before/::after generate actual child boxes
+    // (they become grid/flex items). Insert synthetic children.
+    let is_grid_or_flex = matches!(root.style.display,
+        Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
+    if is_grid_or_flex && !root.style.before_content.is_empty() {
+        let mut pseudo_box = {
+                let mut b = crate::types::HtmlBox::new("::before");
+                b.text = root.style.before_content.clone();
+                b
+            };
+        pseudo_box.tag = "::before".to_string();
+        if let Some(ref ps) = root.style.before_style {
+            pseudo_box.style = *ps.clone();
+        }
+        // Set display to block if not explicitly set (grid/flex items are blockified)
+        if matches!(pseudo_box.style.display, Display::Inline) {
+            pseudo_box.style.display = Display::Block;
+        }
+        root.children.insert(0, pseudo_box);
+        // Clear before_content so it doesn't also render inline
+        root.style.before_content = String::new();
+    }
+    if is_grid_or_flex && !root.style.after_content.is_empty() {
+        let mut pseudo_box = {
+                let mut b = crate::types::HtmlBox::new("::after");
+                b.text = root.style.after_content.clone();
+                b
+            };
+        pseudo_box.tag = "::after".to_string();
+        if let Some(ref ps) = root.style.after_style {
+            pseudo_box.style = *ps.clone();
+        }
+        if matches!(pseudo_box.style.display, Display::Inline) {
+            pseudo_box.style.display = Display::Block;
+        }
+        root.children.push(pseudo_box);
+        root.style.after_content = String::new();
     }
 
     let n_children = root.children.len();
@@ -5341,10 +5443,19 @@ fn apply_cascade_inner(
             vw, vh, focused_box, keyboard_focus,
             &local_vars,
             candidates_buf,
+            counters,
         );
     }
 
     ancestors.pop();
+
+    // Pop counters that were reset at this level
+    for name in counters_pushed.iter().rev() {
+        if let Some(stack) = counters.get_mut(name) {
+            stack.pop();
+            if stack.is_empty() { counters.remove(name); }
+        }
+    }
 }
 
 // ─── User-Agent Stylesheet ───────────────────────────────────────────────────

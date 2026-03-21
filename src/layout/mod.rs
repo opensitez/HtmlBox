@@ -494,9 +494,10 @@ impl LayoutEngine {
     pub fn max_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
-        // Explicit width → use that directly.
+        // Explicit width → use that directly (but skip percentages — they can't
+        // resolve without a known containing width during intrinsic measurement).
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-        if !node.style.width.is_auto() {
+        if !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
             let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
             return w.max(0.0);
         }
