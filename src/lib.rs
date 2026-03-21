@@ -103,9 +103,6 @@ pub fn load_html_with_registry(
         }
     }
 
-    // Start async image fetches (non-blocking — results arrive via poll_pending_images).
-    start_async_image_fetches(&mut doc);
-
     // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
     // are evaluated against the actual window size rather than the default vw=0, vh=0.
     let t2 = std::time::Instant::now();
@@ -117,6 +114,13 @@ pub fn load_html_with_registry(
 
     // Post-cascade: load background images (now that cascade has set background_image_url)
     html::load_background_images(&mut doc.root, &doc.base_url.clone());
+
+    // Resolve <picture> elements with real viewport dimensions before image fetching
+    let base = doc.base_url.clone();
+    html::resolve_picture_elements(&mut doc.root, &base, viewport_width, viewport_height);
+
+    // Start async image fetches (non-blocking — results arrive via poll_pending_images).
+    start_async_image_fetches(&mut doc);
 
     let t3 = std::time::Instant::now();
     let mut engine = LayoutEngine::new();

@@ -1149,6 +1149,11 @@ impl HtmlParser {
             let mut inner_ol = 0i32;
             self.parse_children_into(&tag, &mut node.children, &mut inner_ol);
 
+            // <picture>: resolve best <source> for the child <img>
+            if tag == "picture" {
+                resolve_picture_source(&mut node, &self.base_url, 0.0, 0.0);
+            }
+
             // Details: handle open/closed state
             if tag == "details" {
                 let is_open = node.attributes.contains_key("open");
@@ -1226,6 +1231,69 @@ fn collapse_whitespace(s: &str) -> String {
     }
     if in_ws { out.push(' '); }
     out
+}
+
+/// Parse a `srcset` attribute value and return the first URL.
+/// `srcset` may contain entries like `url 320w, url 640w` or just `url`.
+fn parse_srcset_url(srcset: &str) -> Option<String> {
+    let entry = srcset.split(',').next()?.trim();
+    let url = entry.split_whitespace().next()?;
+    if url.is_empty() { return None; }
+    Some(url.to_string())
+}
+
+/// Resolve the best `<source>` for a `<picture>` element and set it on the child `<img>`.
+fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f32) {
+    // Find the best matching <source>
+    let mut best_url: Option<String> = None;
+    for child in &picture.children {
+        if child.tag != "source" { continue; }
+        // Skip image/webp — our image decoder may not support it
+        if let Some(typ) = child.attributes.get("type") {
+            if typ.contains("webp") { continue; }
+        }
+        // Check media query if present
+        if let Some(media) = child.attributes.get("media") {
+            if vw > 0.0 || vh > 0.0 {
+                if !crate::css::evaluate_media(media, vw, vh) {
+                    continue;
+                }
+            } else {
+                // Viewport unknown — skip sources with media queries,
+                // prefer unconditional sources
+                continue;
+            }
+        }
+        // Extract URL from srcset
+        if let Some(srcset) = child.attributes.get("srcset") {
+            if let Some(url) = parse_srcset_url(srcset) {
+                best_url = Some(url);
+                break; // First matching source wins
+            }
+        }
+    }
+
+    if let Some(url) = best_url {
+        // Find the child <img> and set its src
+        for child in &mut picture.children {
+            if child.tag == "img" {
+                let resolved = resolve_url(&url, base_url);
+                child.attributes.insert("src".to_string(), url);
+                child.attributes.insert("_resolved_src".to_string(), resolved);
+                break;
+            }
+        }
+    }
+}
+
+/// Post-pass: re-resolve `<picture>` elements with real viewport dimensions.
+pub fn resolve_picture_elements(node: &mut HtmlBox, base_url: &str, vw: f32, vh: f32) {
+    if node.tag == "picture" {
+        resolve_picture_source(node, base_url, vw, vh);
+    }
+    for child in &mut node.children {
+        resolve_picture_elements(child, base_url, vw, vh);
+    }
 }
 
 fn number_lists(node: &mut HtmlBox) {
@@ -1494,6 +1562,7 @@ where
     for (k, v) in parser.stylesheet.variables {
         stylesheet.variables.insert(k, v);
     }
+    stylesheet.raw_sources.extend(parser.stylesheet.raw_sources);
     stylesheet.keyframes.extend(parser.stylesheet.keyframes);
 
     let title = parser.title.clone();

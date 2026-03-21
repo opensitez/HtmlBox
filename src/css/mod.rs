@@ -649,7 +649,7 @@ pub struct Stylesheet {
     idx_universal: Vec<usize>,  // rules with * or no specific key selector
     idx_dirty:    bool,
     /// Raw (comment-stripped) CSS sources, kept for re-extracting variables with viewport.
-    raw_sources:  Vec<String>,
+    pub raw_sources:  Vec<String>,
 }
 
 impl Stylesheet {
