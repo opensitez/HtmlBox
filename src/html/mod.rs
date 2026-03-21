@@ -184,7 +184,8 @@ pub fn load_background_images(node: &mut HtmlBox, base_url: &str) {
     }
 }
 
-fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
+fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>,
+                   cache: &mut HashMap<(String, u32, u32), (Vec<u8>, u32, u32)>) {
     if node.tag == "img" {
         if let Some(src) = node.attributes.get("src") {
             if src.starts_with("__svg_") {
@@ -195,53 +196,49 @@ fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>) {
                     let h = node.attributes.get("data-svg-h")
                         .and_then(|s| s.parse().ok())
                         .unwrap_or_else(|| if node.image_height > 0 { node.image_height } else { 150 });
-                    eprintln!("[SVG] rasterizing {} ({}x{}) markup len={}", src, w, h, svg_source.len());
-                    if let Some(rgba) = rasterize_svg_to_rgba(svg_source, w, h) {
-                        eprintln!("[SVG] success: {} bytes of RGBA data", rgba.len());
-                        node.image_data = Some(rgba);
+                    let cache_key = (svg_source.clone(), w, h);
+                    if let Some((rgba, cw, ch)) = cache.get(&cache_key) {
+                        node.image_data = Some(rgba.clone());
+                        node.image_width = *cw;
+                        node.image_height = *ch;
+                        node.svg_markup = Some(svg_source.clone());
+                    } else if let Some(rgba) = rasterize_svg_to_rgba(svg_source, w, h) {
+                        node.image_data = Some(rgba.clone());
                         node.image_width = w;
                         node.image_height = h;
                         node.svg_markup = Some(svg_source.clone());
-                        // Ensure dimensions are set in style
-                        if node.style.width.is_auto() {
-                            apply_property(&mut node.style, "width", &format!("{}px", w));
-                        }
-                        if node.style.height.is_auto() {
-                            apply_property(&mut node.style, "height", &format!("{}px", h));
-                        }
+                        cache.insert(cache_key, (rgba, w, h));
+                    }
+                    if node.style.width.is_auto() {
+                        apply_property(&mut node.style, "width", &format!("{}px", w));
+                    }
+                    if node.style.height.is_auto() {
+                        apply_property(&mut node.style, "height", &format!("{}px", h));
                     }
                 }
             }
         }
     }
     for child in &mut node.children {
-        rasterize_svgs(child, svg_map);
+        rasterize_svgs(child, svg_map, cache);
     }
 }
 
 /// Rasterize an SVG string to RGBA pixel data using resvg.
 fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> {
     use resvg::usvg;
-    eprintln!("[SVG] full markup ({} bytes):\n{}", svg.len(), svg);
     let opt = usvg::Options::default();
     let tree = match usvg::Tree::from_str(svg, &opt) {
         Ok(t) => t,
-        Err(e) => {
-            eprintln!("[SVG] usvg parse error: {}", e);
-            return None;
-        }
+        Err(_) => return None,
     };
     let size = tree.size();
-    eprintln!("[SVG] tree size: {}x{}", size.width(), size.height());
     let sx = width as f32 / size.width();
     let sy = height as f32 / size.height();
     let transform = resvg::tiny_skia::Transform::from_scale(sx, sy);
     let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
         Some(p) => p,
-        None => {
-            eprintln!("[SVG] pixmap creation failed for {}x{}", width, height);
-            return None;
-        }
+        None => return None,
     };
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     // resvg outputs premultiplied RGBA; convert to straight alpha
@@ -433,6 +430,7 @@ pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>,
     // Fetch remote images via HTTP
     if path.starts_with("http://") || path.starts_with("https://") {
         let bytes = ureq::get(&path)
+            .set("User-Agent", crate::USER_AGENT)
             .timeout(std::time::Duration::from_secs(10))
             .call().ok()
             .and_then(|r| {
@@ -1560,9 +1558,10 @@ where
     apply_details_summary_post_cascade(&mut doc.root);
     number_lists(&mut doc.root);
 
-    // Post-pass: rasterize SVG placeholders into image data
+    // Post-pass: rasterize SVG placeholders into image data (with dedup cache)
     if !svg_map.is_empty() {
-        rasterize_svgs(&mut doc.root, &svg_map);
+        let mut svg_cache = HashMap::new();
+        rasterize_svgs(&mut doc.root, &svg_map, &mut svg_cache);
     }
 
     doc

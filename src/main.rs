@@ -105,6 +105,8 @@ struct App {
     mouse_y:       f32,
     initial_html:  String,
     base_url:      String,
+    /// Receiver for a Document being loaded on a background thread.
+    pending_doc:   Option<std::sync::mpsc::Receiver<Document>>,
 }
 
 impl App {
@@ -126,8 +128,18 @@ impl ApplicationHandler for App {
         self.width  = platform.logical_width();
         self.height = platform.logical_height();
         self.renderer.set_scale(self.scale);
-        let doc = load_html_with_base(&self.initial_html, &self.base_url, self.width, self.height);
-        self.doc   = Some(doc);
+
+        // Load content on a background thread so the window shows immediately.
+        let html = std::mem::take(&mut self.initial_html);
+        let base = std::mem::take(&mut self.base_url);
+        let w = self.width;
+        let h = self.height;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let doc = load_html_with_base(&html, &base, w, h);
+            let _ = tx.send(doc);
+        });
+        self.pending_doc = Some(rx);
 
         self.window   = Some(window);
         self.platform = Some(platform);
@@ -259,8 +271,20 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        // Check if the background document load has finished.
+        if let Some(rx) = self.pending_doc.as_ref() {
+            if let Ok(mut doc) = rx.try_recv() {
+                // Re-layout with the renderer's font system for accurate glyph widths.
+                self.renderer.layout_engine().viewport_h = self.height;
+                self.renderer.layout_engine().layout(&mut doc, self.width);
+                self.doc = Some(doc);
+                self.pending_doc = None;
+                self.request_redraw();
+            }
+        }
+
         let mut needs_redraw = false;
-        let mut has_pending = false;
+        let mut has_pending = self.pending_doc.is_some();
         if let Some(doc) = self.doc.as_mut() {
             if doc.editor.has_focus && doc.editor.blink_update() {
                 needs_redraw = true;
@@ -279,7 +303,7 @@ impl ApplicationHandler for App {
                 needs_redraw = true;
             }
             // Keep polling while resources are still in flight.
-            has_pending = doc.pending_images.is_some()
+            has_pending = has_pending || doc.pending_images.is_some()
                 || self.renderer.layout_engine().has_pending_fonts();
         }
         if needs_redraw {
@@ -313,6 +337,7 @@ fn main() {
         if path.starts_with("http://") || path.starts_with("https://") {
             // URL — fetch content, use URL as base
             let html = ureq::get(path)
+                .set("User-Agent", rhtmledit::USER_AGENT)
                 .timeout(std::time::Duration::from_secs(15))
                 .call().ok()
                 .and_then(|r| {
@@ -340,6 +365,7 @@ fn main() {
         renderer: Renderer::new(),
         doc: None, width: 900.0, height: 700.0,
         scale: 1.0, mouse_x: 0.0, mouse_y: 0.0,
+        pending_doc: None,
         initial_html,
         base_url,
     };

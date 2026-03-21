@@ -267,6 +267,7 @@ pub fn layout_grid_subgrid(
         + row_heights.last().copied().unwrap_or(0.0);
     let ch = rbox.content_height.unwrap_or(total_h);
 
+    node.layout_dirty = false;
     layout_abs_children(engine, node, font_px, root_font_px);
     finish_grid(node, rbox, content_x, content_y, content_w, ch)
 }
@@ -313,6 +314,7 @@ pub fn layout_grid(
     let n_items = item_indices.len();
     if n_items == 0 {
         let ch = rbox.content_height.unwrap_or(0.0);
+        node.layout_dirty = false;
         let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
         layout_abs_children(engine, node, font_px, root_font_px);
         return result;
@@ -505,6 +507,7 @@ pub fn layout_grid(
     };
     if n_rows == 0 {
         let ch = rbox.content_height.unwrap_or(0.0);
+        node.layout_dirty = false;
         let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
         layout_abs_children(engine, node, font_px, root_font_px);
         return result;
@@ -780,6 +783,7 @@ pub fn layout_grid(
     // Collapsed margins: no pass-through
     node.collapsed_margin_top    = rbox.margin_top;
     node.collapsed_margin_bottom = rbox.margin_bottom;
+    node.layout_dirty = false;
 
     let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
     layout_abs_children(engine, node, font_px, root_font_px);

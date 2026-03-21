@@ -119,16 +119,14 @@ pub fn layout_flex(
                 raw.max(0.0)
             }
         } else {
-            // Content-based: lay out at full container width, then take the
-            // max-content (shrink-to-fit) size on the main axis.
-            engine.layout_box(child, content_w, content_x, content_y, font_px, root_font_px);
+            // Content-based: compute max-content size on the main axis.
             if is_row {
-                if child.style.width.is_auto() {
-                    crate::layout::block::compute_intrinsic_width(child)
-                } else {
-                    child.content_rect.w
-                }
+                // Use lightweight max_content_width to avoid exponential
+                // layout_box calls in deeply nested flex hierarchies.
+                engine.max_content_width(child, font_px, root_font_px)
             } else {
+                // Column direction needs actual height — must do full layout.
+                engine.layout_box(child, content_w, content_x, content_y, font_px, root_font_px);
                 child.content_rect.h
             }
         };
@@ -496,22 +494,28 @@ pub fn layout_flex(
                     let cross_extra = irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                                     + irb.margin_top + irb.margin_bottom;
                     let stretch_h = (lc - cross_extra).max(0.0);
-                    let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
-                        stretch_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
-                    } else { stretch_h };
-                    child.style.height = CssLength::Px(css_h);
-                    engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
-                    items[item_idx].cross_size = child.margin_rect.h;
+                    // Skip re-layout if the child already has the right height
+                    if (stretch_h - child.content_rect.h).abs() > 0.5 {
+                        let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
+                            stretch_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
+                        } else { stretch_h };
+                        child.style.height = CssLength::Px(css_h);
+                        engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+                        items[item_idx].cross_size = child.margin_rect.h;
+                    }
                 } else if !is_row && child.style.width.is_auto() {
                     let cross_extra = irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                                     + irb.margin_left + irb.margin_right;
                     let stretch_w = (lc - cross_extra).max(0.0);
-                    let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
-                        stretch_w + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
-                    } else { stretch_w };
-                    child.style.width = CssLength::Px(css_w);
-                    engine.layout_box(child, css_w, content_x, content_y, font_px, root_font_px);
-                    items[item_idx].cross_size = child.margin_rect.w;
+                    // Skip re-layout if the child already has the right width
+                    if (stretch_w - child.content_rect.w).abs() > 0.5 {
+                        let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
+                            stretch_w + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
+                        } else { stretch_w };
+                        child.style.width = CssLength::Px(css_w);
+                        engine.layout_box(child, css_w, content_x, content_y, font_px, root_font_px);
+                        items[item_idx].cross_size = child.margin_rect.w;
+                    }
                 }
                 0.0
             } else {
@@ -605,6 +609,7 @@ pub fn layout_flex(
 
     node.collapsed_margin_top    = rbox.margin_top;
     node.collapsed_margin_bottom = rbox.margin_bottom;
+    node.layout_dirty = false;
 
     layout_abs_children(engine, node, font_px, root_font_px);
     node.margin_rect.h

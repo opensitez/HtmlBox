@@ -76,6 +76,14 @@ fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
 /// Compute the intrinsic (max-content) width of a box that was laid out at a
 /// larger containing width.  Mirrors C++ ComputeIntrinsicWidth.
 pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
+    let cached = node.cached_intrinsic_w.get();
+    if !cached.is_nan() { return cached; }
+    let result = compute_intrinsic_width_inner(node);
+    node.cached_intrinsic_w.set(result);
+    result
+}
+
+fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
     // If the box has a fixed width, that IS its intrinsic width (min and max).
     // (In a more complete engine we'd distinguish min-content vs max-content,
     // but for now max-content is what matters for 'Auto' tracks).

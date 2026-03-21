@@ -295,6 +295,7 @@ impl FloatContext {
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
     let mut child_dirty = false;
+    node.cached_intrinsic_w.set(f32::NAN); // reset intrinsic width cache
     for child in &mut node.children {
         if propagate_dirty(child) { child_dirty = true; }
     }
@@ -487,6 +488,94 @@ impl LayoutEngine {
         len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
     }
 
+    /// Compute max-content width of a node WITHOUT calling layout_box.
+    /// This avoids the exponential blowup in nested flex layouts by measuring
+    /// text directly with the font system instead of doing full inline layout.
+    pub fn max_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
+        if matches!(node.style.display, Display::None) { return 0.0; }
+
+        // Explicit width → use that directly.
+        let font_px = node.style.font_size_px(parent_font_px, root_font_px);
+        if !node.style.width.is_auto() {
+            let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
+            return w.max(0.0);
+        }
+
+        // Replaced elements (img): use natural dimensions.
+        if node.tag == "img" && node.image_width > 0 {
+            return node.image_width as f32;
+        }
+
+        let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
+        let pad_border = rbox.padding_left + rbox.padding_right
+                       + rbox.border_left + rbox.border_right;
+
+        // Text node: measure text width directly.
+        if node.is_text_node() {
+            let text = &node.text;
+            if text.is_empty() { return 0.0; }
+            let w = if let Some(fs_ptr) = self.font_system {
+                let fs = unsafe { &mut *fs_ptr };
+                crate::layout::inline_layout::measure_text_width_weighted(
+                    text, font_px * self.scale,
+                    Some(fs),
+                    node.style.font_weight, node.style.font_style,
+                    self.scale,
+                )
+            } else {
+                crate::layout::inline_layout::measure_text_width_ts(text, font_px, 8)
+            };
+            return w;
+        }
+
+        let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
+            && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
+        let is_col_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
+            && !is_row_flex;
+
+        if is_row_flex {
+            // Row flex: sum of children's max-content widths + their box model.
+            let mut total = 0.0f32;
+            let gap = self.res_len(&node.style.column_gap, font_px, 0.0, root_font_px);
+            let mut count = 0usize;
+            for ch in &node.children {
+                if matches!(ch.style.display, Display::None) { continue; }
+                if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+                let child_font = ch.style.font_size_px(font_px, root_font_px);
+                let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
+                let child_outer = child_rbox.padding_left + child_rbox.padding_right
+                    + child_rbox.border_left + child_rbox.border_right
+                    + child_rbox.margin_left + child_rbox.margin_right;
+                // Use flex-basis if explicit, otherwise max-content width.
+                let child_main = if !ch.style.flex_basis.is_auto() {
+                    self.res_len(&ch.style.flex_basis, child_font, 0.0, root_font_px).max(0.0)
+                } else {
+                    self.max_content_width(ch, font_px, root_font_px)
+                };
+                total += child_main + child_outer;
+                if count > 0 { total += gap; }
+                count += 1;
+            }
+            return total + pad_border;
+        }
+
+        // Column flex or block: max of children's max-content widths.
+        let mut max_w = 0.0f32;
+        for ch in &node.children {
+            if matches!(ch.style.display, Display::None) { continue; }
+            if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+            let child_font = ch.style.font_size_px(font_px, root_font_px);
+            let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
+            let child_outer = child_rbox.padding_left + child_rbox.padding_right
+                + child_rbox.border_left + child_rbox.border_right
+                + child_rbox.margin_left + child_rbox.margin_right;
+            let cw = self.max_content_width(ch, font_px, root_font_px) + child_outer;
+            if cw > max_w { max_w = cw; }
+        }
+        max_w + pad_border
+    }
+
     /// Kick off non-blocking font loading. Base64 and local fonts are loaded
     /// immediately; remote fonts are fetched in background threads and arrive
     /// via `pending_fonts` channel — polled each `layout()` call.
@@ -558,6 +647,7 @@ impl LayoutEngine {
                     let counter = in_flight.clone();
                     std::thread::spawn(move || {
                         let result = ureq::get(&url)
+                            .set("User-Agent", crate::USER_AGENT)
                             .timeout(std::time::Duration::from_secs(5))
                             .call()
                             .ok()

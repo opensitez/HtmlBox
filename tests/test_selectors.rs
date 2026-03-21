@@ -655,3 +655,202 @@ fn general_sibling_combinator_parsed() {
     );
 }
 
+// ============================================================
+// Child Combinator: Cascade Application Tests
+// These verify that child-combinator rules actually apply via
+// the full cascade (load_html), not just selector matching.
+// ============================================================
+
+use rhtmledit::load_html;
+use rhtmledit::types::{Color, Float, FontWeight};
+
+fn find_by_id<'a>(root: &'a rhtmledit::HtmlBox, id: &str) -> Option<&'a rhtmledit::HtmlBox> {
+    if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
+    for c in &root.children {
+        if let Some(r) = find_by_id(c, id) { return Some(r); }
+    }
+    None
+}
+
+// .parent > .child rule applies color to direct child, not grandchild
+#[test]
+fn child_combinator_class_applies_to_direct_child() {
+    let doc = load_html(r#"
+        <style>
+          .parent > .child { color: red; }
+        </style>
+        <div class="parent">
+          <span id="direct" class="child">direct</span>
+          <div><span id="indirect" class="child">indirect</span></div>
+        </div>
+    "#, 800.0);
+    let direct   = find_by_id(&doc.root, "direct").expect("direct child");
+    let indirect = find_by_id(&doc.root, "indirect").expect("indirect child");
+    assert_eq!(direct.style.color,   Color::rgb(255, 0, 0), "direct child should be red");
+    assert_ne!(indirect.style.color, Color::rgb(255, 0, 0), "grandchild should NOT be red");
+}
+
+// .parent > .child does NOT match when the element has a different parent class
+#[test]
+fn child_combinator_wrong_parent_not_matched() {
+    let doc = load_html(r#"
+        <style>
+          .box > .child { color: blue; }
+        </style>
+        <div class="other">
+          <span id="s" class="child">text</span>
+        </div>
+    "#, 800.0);
+    let s = find_by_id(&doc.root, "s").expect("span");
+    assert_ne!(s.style.color, Color::rgb(0, 0, 255), "wrong parent class should not apply child rule");
+}
+
+// .parent > .child does NOT match a non-direct descendant
+#[test]
+fn child_combinator_not_grandchild() {
+    let doc = load_html(r#"
+        <style>
+          .outer > .target { color: green; }
+        </style>
+        <div class="outer">
+          <div class="middle">
+            <span id="t" class="target">text</span>
+          </div>
+        </div>
+    "#, 800.0);
+    let t = find_by_id(&doc.root, "t").expect("target");
+    assert_ne!(t.style.color, Color::rgb(0, 128, 0), "grandchild should not match .outer > .target");
+}
+
+// Multi-class compound selector on parent: .wrap.mod > .item
+#[test]
+fn child_combinator_compound_parent_class() {
+    let doc = load_html(r#"
+        <style>
+          .wrap.mod > .item { font-weight: bold; }
+        </style>
+        <div class="wrap mod">
+          <span id="yes" class="item">yes</span>
+        </div>
+        <div class="wrap">
+          <span id="no" class="item">no</span>
+        </div>
+    "#, 800.0);
+    let yes = find_by_id(&doc.root, "yes").expect("yes span");
+    let no  = find_by_id(&doc.root, "no").expect("no span");
+    assert_eq!(yes.style.font_weight, FontWeight::Bold,
+        ".wrap.mod > .item should be bold");
+    assert_ne!(no.style.font_weight,  FontWeight::Bold,
+        ".wrap (without .mod) > .item should not be bold");
+}
+
+// Multi-rule with child combinator: `.a > .b, .c > .d` both apply
+#[test]
+fn child_combinator_multi_selector_rule() {
+    let doc = load_html(r#"
+        <style>
+          .a > .b, .c > .d { color: blue; }
+        </style>
+        <div class="a"><span id="ab" class="b">ab</span></div>
+        <div class="c"><span id="cd" class="d">cd</span></div>
+        <div class="a"><span id="ad" class="d">ad</span></div>
+    "#, 800.0);
+    let ab = find_by_id(&doc.root, "ab").expect("ab");
+    let cd = find_by_id(&doc.root, "cd").expect("cd");
+    let ad = find_by_id(&doc.root, "ad").expect("ad");
+    assert_eq!(ab.style.color, Color::rgb(0, 0, 255), ".a > .b should be blue");
+    assert_eq!(cd.style.color, Color::rgb(0, 0, 255), ".c > .d should be blue");
+    assert_ne!(ad.style.color, Color::rgb(0, 0, 255), ".a > .d should NOT be blue");
+}
+
+// Chained child combinator: div > ul > li
+#[test]
+fn child_combinator_chained() {
+    let doc = load_html(r#"
+        <style>
+          div > ul > li { color: red; }
+        </style>
+        <div>
+          <ul>
+            <li id="direct">direct li</li>
+          </ul>
+        </div>
+        <ul>
+          <li id="no-div">no div parent</li>
+        </ul>
+    "#, 800.0);
+    let direct  = find_by_id(&doc.root, "direct").expect("direct li");
+    let no_div  = find_by_id(&doc.root, "no-div").expect("no-div li");
+    assert_eq!(direct.style.color, Color::rgb(255, 0, 0), "div > ul > li should be red");
+    assert_ne!(no_div.style.color, Color::rgb(255, 0, 0), "ul > li without div should not be red");
+}
+
+// Child combinator with tag > class
+#[test]
+fn child_combinator_tag_parent_class_child() {
+    let doc = load_html(r#"
+        <style>
+          nav > .item { color: red; }
+        </style>
+        <nav>
+          <span id="yes" class="item">yes</span>
+        </nav>
+        <div>
+          <span id="no" class="item">no</span>
+        </div>
+    "#, 800.0);
+    let yes = find_by_id(&doc.root, "yes").expect("yes");
+    let no  = find_by_id(&doc.root, "no").expect("no");
+    assert_eq!(yes.style.color, Color::rgb(255, 0, 0), "nav > .item should be red");
+    assert_ne!(no.style.color,  Color::rgb(255, 0, 0), "div > .item should not be red");
+}
+
+// Real-world pattern: .container > .main-wrap { float:left } — the slashdot pattern
+#[test]
+fn child_combinator_float_left_applied() {
+    let doc = load_html(r#"
+        <style>
+          .container > .main-wrap { float: left; }
+        </style>
+        <div class="container">
+          <div id="mw" class="main-wrap">content</div>
+        </div>
+        <div class="other">
+          <div id="nomw" class="main-wrap">content</div>
+        </div>
+    "#, 800.0);
+    let mw   = find_by_id(&doc.root, "mw").expect("main-wrap in container");
+    let nomw = find_by_id(&doc.root, "nomw").expect("main-wrap in other");
+    assert_eq!(mw.style.float,   Float::Left,
+        ".container > .main-wrap should be float:left");
+    assert_eq!(nomw.style.float, Float::None,
+        ".other > .main-wrap should not be float:left");
+}
+
+// Child combinator with margin applied — closer to real layout test
+#[test]
+fn child_combinator_margin_right_applied() {
+    let doc = load_html(r#"
+        <style>
+          .wrap.has-rail > .content { margin-right: 320px; }
+        </style>
+        <div class="wrap has-rail" style="width:800px;">
+          <div id="yes" class="content">main</div>
+        </div>
+        <div class="wrap" style="width:800px;">
+          <div id="no" class="content">main</div>
+        </div>
+    "#, 800.0);
+    let yes = find_by_id(&doc.root, "yes").expect("yes");
+    let no  = find_by_id(&doc.root, "no").expect("no");
+    // yes: margin-right:320 on content inside wrap.has-rail → content_w = 800-320 = 480
+    assert!(
+        (yes.content_rect.w - 480.0).abs() < 5.0,
+        ".wrap.has-rail > .content should have width ~480 (800-320), got {}", yes.content_rect.w
+    );
+    assert!(
+        (no.content_rect.w - 800.0).abs() < 5.0,
+        ".wrap > .content (no .has-rail) should have full width ~800, got {}", no.content_rect.w
+    );
+}
+

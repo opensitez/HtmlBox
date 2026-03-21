@@ -385,6 +385,74 @@ fn css_important_background_applied() {
     assert_eq!(c.r, 0x33, "background red channel should be 0x33");
 }
 
+// ============================================================
+// !important cascade priority
+// ============================================================
+
+#[test]
+fn css_important_beats_higher_specificity() {
+    // A low-specificity rule with !important should override a higher-specificity rule without it.
+    let doc = parse_html(
+        "<html><head><style>\
+           p { color: red !important; }\
+           body p.special { color: blue; }\
+         </style></head>\
+         <body><p class=\"special\">Text</p></body></html>");
+    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p"
+        && b.attributes.get("class").map_or(false, |v| v == "special"));
+    assert!(p.is_some());
+    // !important (specificity 1) should beat normal (specificity 12)
+    assert_eq!(p.unwrap().style.color, Color::rgb(255, 0, 0),
+        "!important should override higher-specificity normal rule");
+}
+
+#[test]
+fn css_important_beats_inline_style() {
+    // An !important stylesheet rule should override an inline style.
+    let doc = parse_html(
+        "<html><head><style>\
+           p { color: green !important; }\
+         </style></head>\
+         <body><p style=\"color: blue;\">Text</p></body></html>");
+    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    assert!(p.is_some());
+    assert_eq!(p.unwrap().style.color, Color::rgb(0, 128, 0),
+        "!important in stylesheet should override inline style");
+}
+
+#[test]
+fn css_inline_important_beats_stylesheet_important() {
+    // An inline style with !important should beat a stylesheet !important.
+    let doc = parse_html(
+        "<html><head><style>\
+           p { color: green !important; }\
+         </style></head>\
+         <body><p style=\"color: blue !important;\">Text</p></body></html>");
+    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    assert!(p.is_some());
+    assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 255),
+        "inline !important should beat stylesheet !important");
+}
+
+#[test]
+fn css_important_does_not_affect_other_properties() {
+    // !important on one property shouldn't affect other properties in the same rule.
+    let doc = parse_html(
+        "<html><head><style>\
+           p { color: red !important; background-color: yellow; }\
+           p.x { color: blue; background-color: green; }\
+         </style></head>\
+         <body><p class=\"x\">Text</p></body></html>");
+    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p"
+        && b.attributes.get("class").map_or(false, |v| v == "x"));
+    assert!(p.is_some());
+    let p = p.unwrap();
+    // color: red !important should win over color: blue (higher specificity)
+    assert_eq!(p.style.color, Color::rgb(255, 0, 0));
+    // background-color: green (higher specificity, normal) should win over yellow (normal)
+    assert_eq!(p.style.background_color, Color::rgb(0, 128, 0));
+}
+
 // ── find_box helper ───────────────────────────────────────────────────────────
 fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }

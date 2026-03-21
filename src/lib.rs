@@ -1,5 +1,9 @@
 use std::io::Read as _;
 
+/// User-Agent sent with all HTTP requests. Many servers return 403 without a
+/// recognisable browser UA string.
+pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+
 pub mod types;
 pub mod css;
 pub mod html;
@@ -142,6 +146,7 @@ fn start_async_image_fetches(doc: &mut types::Document) {
         let counter = in_flight.clone();
         std::thread::spawn(move || {
             let result = ureq::get(&url)
+                .set("User-Agent", crate::USER_AGENT)
                 .timeout(std::time::Duration::from_secs(10))
                 .call().ok()
                 .and_then(|r| {
@@ -199,6 +204,7 @@ fn resolve_css_url(base: &str, href: &str) -> String {
 
 fn fetch_text(url: &str) -> Result<String, String> {
     let resp = ureq::get(url)
+        .set("User-Agent", USER_AGENT)
         .timeout(std::time::Duration::from_secs(10))
         .call()
         .map_err(|e| e.to_string())?;

@@ -1481,6 +1481,10 @@ pub struct HtmlBox {
     pub resolved_pad_bottom:    f32,
     pub resolved_pad_left:      f32,
     pub resolved_content_width: f32,
+
+    /// Cached intrinsic (max-content) width — `NAN` means not yet computed.
+    /// Reset at the start of each layout pass.
+    pub cached_intrinsic_w: std::cell::Cell<f32>,
 }
 
 impl HtmlBox {
@@ -1533,6 +1537,7 @@ impl HtmlBox {
             resolved_content_width: 0.0,
 
             data: HashMap::new(),
+            cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
         }
     }
 
@@ -2779,6 +2784,12 @@ impl Clone for Document {
 impl Default for Document {
     fn default() -> Self { Self::new() }
 }
+
+// SAFETY: Document contains raw pointers (hovered_box, active_box, etc.) that are
+// only used on the main thread. When sent across threads (e.g. background loading),
+// these pointers are always null. The receiver must not dereference them until
+// re-established on the owning thread.
+unsafe impl Send for Document {}
 
 fn find_node_by_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut HtmlBox> {
     let mut node = root;
