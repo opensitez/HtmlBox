@@ -90,6 +90,10 @@ fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
         for (k, v) in &attrs {
             match k.as_str() {
                 "width" | "height" | "xmlns" | "xmlns:xlink" | "version" => {}
+                // Preserve class/id/style so CSS selectors still match the replacement <img>
+                "class" | "id" | "style" => {
+                    img_tag.push_str(&format!(" {}=\"{}\"", k, v));
+                }
                 _ => {
                     img_tag.push_str(&format!(" data-svg-{}=\"{}\"", k, v));
                 }

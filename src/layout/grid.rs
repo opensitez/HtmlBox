@@ -1137,6 +1137,11 @@ pub fn track_to_px(track: &GridTrackSize, container: f32, font_px: f32, root_fon
         }
         GridTrackKind::FitContent => track.value,
         GridTrackKind::Subgrid    => 0.0,
+        GridTrackKind::Calc => {
+            if let Some(ref len) = track.calc_length {
+                len.resolve(font_px, container, root_font_px)
+            } else { 0.0 }
+        }
     }
 }
 
@@ -1214,6 +1219,13 @@ fn resolve_to_pixels(
                 sizes[i] = cw;
                 used += cw;
                 flexible_cols += 1;
+            }
+            GridTrackKind::Calc => {
+                let px = if let Some(ref len) = track.calc_length {
+                    len.resolve(font_px, container, root_font_px)
+                } else { 0.0 };
+                sizes[i] = px;
+                used += px;
             }
             GridTrackKind::Subgrid => {
                 // Subgrid sentinels should not appear in resolved track lists;

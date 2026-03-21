@@ -109,6 +109,7 @@ pub fn load_html_with_registry(
     // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
     // are evaluated against the actual window size rather than the default vw=0, vh=0.
     let t2 = std::time::Instant::now();
+    doc.stylesheet.resolve_variables_for_viewport(viewport_width, viewport_height);
     doc.stylesheet.rebuild_index();
     eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
     css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, std::ptr::null(), false);

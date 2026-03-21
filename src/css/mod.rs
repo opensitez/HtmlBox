@@ -648,6 +648,8 @@ pub struct Stylesheet {
     idx_by_tag:   HashMap<String, Vec<usize>>,
     idx_universal: Vec<usize>,  // rules with * or no specific key selector
     idx_dirty:    bool,
+    /// Raw (comment-stripped) CSS sources, kept for re-extracting variables with viewport.
+    raw_sources:  Vec<String>,
 }
 
 impl Stylesheet {
@@ -665,6 +667,7 @@ impl Stylesheet {
         // within the variable values so every lookup is O(1) with no recursion.
         extract_root_variables_cleaned(cleaned, &mut self.variables);
         pre_resolve_variables(&mut self.variables);
+        self.raw_sources.push(cleaned.to_string());
         // Extract @font-face declarations
         extract_font_faces_cleaned(cleaned, &mut self.font_faces);
         // Extract @keyframes blocks
@@ -676,6 +679,17 @@ impl Stylesheet {
             }
             self.idx_dirty = true;
         }
+    }
+
+    /// Re-extract CSS variables from `:root` with viewport-aware media queries.
+    /// Call this before cascade when viewport dimensions are known, so variables
+    /// inside `@media` blocks are only extracted when the query matches.
+    pub fn resolve_variables_for_viewport(&mut self, vw: f32, vh: f32) {
+        self.variables.clear();
+        for src in &self.raw_sources {
+            extract_root_variables_vp(src, &mut self.variables, vw, vh);
+        }
+        pre_resolve_variables(&mut self.variables);
     }
 
     /// Rebuild the selector index if dirty.  Called once before each cascade pass.
@@ -1039,6 +1053,10 @@ fn extract_root_variables_cleaned(css: &str, vars: &mut HashMap<String, String>)
 }
 
 fn extract_root_variables_inner(css: &str, vars: &mut HashMap<String, String>) {
+    extract_root_variables_vp(css, vars, 0.0, 0.0);
+}
+
+fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: f32, vh: f32) {
     let mut s = css;
     while !s.is_empty() {
         s = s.trim_start();
@@ -1048,8 +1066,14 @@ fn extract_root_variables_inner(css: &str, vars: &mut HashMap<String, String>) {
             let lower: String = prefix.to_ascii_lowercase();
             if lower.starts_with("@media") {
                 if let Some(brace) = s.find('{') {
+                    // Only extract variables from matching media queries
+                    // (when viewport is known, i.e. vw > 0).
+                    let condition = s[6..brace].trim();
+                    let matches = vw == 0.0 || evaluate_media(condition, vw, vh);
                     let (block, rest) = consume_block(&s[brace..]);
-                    extract_root_variables_inner(&block, vars);
+                    if matches {
+                        extract_root_variables_vp(&block, vars, vw, vh);
+                    }
                     s = rest;
                 } else { break; }
                 continue;
@@ -1440,7 +1464,13 @@ pub fn parse_declarations(block: &str) -> HashMap<String, String> {
         let decl = decl.trim();
         if decl.is_empty() { continue; }
         if let Some(colon) = decl.find(':') {
-            let prop  = decl[..colon].trim().to_ascii_lowercase();
+            let raw_prop = decl[..colon].trim();
+            // CSS custom properties (--*) are case-sensitive; standard properties are not.
+            let prop = if raw_prop.starts_with("--") {
+                raw_prop.to_string()
+            } else {
+                raw_prop.to_ascii_lowercase()
+            };
             let value = strip_important(decl[colon + 1..].trim());
             if !prop.is_empty() && !value.is_empty() {
                 map.insert(prop, value);
@@ -1459,7 +1489,13 @@ pub fn parse_declarations_important(block: &str) -> (HashMap<String, String>, Ha
         let decl = decl.trim();
         if decl.is_empty() { continue; }
         if let Some(colon) = decl.find(':') {
-            let prop = decl[..colon].trim().to_ascii_lowercase();
+            let raw_prop = decl[..colon].trim();
+            // CSS custom properties (--*) are case-sensitive; standard properties are not.
+            let prop = if raw_prop.starts_with("--") {
+                raw_prop.to_string()
+            } else {
+                raw_prop.to_ascii_lowercase()
+            };
             let raw_value = decl[colon + 1..].trim();
             let is_important = has_important(raw_value);
             let value = strip_important(raw_value);
@@ -2531,10 +2567,29 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 "auto" => { style.flex_grow = 1.0; style.flex_shrink = 1.0; style.flex_basis = CssLength::Auto; }
                 _ => {
                     let toks: Vec<&str> = v.split_whitespace().collect();
-                    if let Some(t0) = toks.first() { style.flex_grow = t0.parse().unwrap_or(0.0); }
-                    if let Some(t1) = toks.get(1)  { style.flex_shrink = t1.parse().unwrap_or(1.0); }
-                    else                            { style.flex_shrink = 1.0; style.flex_basis = CssLength::Px(0.0); }
-                    if let Some(t2) = toks.get(2)  { style.flex_basis = parse_length(t2); }
+                    if toks.len() == 1 {
+                        // Single value: if it looks like a <number>, it's flex-grow.
+                        // If it looks like a <length-percentage>, it's flex-basis.
+                        let t = toks[0];
+                        if t.ends_with('%') || t.ends_with("px") || t.ends_with("em")
+                            || t.ends_with("rem") || t.ends_with("vw") || t.ends_with("vh")
+                        {
+                            // flex: <length-percentage> → flex-grow:1 flex-shrink:1 flex-basis:<value>
+                            style.flex_grow = 1.0;
+                            style.flex_shrink = 1.0;
+                            style.flex_basis = parse_length(t);
+                        } else {
+                            // flex: <number> → flex-grow:<number> flex-shrink:1 flex-basis:0
+                            style.flex_grow = t.parse().unwrap_or(0.0);
+                            style.flex_shrink = 1.0;
+                            style.flex_basis = CssLength::Px(0.0);
+                        }
+                    } else {
+                        if let Some(t0) = toks.first() { style.flex_grow = t0.parse().unwrap_or(0.0); }
+                        if let Some(t1) = toks.get(1)  { style.flex_shrink = t1.parse().unwrap_or(1.0); }
+                        else                            { style.flex_shrink = 1.0; style.flex_basis = CssLength::Px(0.0); }
+                        if let Some(t2) = toks.get(2)  { style.flex_basis = parse_length(t2); }
+                    }
                 }
             }
         }
@@ -2745,6 +2800,34 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 match v {
                     "size" | "inline-size" => apply_property(style, "container-type", v),
                     _ => style.container_name = v.to_string(),
+                }
+            }
+        }
+
+        // ── Legacy clip: rect(top, right, bottom, left) ──────────────────────
+        "clip" => {
+            if v == "auto" || v == "none" {
+                style.clip_rect = None;
+            } else if let Some(inner) = v.strip_prefix("rect(").and_then(|s| s.strip_suffix(')')) {
+                // rect(top, right, bottom, left) or rect(top right bottom left)
+                let parts: Vec<&str> = if inner.contains(',') {
+                    inner.split(',').map(|s| s.trim()).collect()
+                } else {
+                    inner.split_whitespace().collect()
+                };
+                if parts.len() == 4 {
+                    let parse_val = |s: &str| -> f32 {
+                        let s = s.trim();
+                        if s == "auto" { return f32::MAX; }
+                        if let Some(px) = s.strip_suffix("px") { return px.trim().parse().unwrap_or(0.0); }
+                        s.parse().unwrap_or(0.0)
+                    };
+                    style.clip_rect = Some([
+                        parse_val(parts[0]),
+                        parse_val(parts[1]),
+                        parse_val(parts[2]),
+                        parse_val(parts[3]),
+                    ]);
                 }
             }
         }
@@ -3755,6 +3838,9 @@ pub fn parse_length(v: &str) -> CssLength {
     let v = v.trim();
     if v == "auto"       { return CssLength::Auto; }
     if v == "0"          { return CssLength::Zero; }
+    if let Some(inner) = v.strip_prefix("calc(").and_then(|s| s.strip_suffix(')')) {
+        return parse_calc(inner);
+    }
     if v.ends_with("px") { return CssLength::Px(v[..v.len()-2].parse().unwrap_or(0.0)); }
     if v.ends_with("rem") { return CssLength::Rem(v[..v.len()-3].parse().unwrap_or(0.0)); }
     if v.ends_with("em") { return CssLength::Em(v[..v.len()-2].parse().unwrap_or(0.0)); }
@@ -3767,6 +3853,83 @@ pub fn parse_length(v: &str) -> CssLength {
     // Unitless number (treat as px for simplicity)
     if let Ok(n) = v.parse::<f32>() { return CssLength::Px(n); }
     CssLength::Auto
+}
+
+/// Parse the inside of `calc(...)`.  Handles addition and subtraction of
+/// `px`, `%`, `em`, `rem` terms.  Produces `CssLength::Calc(pct, px)` when
+/// mixed units are present, or a simple variant when all terms share a unit.
+fn parse_calc(expr: &str) -> CssLength {
+    // Tokenise: split on `+` and `-` while keeping the sign.
+    // We normalise whitespace first so " - " becomes " -".
+    let expr = expr.trim();
+    let mut pct: f32 = 0.0;
+    let mut px:  f32 = 0.0;
+    let mut em:  f32 = 0.0;
+    let mut rem: f32 = 0.0;
+
+    // Split into tokens by `+` and `-` that are preceded by whitespace
+    // (to distinguish "100%" from "-360px").
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = expr.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if (chars[i] == '+' || chars[i] == '-')
+            && i > 0
+            && (chars[i-1] == ' ' || chars[i-1] == '\t')
+        {
+            let s = current.trim().to_string();
+            if !s.is_empty() { tokens.push(s); }
+            current = String::new();
+            current.push(chars[i]);
+        } else {
+            current.push(chars[i]);
+        }
+        i += 1;
+    }
+    let s = current.trim().to_string();
+    if !s.is_empty() { tokens.push(s); }
+
+    let mut vw: f32 = 0.0;
+    let mut vh: f32 = 0.0;
+
+    for tok in &tokens {
+        // Strip internal whitespace so "- 40px" becomes "-40px"
+        let t: String = tok.chars().filter(|c| !c.is_whitespace()).collect();
+        if t.is_empty() { continue; }
+        if t.ends_with('%') {
+            pct += t[..t.len()-1].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("px") {
+            px += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("rem") {
+            rem += t[..t.len()-3].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("vmin") {
+            vw += t[..t.len()-4].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("vmax") {
+            vw += t[..t.len()-4].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("vh") {
+            vh += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("vw") {
+            vw += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
+        } else if t.ends_with("em") {
+            em += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
+        } else if let Ok(n) = t.parse::<f32>() {
+            px += n;
+        }
+    }
+
+    let vals = [pct, px, em, rem, vw, vh];
+    let n_nonzero = vals.iter().filter(|&&v| v != 0.0).count();
+    if n_nonzero <= 1 {
+        // Single unit — use the simple variant
+        if pct != 0.0 { return CssLength::Percent(pct); }
+        if em  != 0.0 { return CssLength::Em(em); }
+        if rem != 0.0 { return CssLength::Rem(rem); }
+        if vw  != 0.0 { return CssLength::Vw(vw); }
+        if vh  != 0.0 { return CssLength::Vh(vh); }
+        return CssLength::Px(px);
+    }
+    CssLength::Calc(vals)
 }
 
 pub fn parse_length_or_none(v: &str) -> CssLength {
@@ -4092,6 +4255,14 @@ pub fn parse_single_track(v: &str) -> GridTrackSize {
         let px: f32 = v[..v.len()-2].parse().unwrap_or(0.0);
         return GridTrackSize::fixed(px);
     }
+    if v.starts_with("calc(") {
+        let len = parse_length(v);
+        return GridTrackSize {
+            kind: GridTrackKind::Calc,
+            calc_length: Some(len),
+            ..Default::default()
+        };
+    }
     if v.starts_with("minmax(") {
         let inner = &v[7..v.len()-1];
         let parts: Vec<&str> = inner.splitn(2, ',').collect();
@@ -4105,6 +4276,7 @@ pub fn parse_single_track(v: &str) -> GridTrackSize {
                 min_value: min_t.value,
                 max_kind: max_t.kind,
                 max_value: max_t.value,
+                calc_length: None,
             };
         }
     }
@@ -4383,6 +4555,21 @@ pub fn evaluate_media(condition: &str, vw: f32, vh: f32) -> bool {
         let dpi: f32 = s.parse().unwrap_or(0.0);
         return dpi >= 96.0;
     }
+    // Modern range syntax: `width >= 300px`, `width > 300px`, etc.
+    fn parse_media_range(expr: &str, dim: f32) -> Option<bool> {
+        let e = expr.trim();
+        if let Some(rest) = e.strip_prefix(">=") { return Some(dim >= parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix("<=") { return Some(dim <= parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix('>')  { return Some(dim >  parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix('<')  { return Some(dim <  parse_media_px(rest.trim())); }
+        if let Some(rest) = e.strip_prefix(':')  { return Some((dim - parse_media_px(rest.trim())).abs() < 0.5); }
+        None
+    }
+    if let Some(rest) = lower.strip_prefix("width")  { if let Some(v) = parse_media_range(rest, vw) { return v; } }
+    if let Some(rest) = lower.strip_prefix("height") { if let Some(v) = parse_media_range(rest, vh) { return v; } }
+    if let Some(rest) = lower.strip_prefix("inline-size")  { if let Some(v) = parse_media_range(rest, vw) { return v; } }
+    if let Some(rest) = lower.strip_prefix("block-size")   { if let Some(v) = parse_media_range(rest, vh) { return v; } }
+
     // Unknown feature — fail-open
     true
 }
@@ -5031,6 +5218,15 @@ fn apply_cascade_inner(
     let font_px = style.font_size_px(parent_font_px, root_font_px);
     style.font_size = CssLength::Px(font_px);
 
+    // If this is the root element (<html>), its computed font-size becomes the
+    // new root font-size used for `rem` resolution in all descendants.
+    // e.g. `html { font-size: 62.5% }` → 1rem = 10px instead of 16px.
+    let root_font_px = if root.tag.eq_ignore_ascii_case("html") {
+        font_px
+    } else {
+        root_font_px
+    };
+
     // Preserve list_index: set by the HTML parser (ol counter), not by CSS.
     // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
     style.list_index = root.style.list_index;
@@ -5161,7 +5357,7 @@ pub fn ua_stylesheet() -> Stylesheet {
 
 const UA_CSS: &str = r##"
 head, link, meta, script, style, title { display: none; }
-area, base, basefont, datalist, noembed, noframes, param, rp, template { display: none; }
+area, base, basefont, datalist, noembed, noframes, param, rp, source, template { display: none; }
 [hidden] { display: none; }
 html { display: block; }
 body { display: block; margin: 8px; }

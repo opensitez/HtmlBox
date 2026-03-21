@@ -81,6 +81,8 @@ pub enum CssLength {
     Vw(f32),
     /// Viewport-height percentage (1vh = 1% of viewport height).
     Vh(f32),
+    /// `calc()` — stores [percent, px, em, rem, vw, vh] contributions.
+    Calc([f32; 6]),
     Auto,
     Zero,
     None,
@@ -111,6 +113,9 @@ impl CssLength {
             CssLength::Percent(v) => v / 100.0 * containing_px,
             CssLength::Vw(v)      => v / 100.0 * viewport_w,
             CssLength::Vh(v)      => v / 100.0 * viewport_h,
+            CssLength::Calc(c) =>
+                c[0] / 100.0 * containing_px + c[1] + c[2] * parent_font_px
+                + c[3] * root_font_px + c[4] / 100.0 * viewport_w + c[5] / 100.0 * viewport_h,
             CssLength::Auto       => 0.0,
             CssLength::Zero       => 0.0,
             CssLength::None       => 0.0,
@@ -461,7 +466,7 @@ impl Default for GridAutoFlow { fn default() -> Self { Self::Row } }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridTrackKind {
     Fixed, Percent, Fractional, Auto, MinMax, MinContent, MaxContent, FitContent,
-    Subgrid,
+    Subgrid, Calc,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -472,6 +477,8 @@ pub struct GridTrackSize {
     pub min_value: f32,
     pub max_kind:  GridTrackKind,
     pub max_value: f32,
+    /// For `Calc` kind: the full CssLength for deferred resolution.
+    pub calc_length: Option<CssLength>,
 }
 
 impl Default for GridTrackSize {
@@ -480,6 +487,7 @@ impl Default for GridTrackSize {
             kind: GridTrackKind::Auto, value: 0.0,
             min_kind: GridTrackKind::Auto, min_value: 0.0,
             max_kind: GridTrackKind::Auto, max_value: 0.0,
+            calc_length: None,
         }
     }
 }
@@ -749,6 +757,9 @@ pub struct ComputedStyle {
 
     // Clip-path
     pub clip_path: ClipPath,
+    // Legacy clip: rect(top, right, bottom, left) — absolute offsets from the element's border box.
+    // Stored as [top, right, bottom, left] in px. Only applies to position:absolute/fixed.
+    pub clip_rect: Option<[f32; 4]>,
 
     // Pointer events
     pub pointer_events: PointerEvents,
@@ -1216,6 +1227,7 @@ impl Default for ComputedStyle {
             orphans:  2,
 
             clip_path: ClipPath::default(),
+            clip_rect: None,
 
             pointer_events: PointerEvents::Auto,
 

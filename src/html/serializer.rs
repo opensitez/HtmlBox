@@ -37,6 +37,15 @@ pub fn serialize_length(len: &CssLength) -> String {
         CssLength::Percent(v) => format!("{}%", v),
         CssLength::Vw(v)      => format!("{}vw", v),
         CssLength::Vh(v)      => format!("{}vh", v),
+        CssLength::Calc(c) => {
+            let labels = ["%", "px", "em", "rem", "vw", "vh"];
+            let parts: Vec<String> = c.iter().zip(labels.iter())
+                .filter(|(v, _)| **v != 0.0)
+                .map(|(v, u)| format!("{}{}", v, u))
+                .collect();
+            if parts.is_empty() { "0px".to_string() }
+            else { format!("calc({})", parts.join(" + ")) }
+        }
     }
 }
 
