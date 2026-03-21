@@ -14,7 +14,7 @@ use winit::window::Window;
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 use rhtmledit::{hit_test_link, parse_html_with_hooks, Document, Renderer};
-use rhtmledit::css::apply_cascade;
+use rhtmledit::css::apply_cascade_vp;
 use rhtmledit::dom::{self, HtmlEventType};
 use rhtmledit::platform::Platform;
 
@@ -65,7 +65,7 @@ a{color:inherit;text-decoration:none}
   <a href="https://www.rust-lang.org"><div class="tile"><div class="fav" style="background:#CE422B">Rs</div><div class="tile-name">Rust</div><div class="tile-domain">rust-lang.org</div></div></a>
   <a href="https://crates.io"><div class="tile"><div class="fav" style="background:#7B5EA7">Cr</div><div class="tile-name">crates.io</div><div class="tile-domain">crates.io</div></div></a>
   <a href="https://en.wikipedia.org/wiki/Main_Page"><div class="tile"><div class="fav" style="background:#E8E8E8;color:#202124">W</div><div class="tile-name">Wikipedia</div><div class="tile-domain">wikipedia.org</div></div></a>
-  <a href="https://stackoverflow.com"><div class="tile"><div class="fav" style="background:#F48024">SO</div><div class="tile-name">Stack Overflow</div><div class="tile-domain">stackoverflow.com</div></div></a>
+  <a href="https://slashdot.org/"><div class="tile"><div class="fav" style="background:#F48024">SL</div><div class="tile-name">Slashdot</div><div class="tile-domain">slashdot.org</div></div></a>
   <a href="https://doc.rust-lang.org/book/"><div class="tile"><div class="fav" style="background:#3B4252">Bk</div><div class="tile-name">Rust Book</div><div class="tile-domain">doc.rust-lang.org</div></div></a>
   <a href="https://www.reddit.com"><div class="tile"><div class="fav" style="background:#FF4500">Re</div><div class="tile-name">Reddit</div><div class="tile-domain">reddit.com</div></div></a>
 </div>
@@ -145,6 +145,7 @@ struct BrowserApp {
     tx:    mpsc::Sender<LoadResult>,
     rx:    mpsc::Receiver<LoadResult>,
     proxy: EventLoopProxy<()>,
+    initial_url: Option<String>,
 }
 
 impl BrowserApp {
@@ -157,7 +158,7 @@ impl BrowserApp {
             chrome_doc: None,
             url_text: String::new(), url_focused: false,
             mouse_pos: (0.0, 0.0), width: 1280.0, height: 800.0,
-            tx, rx, proxy,
+            tx, rx, proxy, initial_url: None,
         }
     }
 
@@ -251,6 +252,7 @@ impl BrowserApp {
         let tx = self.tx.clone();
         let proxy = self.proxy.clone();
         std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
             let html = if url == NEW_TAB_URL || url.starts_with("about:") {
                 NEW_TAB_HTML.to_string()
             } else if let Some(path) = url.strip_prefix("file://") {
@@ -259,16 +261,20 @@ impl BrowserApp {
             } else {
                 fetch_text(&url).unwrap_or_else(|e| error_page(&url, &e))
             };
+            eprintln!("[browser] HTML fetch: {:.0}ms ({} bytes)", t0.elapsed().as_millis(), html.len());
 
             // CSS channel: receives sheets as they finish fetching.
-            let (css_tx, css_rx) = std::sync::mpsc::channel::<String>();
+            let (css_tx, css_rx) = std::sync::mpsc::channel::<(usize, String)>();
             let base = url.clone();
+            let css_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
             // parse_html_with_hooks fires our callback for every open tag.
             // When a <link rel="stylesheet"> is seen we immediately spawn a
             // fetch thread — it races against the rest of the HTML body parse,
             // so by the time parse returns, most CSS is already in-flight.
             let css_tx2 = css_tx.clone();
+            let css_idx2 = css_idx.clone();
+            let t1 = std::time::Instant::now();
             let doc = parse_html_with_hooks(&html, &url, move |tag, attrs| {
                 if tag == "link"
                     && attrs.get("rel").map(|s| s == "stylesheet").unwrap_or(false)
@@ -276,16 +282,26 @@ impl BrowserApp {
                     if let Some(href) = attrs.get("href") {
                         let abs = resolve_url(&base, href);
                         let sender = css_tx2.clone();
+                        let idx = css_idx2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        eprintln!("[browser]   CSS fetch start: {abs}");
                         std::thread::spawn(move || {
-                            let _ = sender.send(fetch_text(&abs).unwrap_or_default());
+                            let t = std::time::Instant::now();
+                            let text = fetch_text(&abs).unwrap_or_default();
+                            eprintln!("[browser]   CSS fetch done:  {abs} ({:.0}ms, {} bytes)", t.elapsed().as_millis(), text.len());
+                            let _ = sender.send((idx, text));
                         });
                     }
                 }
             });
+            eprintln!("[browser] Parse: {:.0}ms", t1.elapsed().as_millis());
 
-            // Collect exactly as many sheets as we spawned.
-            drop(css_tx); // close our end so crx.iter() terminates
-            let css_sheets: Vec<String> = css_rx.iter().collect();
+            // Collect in declaration order.
+            drop(css_tx);
+            let t2 = std::time::Instant::now();
+            let mut css_results: Vec<(usize, String)> = css_rx.iter().collect();
+            eprintln!("[browser] CSS wait: {:.0}ms ({} sheets)", t2.elapsed().as_millis(), css_results.len());
+            css_results.sort_by_key(|(idx, _)| *idx);
+            let css_sheets: Vec<String> = css_results.into_iter().map(|(_, s)| s).collect();
 
             let _ = tx.send(LoadResult::Page {
                 tab_id, url, doc: FreshDoc(doc), css_sheets,
@@ -297,12 +313,24 @@ impl BrowserApp {
     // ── Process incoming results ───────────────────────────────────────────────
 
     fn process_results(&mut self) {
+        // Collect all pending results, then batch image updates to avoid
+        // one full re-layout per image (13 images × 360ms = 5s).
+        let mut pending: Vec<LoadResult> = Vec::new();
         while let Ok(res) = self.rx.try_recv() {
+            pending.push(res);
+        }
+        if pending.is_empty() { return; }
+
+        // Track which tabs need an image re-layout.
+        let mut tabs_need_relayout: Vec<usize> = Vec::new();
+
+        for res in pending {
             match res {
                 LoadResult::Page { tab_id, url, doc: FreshDoc(mut doc), css_sheets } => {
                     let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else { continue };
 
                     // Apply any stylesheets that arrived (fetched in parallel during parse)
+                    let t_css = std::time::Instant::now();
                     let mut had_css = false;
                     for css in &css_sheets {
                         if !css.is_empty() {
@@ -310,8 +338,14 @@ impl BrowserApp {
                             had_css = true;
                         }
                     }
+                    eprintln!("[browser] CSS parse: {:.0}ms ({} rules)", t_css.elapsed().as_millis(), doc.stylesheet.rules.len());
                     if had_css {
-                        apply_cascade(&mut doc.root, &doc.stylesheet, None, 16.0);
+                        let t_casc = std::time::Instant::now();
+                        let w = self.width;
+                        let ch = self.content_h();
+                        doc.stylesheet.rebuild_index();
+                        apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, w, ch, std::ptr::null(), false);
+                        eprintln!("[browser] Cascade: {:.0}ms", t_casc.elapsed().as_millis());
                     }
 
                     self.tabs[idx].title = if doc.title.is_empty() {
@@ -345,14 +379,15 @@ impl BrowserApp {
                         });
                     }
 
+                    let t_layout = std::time::Instant::now();
                     self.layout_doc(&mut doc);
+                    eprintln!("[browser] Layout: {:.0}ms", t_layout.elapsed().as_millis());
                     self.tabs[idx].doc = Some(doc);
                     if idx == self.active { self.url_text = self.tabs[idx].url.clone(); }
                     self.rebuild_chrome();
                 }
                 LoadResult::Image { tab_id, src, rgba, w, h } => {
                     let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else { continue };
-                    let width = self.width; let ch = self.content_h();
                     let Some(doc) = self.tabs[idx].doc.as_mut() else { continue };
                     let base = doc.base_url.clone();
                     Document::walk_all_mut(&mut doc.root, &mut |b| {
@@ -366,9 +401,24 @@ impl BrowserApp {
                             }
                         }
                     });
-                    let mut eng = self.renderer.layout_engine();
-                    eng.viewport_h = ch; eng.layout(doc, width);
+                    if !tabs_need_relayout.contains(&idx) {
+                        tabs_need_relayout.push(idx);
+                    }
                 }
+            }
+        }
+
+        // One batched re-layout per tab instead of one per image.
+        for idx in tabs_need_relayout {
+            let width = self.width; let ch = self.content_h();
+            if let Some(doc) = self.tabs[idx].doc.as_mut() {
+                // Propagate layout_dirty up from dirty images to ancestors
+                // so the subtree pruning in layout_box actually visits them.
+                propagate_dirty(&mut doc.root);
+                let t_img = std::time::Instant::now();
+                let mut eng = self.renderer.layout_engine();
+                eng.viewport_h = ch; eng.layout_no_cascade(doc, width);
+                eprintln!("[browser] Image batch re-layout: {:.0}ms", t_img.elapsed().as_millis());
             }
         }
     }
@@ -509,6 +559,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
         let chrome_doc      = self.chrome_doc.as_mut();
         let active_doc      = self.tabs[self.active].doc.as_mut();
 
+        let t_draw = std::time::Instant::now();
         platform.render(|scale, pixmap| {
             pixmap.fill(tiny_skia::Color::from_rgba8(28, 28, 31, 255));
 
@@ -521,7 +572,12 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
             if let Some(doc) = active_doc {
                 if let Some(mut pm) = Pixmap::new(w_px, content_px.max(1)) {
                     pm.fill(tiny_skia::Color::from_rgba8(255, 255, 255, 255));
+                    let t_render = std::time::Instant::now();
                     renderer.render(doc, &mut pm, scale);
+                    let render_ms = t_render.elapsed().as_millis();
+                    if render_ms > 5 {
+                        eprintln!("[browser] Render: {render_ms}ms ({}x{})", w_px, content_px);
+                    }
                     pixmap.draw_pixmap(0, chrome_px as i32, pm.as_ref(),
                         &PixmapPaint::default(), Transform::identity(), None);
                 }
@@ -553,6 +609,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                 pixmap.fill_rect(r, &p, Transform::identity(), None);
             }
         });
+        let draw_ms = t_draw.elapsed().as_millis();
+        if draw_ms > 5 {
+            eprintln!("[browser] Draw total: {draw_ms}ms");
+        }
     }
 }
 
@@ -571,11 +631,14 @@ impl ApplicationHandler<()> for BrowserApp {
         self.height = platform.logical_height();
         self.window   = Some(win);
         self.platform = Some(platform);
-        self.navigate(NEW_TAB_URL.to_string());
+        let start_url = self.initial_url.take().unwrap_or_else(|| NEW_TAB_URL.to_string());
+        self.navigate(start_url);
     }
 
     fn user_event(&mut self, _el: &winit::event_loop::ActiveEventLoop, _: ()) {
+        let t = std::time::Instant::now();
         self.process_results();
+        eprintln!("[browser] process_results: {:.0}ms", t.elapsed().as_millis());
         if let Some(w) = &self.window { w.request_redraw(); }
     }
 
@@ -818,6 +881,21 @@ fn normalize_url(s: String) -> String {
     format!("https://duckduckgo.com/?q={query}")
 }
 
+/// Propagate layout_dirty upward: if any descendant is dirty, mark the parent dirty too.
+/// Returns true if this node or any descendant is dirty.
+fn propagate_dirty(node: &mut rhtmledit::HtmlBox) -> bool {
+    let mut any_dirty = node.layout_dirty;
+    for child in &mut node.children {
+        if propagate_dirty(child) {
+            any_dirty = true;
+        }
+    }
+    if any_dirty {
+        node.layout_dirty = true;
+    }
+    any_dirty
+}
+
 /// Resolve a (possibly relative) `href` against a `base` URL.
 fn resolve_url(base: &str, href: &str) -> String {
     if href.is_empty() { return base.to_string(); }
@@ -882,9 +960,11 @@ h2{{color:#ed4245;font-size:28px;font-weight:500}}
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
+    let initial_url = std::env::args().nth(1);
     let event_loop = EventLoop::<()>::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let mut app = BrowserApp::new(proxy);
+    app.initial_url = initial_url;
     event_loop.run_app(&mut app).unwrap();
 }

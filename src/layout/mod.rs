@@ -207,12 +207,13 @@ impl ResolvedBox {
 
 pub fn resolve_box(style: &ComputedStyle, parent_font_px: f32,
                    containing_w: f32, root_font_px: f32) -> ResolvedBox {
-    resolve_box_vp(style, parent_font_px, containing_w, root_font_px, 0.0, 0.0)
+    resolve_box_vp(style, parent_font_px, containing_w, root_font_px, 0.0, 0.0, None)
 }
 
 pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
                    containing_w: f32, root_font_px: f32,
-                   viewport_w: f32, viewport_h: f32) -> ResolvedBox {
+                   viewport_w: f32, viewport_h: f32,
+                   containing_h: Option<f32>) -> ResolvedBox {
     let res = |l: &CssLength| l.resolve_vp(parent_font_px, containing_w, root_font_px, viewport_w, viewport_h);
     let _font_px = style.font_size_px(parent_font_px, root_font_px);
 
@@ -237,8 +238,22 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
         Some(w)
     };
 
+    // CSS 2.1 §10.5: percentage heights resolve against the containing block's height.
+    // If the containing block's height is not explicitly set (containing_h is None),
+    // percentage heights are treated as auto.
     let content_height = if style.height.is_auto() {
         None
+    } else if matches!(style.height, CssLength::Percent(_)) {
+        match containing_h {
+            Some(ch) => {
+                let mut h = style.height.resolve_vp(parent_font_px, ch, root_font_px, viewport_w, viewport_h).max(0.0);
+                if style.box_sizing == BoxSizing::BorderBox {
+                    h = (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
+                }
+                Some(h)
+            }
+            None => None, // percentage height with no explicit containing height → auto
+        }
     } else {
         let mut h = res(&style.height).max(0.0);
         if style.box_sizing == BoxSizing::BorderBox {
@@ -317,7 +332,7 @@ impl LayoutEngine {
     /// Resolve a box's styles using the engine's viewport dimensions.
     #[inline]
     pub fn res_box(&self, style: &ComputedStyle, font_px: f32, containing_w: f32, root_font_px: f32) -> ResolvedBox {
-        resolve_box_vp(style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h)
+        resolve_box_vp(style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, None)
     }
 
     /// Resolve a single CSS length using the engine's viewport dimensions.
@@ -351,6 +366,20 @@ impl LayoutEngine {
                     continue;
                 }
 
+                // ── Remote URL ─────────────────────────────────────────────────
+                if url_inner.starts_with("http://") || url_inner.starts_with("https://") {
+                    if let Ok(resp) = ureq::get(url_inner)
+                        .timeout(std::time::Duration::from_secs(10))
+                        .call()
+                    {
+                        let mut buf = Vec::new();
+                        if resp.into_reader().read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                            load_font_bytes(fs, buf);
+                        }
+                    }
+                    continue;
+                }
+
                 // ── File path ──────────────────────────────────────────────────
                 let path = crate::css::extract_url_path(src);
                 if path.is_empty() { continue; }
@@ -371,6 +400,11 @@ impl LayoutEngine {
 
         // Rebuild selector index if rules changed (lazy, skips if already up-to-date).
         doc.stylesheet.rebuild_index();
+
+        // Load @font-face fonts (remote + local) before layout so text shaping uses them.
+        if !doc.stylesheet.font_faces.is_empty() {
+            self.load_font_faces(&doc.stylesheet.font_faces);
+        }
 
         // Cache @media / @container presence so we don't O(n)-scan rules every layout.
         self.cached_has_media_q     = doc.stylesheet.rules.iter().any(|r| !r.media_condition.is_empty());
@@ -532,7 +566,7 @@ impl LayoutEngine {
             }
         }
 
-        let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+        let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, None);
 
         // Auto-margin centering (CSS 2.1 §10.3.3) — applies to any element with an
         // explicit width and at least one auto horizontal margin.  Block layout has
@@ -701,7 +735,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let constrained_w = if !left_auto && !right_auto {
         let l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
         let r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
-        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
         let w = (containing_w - l - r - rbox_inner.inner_h_space()).max(0.0);
         Some(w)
     } else {
@@ -711,7 +745,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let constrained_h = if !top_auto && !bot_auto {
         let t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
         let b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
         let h = (containing_h - t - b - rbox_inner.inner_v_space()).max(0.0);
         Some(h)
     } else {
@@ -737,7 +771,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     }
 
     // Now resolve position offsets
-    let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
+    let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
     let res_l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
     let res_r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
     let res_t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);

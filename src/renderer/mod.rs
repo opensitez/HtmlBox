@@ -2095,20 +2095,7 @@ impl Renderer {
             }
         }
 
-        // Fallback: draw grey placeholder with border
-        let rx = cr.x - sx;
-        let ry = cr.y - sy;
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(220, 220, 220, 200);
-        if let Some(r) = SkRect::from_xywh(rx, ry, cr.w, cr.h) {
-            pixmap.fill_rect(r, &paint, Transform::from_scale(self.scale, self.scale), mask);
-        }
-        paint.set_color_rgba8(180, 180, 180, 255);
-        let mut stroke = Stroke::default();
-        stroke.width = 1.0;
-        if let Some(path) = rect_path(rx, ry, cr.w, cr.h) {
-            pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
-        }
+        // Fallback: transparent placeholder (like browsers before image loads)
     }
 
     fn draw_image_data(

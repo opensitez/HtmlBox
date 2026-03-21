@@ -83,6 +83,26 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
         if px >= 0.0 { return px; }
     }
 
+    // For row-direction flex containers, the intrinsic width is the SUM of all
+    // flex items' intrinsic widths (+ padding/border/margin), not the max of their
+    // laid-out margin_rect positions (which reflect the container width, not content).
+    let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
+        && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
+    if is_row_flex {
+        let mut total = 0.0f32;
+        for ch in &node.children {
+            if matches!(ch.style.display, Display::None) { continue; }
+            if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+            if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+            let child_w = compute_intrinsic_width(ch)
+                + ch.resolved_pad_left + ch.resolved_pad_right
+                + ch.resolved_border_left + ch.resolved_border_right
+                + ch.resolved_margin_left + ch.resolved_margin_right;
+            total += child_w;
+        }
+        return if total > 0.0 { total + 1.0 } else { total };
+    }
+
     let origin = node.content_rect.x;
     let mut w = 0.0f32;
     // Inline line widths — use line.width (raw content width) directly.
@@ -129,8 +149,6 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
         }
         // Block children with auto width: their marginRect is inflated to containing width.
         // Recurse to get real content width.
-        // Skip this for flex/grid containers — their children are already correctly positioned
-        // by the flex/grid algorithm and margin_rect reflects the final layout.
         // Floated children are positioned by the float algorithm (not stacked
         // vertically), so use their laid-out right edge for intrinsic width.
         if !matches!(ch.style.float, Float::None) {
@@ -138,11 +156,15 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
             if right > w { w = right; }
             continue;
         }
-        let is_auto_width_block = !is_flex_or_grid
-            && ch.style.width.is_auto()
+        // Container children with auto or percentage width: their margin_rect
+        // is inflated to the containing width during layout, so recurse to get the
+        // real intrinsic content width. Percentage widths resolve to the container
+        // width during layout, which doesn't reflect intrinsic content width.
+        let is_fluid_width_container = (ch.style.width.is_auto() || matches!(ch.style.width, CssLength::Percent(_)))
             && matches!(ch.style.display,
-                Display::Block | Display::ListItem);
-        if is_auto_width_block {
+                Display::Block | Display::ListItem | Display::Flex | Display::InlineFlex
+                | Display::Grid | Display::InlineGrid);
+        if is_fluid_width_container {
             let child_content = compute_intrinsic_width(ch);
             let total = child_content
                 + ch.resolved_pad_left + ch.resolved_pad_right
