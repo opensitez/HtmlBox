@@ -228,21 +228,28 @@ pub fn layout_inline_block(
         );
         let is_contenteditable = node.attributes.get("contenteditable")
             .map(|v| v == "true").unwrap_or(false);
+        let has_pseudo_content = before_w > 0.0 || after_w > 0.0;
         let add_placeholder = !is_void
             && node.children.is_empty()
             && rbox.content_height.is_none()
-            && (is_prose_tag || is_contenteditable);
+            && (is_prose_tag || is_contenteditable || has_pseudo_content);
         if add_placeholder {
-            let line_h = font_px * 1.2;
+            let pseudo_w = before_w + after_w;
+            let ps_font = if has_pseudo_content {
+                pseudo_font_px(node.style.before_style.as_deref()
+                    .or(node.style.after_style.as_deref()))
+            } else { font_px };
+            let eff_fpx = if has_pseudo_content { ps_font } else { font_px };
+            let line_h = eff_fpx * 1.2;
             node.line_cache = vec![LayoutLine {
                 text_start: text_offset,
                 text_length: 0,
                 x: content_x,
                 y: content_y,
-                width: 0.0,
+                width: pseudo_w,
                 height: line_h,
-                ascent: font_px,
-                descent: font_px * 0.2,
+                ascent: eff_fpx,
+                descent: eff_fpx * 0.2,
                 extra_space_per_word: 0.0,
                 visual_segments: Vec::new(),
                 char_x: Vec::new(),
@@ -252,7 +259,11 @@ pub fn layout_inline_block(
         // must still produce a line-height of vertical space, just like it would
         // inside a paragraph.
         let br_h = if node.tag == "br" { font_px * 1.2 } else { 0.0 };
-        let placeholder_h = if add_placeholder { font_px * 1.2 } else { br_h };
+        let eff_placeholder_fpx = if has_pseudo_content {
+            pseudo_font_px(node.style.before_style.as_deref()
+                .or(node.style.after_style.as_deref()))
+        } else { font_px };
+        let placeholder_h = if add_placeholder { eff_placeholder_fpx * 1.2 } else { br_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
         let max_h = if node.style.max_height.is_none() { f32::MAX }
                     else {

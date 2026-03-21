@@ -367,7 +367,7 @@ pub fn parse_html_bytes_with_base(data: &[u8], base_url: &str) -> Document {
 // ─── Image loading ─────────────────────────────────────────────────────────
 
 /// Resolve a URL against a base URL.
-fn resolve_url(src: &str, base_url: &str) -> String {
+pub fn resolve_url(src: &str, base_url: &str) -> String {
     if src.contains("://") {
         return src.to_string();
     }
@@ -1102,12 +1102,6 @@ impl HtmlParser {
 
         // Load image data for <img> elements
         if tag == "img" {
-            // Swap data-src into src for lazy-loaded images (the real URL replaces the placeholder)
-            if let Some(ds) = node.attributes.get("data-src").cloned() {
-                if !ds.is_empty() {
-                    node.attributes.insert("src".to_string(), ds);
-                }
-            }
             if let Some(src) = node.attributes.get("src").cloned() {
                 let resolved = resolve_url(&src, &self.base_url);
                 let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
@@ -1537,6 +1531,8 @@ where
         pending_announcements:    Vec::new(),
         live_region_snapshots:    std::collections::HashMap::new(),
         live_regions_initialized: false,
+        pending_images:      None,
+        images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
 
     // NOTE: External CSS fetching, cascade, layout, and image loading are

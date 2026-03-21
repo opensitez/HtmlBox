@@ -80,10 +80,18 @@ pub fn load_html_with_registry(
     eprintln!("Parse: {:.0}ms", t0.elapsed().as_millis());
     drop(css_tx); // close sender so rx.iter() terminates after all threads finish
 
-    // Collect fetched stylesheets in declaration order.
+    // Collect fetched stylesheets — wait up to 2s (CSS already started during parsing).
     let t1 = std::time::Instant::now();
-    let mut css_results: Vec<(usize, String)> = css_rx.iter().collect();
-    eprintln!("CSS wait: {:.0}ms ({} sheets)", t1.elapsed().as_millis(), css_results.len());
+    let expected_count = css_idx.load(std::sync::atomic::Ordering::SeqCst);
+    let mut css_results: Vec<(usize, String)> = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while css_results.len() < expected_count {
+        match css_rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(item) => css_results.push(item),
+            Err(_) => break, // timeout or disconnected
+        }
+    }
+    eprintln!("CSS wait: {:.0}ms ({}/{} sheets)", t1.elapsed().as_millis(), css_results.len(), expected_count);
     css_results.sort_by_key(|(idx, _)| *idx);
     for (_, sheet) in &css_results {
         if !sheet.is_empty() {
@@ -91,12 +99,8 @@ pub fn load_html_with_registry(
         }
     }
 
-    // Batch-fetch remote images in parallel (deferred from parsing).
-    let t_img = std::time::Instant::now();
-    let img_count = batch_fetch_images(&mut doc.root);
-    if img_count > 0 {
-        eprintln!("Images: {:.0}ms ({} fetched)", t_img.elapsed().as_millis(), img_count);
-    }
+    // Start async image fetches (non-blocking — results arrive via poll_pending_images).
+    start_async_image_fetches(&mut doc);
 
     // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
     // are evaluated against the actual window size rather than the default vw=0, vh=0.
@@ -123,41 +127,36 @@ pub fn load_html_with_registry(
 }
 
 /// Walk the DOM tree, find all <img> nodes with remote `_resolved_src`,
-/// fetch them all in parallel threads, then set the decoded image data.
-fn batch_fetch_images(root: &mut types::HtmlBox) -> usize {
-    // 1. Collect (node_path, url) for all remote images
+/// fire off parallel fetch threads, store channel on Document for async polling.
+fn start_async_image_fetches(doc: &mut types::Document) {
     let mut pending: Vec<(Vec<usize>, String)> = Vec::new();
-    collect_remote_images(root, &mut Vec::new(), &mut pending);
-    if pending.is_empty() { return 0; }
+    collect_remote_images(&doc.root, &mut Vec::new(), &mut pending);
+    if pending.is_empty() { return; }
 
-    // 2. Spawn parallel fetches
-    let mut handles: Vec<(Vec<usize>, std::thread::JoinHandle<Option<(Vec<u8>, u32, u32)>>)> = Vec::new();
+    let (tx, rx) = std::sync::mpsc::channel::<(Vec<usize>, Vec<u8>, u32, u32)>();
+    let in_flight = doc.images_in_flight.clone();
+    in_flight.store(pending.len(), std::sync::atomic::Ordering::SeqCst);
+
     for (path, url) in pending {
-        let handle = std::thread::spawn(move || {
-            let bytes = ureq::get(&url)
+        let sender = tx.clone();
+        let counter = in_flight.clone();
+        std::thread::spawn(move || {
+            let result = ureq::get(&url)
                 .timeout(std::time::Duration::from_secs(10))
                 .call().ok()
                 .and_then(|r| {
                     let mut buf = Vec::new();
                     r.into_reader().read_to_end(&mut buf).ok()?;
                     Some(buf)
-                })?;
-            html::decode_image_bytes(&bytes)
-        });
-        handles.push((path, handle));
-    }
-
-    // 3. Collect results and set image data on nodes
-    let mut count = 0;
-    for (path, handle) in handles {
-        if let Ok(Some((data, w, h))) = handle.join() {
-            if let Some(node) = find_node_by_path(root, &path) {
-                html::set_image_on_node(node, data, w, h);
-                count += 1;
+                })
+                .and_then(|bytes| html::decode_image_bytes(&bytes));
+            if let Some((data, w, h)) = result {
+                let _ = sender.send((path, data, w, h));
             }
-        }
+            counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
     }
-    count
+    doc.pending_images = Some(rx);
 }
 
 fn collect_remote_images(
@@ -177,15 +176,6 @@ fn collect_remote_images(
         collect_remote_images(child, path, pending);
         path.pop();
     }
-}
-
-fn find_node_by_path<'a>(root: &'a mut types::HtmlBox, path: &[usize]) -> Option<&'a mut types::HtmlBox> {
-    let mut node = root;
-    for &idx in path {
-        if idx >= node.children.len() { return None; }
-        node = &mut node.children[idx];
-    }
-    Some(node)
 }
 
 fn resolve_css_url(base: &str, href: &str) -> String {

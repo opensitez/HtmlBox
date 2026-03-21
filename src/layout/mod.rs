@@ -7,6 +7,7 @@ pub mod table;
 pub mod hit_test;
 
 use std::cell::Cell;
+use std::io::Read as _;
 use crate::types::*;
 
 // ─── Font loading helpers ──────────────────────────────────────────────────────
@@ -14,16 +15,152 @@ use crate::types::*;
 /// WOFF2 magic bytes: `wOF2` (0x774F4632).
 const WOFF2_MAGIC: [u8; 4] = [0x77, 0x4F, 0x46, 0x32];
 
+/// Split a CSS `src:` value into individual source entries, respecting
+/// parentheses so that `data:` URIs (which contain commas) are not split.
+fn split_font_sources(src: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in src.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => {
+                result.push(&src[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < src.len() {
+        result.push(&src[start..]);
+    }
+    result
+}
+
 /// Load raw font bytes into the font system, with format detection.
 /// WOFF2 is detected and skipped (it requires Brotli decompression which is not
 /// currently bundled; convert to TTF/OTF/WOFF1 for use with @font-face).
+/// WOFF1 magic bytes: `wOFF` (0x774F4646).
+const WOFF1_MAGIC: [u8; 4] = [0x77, 0x4F, 0x46, 0x46];
+
 fn load_font_bytes(fs: &mut cosmic_text::FontSystem, data: Vec<u8>) {
     if data.starts_with(&WOFF2_MAGIC) {
-        // WOFF2 uses Brotli compression. fontdb cannot decode it without an
-        // external decompressor. Skip and let the font-family fallback apply.
         return;
     }
-    fs.db_mut().load_font_data(data);
+    let font_data = if data.starts_with(&WOFF1_MAGIC) {
+        match decode_woff1(&data) {
+            Some(ttf) => ttf,
+            None => return,
+        }
+    } else {
+        data
+    };
+    fs.db_mut().load_font_data(font_data);
+}
+
+/// Decode WOFF1 container to raw OpenType/TrueType.
+/// WOFF1 wraps each OT table with optional zlib compression.
+fn decode_woff1(data: &[u8]) -> Option<Vec<u8>> {
+    use flate2::read::ZlibDecoder;
+
+    if data.len() < 44 { return None; }
+
+    let r32 = |off: usize| -> u32 {
+        u32::from_be_bytes([data[off], data[off+1], data[off+2], data[off+3]])
+    };
+    let r16 = |off: usize| -> u16 {
+        u16::from_be_bytes([data[off], data[off+1]])
+    };
+
+    let _signature = r32(0);       // 'wOFF'
+    let flavor     = r32(4);       // original sfVersion (e.g. 0x00010000 for TrueType)
+    let _length    = r32(8);       // total WOFF file size
+    let num_tables = r16(12);
+    let _reserved  = r16(14);
+    let total_sfnt = r32(16) as usize; // total size of uncompressed font
+    // bytes 20..44: version, metadata, private data offsets (not needed)
+
+    // Each table directory entry is 20 bytes, starting at offset 44
+    struct TableEntry {
+        tag:             [u8; 4],
+        offset:          usize,
+        comp_length:     usize,
+        orig_length:     usize,
+        orig_checksum:   u32,
+    }
+    let mut entries = Vec::with_capacity(num_tables as usize);
+    for i in 0..num_tables as usize {
+        let base = 44 + i * 20;
+        if base + 20 > data.len() { return None; }
+        let mut tag = [0u8; 4];
+        tag.copy_from_slice(&data[base..base+4]);
+        entries.push(TableEntry {
+            tag,
+            offset:       r32(base + 4) as usize,
+            comp_length:  r32(base + 8) as usize,
+            orig_length:  r32(base + 12) as usize,
+            orig_checksum: r32(base + 16),
+        });
+    }
+
+    // Build the output OTF/TTF
+    let mut out = Vec::with_capacity(total_sfnt);
+
+    // OT header: sfVersion(4) + numTables(2) + searchRange(2) + entrySelector(2) + rangeShift(2) = 12
+    out.extend_from_slice(&flavor.to_be_bytes());
+    out.extend_from_slice(&num_tables.to_be_bytes());
+    let n = num_tables as u32;
+    let entry_sel = (n as f64).log2().floor() as u16;
+    let search_range = (1u16 << entry_sel) * 16;
+    let range_shift = num_tables * 16 - search_range;
+    out.extend_from_slice(&search_range.to_be_bytes());
+    out.extend_from_slice(&entry_sel.to_be_bytes());
+    out.extend_from_slice(&range_shift.to_be_bytes());
+
+    // We need to write the table directory first (each entry = 16 bytes),
+    // then the actual table data. Compute offsets.
+    let dir_size = 12 + (num_tables as usize) * 16;
+    let mut table_data: Vec<Vec<u8>> = Vec::new();
+    let mut current_offset = dir_size;
+
+    for entry in &entries {
+        // Decompress or copy table data
+        let raw = if entry.comp_length < entry.orig_length {
+            // zlib compressed
+            let compressed = &data[entry.offset..entry.offset + entry.comp_length];
+            let mut decoder = ZlibDecoder::new(compressed);
+            let mut decompressed = Vec::with_capacity(entry.orig_length);
+            if std::io::Read::read_to_end(&mut decoder, &mut decompressed).is_err() {
+                return None;
+            }
+            decompressed
+        } else {
+            // uncompressed
+            if entry.offset + entry.orig_length > data.len() { return None; }
+            data[entry.offset..entry.offset + entry.orig_length].to_vec()
+        };
+
+        // Write table directory entry: tag(4) + checksum(4) + offset(4) + length(4)
+        out.extend_from_slice(&entry.tag);
+        out.extend_from_slice(&entry.orig_checksum.to_be_bytes());
+        out.extend_from_slice(&(current_offset as u32).to_be_bytes());
+        out.extend_from_slice(&(raw.len() as u32).to_be_bytes());
+
+        // Pad to 4-byte boundary
+        let padded = (raw.len() + 3) & !3;
+        let mut padded_raw = raw;
+        padded_raw.resize(padded, 0);
+        current_offset += padded;
+        table_data.push(padded_raw);
+    }
+
+    // Append all table data
+    for td in table_data {
+        out.extend_from_slice(&td);
+    }
+
+    Some(out)
 }
 
 /// Minimal Base64 decoder (no external dependency).
@@ -307,6 +444,12 @@ pub struct LayoutEngine {
     cached_has_media_q: bool,
     /// Whether any @container rules exist — cached to avoid O(n) scan every layout.
     cached_has_container_q: bool,
+    /// Whether @font-face font fetches have been kicked off (not necessarily finished).
+    fonts_loaded: bool,
+    /// Receiver for async font data arriving from background threads.
+    pending_fonts: Option<std::sync::mpsc::Receiver<(String, Vec<u8>)>>,
+    /// Number of font fetches still in flight.
+    fonts_in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Containing block rect for the nearest positioned (non-static) ancestor.
     /// Used by abs-pos children to resolve their containing block correctly.
     pub pos_cb: Cell<Rect>,
@@ -325,6 +468,9 @@ impl LayoutEngine {
             last_geometry_viewport_h: f32::NAN, // NAN forces full layout on first call
             cached_has_media_q: false,
             cached_has_container_q: false,
+            fonts_loaded: false,
+            pending_fonts: None,
+            fonts_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             pos_cb: Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)),
         }
     }
@@ -341,53 +487,129 @@ impl LayoutEngine {
         len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
     }
 
-    /// Load custom fonts declared by @font-face rules into the font system.
-    pub fn load_font_faces(&mut self, faces: &[crate::css::FontFaceDecl]) {
+    /// Kick off non-blocking font loading. Base64 and local fonts are loaded
+    /// immediately; remote fonts are fetched in background threads and arrive
+    /// via `pending_fonts` channel — polled each `layout()` call.
+    pub fn load_font_faces(&mut self, faces: &[crate::css::FontFaceDecl], base_url: &str) {
         if let Some(fs_ptr) = self.font_system {
             let fs = unsafe { &mut *fs_ptr };
+
+            // ── Phase 1: Resolve each @font-face to its best fetchable URL ──────
+            let mut remote: Vec<(String, String)> = Vec::new();
+
             for face in faces {
-                let src = face.src.trim();
+                let mut found = false;
+                for source in split_font_sources(&face.src) {
+                    if found { break; }
+                    let source = source.trim();
+                    let url_inner = if let Some(start) = source.find("url(") {
+                        let rest = &source[start + 4..];
+                        let end = rest.find(')').unwrap_or(rest.len());
+                        rest[..end].trim().trim_matches('"').trim_matches('\'')
+                    } else {
+                        continue;
+                    };
 
-                // ── Base64 data URI: `url("data:font/...;base64,<data>")` ──────
-                let url_inner = {
-                    let s = src.trim_start_matches("url(")
-                               .trim_end_matches(')')
-                               .trim()
-                               .trim_matches('"')
-                               .trim_matches('\'');
-                    s
-                };
-                if let Some(b64) = url_inner.strip_prefix("data:")
-                    .and_then(|s| s.find(";base64,").map(|i| &s[i + 8..]))
-                {
-                    if let Ok(bytes) = decode_base64(b64.trim()) {
-                        load_font_bytes(fs, bytes);
+                    // Strip fragment (#iefix etc.)
+                    let url_clean = url_inner.split('#').next().unwrap_or(url_inner);
+                    // Strip query string for extension check
+                    let url_for_ext = url_clean.split('?').next().unwrap_or(url_clean);
+
+                    // Skip font formats we can't handle (eot, svg, woff2)
+                    if url_for_ext.ends_with(".eot") || url_for_ext.ends_with(".svg")
+                       || url_for_ext.ends_with(".woff2") {
+                        continue;
                     }
-                    continue;
-                }
 
-                // ── Remote URL ─────────────────────────────────────────────────
-                if url_inner.starts_with("http://") || url_inner.starts_with("https://") {
-                    if let Ok(resp) = ureq::get(url_inner)
-                        .timeout(std::time::Duration::from_secs(10))
-                        .call()
+                    // Base64 data URI — load immediately (no network)
+                    if let Some(b64) = url_inner.strip_prefix("data:")
+                        .and_then(|s| s.find(";base64,").map(|i| &s[i + 8..]))
                     {
-                        let mut buf = Vec::new();
-                        if resp.into_reader().read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                            load_font_bytes(fs, buf);
+                        if let Ok(bytes) = decode_base64(b64.trim()) {
+                            load_font_bytes(fs, bytes);
+                            found = true;
+                        }
+                        continue;
+                    }
+
+                    let resolved = crate::html::resolve_url(url_clean, base_url);
+
+                    if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                        remote.push((face.family.clone(), resolved));
+                        found = true;
+                    } else if !resolved.is_empty() {
+                        // Local file — load immediately
+                        if let Ok(data) = std::fs::read(&resolved) {
+                            load_font_bytes(fs, data);
+                            found = true;
                         }
                     }
-                    continue;
-                }
-
-                // ── File path ──────────────────────────────────────────────────
-                let path = crate::css::extract_url_path(src);
-                if path.is_empty() { continue; }
-                if let Ok(data) = std::fs::read(&path) {
-                    load_font_bytes(fs, data);
                 }
             }
+
+            // ── Phase 2: Fire-and-forget remote font fetches ────────────────────
+            if !remote.is_empty() {
+                let (tx, rx) = std::sync::mpsc::channel::<(String, Vec<u8>)>();
+                let in_flight = self.fonts_in_flight.clone();
+                in_flight.store(remote.len(), std::sync::atomic::Ordering::SeqCst);
+
+                for (family, url) in remote {
+                    let sender = tx.clone();
+                    let counter = in_flight.clone();
+                    std::thread::spawn(move || {
+                        let result = ureq::get(&url)
+                            .timeout(std::time::Duration::from_secs(5))
+                            .call()
+                            .ok()
+                            .and_then(|resp| {
+                                let mut buf = Vec::new();
+                                resp.into_reader().read_to_end(&mut buf).ok()?;
+                                if buf.is_empty() { None } else { Some(buf) }
+                            });
+                        if let Some(bytes) = result {
+                            eprintln!("  Font loaded: {} ({} bytes) from {}", family, bytes.len(), &url[..url.len().min(80)]);
+                            let _ = sender.send((family, bytes));
+                        } else {
+                            eprintln!("  Font fetch failed: {}", family);
+                        }
+                        counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    });
+                }
+                self.pending_fonts = Some(rx);
+            }
         }
+    }
+
+    /// Poll for fonts that have arrived from background threads.
+    /// Returns `true` if any new fonts were loaded (caller should re-layout).
+    pub fn poll_pending_fonts(&mut self) -> bool {
+        let rx = match self.pending_fonts.as_ref() {
+            Some(rx) => rx,
+            None => return false,
+        };
+        let fs = match self.font_system {
+            Some(ptr) => unsafe { &mut *ptr },
+            None => return false,
+        };
+
+        let mut loaded_any = false;
+        // Drain all available font data without blocking.
+        while let Ok((_, bytes)) = rx.try_recv() {
+            load_font_bytes(fs, bytes);
+            loaded_any = true;
+        }
+
+        // If all fetches are done, drop the receiver.
+        if self.fonts_in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            self.pending_fonts = None;
+        }
+
+        loaded_any
+    }
+
+    /// Returns `true` if there are still font fetches in flight.
+    pub fn has_pending_fonts(&self) -> bool {
+        self.pending_fonts.is_some()
     }
 
     /// Main entry point: layout the full document.
@@ -401,9 +623,10 @@ impl LayoutEngine {
         // Rebuild selector index if rules changed (lazy, skips if already up-to-date).
         doc.stylesheet.rebuild_index();
 
-        // Load @font-face fonts (remote + local) before layout so text shaping uses them.
-        if !doc.stylesheet.font_faces.is_empty() {
-            self.load_font_faces(&doc.stylesheet.font_faces);
+        // Load @font-face fonts (non-blocking — remote fonts arrive via poll_pending_fonts).
+        if !self.fonts_loaded && !doc.stylesheet.font_faces.is_empty() {
+            self.load_font_faces(&doc.stylesheet.font_faces, &doc.base_url);
+            self.fonts_loaded = true;
         }
 
         // Cache @media / @container presence so we don't O(n)-scan rules every layout.

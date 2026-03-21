@@ -1128,6 +1128,28 @@ pub fn extract_font_faces(css: &str, faces: &mut Vec<FontFaceDecl>) {
     extract_font_faces_cleaned(&cleaned, faces);
 }
 
+/// Split CSS declarations on `;`, but skip `;` inside parentheses (for data URIs).
+fn split_declarations_paren_aware(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ';' if depth == 0 => {
+                result.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        result.push(&s[start..]);
+    }
+    result
+}
+
 fn extract_font_faces_cleaned(css: &str, faces: &mut Vec<FontFaceDecl>) {
     let mut s = css;
     loop {
@@ -1144,9 +1166,10 @@ fn extract_font_faces_cleaned(css: &str, faces: &mut Vec<FontFaceDecl>) {
         let (block, rest) = consume_block(s);
         s = rest;
 
-        // Parse declarations
+        // Parse declarations — split on `;` outside parentheses (to avoid
+        // splitting inside `url(data:...;base64,...)`)
         let mut face = FontFaceDecl::default();
-        for decl in block.split(';') {
+        for decl in split_declarations_paren_aware(block) {
             let decl = decl.trim();
             if let Some(colon) = decl.find(':') {
                 let prop  = decl[..colon].trim().to_ascii_lowercase();
@@ -3291,6 +3314,42 @@ fn resolve_var_pass(val: &str, variables: &HashMap<String, String>) -> String {
 
 /// Resolve a CSS `content` property value string to a displayable string.
 /// Handles string literals, open-quote/close-quote, and discards complex expressions.
+/// Process CSS Unicode escapes in a string: `\e001` → U+E001, `\A` → newline, etc.
+fn unescape_css_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Collect up to 6 hex digits
+            let mut hex = String::new();
+            while hex.len() < 6 {
+                match chars.peek() {
+                    Some(ch) if ch.is_ascii_hexdigit() => { hex.push(*ch); chars.next(); }
+                    _ => break,
+                }
+            }
+            if !hex.is_empty() {
+                // Optional trailing whitespace is consumed after hex escape
+                if let Some(&' ') = chars.peek() { chars.next(); }
+                if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                    if let Some(uc) = char::from_u32(cp) {
+                        out.push(uc);
+                        continue;
+                    }
+                }
+                // Invalid code point — output replacement character
+                out.push('\u{FFFD}');
+            } else if let Some(next) = chars.next() {
+                // Escaped literal character (e.g. \\ → \, \" → ")
+                out.push(next);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn resolve_content_value(v: &str) -> String {
     let v = v.trim();
     match v {
@@ -3303,7 +3362,7 @@ pub fn resolve_content_value(v: &str) -> String {
             if (v.starts_with('"') && v.ends_with('"'))
                 || (v.starts_with('\'') && v.ends_with('\''))
             {
-                return v[1..v.len()-1].to_string();
+                return unescape_css_string(&v[1..v.len()-1]);
             }
             // Multiple tokens (e.g. '"foo" open-quote'): concatenate resolved parts
             let mut out = String::new();
@@ -3313,10 +3372,10 @@ pub fn resolve_content_value(v: &str) -> String {
                 if rest.starts_with('"') || rest.starts_with('\'') {
                     let q = &rest[..1];
                     if let Some(end) = rest[1..].find(q) {
-                        out.push_str(&rest[1..end+1]);
+                        out.push_str(&unescape_css_string(&rest[1..end+1]));
                         rest = &rest[end+2..];
                     } else {
-                        out.push_str(&rest[1..]);
+                        out.push_str(&unescape_css_string(&rest[1..]));
                         break;
                     }
                 } else {

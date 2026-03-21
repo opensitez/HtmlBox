@@ -19,6 +19,8 @@ pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
     pub component_registry: ComponentRegistry,
+    /// Persistent layout engine — preserves async font loading state across calls.
+    layout_engine_inner: crate::layout::LayoutEngine,
     /// Zoom level: 1.0 = 100%, 2.0 = 200%, 0.5 = 50%.
     /// Updated automatically by `handle_window_event` (pinch, Ctrl+Wheel, Ctrl+=/−/0).
     /// Can also be set directly by the host.
@@ -49,6 +51,7 @@ impl Renderer {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             component_registry: ComponentRegistry::default(),
+            layout_engine_inner: crate::layout::LayoutEngine::new(),
             zoom: 1.0,
             scale: 1.0,
             shape_buf: None,
@@ -312,13 +315,12 @@ impl Renderer {
 
     /// Create a [`LayoutEngine`] that shares this renderer's font system so that
     /// line-breaking metrics match the actual rendered glyph widths.
-    pub fn layout_engine(&mut self) -> crate::layout::LayoutEngine {
-        let mut engine = crate::layout::LayoutEngine::new();
-        engine.font_system = Some(&mut self.font_system as *mut _);
-        engine.component_registry = self.component_registry.clone();
-        engine.viewport_h = self.viewport_h;
-        engine.scale = self.scale;
-        engine
+    pub fn layout_engine(&mut self) -> &mut crate::layout::LayoutEngine {
+        self.layout_engine_inner.font_system = Some(&mut self.font_system as *mut _);
+        self.layout_engine_inner.component_registry = self.component_registry.clone();
+        self.layout_engine_inner.viewport_h = self.viewport_h;
+        self.layout_engine_inner.scale = self.scale;
+        &mut self.layout_engine_inner
     }
 
     /// Parse HTML and run layout using the renderer's font system, so that text
@@ -337,7 +339,7 @@ impl Renderer {
     pub fn load_html_with_base(&mut self, html: &str, base_url: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
         let mut doc = crate::load_html_with_base(html, base_url, viewport_width, viewport_height);
         // Re-layout with the renderer's font metrics so glyph widths match rendering.
-        let mut engine = self.layout_engine();
+        let engine = self.layout_engine();
         engine.viewport_h = viewport_height;
         engine.layout(&mut doc, viewport_width);
         doc

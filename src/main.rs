@@ -236,7 +236,7 @@ impl ApplicationHandler for App {
                 };
                 if let Some(doc) = self.doc.as_mut() {
                     if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
-                        let mut engine = self.renderer.layout_engine();
+                        let engine = self.renderer.layout_engine();
                         if ch.is_some() && key_code >= 32 {
                             engine.layout_no_cascade(doc, self.width);
                         } else {
@@ -258,11 +258,39 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let mut needs_redraw = false;
+        let mut has_pending = false;
         if let Some(doc) = self.doc.as_mut() {
             if doc.editor.has_focus && doc.editor.blink_update() {
-                self.request_redraw();
+                needs_redraw = true;
             }
+            // Poll for async resources that arrived from background threads.
+            let mut needs_relayout = false;
+            if doc.poll_pending_images() {
+                needs_relayout = true;
+            }
+            if self.renderer.layout_engine().poll_pending_fonts() {
+                self.renderer.layout_engine().invalidate_cascade();
+                needs_relayout = true;
+            }
+            if needs_relayout {
+                self.renderer.layout_engine().layout(doc, self.width);
+                needs_redraw = true;
+            }
+            // Keep polling while resources are still in flight.
+            has_pending = doc.pending_images.is_some()
+                || self.renderer.layout_engine().has_pending_fonts();
+        }
+        if needs_redraw {
+            self.request_redraw();
+        }
+        // Use short poll interval while async resources are in flight,
+        // otherwise wait for events normally.
+        if has_pending {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                std::time::Instant::now() + std::time::Duration::from_millis(50),
+            ));
         }
     }
 }

@@ -1730,7 +1730,7 @@ pub struct Announcement {
 }
 
 /// The root document: box tree + stylesheet + metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Document {
     pub root:            HtmlBox,
     pub stylesheet:      Stylesheet,
@@ -1798,6 +1798,13 @@ pub struct Document {
     /// On the very first pass, only assertive regions announce their initial content;
     /// polite regions are silently initialised so they don't flood the user on load.
     pub(crate) live_regions_initialized: bool,
+
+    // ── Async image loading ─────────────────────────────────────────────────
+    /// Receiver for images arriving from background fetch threads.
+    /// Each message is (node_path, decoded_rgba, width, height).
+    pub pending_images: Option<std::sync::mpsc::Receiver<(Vec<usize>, Vec<u8>, u32, u32)>>,
+    /// Number of image fetches still in flight.
+    pub images_in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Document {
@@ -1836,7 +1843,29 @@ impl Document {
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
             live_regions_initialized: false,
+            pending_images:      None,
+            images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// Poll for images that arrived from background fetch threads.
+    /// Returns `true` if any new images were loaded (caller should re-layout).
+    pub fn poll_pending_images(&mut self) -> bool {
+        let rx = match self.pending_images.as_ref() {
+            Some(rx) => rx,
+            None => return false,
+        };
+        let mut loaded_any = false;
+        while let Ok((path, data, w, h)) = rx.try_recv() {
+            if let Some(node) = find_node_by_path_mut(&mut self.root, &path) {
+                crate::html::set_image_on_node(node, data, w, h);
+                loaded_any = true;
+            }
+        }
+        if self.images_in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            self.pending_images = None;
+        }
+        loaded_any
     }
 
     /// Re-apply the CSS cascade to the entire document tree.
@@ -2704,8 +2733,60 @@ fn collect_focusable_ordered(
     }
 }
 
+impl Clone for Document {
+    fn clone(&self) -> Self {
+        Self {
+            root:            self.root.clone(),
+            stylesheet:      self.stylesheet.clone(),
+            title:           self.title.clone(),
+            base_url:        self.base_url.clone(),
+            linked_stylesheets: self.linked_stylesheets.clone(),
+            editor:          self.editor.clone(),
+            events:          self.events.clone(),
+            scroll_x:        self.scroll_x,
+            scroll_y:        self.scroll_y,
+            scrollbar_drag:  self.scrollbar_drag.clone(),
+            hovered_box:     self.hovered_box,
+            active_box:      self.active_box,
+            focused_box:     self.focused_box,
+            mousedown_target: self.mousedown_target,
+            last_click_target: self.last_click_target,
+            last_click_time: self.last_click_time,
+            drag_source:     self.drag_source,
+            drag_start_doc_pt: self.drag_start_doc_pt,
+            drag_active:     self.drag_active,
+            visited_urls:    self.visited_urls.clone(),
+            viewport_w:      self.viewport_w,
+            viewport_h:      self.viewport_h,
+            keyboard_focus:  self.keyboard_focus,
+            active_animations:     self.active_animations.clone(),
+            transition_states:     self.transition_states.clone(),
+            prev_styles:           self.prev_styles.clone(),
+            cascade_styles:        self.cascade_styles.clone(),
+            animation_overrides:   self.animation_overrides.clone(),
+            needs_animation_frame: self.needs_animation_frame,
+            hover_changed:         self.hover_changed,
+            pending_announcements:    self.pending_announcements.clone(),
+            live_region_snapshots:    self.live_region_snapshots.clone(),
+            live_regions_initialized: self.live_regions_initialized,
+            // Async image state is not cloned — cloned docs start with no pending fetches.
+            pending_images:   None,
+            images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+}
+
 impl Default for Document {
     fn default() -> Self { Self::new() }
+}
+
+fn find_node_by_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut HtmlBox> {
+    let mut node = root;
+    for &idx in path {
+        if idx >= node.children.len() { return None; }
+        node = &mut node.children[idx];
+    }
+    Some(node)
 }
 
 // ─── aria-live helper ──────────────────────────────────────────────────────────
