@@ -4941,6 +4941,18 @@ fn apply_cascade_inner(
     candidates_buf: &mut Vec<usize>,
     counters: &mut HashMap<String, Vec<i32>>,
 ) {
+    // Synthetic ::before/::after children already have their style set.
+    // Skip the cascade for them — just recurse into their children (if any) and return.
+    if root.tag == "::before" || root.tag == "::after" {
+        // Still inherit inheritable properties from parent
+        if let Some(p) = parent_style {
+            let saved_display = root.style.display;
+            root.style.inherit_from(p);
+            root.style.display = saved_display; // preserve blockified display
+        }
+        return;
+    }
+
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
     if let Some(p) = parent_style {
@@ -5338,6 +5350,18 @@ fn apply_cascade_inner(
     }
 
     if let Some((txt, ps)) = build_pseudo_style(&mut before_matched, &root.style, &local_vars, &stylesheet.rules) {
+        // ::before may carry counter-increment/counter-reset — apply before resolving content
+        for (name, val) in &ps.counter_reset {
+            counters.entry(name.clone()).or_insert_with(Vec::new).push(*val);
+            counters_pushed.push(name.clone());
+        }
+        for (name, val) in &ps.counter_increment {
+            if let Some(stack) = counters.get_mut(name) {
+                if let Some(top) = stack.last_mut() {
+                    *top += val;
+                }
+            }
+        }
         root.style.before_content = resolve_counters_in_content(&txt, counters);
         root.style.before_style   = Some(ps);
     }
@@ -5357,6 +5381,8 @@ fn apply_cascade_inner(
     let is_grid_or_flex = matches!(root.style.display,
         Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
     if is_grid_or_flex && !root.style.before_content.is_empty() {
+        // Check if a ::before child already exists (from a prior cascade pass)
+        let existing = root.children.iter().position(|c| c.tag == "::before");
         let mut pseudo_box = {
                 let mut b = crate::types::HtmlBox::new("::before");
                 b.text = root.style.before_content.clone();
@@ -5370,11 +5396,17 @@ fn apply_cascade_inner(
         if matches!(pseudo_box.style.display, Display::Inline) {
             pseudo_box.style.display = Display::Block;
         }
-        root.children.insert(0, pseudo_box);
+        if let Some(idx) = existing {
+            root.children[idx] = pseudo_box; // update existing
+        } else {
+            root.children.insert(0, pseudo_box);
+        }
         // Clear before_content so it doesn't also render inline
         root.style.before_content = String::new();
     }
     if is_grid_or_flex && !root.style.after_content.is_empty() {
+        // Check if an ::after child already exists (from a prior cascade pass)
+        let existing = root.children.iter().position(|c| c.tag == "::after");
         let mut pseudo_box = {
                 let mut b = crate::types::HtmlBox::new("::after");
                 b.text = root.style.after_content.clone();
@@ -5387,7 +5419,11 @@ fn apply_cascade_inner(
         if matches!(pseudo_box.style.display, Display::Inline) {
             pseudo_box.style.display = Display::Block;
         }
-        root.children.push(pseudo_box);
+        if let Some(idx) = existing {
+            root.children[idx] = pseudo_box; // update existing
+        } else {
+            root.children.push(pseudo_box);
+        }
         root.style.after_content = String::new();
     }
 

@@ -177,7 +177,20 @@ pub fn layout_flex(
             if !child.style.min_width.is_auto() {
                 let v = child.style.min_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h);
                 (v - bb_main).max(0.0)
-            } else { 0.0 }
+            } else if child.style.overflow_x != Overflow::Visible {
+                // overflow: hidden/scroll/auto → automatic minimum is 0
+                0.0
+            } else {
+                // CSS spec: min-width:auto on flex items = min-content size
+                // (clamped to the item's specified size if any)
+                let mc = engine.min_content_width(child, font_px, root_font_px);
+                let clamped = if !child.style.width.is_auto() {
+                    mc.min(basis_main)
+                } else {
+                    mc
+                };
+                (clamped - bb_main).max(0.0)
+            }
         } else {
             if !child.style.min_height.is_auto() {
                 let v = child.style.min_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);

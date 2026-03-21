@@ -491,6 +491,67 @@ impl LayoutEngine {
     /// Compute max-content width of a node WITHOUT calling layout_box.
     /// This avoids the exponential blowup in nested flex layouts by measuring
     /// text directly with the font system instead of doing full inline layout.
+    /// Compute the min-content width of a node (the smallest width it can take
+    /// without overflowing).  For text, this is the width of the longest word.
+    pub fn min_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
+        if matches!(node.style.display, Display::None) { return 0.0; }
+
+        let font_px = node.style.font_size_px(parent_font_px, root_font_px);
+
+        // Explicit width → use that directly
+        if !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
+            let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
+            return w.max(0.0);
+        }
+
+        // Replaced elements (img): use natural dimensions
+        if node.tag == "img" && node.image_width > 0 {
+            return node.image_width as f32;
+        }
+
+        let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
+        let pad_border = rbox.padding_left + rbox.padding_right
+                       + rbox.border_left + rbox.border_right;
+
+        // Text node: measure the longest word
+        if node.is_text_node() {
+            let text = &node.text;
+            if text.is_empty() { return 0.0; }
+            let mut max_word = 0.0f32;
+            for word in text.split(|c: char| c.is_ascii_whitespace()) {
+                if word.is_empty() { continue; }
+                let w = if let Some(fs_ptr) = self.font_system {
+                    let fs = unsafe { &mut *fs_ptr };
+                    crate::layout::inline_layout::measure_text_width_weighted(
+                        word, font_px * self.scale,
+                        Some(fs),
+                        node.style.font_weight, node.style.font_style,
+                        self.scale,
+                    )
+                } else {
+                    crate::layout::inline_layout::measure_text_width_ts(word, font_px, 8)
+                };
+                if w > max_word { max_word = w; }
+            }
+            return max_word;
+        }
+
+        // For containers: max of children's min-content widths
+        let mut max_w = 0.0f32;
+        for ch in &node.children {
+            if matches!(ch.style.display, Display::None) { continue; }
+            if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+            let child_font = ch.style.font_size_px(font_px, root_font_px);
+            let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
+            let child_outer = child_rbox.padding_left + child_rbox.padding_right
+                + child_rbox.border_left + child_rbox.border_right
+                + child_rbox.margin_left + child_rbox.margin_right;
+            let cw = self.min_content_width(ch, font_px, root_font_px) + child_outer;
+            if cw > max_w { max_w = cw; }
+        }
+        max_w + pad_border
+    }
+
     pub fn max_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
