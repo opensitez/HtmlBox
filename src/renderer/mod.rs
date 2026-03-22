@@ -516,6 +516,7 @@ impl Renderer {
         // span > a).  Culling those would hide the children.
         if matches!(node.style.position, Position::Static | Position::Relative)
             && !node.style.is_inline_level()
+            && !matches!(node.style.display, Display::Contents)
         {
             let bx = br.x - sx;
             let by = br.y - sy;

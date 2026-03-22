@@ -659,6 +659,14 @@ impl Stylesheet {
     }
 
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
+    /// `css_base_url` is the URL of the CSS file itself, used to resolve relative url()
+    /// references (e.g. `url('../image.jpg')` in an external stylesheet).
+    pub fn parse_and_add_with_base(&mut self, css: &str, css_base_url: &str) {
+        let resolved = resolve_css_urls(css, css_base_url);
+        self.parse_and_add(&resolved);
+    }
+
+    /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
     pub fn parse_and_add(&mut self, css: &str) {
         // Strip comments once, share the cleaned string across all extractors.
         let cleaned = strip_css_comments(css);
@@ -1954,6 +1962,14 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 "right" => Float::Right,
                 _       => Float::None,
             };
+            // CSS 2.1 §9.7: floated elements are blockified
+            if style.float != Float::None {
+                style.display = match style.display {
+                    Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+                        => Display::Block,
+                    other => other,
+                };
+            }
         }
         "clear" => {
             style.clear = match v {
@@ -2034,12 +2050,30 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 apply_gradient(style, v);
                 return;
             }
+            // Extract url() first (before splitting by whitespace, which may break URLs)
+            if let Some(url) = extract_url(v) {
+                style.background_image_url = url;
+            }
             // Parse background shorthand: color, image url(), position [/ size], repeat
-            // Split on "/" to separate position from size
-            let (pos_part, size_part) = if let Some(slash) = v.find(" / ") {
-                (&v[..slash], Some(&v[slash+3..]))
+            // Strip url(...) from value before splitting to avoid partial token issues
+            let v_no_url = if let Some(start) = v.find("url(") {
+                let depth_start = start;
+                let mut depth = 0;
+                let mut end = v.len();
+                for (i, ch) in v[depth_start..].char_indices() {
+                    if ch == '(' { depth += 1; }
+                    if ch == ')' { depth -= 1; if depth == 0 { end = depth_start + i + 1; break; } }
+                }
+                format!("{} {}", &v[..depth_start], &v[end..])
             } else {
-                (v, None)
+                v.to_string()
+            };
+            let v_rest = v_no_url.trim();
+            // Split on "/" to separate position from size
+            let (pos_part, size_part) = if let Some(slash) = v_rest.find(" / ") {
+                (&v_rest[..slash], Some(&v_rest[slash+3..]))
+            } else {
+                (v_rest, None)
             };
             // Process position/size part first
             if let Some(size_str) = size_part {
@@ -2069,17 +2103,13 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             let mut pos_tokens: Vec<&str> = Vec::new();
             for token in pos_part.split_whitespace() {
                 match token {
+                    "none"       => { style.background_image_url.clear(); }
                     "no-repeat"  => { style.background_repeat = BackgroundRepeat::NoRepeat; }
                     "repeat-x"   => { style.background_repeat = BackgroundRepeat::RepeatX; }
                     "repeat-y"   => { style.background_repeat = BackgroundRepeat::RepeatY; }
                     "repeat"     => { style.background_repeat = BackgroundRepeat::Repeat; }
                     "left" | "center" | "right" | "top" | "bottom" => {
                         pos_tokens.push(token);
-                    }
-                    _ if token.starts_with("url(") => {
-                        let url = token.trim_start_matches("url(").trim_end_matches(')')
-                            .trim_matches('"').trim_matches('\'');
-                        style.background_image_url = url.to_string();
                     }
                     _ => {
                         if let Some(c) = parse_color(token) {
@@ -2535,6 +2565,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "background-image" => {
             if v.contains("gradient") {
                 apply_gradient(style, v);
+            } else if v == "none" {
+                style.background_image_url.clear();
             } else if let Some(url) = extract_url(v) {
                 style.background_image_url = url;
             }
@@ -3763,6 +3795,56 @@ fn extract_url(v: &str) -> Option<String> {
     let inner = inner.trim_start_matches('"').trim_start_matches('\'');
     let end = inner.find(|c| c == ')' || c == '"' || c == '\'')?;
     Some(inner[..end].to_string())
+}
+
+/// Resolve all `url()` references in CSS text relative to the CSS file's URL.
+/// This ensures that `url('../image.jpg')` in an external stylesheet is resolved
+/// relative to the stylesheet, not the HTML document.
+pub fn resolve_css_urls(css: &str, css_base_url: &str) -> String {
+    if css_base_url.is_empty() || !css_base_url.contains("://") {
+        return css.to_string();
+    }
+    // Find the directory of the CSS file URL
+    let css_dir = if let Some(last_slash) = css_base_url.rfind('/') {
+        &css_base_url[..=last_slash]
+    } else {
+        css_base_url
+    };
+
+    let mut result = String::with_capacity(css.len());
+    let mut remaining = css;
+    while let Some(url_start) = remaining.to_lowercase().find("url(") {
+        // Copy everything before url(
+        result.push_str(&remaining[..url_start]);
+        let after_url = &remaining[url_start + 4..];
+        let inner = after_url.trim_start();
+        // Find the closing )
+        let mut depth = 1;
+        let mut end_idx = 0;
+        for (i, ch) in after_url.char_indices() {
+            if ch == '(' { depth += 1; }
+            if ch == ')' { depth -= 1; if depth == 0 { end_idx = i; break; } }
+        }
+        if end_idx == 0 {
+            // Malformed — just copy as-is
+            result.push_str(&remaining[url_start..]);
+            break;
+        }
+        let url_content = after_url[..end_idx].trim();
+        let url_content = url_content.trim_matches('"').trim_matches('\'');
+
+        // Only resolve relative URLs (not absolute, data:, or already-resolved)
+        let resolved = if url_content.contains("://") || url_content.starts_with("data:") || url_content.starts_with('/') {
+            url_content.to_string()
+        } else {
+            format!("{}{}", css_dir, url_content)
+        };
+
+        result.push_str(&format!("url('{}')", resolved));
+        remaining = &after_url[end_idx + 1..];
+    }
+    result.push_str(remaining);
+    result
 }
 
 /// Parse a CSS shadow value: `offset_x offset_y [blur] [color]`
@@ -5182,6 +5264,15 @@ fn apply_cascade_inner(
     if ancestors.len() >= MAX_CASCADE_DEPTH {
         // Just inherit from parent and stop — the page may render slightly wrong
         // at extreme depth, but won't crash.
+        if let Some(p) = parent_style {
+            root.style.inherit_from(p);
+        }
+        return;
+    }
+
+    // Text nodes are not elements — they inherit from their parent but
+    // must never match CSS selectors (including `*`).
+    if root.tag == "#text" {
         if let Some(p) = parent_style {
             root.style.inherit_from(p);
         }

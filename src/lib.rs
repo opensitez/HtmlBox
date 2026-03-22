@@ -89,7 +89,7 @@ pub fn load_html_with_registry(
     use std::sync::{mpsc, atomic::{AtomicUsize, Ordering}, Arc};
 
     // Channel for CSS results — fetches start during parsing via the hook.
-    let (css_tx, css_rx) = mpsc::channel::<(usize, String)>();
+    let (css_tx, css_rx) = mpsc::channel::<(usize, String, String)>();
     let css_tx2  = css_tx.clone();
     let css_idx  = Arc::new(AtomicUsize::new(0));
     let css_idx2 = css_idx.clone();
@@ -109,7 +109,7 @@ pub fn load_html_with_registry(
                     let t = std::time::Instant::now();
                     let text = fetch_text(&abs).unwrap_or_default();
                     eprintln!("  CSS done:  {} ({:.0}ms, {} bytes)", abs, t.elapsed().as_millis(), text.len());
-                    let _ = sender.send((idx, text));
+                    let _ = sender.send((idx, abs, text));
                 });
             }
         }
@@ -120,7 +120,7 @@ pub fn load_html_with_registry(
     // Collect fetched stylesheets — wait up to 2s (CSS already started during parsing).
     let t1 = std::time::Instant::now();
     let expected_count = css_idx.load(std::sync::atomic::Ordering::SeqCst);
-    let mut css_results: Vec<(usize, String)> = Vec::new();
+    let mut css_results: Vec<(usize, String, String)> = Vec::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while css_results.len() < expected_count {
         match css_rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
@@ -129,10 +129,10 @@ pub fn load_html_with_registry(
         }
     }
     eprintln!("CSS wait: {:.0}ms ({}/{} sheets)", t1.elapsed().as_millis(), css_results.len(), expected_count);
-    css_results.sort_by_key(|(idx, _)| *idx);
-    for (_, sheet) in &css_results {
+    css_results.sort_by_key(|(idx, _, _)| *idx);
+    for (_, css_url, sheet) in &css_results {
         if !sheet.is_empty() {
-            doc.stylesheet.parse_and_add(sheet);
+            doc.stylesheet.parse_and_add_with_base(sheet, css_url);
         }
     }
 
@@ -144,9 +144,6 @@ pub fn load_html_with_registry(
     eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
     css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, std::ptr::null(), false);
     eprintln!("  Cascade: {:.0}ms", t2.elapsed().as_millis());
-
-    // Post-cascade: load background images (now that cascade has set background_image_url)
-    html::load_background_images(&mut doc.root, &doc.base_url.clone());
 
     // Resolve <picture> elements with real viewport dimensions before image fetching
     let base = doc.base_url.clone();
@@ -162,6 +159,9 @@ pub fn load_html_with_registry(
     engine.component_registry = registry;
     engine.layout(&mut doc, viewport_width);
     eprintln!("  Layout: {:.0}ms", t3.elapsed().as_millis());
+
+    // Post-layout: load background images (layout may re-run cascade with viewport)
+    html::load_background_images(&mut doc.root, &doc.base_url.clone());
     // Fire DOMContentLoaded — listeners registered before load_html can react.
     let evt = dom::HtmlEvent::new(dom::HtmlEventType::DOMContentLoaded);
     doc.events.dispatch(&doc.root, evt);

@@ -733,7 +733,8 @@ fn default_display(tag: &str) -> &'static str {
         "ruby" => "ruby",
         "rt"   => "ruby-text",
         // Non-visual: display:none
-        "head" | "style" | "script" | "title" | "meta" | "link" | "noscript" => "none",
+        "head" | "style" | "script" | "title" | "meta" | "link" | "noscript"
+        | "option" | "optgroup" | "datalist" => "none",
         // Everything else is inline
         _ => "inline",
     }
@@ -1225,6 +1226,42 @@ impl HtmlParser {
     fn post_process_node(node: &mut HtmlBox, base_url: &str) {
         if node.tag == "picture" {
             resolve_picture_source(node, base_url, 0.0, 0.0);
+        }
+        // <select>: show selected/first option text, hide all option children
+        if node.tag == "select" {
+            // Find selected option text (or first option)
+            let mut selected_text = String::new();
+            fn find_option_text(children: &[HtmlBox], selected: &mut String, first: &mut String) {
+                for child in children {
+                    if child.tag == "option" {
+                        let txt = collect_text(child);
+                        if first.is_empty() { *first = txt.clone(); }
+                        if child.attributes.contains_key("selected") {
+                            *selected = txt;
+                            return;
+                        }
+                    } else if child.tag == "optgroup" {
+                        find_option_text(&child.children, selected, first);
+                        if !selected.is_empty() { return; }
+                    }
+                }
+            }
+            fn collect_text(n: &HtmlBox) -> String {
+                if n.tag == "#text" { return n.text.clone(); }
+                let mut s = String::new();
+                for c in &n.children { s.push_str(&collect_text(c)); }
+                s
+            }
+            let mut first_text = String::new();
+            find_option_text(&node.children, &mut selected_text, &mut first_text);
+            if selected_text.is_empty() { selected_text = first_text; }
+            // Replace children with a single text node showing the selected option
+            node.children.clear();
+            if !selected_text.is_empty() {
+                let mut text_node = HtmlBox::new("#text");
+                text_node.text = selected_text.trim().to_string();
+                node.children.push(text_node);
+            }
         }
         if node.tag == "details" {
             let is_open = node.attributes.contains_key("open");
