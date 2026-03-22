@@ -59,13 +59,9 @@ fn resolve_replaced_size(ew: Option<u32>, eh: Option<u32>, vb: Option<(u32, u32)
         }
         (None, None) => {
             if let Some((vw, vh)) = vb {
-                let ratio = vw as f64 / vh.max(1) as f64;
-                let (fw, fh) = if ratio > (300.0 / 150.0) {
-                    (300, (300.0 / ratio).round() as u32)
-                } else {
-                    ((150.0 * ratio).round() as u32, 150)
-                };
-                (fw.max(1), fh.max(1))
+                // Use viewBox dimensions directly for inline SVGs (icon sizing).
+                // Most inline SVGs use viewBox="0 0 24 24" and rely on CSS for final size.
+                (vw.max(1), vh.max(1))
             } else {
                 (300, 150)
             }
@@ -275,25 +271,13 @@ pub fn resolve_url(src: &str, base_url: &str) -> String {
     else { format!("{}/{}", base_dir, src) }
 }
 
-/// Set decoded image data on a node, applying width/height/aspect-ratio.
+/// Set decoded image data on a node.
+/// Dimensions are NOT baked into the style here — the layout engine handles
+/// aspect-ratio sizing after the CSS cascade has set any explicit width/height.
 pub fn set_image_on_node(node: &mut HtmlBox, data: Vec<u8>, w: u32, h: u32) {
     node.image_data   = Some(data);
     node.image_width  = w;
     node.image_height = h;
-    let w_auto = node.style.width.is_auto();
-    let h_auto = node.style.height.is_auto();
-    if w_auto && h_auto {
-        apply_property(&mut node.style, "width",  &format!("{}px", w));
-        apply_property(&mut node.style, "height", &format!("{}px", h));
-    } else if w_auto && h > 0 {
-        let specified_h = node.style.height.resolve(16.0, 0.0, 16.0);
-        let ratio_w = (specified_h * w as f32 / h as f32).round() as u32;
-        apply_property(&mut node.style, "width", &format!("{}px", ratio_w));
-    } else if h_auto && w > 0 {
-        let specified_w = node.style.width.resolve(16.0, 0.0, 16.0);
-        let ratio_h = (specified_w * h as f32 / w as f32).round() as u32;
-        apply_property(&mut node.style, "height", &format!("{}px", ratio_h));
-    }
 }
 
 /// Try to load an image from a file path or data URL.
@@ -1085,27 +1069,33 @@ impl HtmlParser {
                         svg_tag_str.push('>');
                         let svg_markup = format!("{}{}</svg>", svg_tag_str, svg_body);
 
-                        let vb = parse_viewbox_value(attrs.get("viewbox").map(|s| s.as_str()));
+                        // Parse viewBox (case-insensitive lookup)
+                        let vb_str = attrs.get("viewBox").or_else(|| attrs.get("viewbox"));
+                        let vb = parse_viewbox_value(vb_str.map(|s| s.as_str()));
+                        let (vb_w, vb_h) = vb.unwrap_or((0, 0));
+
+                        // Check for explicit dimensions from HTML attributes or inline style
                         let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
                         let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
-                        let (w, h) = resolve_replaced_size(explicit_w, explicit_h, vb);
 
-                        let mut node = HtmlBox::new("img");
-                        // Forward SVG attributes as class/id/style for CSS matching
-                        if let Some(cls) = attrs.get("class") { node.attributes.insert("class".to_string(), cls.clone()); }
-                        if let Some(id) = attrs.get("id") { node.attributes.insert("id".to_string(), id.clone()); }
-                        if let Some(st) = attrs.get("style") { node.attributes.insert("style".to_string(), st.clone()); }
+                        let mut node = HtmlBox::new("svg");
+                        node.attributes = attrs;
                         apply_property(&mut node.style, "display", "inline-block");
-                        apply_property(&mut node.style, "width", &format!("{}px", w));
-                        apply_property(&mut node.style, "height", &format!("{}px", h));
-                        node.svg_markup = Some(svg_markup.clone());
+                        node.svg_markup = Some(svg_markup);
+                        node.svg_viewbox_w = vb_w as f32;
+                        node.svg_viewbox_h = vb_h as f32;
 
-                        // Rasterize immediately
-                        if let Some(rgba) = rasterize_svg_to_rgba(&svg_markup, w, h) {
-                            node.image_data = Some(rgba);
-                            node.image_width = w;
-                            node.image_height = h;
+                        // Only bake explicit HTML-attribute dimensions into the style.
+                        // CSS cascade will override these. If no explicit dimensions,
+                        // the layout engine uses svg_viewbox_w/h.
+                        if let Some(w) = explicit_w {
+                            apply_property(&mut node.style, "width", &format!("{}px", w));
                         }
+                        if let Some(h) = explicit_h {
+                            apply_property(&mut node.style, "height", &format!("{}px", h));
+                        }
+
+                        // Don't rasterize here — deferred to render time at the correct display size.
                         stack.last_mut().unwrap().node.children.push(node);
                         continue;
                     }

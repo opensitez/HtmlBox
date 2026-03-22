@@ -1485,6 +1485,10 @@ pub struct HtmlBox {
 
     // SVG source markup (for round-trip and re-rasterization)
     pub svg_markup: Option<String>,
+    /// SVG viewBox intrinsic dimensions (width, height). Used for aspect ratio
+    /// sizing in layout and on-demand rasterization at the correct display size.
+    pub svg_viewbox_w: f32,
+    pub svg_viewbox_h: f32,
 
     // Dirty flag for incremental layout
     pub layout_dirty:          bool,
@@ -1538,6 +1542,8 @@ impl HtmlBox {
             bg_image_height: 0,
 
             svg_markup: None,
+            svg_viewbox_w: 0.0,
+            svg_viewbox_h: 0.0,
 
             collapsed_margin_top:    0.0,
             collapsed_margin_bottom: 0.0,

@@ -363,6 +363,10 @@ fn matches_part_with_context(
                         let from_end = ctx.type_sibling_count - ctx.type_child_index;
                         return nth_matches(inner, from_end);
                     }
+                    // Shadow DOM pseudo-classes: never match in non-shadow context
+                    if pc.starts_with("host(") || pc.starts_with("host-context(") || pc == "host" {
+                        return false;
+                    }
                     // Unknown pseudo-class: fail-open for forward compat
                     true
                 }
@@ -1086,7 +1090,16 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
                 } else { break; }
                 continue;
             }
-            // Other @-rules: skip
+            // @layer, @supports: recurse into their blocks to find :root variables
+            if lower.starts_with("@layer") || lower.starts_with("@supports") {
+                if let Some(brace) = s.find('{') {
+                    let (block, rest) = consume_block(&s[brace..]);
+                    extract_root_variables_vp(&block, vars, vw, vh);
+                    s = rest;
+                } else { break; }
+                continue;
+            }
+            // Other @-rules (@keyframes, @font-face, etc.): skip
             if let Some(brace) = s.find('{') {
                 let (_, rest) = consume_block(&s[brace..]);
                 s = rest;
@@ -5502,6 +5515,8 @@ fn apply_cascade_inner(
         for (prop, val) in &stylesheet.rules[ri].declarations {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, &local_vars);
+            // If var() resolved to empty, skip — keep inherited/default value
+            if resolved.trim().is_empty() && val.contains("var(") { continue; }
             if resolved.trim() == "inherit" {
                 inherit_props.insert(prop.to_string());
             } else {
@@ -5599,6 +5614,7 @@ fn apply_cascade_inner(
         for (prop, val) in &stylesheet.rules[ri].important_declarations {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, &local_vars);
+            if resolved.trim().is_empty() && val.contains("var(") { continue; }
             if resolved.trim() == "inherit" {
                 if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
             } else {

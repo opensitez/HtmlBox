@@ -943,12 +943,18 @@ impl LayoutEngine {
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
-        // <img> aspect ratio: when one dimension is auto and the natural
+        // <img>/<svg> aspect ratio: when one dimension is auto and the natural
         // dimensions are known, compute the auto dimension to preserve the
         // image's intrinsic aspect ratio (CSS Images §5.1).
-        if node.tag == "img" && node.image_width > 0 && node.image_height > 0 {
-            let iw = node.image_width as f32;
-            let ih = node.image_height as f32;
+        // For <svg>, intrinsic dimensions come from viewBox.
+        let (has_intrinsic, iw, ih) = if node.tag == "img" && node.image_width > 0 && node.image_height > 0 {
+            (true, node.image_width as f32, node.image_height as f32)
+        } else if node.tag == "svg" && node.svg_viewbox_w > 0.0 && node.svg_viewbox_h > 0.0 {
+            (true, node.svg_viewbox_w, node.svg_viewbox_h)
+        } else {
+            (false, 0.0, 0.0)
+        };
+        if has_intrinsic {
             if node.style.width.is_auto() && !node.style.height.is_auto() {
                 let h = node.style.height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
                 let w = (h * iw / ih).round();
@@ -958,8 +964,22 @@ impl LayoutEngine {
                 let h = (w * ih / iw).round();
                 node.style.height = CssLength::Px(h);
             } else if node.style.width.is_auto() && node.style.height.is_auto() {
-                node.style.width  = CssLength::Px(iw);
-                node.style.height = CssLength::Px(ih);
+                // Start with natural dimensions
+                let mut w = iw;
+                let mut h = ih;
+                // Apply max-width/max-height constraints, maintaining aspect ratio
+                let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                if max_w > 0.0 && w > max_w {
+                    h = (max_w * ih / iw).round();
+                    w = max_w;
+                }
+                let max_h = node.style.max_height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
+                if max_h > 0.0 && h > max_h {
+                    w = (max_h * iw / ih).round();
+                    h = max_h;
+                }
+                node.style.width  = CssLength::Px(w);
+                node.style.height = CssLength::Px(h);
             }
         }
 

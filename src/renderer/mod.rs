@@ -904,6 +904,11 @@ impl Renderer {
             self.draw_image_placeholder(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
 
+        // ── Inline SVG: rasterize on demand at display size ────────────────
+        if node.tag == "svg" {
+            self.draw_svg(node, pixmap, eff_sx, eff_sy, eff_mask);
+        }
+
         // ── Children: non-positioned first, then positioned by z-index ───────
         let has_positioned = node.children.iter().any(|c|
             c.style.is_positioned() && !matches!(c.style.display, Display::None));
@@ -2119,6 +2124,54 @@ impl Renderer {
         }
 
         // Fallback: transparent placeholder (like browsers before image loads)
+    }
+
+    /// Rasterize and draw an inline `<svg>` at its final display size.
+    /// Injects the DOM's computed `color` so `currentColor` and unstyled fills work.
+    fn draw_svg(
+        &self,
+        node:   &HtmlBox,
+        pixmap: &mut Pixmap,
+        sx:     f32,
+        sy:     f32,
+        mask:   Option<&Mask>,
+    ) {
+        let cr = node.content_rect;
+        if cr.w <= 0.0 || cr.h <= 0.0 { return; }
+        let markup = match &node.svg_markup {
+            Some(m) => m,
+            None => return,
+        };
+
+        // Rasterize at display size (content rect × scale)
+        let raster_w = (cr.w * self.scale).round() as u32;
+        let raster_h = (cr.h * self.scale).round() as u32;
+        if raster_w == 0 || raster_h == 0 { return; }
+
+        // Inject the inherited CSS color into the SVG for currentColor support.
+        // 1. Replace `currentColor` references with the actual hex color
+        // 2. Inject a <style> block so unstyled paths/elements inherit the DOM color
+        let c = node.style.color;
+        let color_hex = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+        let mut colored_markup = markup.replace("currentColor", &color_hex);
+        // Inject default fill via a <style> block right after the opening <svg...> tag
+        if colored_markup.starts_with("<svg") {
+            if let Some(gt) = colored_markup.find('>') {
+                let style_inject = format!(
+                    "<style>svg{{color:{0}}}path:not([fill]),circle:not([fill]),rect:not([fill]),polygon:not([fill]),line:not([fill]),polyline:not([fill]){{fill:{0}}}</style>",
+                    color_hex
+                );
+                colored_markup.insert_str(gt + 1, &style_inject);
+            }
+        }
+
+        if let Some(rgba) = crate::html::rasterize_svg_to_rgba(&colored_markup, raster_w, raster_h) {
+            self.draw_image_data(
+                &rgba, raster_w, raster_h,
+                cr, node.style.object_fit,
+                pixmap, sx, sy, mask,
+            );
+        }
     }
 
     fn draw_image_data(
