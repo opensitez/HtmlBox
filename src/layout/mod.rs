@@ -965,6 +965,21 @@ impl LayoutEngine {
 
         let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, None);
 
+        // CSS 2.1 §10.5: when this element has a definite content height,
+        // children with percentage heights can resolve against it.
+        // Pre-resolve them here so layout_box (which passes containing_h=None
+        // to resolve_box_vp) gets the right values.
+        if let Some(parent_h) = rbox.content_height {
+            if parent_h > 0.0 {
+                for child in &mut node.children {
+                    if matches!(child.style.height, CssLength::Percent(_)) {
+                        let h = child.style.height.resolve_vp(font_px, parent_h, root_font_px, self.viewport_w, self.viewport_h);
+                        child.style.height = CssLength::Px(h.max(0.0));
+                    }
+                }
+            }
+        }
+
         // Auto-margin centering (CSS 2.1 §10.3.3) — applies to any element with an
         // explicit width and at least one auto horizontal margin.  Block layout has
         // its own copy of this logic; here we handle flex/grid/table/custom.
@@ -1135,8 +1150,12 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let top_auto   = node.style.top.is_auto();
     let bot_auto   = node.style.bottom.is_auto();
 
-    // If both horizontal sides are set, we can compute width from stretch
-    let constrained_w = if !left_auto && !right_auto {
+    // If both horizontal sides are set AND width is auto, compute width from stretch.
+    // If width is explicit (or the element has intrinsic size), don't stretch —
+    // auto margins will center it instead (CSS 2.1 §10.3.7).
+    let constrained_w = if !left_auto && !right_auto && node.style.width.is_auto()
+        && !(node.tag == "img" && node.image_width > 0)
+    {
         let l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
         let r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
         let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
@@ -1198,12 +1217,26 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     let res_t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
     let res_b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
 
-    let x = if !left_auto {
+    let x = if !left_auto && !right_auto
+        && (node.style.margin_left.is_auto() || node.style.margin_right.is_auto())
+        && !node.style.width.is_auto()
+    {
+        // Both left and right set with auto margins — center the element.
+        // available = containing_w - left - right - border_box_w
+        let avail = containing_w - res_l - res_r - node.border_rect.w;
+        if node.style.margin_left.is_auto() && node.style.margin_right.is_auto() {
+            containing_x + res_l + (avail / 2.0).max(0.0)
+        } else if node.style.margin_left.is_auto() {
+            containing_x + res_l + avail.max(0.0) - rbox.margin_right
+        } else {
+            containing_x + res_l + rbox.margin_left
+        }
+    } else if !left_auto {
         containing_x + res_l + rbox.margin_left
     } else if !right_auto {
         (containing_x + containing_w) - res_r - node.border_rect.w - rbox.margin_right
     } else {
-        node.border_rect.x
+        containing_x + rbox.margin_left
     };
 
     let y = if !top_auto {
@@ -1211,7 +1244,10 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
     } else if !bot_auto {
         (containing_y + containing_h) - res_b - node.border_rect.h - rbox.margin_bottom
     } else {
-        node.border_rect.y
+        // Static position: place at the containing block's content start.
+        // layout_box ran at (0,0) so border_rect.y is meaningless here;
+        // use containing_y as the static position approximation.
+        containing_y + rbox.margin_top
     };
 
     // Shift all rects to final position

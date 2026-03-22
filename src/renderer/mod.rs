@@ -2581,11 +2581,11 @@ fn make_overflow_clip_mask(
     scale: f32,
 ) -> Option<Mask> {
     if pw <= 0.0 || ph <= 0.0 { return None; }
-    // For rectangular clips (no border-radius) we skip the full-viewport Mask allocation
-    // (~2-10 MB per element) and rely on the child_clip rect for culling instead.
-    // Only rounded corners genuinely need a pixel-level mask.
-    if radius <= 0.0 { return None; }
-    let path = rounded_rect_path(px, py, pw, ph, radius)?;
+    let path = if radius > 0.0 {
+        rounded_rect_path(px, py, pw, ph, radius)?
+    } else {
+        rect_path(px, py, pw, ph)?
+    };
     let ts = Transform::from_scale(scale, scale);
     let mut mask = Mask::new(pixmap.width(), pixmap.height())?;
     mask.fill_path(&path, FillRule::Winding, true, ts);
