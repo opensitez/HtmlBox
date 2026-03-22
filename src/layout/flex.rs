@@ -198,12 +198,12 @@ pub fn layout_flex(
             } else { 0.0 }
         };
         let max_main: f32 = if is_row {
-            if !child.style.max_width.is_none() {
+            if !child.style.max_width.is_none() && !child.style.max_width.is_auto() {
                 let v = child.style.max_width.resolve_vp(child_font, content_w, root_font_px, engine.viewport_w, engine.viewport_h);
                 (v - bb_main).max(0.0)
             } else { f32::MAX }
         } else {
-            if !child.style.max_height.is_none() {
+            if !child.style.max_height.is_none() && !child.style.max_height.is_auto() {
                 let v = child.style.max_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
                 (v - bb_main).max(0.0)
             } else { f32::MAX }

@@ -5,19 +5,20 @@ use crate::layout::block::apply_relative_offset;
 use crate::css::parse_single_track;
 
 /// Resolve a child by path through `display: contents` wrappers.
-fn grid_child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
+pub fn grid_child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
     let mut n = node;
     for &i in path { n = &n.children[i]; }
     n
 }
-fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
+pub fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
     let mut n = node;
     for &i in path { n = &mut n.children[i]; }
     n
 }
 
-/// Collect effective grid children, flattening `display: contents`.
-fn collect_grid_children(node: &HtmlBox) -> Vec<Vec<usize>> {
+/// Collect effective children, flattening `display: contents`.
+/// Used by grid, and also by block/flex layout for display:contents support.
+pub fn collect_grid_children(node: &HtmlBox) -> Vec<Vec<usize>> {
     let mut result = Vec::new();
     let mut path = Vec::new();
     collect_grid_inner(node, &mut path, &mut result);

@@ -1,8 +1,41 @@
-use std::io::Read as _;
 
-/// User-Agent sent with all HTTP requests. Many servers return 403 without a
-/// recognisable browser UA string.
-pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+/// Browser version — bump periodically to stay current with real Chrome releases.
+const CHROME_MAJOR: u32 = 131;
+
+/// Build a platform-appropriate User-Agent string at runtime.
+/// Real browsers derive this from their binary version and the OS they're
+/// running on.  We approximate by using compile-time platform detection
+/// and a manually-bumped Chrome major version.
+fn build_user_agent() -> String {
+    let platform = if cfg!(target_os = "macos") {
+        "Macintosh; Intel Mac OS X 10_15_7"
+    } else if cfg!(target_os = "windows") {
+        "Windows NT 10.0; Win64; x64"
+    } else {
+        "X11; Linux x86_64"
+    };
+    format!(
+        "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{CHROME_MAJOR}.0.0.0 Safari/537.36"
+    )
+}
+
+/// Platform string for Sec-CH-UA-Platform header.
+fn platform_hint() -> &'static str {
+    if cfg!(target_os = "macos") { "\"macOS\"" }
+    else if cfg!(target_os = "windows") { "\"Windows\"" }
+    else { "\"Linux\"" }
+}
+
+/// Sec-CH-UA header matching the Chrome version we claim.
+fn sec_ch_ua() -> String {
+    format!("\"Chromium\";v=\"{CHROME_MAJOR}\", \"Google Chrome\";v=\"{CHROME_MAJOR}\", \"Not-A.Brand\";v=\"99\"")
+}
+
+/// User-Agent sent with all HTTP requests.
+pub fn user_agent() -> String { build_user_agent() }
+
+/// Legacy constant — prefer `user_agent()`.
+pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 pub mod types;
 pub mod css;
@@ -22,7 +55,7 @@ pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, A
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState};
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
-pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_bytes, parse_html_bytes_with_base};
+pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
 pub use renderer::Renderer;
@@ -150,15 +183,11 @@ fn start_async_image_fetches(doc: &mut types::Document) {
         let sender = tx.clone();
         let counter = in_flight.clone();
         std::thread::spawn(move || {
-            let result = ureq::get(&url)
-                .set("User-Agent", crate::USER_AGENT)
-                .timeout(std::time::Duration::from_secs(10))
-                .call().ok()
-                .and_then(|r| {
-                    let mut buf = Vec::new();
-                    r.into_reader().read_to_end(&mut buf).ok()?;
-                    Some(buf)
-                })
+            let result = http_client()
+                .get(&url)
+                .header("Sec-Fetch-Dest", "image")
+                .send().ok()
+                .and_then(|r| r.bytes().ok())
                 .and_then(|bytes| html::decode_image_bytes(&bytes));
             if let Some((data, w, h)) = result {
                 let _ = sender.send((path, data, w, h));
@@ -207,19 +236,50 @@ fn resolve_css_url(base: &str, href: &str) -> String {
     href.to_string()
 }
 
+/// Build a `reqwest::blocking::Client` with browser-like headers.
+/// The client handles gzip/brotli/deflate decompression, cookies, and
+/// redirects automatically.
+pub fn http_client() -> reqwest::blocking::Client {
+    let ua = build_user_agent();
+    let ch_ua = sec_ch_ua();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8".parse().unwrap());
+    headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
+    headers.insert("Sec-Fetch-Dest", "document".parse().unwrap());
+    headers.insert("Sec-Fetch-Mode", "navigate".parse().unwrap());
+    headers.insert("Sec-Fetch-Site", "none".parse().unwrap());
+    headers.insert("Sec-Fetch-User", "?1".parse().unwrap());
+    headers.insert("Sec-CH-UA", ch_ua.parse().unwrap());
+    headers.insert("Sec-CH-UA-Mobile", "?0".parse().unwrap());
+    headers.insert("Sec-CH-UA-Platform", platform_hint().parse().unwrap());
+    headers.insert("Upgrade-Insecure-Requests", "1".parse().unwrap());
+    reqwest::blocking::Client::builder()
+        .user_agent(ua)
+        .default_headers(headers)
+        .gzip(true)
+        .brotli(true)
+        .deflate(true)
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .expect("failed to build HTTP client")
+}
+
 fn fetch_text(url: &str) -> Result<String, String> {
-    let resp = ureq::get(url)
-        .set("User-Agent", USER_AGENT)
-        .timeout(std::time::Duration::from_secs(10))
-        .call()
-        .map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut buf)
-        .map_err(|e| e.to_string())?;
-    String::from_utf8(buf)
-        .or_else(|e| {
-            let bytes = e.into_bytes();
-            Ok(bytes.iter().map(|&b| b as char).collect())
-        })
+    let client = http_client();
+    let bytes = client.get(url).send().map_err(|e| e.to_string())?
+        .bytes().map_err(|e| e.to_string())?;
+    decode_text(&bytes)
+}
+
+/// Decode bytes to a String, trying UTF-8 first, then falling back to
+/// encoding_rs for Latin-1 / Windows-1252 / etc.
+fn decode_text(bytes: &[u8]) -> Result<String, String> {
+    match String::from_utf8(bytes.to_vec()) {
+        Ok(s) => Ok(s),
+        Err(_) => {
+            // Try common fallback encodings
+            let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+            Ok(cow.into_owned())
+        }
+    }
 }

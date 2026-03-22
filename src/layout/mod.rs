@@ -7,7 +7,6 @@ pub mod table;
 pub mod hit_test;
 
 use std::cell::Cell;
-use std::io::Read as _;
 use crate::types::*;
 
 // ─── Font loading helpers ──────────────────────────────────────────────────────
@@ -454,7 +453,12 @@ pub struct LayoutEngine {
     /// Containing block rect for the nearest positioned (non-static) ancestor.
     /// Used by abs-pos children to resolve their containing block correctly.
     pub pos_cb: Cell<Rect>,
+    /// Current recursion depth — prevents stack overflow on deeply nested DOMs.
+    layout_depth: Cell<usize>,
 }
+
+/// Maximum layout recursion depth to prevent stack overflow.
+const MAX_LAYOUT_DEPTH: usize = 400;
 
 impl LayoutEngine {
     pub fn new() -> Self {
@@ -473,6 +477,7 @@ impl LayoutEngine {
             pending_fonts: None,
             fonts_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             pos_cb: Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)),
+            layout_depth: Cell::new(0),
         }
     }
 
@@ -708,16 +713,12 @@ impl LayoutEngine {
                     let sender = tx.clone();
                     let counter = in_flight.clone();
                     std::thread::spawn(move || {
-                        let result = ureq::get(&url)
-                            .set("User-Agent", crate::USER_AGENT)
-                            .timeout(std::time::Duration::from_secs(5))
-                            .call()
-                            .ok()
-                            .and_then(|resp| {
-                                let mut buf = Vec::new();
-                                resp.into_reader().read_to_end(&mut buf).ok()?;
-                                if buf.is_empty() { None } else { Some(buf) }
-                            });
+                        let result = crate::http_client()
+                            .get(&url)
+                            .send().ok()
+                            .and_then(|r| r.bytes().ok())
+                            .map(|b| b.to_vec())
+                            .filter(|b| !b.is_empty());
                         if let Some(bytes) = result {
                             eprintln!("  Font loaded: {} ({} bytes) from {}", family, bytes.len(), &url[..url.len().min(80)]);
                             let _ = sender.send((family, bytes));
@@ -910,6 +911,15 @@ impl LayoutEngine {
         root_font_px:   f32,
         fc:  Option<&mut FloatContext>,
     ) -> f32 {
+        // Guard against stack overflow on deeply nested DOMs.
+        let depth = self.layout_depth.get();
+        if depth >= MAX_LAYOUT_DEPTH {
+            node.content_rect = Rect::new(x, y, containing_w, 0.0);
+            node.padding_rect = node.content_rect;
+            node.border_rect  = node.content_rect;
+            node.margin_rect  = node.content_rect;
+            return 0.0;
+        }
         // Don't layout display:none
         if matches!(node.style.display, Display::None) {
             node.content_rect = Rect::default();
@@ -928,6 +938,8 @@ impl LayoutEngine {
             node.margin_rect  = Rect::default();
             return 0.0;
         }
+
+        self.layout_depth.set(depth + 1);
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
@@ -1054,12 +1066,15 @@ impl LayoutEngine {
                 if has_block_children(node) {
                     block::layout_block_with_fc(self, node, &rbox, containing_w, x, y, font_px, root_font_px, fc)
                 } else {
-                    inline_layout::layout_inline_block(self, node, &rbox, containing_w, x, y, font_px, root_font_px, None)
+                    // Pass parent float context so inline content wraps around
+                    // floats from ancestor block containers (CSS §9.5).
+                    inline_layout::layout_inline_block(self, node, &rbox, containing_w, x, y, font_px, root_font_px, fc)
                 }
             }
         };
 
         self.pos_cb.set(old_pos_cb);
+        self.layout_depth.set(depth);
         h
     }
 
@@ -1085,12 +1100,16 @@ impl LayoutEngine {
 // ─── Helper: does a box have any block-level children? ────────────────────────
 
 pub fn has_block_children(node: &HtmlBox) -> bool {
-    node.children.iter().any(|c|
-        !matches!(c.style.display, Display::None) &&
+    node.children.iter().any(|c| {
+        if matches!(c.style.display, Display::None) { return false; }
+        // Look through display:contents elements recursively.
+        if matches!(c.style.display, Display::Contents) {
+            return has_block_children(c);
+        }
         matches!(c.style.position, Position::Static | Position::Relative | Position::Sticky) &&
         c.style.is_block_level() &&
         matches!(c.style.float, Float::None)
-    )
+    })
 }
 
 // ─── Absolute / fixed positioning pass ───────────────────────────────────────

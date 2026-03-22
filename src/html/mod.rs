@@ -1,7 +1,6 @@
 pub mod serializer;
 
 use std::collections::HashMap;
-use std::io::Read as _;
 use crate::types::{HtmlBox, Document, Display, ListStyleType};
 use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
@@ -433,15 +432,12 @@ pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>,
 
     // Fetch remote images via HTTP
     if path.starts_with("http://") || path.starts_with("https://") {
-        let bytes = ureq::get(&path)
-            .set("User-Agent", crate::USER_AGENT)
-            .timeout(std::time::Duration::from_secs(10))
-            .call().ok()
-            .and_then(|r| {
-                let mut buf = Vec::new();
-                r.into_reader().read_to_end(&mut buf).ok()?;
-                Some(buf)
-            })?;
+        let bytes = crate::http_client()
+            .get(&path)
+            .header("Sec-Fetch-Dest", "image")
+            .send().ok()
+            .and_then(|r| r.bytes().ok())
+            .map(|b| b.to_vec())?;
         return decode_image_bytes(&bytes);
     }
 
@@ -565,14 +561,31 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 pub fn decode_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '&' {
-            out.push(ch);
+    let mut i = 0;
+    while i < s.len() {
+        let b = s.as_bytes()[i];
+        if b != b'&' {
+            // Find next '&' or end, copy the whole chunk at once.
+            let start = i;
+            i += 1;
+            while i < s.len() && s.as_bytes()[i] != b'&' { i += 1; }
+            out.push_str(&s[start..i]);
             continue;
         }
-        let rest: String = chars.by_ref().take_while(|&c| c != ';').collect();
-        out.push_str(&resolve_entity(&rest));
+        // Look ahead for ';' within a reasonable range (HTML entity names are short).
+        // If no ';' found, treat '&' as literal.
+        let after = i + 1;
+        match s[after..].find(';') {
+            Some(semi) if semi <= 32 => {
+                let name = &s[after..after + semi];
+                out.push_str(&resolve_entity(name));
+                i = after + semi + 1;
+            }
+            _ => {
+                out.push('&');
+                i += 1;
+            }
+        }
     }
     out
 }
@@ -662,9 +675,9 @@ fn tokenize(html: &str) -> Vec<Token> {
             let is_void = is_void_element(&tag);
             tokens.push(Token::OpenTag { tag: tag.clone(), attrs, self_closing: self_closing || is_void });
             i = end;
-            // Raw text elements: <style> and <script> content must not be parsed as HTML.
+            // Raw text elements: content must not be parsed as HTML.
             // Collect everything until the matching close tag as a single Text token.
-            if (tag == "style" || tag == "script") && !(self_closing || is_void) {
+            if matches!(tag.as_str(), "style" | "script" | "noscript") && !(self_closing || is_void) {
                 let close_pat = format!("</{}", tag);
                 let raw_end = crate::css::find_case_insensitive(&html[i..], &close_pat)
                     .map(|e| i + e)
@@ -764,12 +777,58 @@ fn parse_attrs(s: &str) -> HashMap<String, String> {
 
 fn is_void_element(tag: &str) -> bool {
     matches!(tag, "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
-        | "link" | "meta" | "param" | "source" | "track" | "wbr")
+        | "link" | "meta" | "param" | "source" | "track" | "wbr"
+        // SVG void elements — never have child content
+        | "path" | "circle" | "rect" | "line" | "polygon" | "polyline"
+        | "ellipse" | "use" | "image" | "stop")
 }
 
 /// Elements whose content should be completely suppressed (no box, no text)
+/// HTML implicit closing rules (HTML spec §12.2.6.4).
+/// Returns true if seeing `new_tag` as an open tag should auto-close `current`.
+fn should_auto_close(current: &str, new_tag: &str) -> bool {
+    match current {
+        // <p> closes when a block-level element opens
+        "p" => matches!(new_tag,
+            "address" | "article" | "aside" | "blockquote" | "center" |
+            "details" | "dialog" | "dir" | "div" | "dl" | "fieldset" |
+            "figcaption" | "figure" | "footer" | "form" | "h1" | "h2" |
+            "h3" | "h4" | "h5" | "h6" | "header" | "hgroup" | "hr" |
+            "li" | "listing" | "main" | "menu" | "nav" | "ol" | "p" |
+            "plaintext" | "pre" | "search" | "section" | "summary" |
+            "table" | "ul" | "xmp"
+        ),
+        // <li> closes on another <li>
+        "li" => new_tag == "li",
+        // <dt> closes on <dt> or <dd>
+        "dt" => matches!(new_tag, "dt" | "dd"),
+        // <dd> closes on <dt> or <dd>
+        "dd" => matches!(new_tag, "dt" | "dd"),
+        // <td> closes on <td>, <th>, or end-of-row tags
+        "td" => matches!(new_tag, "td" | "th"),
+        // <th> closes on <td>, <th>
+        "th" => matches!(new_tag, "td" | "th"),
+        // <tr> closes on <tr>
+        "tr" => new_tag == "tr",
+        // <thead>/<tbody>/<tfoot> close on each other
+        "thead" | "tbody" | "tfoot" => matches!(new_tag, "thead" | "tbody" | "tfoot"),
+        // <option> closes on <option> or <optgroup>
+        "option" => matches!(new_tag, "option" | "optgroup"),
+        // <optgroup> closes on <optgroup>
+        "optgroup" => new_tag == "optgroup",
+        // <rt>/<rp> close on <rt>/<rp>
+        "rt" | "rp" => matches!(new_tag, "rt" | "rp"),
+        // <colgroup> closes on non-col content
+        "colgroup" => new_tag != "col",
+        // <head> closes when <body> opens
+        "head" => new_tag == "body",
+        _ => false,
+    }
+}
+
 fn is_non_visual(tag: &str) -> bool {
-    matches!(tag, "head" | "meta" | "link" | "script" | "noscript")
+    // script/noscript are handled separately (content passed to host hook).
+    matches!(tag, "head" | "meta" | "link")
 }
 
 // ─── Default display ────────────────────────────────────────────────────────
@@ -983,6 +1042,11 @@ struct HtmlParser {
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
     on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
+    /// Optional host callback for `<script>` and `<noscript>` tags.
+    /// Receives (tag, attrs, raw_content) and returns true if the host handled it.
+    /// If None or returns false: `<noscript>` content is parsed as HTML (shown to
+    /// the user as fallback), `<script>` is discarded.
+    on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
 }
 
 impl HtmlParser {
@@ -995,6 +1059,7 @@ impl HtmlParser {
             base_url: String::new(),
             linked_stylesheets: Vec::new(),
             on_open_tag: None,
+            on_script: None,
         }
     }
 
@@ -1009,36 +1074,78 @@ impl HtmlParser {
     /// Parse children until close tag matching `parent_tag` or EOF.
     /// If `parent_tag` is empty, parse until EOF.
     /// All resulting boxes are appended to the provided `children` vec.
+    ///
+    /// Iterative implementation using an explicit stack — handles arbitrarily
+    /// deep nesting without risking a stack overflow.
     fn parse_children_into(
         &mut self,
         parent_tag: &str,
         children: &mut Vec<HtmlBox>,
         ol_counter: &mut i32,
     ) {
-        // Elements that require literal whitespace preservation (CSS white-space: pre).
-        let preserve_ws = matches!(parent_tag, "pre" | "textarea" | "listing" | "xmp" | "plaintext");
+        // Each frame represents one nesting level.
+        struct Frame {
+            parent_tag: String,
+            node:       HtmlBox,   // the element whose children we're collecting
+            ol_counter: i32,
+        }
+
+        // Bottom frame collects the top-level children that will be returned.
+        let mut stack: Vec<Frame> = Vec::new();
+        stack.push(Frame {
+            parent_tag: parent_tag.to_string(),
+            node:       HtmlBox::new("__root__"),
+            ol_counter: *ol_counter,
+        });
+
         loop {
+            let cur_tag = &stack.last().unwrap().parent_tag;
+            let preserve_ws = matches!(cur_tag.as_str(), "pre" | "textarea" | "listing" | "xmp" | "plaintext");
+
             match self.tokens.get(self.pos).cloned() {
-                None => break,
+                None => break, // EOF
+
                 Some(Token::CloseTag { tag }) => {
-                    if parent_tag.is_empty() || tag == parent_tag {
+                    // Find matching frame in the stack (like a browser's
+                    // "adoption agency" — pop implicit close tags up to
+                    // the matching ancestor, or ignore if truly stray).
+                    let match_idx = stack.iter().rposition(|f| f.parent_tag == tag);
+
+                    if let Some(idx) = match_idx {
+                        // Pop frames from top down to (and including) the match.
+                        // Non-matching frames above the match are implicitly closed.
+                        while stack.len() > idx + 1 {
+                            let frame = stack.pop().unwrap();
+                            let mut node = frame.node;
+                            Self::post_process_node(&mut node, &self.base_url);
+                            stack.last_mut().unwrap().node.children.push(node);
+                        }
+                        // Now pop the matching frame itself.
+                        self.pos += 1;
+                        let frame = stack.pop().unwrap();
+                        if stack.is_empty() {
+                            *children = frame.node.children;
+                            *ol_counter = frame.ol_counter;
+                            return;
+                        }
+                        let mut node = frame.node;
+                        Self::post_process_node(&mut node, &self.base_url);
+                        stack.last_mut().unwrap().node.children.push(node);
+                    } else {
+                        // Stray close tag with no matching open — ignore it.
                         self.pos += 1;
                     }
-                    break;
                 }
+
                 Some(Token::Comment) | Some(Token::Doctype) => {
                     self.pos += 1;
                 }
+
                 Some(Token::Text(t)) => {
                     self.pos += 1;
                     let text_val = if preserve_ws {
-                        // Preserve literal text including newlines.
-                        // Per the HTML spec, a single newline immediately after the
-                        // opening tag of a pre element is stripped.
                         if t.starts_with('\n') { t[1..].to_string() } else { t }
                     } else if t.trim().is_empty() && t.contains('\n') {
-                        // Whitespace-only inter-element text that contains a newline —
-                        // keep as "\n" so `white-space: pre` parents get a line break.
                         "\n".to_string()
                     } else {
                         collapse_whitespace(&t)
@@ -1047,20 +1154,174 @@ impl HtmlParser {
                         || text_val == " "
                         || text_val == "\n";
                     if keep {
-                        let mut node = HtmlBox::new("#text");
-                        node.text = text_val;
-                        children.push(node);
+                        let mut text_node = HtmlBox::new("#text");
+                        text_node.text = text_val;
+                        stack.last_mut().unwrap().node.children.push(text_node);
                     }
                 }
+
                 Some(Token::OpenTag { tag, attrs, self_closing }) => {
                     self.pos += 1;
+
+                    // Script/noscript: give the host first chance to handle it.
+                    // If the host doesn't handle it: noscript content is shown
+                    // as fallback HTML, script is discarded.
+                    if matches!(tag.as_str(), "script" | "noscript") {
+                        let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
+                        let host_handled = if let Some(ref mut f) = self.on_script {
+                            f(&tag, &attrs, &content)
+                        } else { false };
+                        if !host_handled && tag == "noscript" && !content.is_empty() {
+                            // Parse noscript content as HTML and insert into current frame
+                            let inner_tokens = tokenize(&content);
+                            let mut inner_parser = HtmlParser::new(inner_tokens);
+                            inner_parser.base_url = self.base_url.clone();
+                            let mut inner_children = Vec::new();
+                            let mut inner_ol = 0i32;
+                            inner_parser.parse_children_into("", &mut inner_children, &mut inner_ol);
+                            for child in inner_children {
+                                stack.last_mut().unwrap().node.children.push(child);
+                            }
+                            // Merge any stylesheets found inside noscript
+                            for rule in inner_parser.stylesheet.rules {
+                                self.stylesheet.rules.push(rule);
+                            }
+                        }
+                        continue;
+                    }
+
                     self.fire_hook(&tag, &attrs);
-                    self.handle_tag(tag, attrs, self_closing, children, ol_counter);
+
+                    // Skip non-visual tags entirely
+                    if is_non_visual(&tag) {
+                        if !self_closing { self.skip_until_close(&tag); }
+                        continue;
+                    }
+                    // Style block: extract CSS
+                    if tag == "style" {
+                        let css = self.collect_raw_text_until("style");
+                        let css = normalize_css_text(&css);
+                        self.stylesheet.parse_and_add(&css);
+                        continue;
+                    }
+                    // Title
+                    if tag == "title" {
+                        let text = self.collect_raw_text_until("title");
+                        self.title = text.trim().to_string();
+                        continue;
+                    }
+
+                    // Build the node
+                    let mut node = HtmlBox::new(tag.clone());
+                    node.attributes = attrs;
+                    apply_property(&mut node.style, "display", default_display(&tag));
+                    apply_presentational_attrs(&mut node);
+
+                    // <img> handling
+                    if tag == "img" {
+                        if let Some(src) = node.attributes.get("src").cloned() {
+                            let resolved = resolve_url(&src, &self.base_url);
+                            let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
+                            if !is_remote {
+                                if let Some((data, w, h)) = load_image_from_src(&src, &self.base_url) {
+                                    set_image_on_node(&mut node, data, w, h);
+                                }
+                            }
+                            node.attributes.insert("_resolved_src".to_string(), resolved);
+                        }
+                    }
+                    // Background image
+                    if !node.style.background_image_url.is_empty() {
+                        let url = node.style.background_image_url.clone();
+                        if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
+                            node.bg_image_data   = Some(data);
+                            node.bg_image_width  = w;
+                            node.bg_image_height = h;
+                        }
+                    }
+
+                    // List counter (uses the CURRENT frame's counter)
+                    {
+                        let frame = stack.last_mut().unwrap();
+                        if tag == "ol" { frame.ol_counter = 0; }
+                        if tag == "li" {
+                            frame.ol_counter += 1;
+                            node.style.list_index = frame.ol_counter;
+                        }
+                    }
+
+                    // Summary: always list-item + Disclosure marker
+                    if tag == "summary" {
+                        node.style.display = Display::ListItem;
+                        node.style.list_style_type = ListStyleType::Disclosure;
+                    }
+
+                    // HTML implicit closing: certain tags auto-close the
+                    // current open element before opening a new one.
+                    // Without this, unclosed <li>/<p>/<td>/etc. nest inside
+                    // each other, creating absurdly deep DOM trees that
+                    // overflow the stack during cascade/layout.
+                    while stack.len() > 1 {
+                        let cur = stack.last().unwrap().parent_tag.as_str();
+                        if should_auto_close(cur, &tag) {
+                            let frame = stack.pop().unwrap();
+                            let mut closed = frame.node;
+                            Self::post_process_node(&mut closed, &self.base_url);
+                            stack.last_mut().unwrap().node.children.push(closed);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if self_closing {
+                        // Void element — push directly to current frame.
+                        stack.last_mut().unwrap().node.children.push(node);
+                    } else {
+                        // Non-void — push a new frame; children will be collected
+                        // into node.children until the matching close tag.
+                        stack.push(Frame {
+                            parent_tag: tag,
+                            node,
+                            ol_counter: 0,
+                        });
+                    }
+                }
+            }
+        }
+
+        // EOF reached — collapse remaining frames.
+        while let Some(frame) = stack.pop() {
+            if stack.is_empty() {
+                *children = frame.node.children;
+                *ol_counter = frame.ol_counter;
+            } else {
+                let mut node = frame.node;
+                Self::post_process_node(&mut node, &self.base_url);
+                stack.last_mut().unwrap().node.children.push(node);
+            }
+        }
+    }
+
+    /// Post-processing applied to a node after its children have been parsed.
+    fn post_process_node(node: &mut HtmlBox, base_url: &str) {
+        if node.tag == "picture" {
+            resolve_picture_source(node, base_url, 0.0, 0.0);
+        }
+        if node.tag == "details" {
+            let is_open = node.attributes.contains_key("open");
+            for child in &mut node.children {
+                if child.tag == "summary" {
+                    // summary always visible
+                } else if !is_open {
+                    apply_property(&mut child.style, "display", "none");
                 }
             }
         }
     }
 
+    /// Handle a single open tag: create its node, parse its children (iteratively),
+    /// apply post-processing, and push the finished node to `children`.
+    /// Called from the top-level html/head/body skeleton parser for stray tags.
     fn handle_tag(
         &mut self,
         tag: String,
@@ -1069,57 +1330,59 @@ impl HtmlParser {
         children: &mut Vec<HtmlBox>,
         ol_counter: &mut i32,
     ) {
-        // Skip non-visual tags entirely (no box, no text)
-        if is_non_visual(&tag) {
-            if !self_closing {
-                self.skip_until_close(&tag);
+        // Script/noscript: give host first chance, else show noscript as HTML.
+        if matches!(tag.as_str(), "script" | "noscript") {
+            let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
+            let host_handled = if let Some(ref mut f) = self.on_script {
+                f(&tag, &attrs, &content)
+            } else { false };
+            if !host_handled && tag == "noscript" && !content.is_empty() {
+                let inner_tokens = tokenize(&content);
+                let mut inner_parser = HtmlParser::new(inner_tokens);
+                inner_parser.base_url = self.base_url.clone();
+                let mut inner_children = Vec::new();
+                let mut inner_ol = *ol_counter;
+                inner_parser.parse_children_into("", &mut inner_children, &mut inner_ol);
+                children.extend(inner_children);
+                for rule in inner_parser.stylesheet.rules {
+                    self.stylesheet.rules.push(rule);
+                }
             }
             return;
         }
-
-        // Style block: extract CSS
+        if is_non_visual(&tag) {
+            if !self_closing { self.skip_until_close(&tag); }
+            return;
+        }
         if tag == "style" {
             let css = self.collect_raw_text_until("style");
             let css = normalize_css_text(&css);
             self.stylesheet.parse_and_add(&css);
             return;
         }
-
-        // Title: extract text, store in title
         if tag == "title" {
             let text = self.collect_raw_text_until("title");
             self.title = text.trim().to_string();
             return;
         }
 
-        // Create the box
         let mut node = HtmlBox::new(tag.clone());
         node.attributes = attrs;
-
-        // Apply default display
         apply_property(&mut node.style, "display", default_display(&tag));
-
-        // Apply presentational attributes
         apply_presentational_attrs(&mut node);
 
-        // Load image data for <img> elements
         if tag == "img" {
             if let Some(src) = node.attributes.get("src").cloned() {
                 let resolved = resolve_url(&src, &self.base_url);
                 let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
-                // Only load non-remote images during parsing; remote images
-                // are batch-fetched in parallel after parsing (see lib.rs).
                 if !is_remote {
                     if let Some((data, w, h)) = load_image_from_src(&src, &self.base_url) {
                         set_image_on_node(&mut node, data, w, h);
                     }
                 }
-                // Store the resolved URL for deferred loading
                 node.attributes.insert("_resolved_src".to_string(), resolved);
             }
         }
-
-        // Load background image data for any element with background-image: url(...)
         if !node.style.background_image_url.is_empty() {
             let url = node.style.background_image_url.clone();
             if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
@@ -1128,44 +1391,21 @@ impl HtmlParser {
                 node.bg_image_height = h;
             }
         }
-
-        // List counter
-        if tag == "ol" {
-            *ol_counter = 0;
-        }
+        if tag == "ol" { *ol_counter = 0; }
         if tag == "li" {
             *ol_counter += 1;
             node.style.list_index = *ol_counter;
         }
-
-        // Summary: always list-item + Disclosure marker
         if tag == "summary" {
             node.style.display = Display::ListItem;
             node.style.list_style_type = ListStyleType::Disclosure;
         }
 
-        // Recurse children
         if !self_closing {
             let mut inner_ol = 0i32;
+            // Delegates to the iterative parse_children_into — no recursion risk.
             self.parse_children_into(&tag, &mut node.children, &mut inner_ol);
-
-            // <picture>: resolve best <source> for the child <img>
-            if tag == "picture" {
-                resolve_picture_source(&mut node, &self.base_url, 0.0, 0.0);
-            }
-
-            // Details: handle open/closed state
-            if tag == "details" {
-                let is_open = node.attributes.contains_key("open");
-                for child in &mut node.children {
-                    if child.tag == "summary" {
-                        // summary always visible
-                    } else if !is_open {
-                        // hide non-summary children when closed
-                        apply_property(&mut child.style, "display", "none");
-                    }
-                }
-            }
+            Self::post_process_node(&mut node, &self.base_url);
         }
 
         children.push(node);
@@ -1323,27 +1563,35 @@ fn parse_head_content(parser: &mut HtmlParser) {
             }
             Some(Token::OpenTag { tag, attrs, self_closing }) => {
                 parser.pos += 1;
-                parser.fire_hook(&tag, &attrs);
                 match tag.as_str() {
+                    "script" | "noscript" => {
+                        let content = if !self_closing { parser.collect_raw_text_until(&tag) } else { String::new() };
+                        if let Some(ref mut f) = parser.on_script {
+                            f(&tag, &attrs, &content);
+                        }
+                        // In <head>, noscript fallback content is not rendered.
+                    }
                     "style" => {
+                        parser.fire_hook(&tag, &attrs);
                         let css = parser.collect_raw_text_until("style");
                         let css = normalize_css_text(&css);
                         parser.stylesheet.parse_and_add(&css);
                     }
                     "title" => {
+                        parser.fire_hook(&tag, &attrs);
                         let text = parser.collect_raw_text_until("title");
                         parser.title = text.trim().to_string();
                     }
                     "link" => {
-                        // Collect <link rel="stylesheet" href="..."> for the host to fetch.
+                        parser.fire_hook(&tag, &attrs);
                         let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
                         let href = attrs.get("href").cloned().unwrap_or_default();
                         if rel == "stylesheet" && !href.is_empty() {
                             parser.linked_stylesheets.push(href);
                         }
-                        // <link> is void — no closing tag to skip.
                     }
                     _ => {
+                        parser.fire_hook(&tag, &attrs);
                         if !self_closing {
                             parser.skip_until_close(&tag);
                         }
@@ -1464,10 +1712,44 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
 ///     }
 /// });
 /// ```
-pub fn parse_html_with_hooks<F>(html: &str, base_url: &str, mut hook: F) -> Document
+pub fn parse_html_with_hooks<F>(html: &str, base_url: &str, hook: F) -> Document
 where
     F: FnMut(&str, &HashMap<String, String>) + 'static,
 {
+    parse_html_full(html, base_url, Some(Box::new(hook)), None)
+}
+
+/// Parse HTML with both a tag hook and a script/noscript callback.
+///
+/// `on_script` is called for every `<script>` and `<noscript>` tag with
+/// `(tag_name, attrs, raw_content)`.  Return `true` if your host handled it
+/// (e.g. executed the script).  Return `false` to let the engine apply the
+/// default: `<noscript>` fallback content is parsed as HTML and shown,
+/// `<script>` is discarded.
+///
+/// ```ignore
+/// let doc = parse_html_with_scripts(html, base_url,
+///     |tag, attrs| { /* open-tag hook */ },
+///     |tag, attrs, content| {
+///         if tag == "script" { my_js_engine.eval(content); true }
+///         else { false } // let engine show noscript fallback
+///     },
+/// );
+/// ```
+pub fn parse_html_with_scripts<F, S>(html: &str, base_url: &str, hook: F, on_script: S) -> Document
+where
+    F: FnMut(&str, &HashMap<String, String>) + 'static,
+    S: FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static,
+{
+    parse_html_full(html, base_url, Some(Box::new(hook)), Some(Box::new(on_script)))
+}
+
+fn parse_html_full(
+    html: &str,
+    base_url: &str,
+    on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
+    on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
+) -> Document {
     // Pre-pass: extract <svg> blocks, replace with <img> placeholders
     let (processed_html, svg_map) = extract_svg_blocks(html);
     let html_to_parse = if svg_map.is_empty() { html } else { &processed_html };
@@ -1475,7 +1757,8 @@ where
     let tokens = tokenize(html_to_parse);
     let mut parser = HtmlParser::new(tokens);
     parser.base_url = base_url.to_string();
-    parser.on_open_tag = Some(Box::new(move |tag, attrs| hook(tag, attrs)));
+    parser.on_open_tag = on_open_tag;
+    parser.on_script = on_script;
 
     // Always create html > body structure
     let mut html_box = HtmlBox::new("html");

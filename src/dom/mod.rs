@@ -1076,6 +1076,7 @@ impl Editor {
                     self.collapse_to(self.caret_local);
                 }
             }
+            container.layout_dirty = true;
         }
     }
 
@@ -1087,11 +1088,13 @@ impl Editor {
                 let e = self.sel_end;
                 delete_range_full(node, s, e);
                 self.collapse_to(s);
+                node.layout_dirty = true;
             } else if self.caret_local > 0 {
                 let flat = crate::layout::inline_layout::collect_flat_text(node);
                 let new_off = prev_char_boundary(&flat, self.caret_local);
                 delete_range_full(node, new_off, self.caret_local);
                 self.collapse_to(new_off);
+                node.layout_dirty = true;
             }
         }
     }
@@ -1104,12 +1107,14 @@ impl Editor {
                 let e = self.sel_end;
                 delete_range_full(node, s, e);
                 self.collapse_to(s);
+                node.layout_dirty = true;
             } else {
                 let flat = crate::layout::inline_layout::collect_flat_text(node);
                 if self.caret_local < flat.len() {
                     let next_off = next_char_boundary(&flat, self.caret_local);
                     delete_range_full(node, self.caret_local, next_off);
                     self.collapse_to(self.caret_local);
+                    node.layout_dirty = true;
                 }
             }
         }
@@ -1170,12 +1175,15 @@ impl Editor {
                 let new_tag = if is_block_tag(&block_tag) { block_tag.as_str() } else { "p" };
                 let mut new_block = HtmlBox::new(new_tag);
                 apply_property(&mut new_block.style, "display", "block");
+                new_block.layout_dirty = true;
                 if !after_text.is_empty() {
                     let mut tn = HtmlBox::new("#text");
                     tn.text = after_text;
                     new_block.children.push(tn);
                 }
+                parent.children[idx].layout_dirty = true;
                 parent.children.insert(idx + 1, new_block);
+                parent.layout_dirty = true;
                 let new_ptr = &parent.children[idx + 1] as *const HtmlBox;
                 self.caret_box = Some(new_ptr);
                 self.collapse_to(0);
@@ -1203,6 +1211,7 @@ impl Editor {
                 Err(_) => {
                     // Caret is past end — append a <br> as last child of container
                     container.children.push(HtmlBox::new("br"));
+                    container.layout_dirty = true;
                     self.collapse_to(caret);
                     return;
                 }
@@ -1211,6 +1220,8 @@ impl Editor {
 
         // Walk the tree to find the leaf's parent and split.
         split_node_with_br(root, leaf_ptr, local_off);
+        // Mark the caret box dirty so layout re-runs on this subtree.
+        if let Some(b) = find_box_mut(root, box_ptr) { b.layout_dirty = true; }
         // Caret offset in flat text is unchanged (<br> is transparent to flat-text),
         // but we mark that the caret is now at the START of the next visual line so
         // that rendering and insertion prefer the node after the <br>.
@@ -1559,27 +1570,33 @@ fn split_node_with_br(root: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: u
 }
 
 fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: usize) -> bool {
-    // Case A: the leaf is a direct child of this node
+    // Case A: the leaf is a direct *text-node* child of this node.
+    // Only apply when the child is a pure text node (#text).  Element nodes
+    // that happen to carry `.text` (e.g. <td>) must NOT be removed from their
+    // parent — they are handled by Case B via recursion.
     if let Some(idx) = node.children.iter()
         .position(|c| std::ptr::eq(c as *const HtmlBox, leaf_ptr))
     {
-        let text = node.children[idx].text.clone();
-        let split = local_off.min(text.len());
-        let before = text[..split].to_string();
-        let after  = text[split..].to_string();
+        if node.children[idx].is_text_node() {
+            let text = node.children[idx].text.clone();
+            let split = local_off.min(text.len());
+            let before = text[..split].to_string();
+            let after  = text[split..].to_string();
 
-        // Remove the original leaf, then insert [before, br, after] in order.
-        node.children.remove(idx);
-        if !after.is_empty() {
-            let mut an = HtmlBox::new("#text"); an.text = after;
-            node.children.insert(idx, an);
+            // Remove the original leaf, then insert [before, br, after] in order.
+            node.children.remove(idx);
+            if !after.is_empty() {
+                let mut an = HtmlBox::new("#text"); an.text = after;
+                node.children.insert(idx, an);
+            }
+            node.children.insert(idx, HtmlBox::new("br"));
+            if !before.is_empty() {
+                let mut bn = HtmlBox::new("#text"); bn.text = before;
+                node.children.insert(idx, bn);
+            }
+            return true;
         }
-        node.children.insert(idx, HtmlBox::new("br"));
-        if !before.is_empty() {
-            let mut bn = HtmlBox::new("#text"); bn.text = before;
-            node.children.insert(idx, bn);
-        }
-        return true;
+        // Non-text element child — fall through to recursion (Case B inside it).
     }
 
     // Case B: the leaf is this node itself (has its own .text, no children)

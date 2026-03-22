@@ -22,6 +22,7 @@ pub fn layout_inline_block(
     // Create a local float context if the parent didn't provide one.
     // This ensures floated children inside inline containers are placed correctly.
     let mut fc_owned = FloatContext::default();
+    let has_parent_fc = parent_float_ctx.is_some();
     let mut float_ctx: Option<&mut FloatContext> = if let Some(fc) = parent_float_ctx {
         // Use parent's float context -- but we can't store it directly because of
         // borrow rules, so we clone its state into fc_owned and use that.
@@ -44,7 +45,7 @@ pub fn layout_inline_block(
         let v = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
         (v - bb_extra).max(0.0)
     };
-    let max_w = if node.style.max_width.is_none() { f32::MAX } else {
+    let max_w = if node.style.max_width.is_none() || node.style.max_width.is_auto() { f32::MAX } else {
         let v = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
         (v - bb_extra).max(0.0)
     };
@@ -174,7 +175,7 @@ pub fn layout_inline_block(
     let mut runs:  Vec<InlineRun>  = Vec::new();
     for (i, child) in node.children.iter().enumerate() {
         if matches!(child.style.display, Display::None) { continue; }
-        collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true);
+        collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true, &[]);
     }
     // Also collect from own text (text directly inside element)
     if !node.text.is_empty() {
@@ -182,7 +183,7 @@ pub fn layout_inline_block(
             // Text node laid out directly (e.g. as a flex child): collect self,
             // but skip whitespace-only nodes (handled by parent inline layout).
             if !node.text.chars().all(|c| c.is_ascii_whitespace()) {
-                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
+                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
             }
         } else if !node.inline_runs.is_empty() {
             // Block has pre-built inline runs (e.g. from the markdown parser).
@@ -196,13 +197,13 @@ pub fn layout_inline_block(
                 let mut tmp = HtmlBox::new("#text");
                 tmp.text = run_text;
                 tmp.style = run.style.clone();
-                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
+                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
             }
         } else {
             let mut tmp_node = HtmlBox::new("#text");
             tmp_node.text = node.text.clone();
             tmp_node.style = node.style.clone();
-            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false);
+            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
         }
     }
 
@@ -265,7 +266,7 @@ pub fn layout_inline_block(
         } else { font_px };
         let placeholder_h = if add_placeholder { eff_placeholder_fpx * 1.2 } else { br_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-        let max_h = if node.style.max_height.is_none() { f32::MAX }
+        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
                     else {
                         let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
                         // Percentage max-height against unknown (0) containing height → treat as none
@@ -315,7 +316,7 @@ pub fn layout_inline_block(
     let mut cursor_y     = content_y;
     let mut item_idx     = 0usize;
     let mut line_cache:  Vec<LayoutLine>           = Vec::new();
-    let mut atomic_pos:  Vec<(usize, f32, f32)>    = Vec::new(); // (child_idx, x, y)
+    let mut atomic_pos:  Vec<(Vec<usize>, f32, f32)> = Vec::new(); // (path, x, y)
     let mut old_line_idx = 0usize;
     let mut ends_with_break = false;
     let mut loop_guard   = 0usize;
@@ -525,7 +526,7 @@ pub fn layout_inline_block(
                 let raw_h = (bottom - content_y).max(0.0);
                 let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
                 let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-                let max_h = if node.style.max_height.is_none() { f32::MAX }
+                let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
                             else {
                                 let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
                                 if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
@@ -541,16 +542,16 @@ pub fn layout_inline_block(
         {
             let mut cur_x = line_x;
             for item in line_items {
-                if let InlineItemKind::Atomic { child_idx } = &item.kind {
+                if let InlineItemKind::Atomic { path } = &item.kind {
                     // CSS baseline alignment: the inline-block's bottom margin
                     // edge sits on the line baseline (cursor_y + line_asc).
-                    let box_h = if *child_idx < node.children.len() {
-                        node.children[*child_idx].margin_rect.h
-                    } else { item.height };
+                    let box_h = resolve_path(node, path)
+                        .map(|n| n.margin_rect.h)
+                        .unwrap_or(item.height);
                     let ay = cursor_y + line_asc - box_h;
                     // Clamp so it doesn't go above line top
                     let ay = ay.max(cursor_y);
-                    atomic_pos.push((*child_idx, cur_x, ay));
+                    atomic_pos.push((path.clone(), cur_x, ay));
                 }
                 cur_x += item.advance;
             }
@@ -627,16 +628,17 @@ pub fn layout_inline_block(
 
     // ── 5. Compute content height ──────────────────────────────────────────────
     let inline_h = (cursor_y - content_y).max(0.0);
-    // Include float bottom so the container encloses its floats
-    // f.clear is stored relative to fc.origin_y (same convention as layout_block_with_fc).
-    let float_bottom = if let Some(ref fc) = float_ctx {
-        fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
-    } else {
-        0.0
-    };
+    // Include float bottom so the container encloses its floats.
+    // Only do this for the element that OWNS the float context, not children
+    // that inherit it (they shouldn't extend to contain the parent's floats).
+    let float_bottom = if !has_parent_fc {
+        if let Some(ref fc) = float_ctx {
+            fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
+        } else { 0.0 }
+    } else { 0.0 };
     let raw_h = inline_h.max(float_bottom);
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-    let max_h = if node.style.max_height.is_none() { f32::MAX }
+    let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
                 else {
                     let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
                     if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
@@ -681,12 +683,12 @@ pub fn layout_inline_block(
 
     // ── 6. Position atomic inline-block children ──────────────────────────────
     //    Separate pass after all lines are built (mirrors C++ post-loop pass)
-    for (ci, ax, ay) in atomic_pos {
-        if ci < node.children.len() {
+    for (path, ax, ay) in atomic_pos {
+        if let Some(target) = resolve_path_mut(node, &path) {
             // Shift child rects to final position
-            let dx = ax - node.children[ci].margin_rect.x;
-            let dy = ay - node.children[ci].margin_rect.y;
-            crate::layout::shift_rects(&mut node.children[ci], dx, dy);
+            let dx = ax - target.margin_rect.x;
+            let dy = ay - target.margin_rect.y;
+            crate::layout::shift_rects(target, dx, dy);
         }
     }
 
@@ -718,6 +720,28 @@ pub fn layout_inline_block(
     }
 
     node.margin_rect.h
+}
+
+// ─── Path resolution helpers ─────────────────────────────────────────────────
+
+/// Follow a chain of child indices to find the target node (immutable).
+fn resolve_path<'a>(root: &'a HtmlBox, path: &[usize]) -> Option<&'a HtmlBox> {
+    let mut cur = root;
+    for &idx in path {
+        if idx >= cur.children.len() { return None; }
+        cur = &cur.children[idx];
+    }
+    Some(cur)
+}
+
+/// Follow a chain of child indices to find the target node (mutable).
+fn resolve_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut HtmlBox> {
+    let mut cur = root;
+    for &idx in path {
+        if idx >= cur.children.len() { return None; }
+        cur = &mut cur.children[idx];
+    }
+    Some(cur)
 }
 
 // ─── Box rect helper ──────────────────────────────────────────────────────────
@@ -806,8 +830,10 @@ pub enum InlineItemKind {
     /// A word or space segment. text_start/text_len are offsets into the
     /// concatenated text collected by `collect_items`.
     Text  { text_start: usize, text_len: usize, box_idx: usize },
-    /// An inline-block child (child_idx into parent's children Vec).
-    Atomic { child_idx: usize },
+    /// An inline-block child.  `path` is a chain of child indices from the
+    /// block container down to the actual InlineBlock node (e.g. [2, 0, 0]
+    /// means node.children[2].children[0].children[0]).
+    Atomic { path: Vec<usize> },
     /// Forced line break (<br>).
     Break,
     /// A floated child.
@@ -842,6 +868,7 @@ pub fn collect_items(
     text_offset:     &mut usize,
     box_idx:         usize,
     is_direct_child: bool,
+    ancestor_path:   &[usize],
 ) {
     if matches!(node.style.display, Display::None) { return; }
 
@@ -903,8 +930,10 @@ pub fn collect_items(
         // Use the pre-laid-out margin-rect width (set by the pre-layout pass)
         let box_w = if node.margin_rect.w > 0.0 { node.margin_rect.w } else { 50.0 };
         let box_h = if node.margin_rect.h > 0.0 { node.margin_rect.h } else { font_px * 1.2 };
+        let mut full_path = ancestor_path.to_vec();
+        full_path.push(box_idx);
         items.push(InlineItem {
-            kind:      InlineItemKind::Atomic { child_idx: box_idx },
+            kind:      InlineItemKind::Atomic { path: full_path },
             advance:   box_w,
             ascent:    box_h,
             descent:   0.0,
@@ -925,8 +954,10 @@ pub fn collect_items(
 
     // ── Recurse into children ─────────────────────────────────────────────
     let runs_before = runs.len();
+    let mut child_path = ancestor_path.to_vec();
+    child_path.push(box_idx);
     for (i, child) in node.children.iter().enumerate() {
-        collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i, false);
+        collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i, false, &child_path);
     }
     // CSS background-color is not inherited, but an inline element's background
     // must visually paint behind its descendant text runs.  Propagate this
@@ -1492,7 +1523,33 @@ fn prelayout_nested_inline_blocks(
         if matches!(node.children[ci].style.position, Position::Absolute | Position::Fixed) { continue; }
         if matches!(node.children[ci].style.display,
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
-            // Already handled by the direct-child loop in step 0; skip.
+            // When called from the top-level (block container), direct inline-block
+            // children are already handled by the step 0 loop in layout_inline_block().
+            // Only lay out here in the recursive case (node is an inline wrapper,
+            // e.g. span > a > img where this function was called on the <a>).
+            if matches!(node.style.display, Display::Inline) {
+                engine.layout_box(
+                    &mut node.children[ci],
+                    content_w, 0.0, 0.0, font_px, root_font_px,
+                );
+                if node.children[ci].style.width.is_auto() {
+                    let max_line_w = node.children[ci].line_cache.iter()
+                        .map(|l| l.width).fold(0.0_f32, f32::max);
+                    let intrinsic_w = if max_line_w > 0.0 { max_line_w }
+                        else { compute_intrinsic_width(&node.children[ci]) };
+                    let gc = &node.children[ci];
+                    let shrink_w = intrinsic_w
+                        + gc.resolved_pad_left + gc.resolved_pad_right
+                        + gc.resolved_border_left + gc.resolved_border_right
+                        + gc.resolved_margin_left + gc.resolved_margin_right;
+                    if shrink_w < content_w {
+                        engine.layout_box(
+                            &mut node.children[ci],
+                            shrink_w, 0.0, 0.0, font_px, root_font_px,
+                        );
+                    }
+                }
+            }
             continue;
         }
         // Inline children: recurse to find nested inline-blocks.

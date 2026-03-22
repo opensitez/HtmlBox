@@ -1,6 +1,5 @@
 mod platform;
 
-use std::io::Read as _;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -336,15 +335,14 @@ fn main() {
     let (initial_html, base_url) = if let Some(ref path) = arg {
         if path.starts_with("http://") || path.starts_with("https://") {
             // URL — fetch content, use URL as base
-            let html = ureq::get(path)
-                .set("User-Agent", rhtmledit::USER_AGENT)
-                .timeout(std::time::Duration::from_secs(15))
-                .call().ok()
-                .and_then(|r| {
-                    let mut buf = Vec::new();
-                    r.into_reader().read_to_end(&mut buf).ok()?;
-                    Some(String::from_utf8(buf)
-                        .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
+            let html = rhtmledit::http_client()
+                .get(path).send().ok()
+                .and_then(|r| r.bytes().ok())
+                .and_then(|bytes| {
+                    String::from_utf8(bytes.to_vec()).ok().or_else(|| {
+                        let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(&bytes);
+                        Some(cow.into_owned())
+                    })
                 })
                 .unwrap_or_else(|| format!("<h2>Failed to fetch {path}</h2>"));
             (html, path.clone())

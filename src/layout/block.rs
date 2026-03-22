@@ -1,6 +1,7 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide,
                     shift_rects, layout_positioned};
+use crate::layout::grid::{collect_grid_children, grid_child_ref, grid_child_mut};
 
 // ─── Margin collapsing helpers ────────────────────────────────────────────────
 
@@ -341,7 +342,7 @@ pub fn layout_block_with_fc(
         let v = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
         (v - bb_extra).max(0.0)
     };
-    let max_w = if node.style.max_width.is_none() { f32::MAX } else {
+    let max_w = if node.style.max_width.is_none() || node.style.max_width.is_auto() { f32::MAX } else {
         let v = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
         (v - bb_extra).max(0.0)
     };
@@ -361,7 +362,7 @@ pub fn layout_block_with_fc(
     let reserve_v_scrollbar =
         matches!(node.style.overflow_y, Overflow::Scroll)
         || (matches!(node.style.overflow_y, Overflow::Auto)
-            && !node.style.max_height.is_none());
+            && !node.style.max_height.is_none() || node.style.max_height.is_auto());
     let child_content_w = if reserve_v_scrollbar { (content_w - SBW).max(0.0) } else { content_w };
 
     // Auto margin centering (CSS 2.1 §10.3.3)
@@ -393,11 +394,15 @@ pub fn layout_block_with_fc(
     let can_collapse_top    = can_collapse_top_with_first_child(node, rbox);
     let can_collapse_bottom = can_collapse_bottom_with_last_child(node, rbox);
 
+    // ─── Flatten display:contents and collect effective children ────────────
+    let eff_children = collect_grid_children(node);
+
     // ─── Collect out-of-flow children ─────────────────────────────────────────
-    let mut abs_children: Vec<usize> = Vec::new();
-    for i in 0..node.children.len() {
-        if matches!(node.children[i].style.position, Position::Absolute | Position::Fixed) {
-            abs_children.push(i);
+    let mut abs_children: Vec<Vec<usize>> = Vec::new();
+    for path in &eff_children {
+        let child = grid_child_ref(node, path);
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            abs_children.push(path.clone());
         }
     }
 
@@ -416,7 +421,7 @@ pub fn layout_block_with_fc(
         let col_h = layout_columns(engine, node, rbox, content_x, content_y, content_w, font_px, root_font_px);
         let content_h = match rbox.content_height { Some(h) => h, None => col_h };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-        let max_h = if node.style.max_height.is_none() { f32::MAX }
+        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
                     else {
                         let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
                         if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
@@ -429,8 +434,8 @@ pub fn layout_block_with_fc(
         } else {
             engine.pos_cb.get()
         };
-        for &i in &abs_children {
-            let child = &mut node.children[i];
+        for path in &abs_children {
+            let child = grid_child_mut(node, path);
             layout_positioned(engine, child, containing_rect, font_px, root_font_px);
         }
         node.layout_dirty = false;
@@ -443,18 +448,21 @@ pub fn layout_block_with_fc(
     let mut prev_bottom_margin = 0.0f32;
     let mut is_first_in_flow  = true;
     let mut first_child_collapsed = false;
-    let mut first_in_flow_idx: Option<usize> = None;
-    let mut last_in_flow_idx:  Option<usize> = None;
-    let mut seen_float = false;
+    let mut first_in_flow_path: Option<Vec<usize>> = None;
+    let mut last_in_flow_path:  Option<Vec<usize>> = None;
+    // If the parent passed a float context with floats, children need to
+    // receive it so their inline content wraps around those floats.
+    let mut seen_float = !is_bfc && !fc.floats.is_empty();
     // Inline flow state for anonymous inline formatting contexts
     let mut inline_x = 0.0f32;
     let mut inline_line_h = 0.0f32;
 
-    for i in 0..node.children.len() {
-        let child_display  = node.children[i].style.display;
-        let child_float    = node.children[i].style.float;
-        let child_clear    = node.children[i].style.clear;
-        let child_position = node.children[i].style.position;
+    for path in eff_children.iter() {
+        let ch = grid_child_ref(node, path);
+        let child_display  = ch.style.display;
+        let child_float    = ch.style.float;
+        let child_clear    = ch.style.clear;
+        let child_position = ch.style.position;
 
         if matches!(child_display, Display::None) { continue; }
         if matches!(child_position, Position::Absolute | Position::Fixed) { continue; }
@@ -469,7 +477,7 @@ pub fn layout_block_with_fc(
         }
 
         // Flush any pending inline line before a block or float child
-        if (node.children[i].style.is_block_level() || !matches!(child_float, Float::None))
+        if (grid_child_ref(node, path).style.is_block_level() || !matches!(child_float, Float::None))
             && inline_line_h > 0.0
         {
             child_y += inline_line_h;
@@ -481,183 +489,177 @@ pub fn layout_block_with_fc(
             seen_float = true;
             // Layout float to get natural size
             engine.layout_box(
-                &mut node.children[i], child_content_w, content_x, content_y + child_y,
+                grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
                 font_px, root_font_px
             );
             // Shrink-to-fit for auto-width floats
-            if node.children[i].style.width.is_auto() {
-                let intrinsic_w = compute_intrinsic_width(&node.children[i]);
+            if grid_child_ref(node, path).style.width.is_auto() {
+                let intrinsic_w = compute_intrinsic_width(grid_child_ref(node, path));
                 if intrinsic_w > 0.0 && intrinsic_w < child_content_w {
-                    let irb = &node.children[i];
+                    let irb = grid_child_ref(node, path);
                     let shrink_w = intrinsic_w
                         + irb.resolved_pad_left + irb.resolved_pad_right
                         + irb.resolved_border_left + irb.resolved_border_right
                         + irb.resolved_margin_left + irb.resolved_margin_right;
                     engine.layout_box(
-                        &mut node.children[i], shrink_w, content_x, content_y + child_y,
+                        grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
                         font_px, root_font_px
                     );
                 }
             }
-            // For float placement, use the effective margin-box width including
-            // negative margins.  A float with width:320px; margin-left:-320px
-            // occupies 0px of horizontal space (Holy Grail pattern).
-            let ch = &node.children[i];
+            let ch = grid_child_ref(node, path);
             let effective_w = ch.border_rect.w
                 + ch.resolved_margin_left + ch.resolved_margin_right;
             let float_w = effective_w.max(0.0);
             let float_h = ch.margin_rect.h;
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
             let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, child_content_w, side);
-            let dx = content_x + placed.x - node.children[i].margin_rect.x;
-            let dy = content_y + placed.y - node.children[i].margin_rect.y;
-            shift_rects(&mut node.children[i], dx, dy);
+            let ch = grid_child_ref(node, path);
+            let dx = content_x + placed.x - ch.margin_rect.x;
+            let dy = content_y + placed.y - ch.margin_rect.y;
+            shift_rects(grid_child_mut(node, path), dx, dy);
 
-            if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
-                let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
+            if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
+                let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
+                apply_relative_offset(grid_child_mut(node, path), rel_font_px, child_content_w, root_font_px);
             }
             continue;
         }
 
-        if node.children[i].style.is_block_level() {
-            // Layout child to get its geometry
-            engine.layout_box(
-                &mut node.children[i], child_content_w, content_x, content_y,
-                font_px, root_font_px
-            );
+        if grid_child_ref(node, path).style.is_block_level() {
+            let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
+            if child_is_bfc_pre || !seen_float {
+                engine.layout_box(
+                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
+                    font_px, root_font_px
+                );
+            } else {
+                engine.layout_box_with_fc(
+                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
+                    font_px, root_font_px, Some(&mut *fc)
+                );
+            }
 
-            // Use child's collapsed margins (includes grandchild pass-through)
-            let child_top_margin    = node.children[i].collapsed_margin_top;
-            let child_bottom_margin = node.children[i].collapsed_margin_bottom;
+            let ch = grid_child_ref(node, path);
+            let child_top_margin    = ch.collapsed_margin_top;
+            let child_bottom_margin = ch.collapsed_margin_bottom;
 
             if is_first_in_flow && can_collapse_top && !seen_float {
-                // Parent-first-child collapsing: child's top margin is absorbed into parent
                 first_child_collapsed = true;
-                first_in_flow_idx = Some(i);
-                // Don't advance child_y for this child's top margin
+                first_in_flow_path = Some(path.clone());
             } else {
                 let collapsed = collapse_two(prev_bottom_margin, child_top_margin);
                 child_y += collapsed - prev_bottom_margin;
-                is_first_in_flow = false; // value may not be read again
+                is_first_in_flow = false;
             }
             let _ = is_first_in_flow;
 
-            // Check available width from floats.
-            // Per CSS §9.5.1, only BFC-establishing blocks must not overlap float
-            // margin boxes.  Normal in-flow blocks extend to full container width;
-            // their *inline content* wraps around floats (handled by the float
-            // context during line breaking).
-            let child_h = node.children[i].margin_rect.h;
+            let ch = grid_child_ref(node, path);
+            let child_h = ch.margin_rect.h;
             let mut left_edge = 0.0f32;
             let mut right_edge = child_content_w;
-            let child_is_bfc = establishes_bfc(&node.children[i].style);
+            let child_is_bfc = establishes_bfc(&ch.style);
             if child_is_bfc {
                 fc.available_width(content_y + child_y - fc.origin_y, child_h, child_content_w, &mut left_edge, &mut right_edge);
             }
 
-            // Rebuild rects at correct position using cached resolved values
-            let child_margin_left  = node.children[i].resolved_margin_left;
-            let child_margin_right = node.children[i].resolved_margin_right;
-            let child_border_top   = node.children[i].resolved_border_top;
-            let child_pad_top      = node.children[i].resolved_pad_top;
-            let child_content_h    = node.children[i].content_rect.h;
+            let ch = grid_child_ref(node, path);
+            let child_margin_left  = ch.resolved_margin_left;
+            let child_margin_right = ch.resolved_margin_right;
+            let child_border_top   = ch.resolved_border_top;
+            let child_pad_top      = ch.resolved_pad_top;
+            let child_content_h    = ch.content_rect.h;
             let child_rbox_copy = ResolvedBox {
-                margin_top:    node.children[i].resolved_margin_top,
+                margin_top:    ch.resolved_margin_top,
                 margin_right:  child_margin_right,
-                margin_bottom: node.children[i].resolved_margin_bottom,
+                margin_bottom: ch.resolved_margin_bottom,
                 margin_left:   child_margin_left,
                 border_top:    child_border_top,
-                border_right:  node.children[i].resolved_border_right,
-                border_bottom: node.children[i].resolved_border_bottom,
-                border_left:   node.children[i].resolved_border_left,
-                padding_top:   node.children[i].resolved_pad_top,
-                padding_right: node.children[i].resolved_pad_right,
-                padding_bottom:node.children[i].resolved_pad_bottom,
-                padding_left:  node.children[i].resolved_pad_left,
-                content_width: Some(node.children[i].resolved_content_width),
+                border_right:  ch.resolved_border_right,
+                border_bottom: ch.resolved_border_bottom,
+                border_left:   ch.resolved_border_left,
+                padding_top:   ch.resolved_pad_top,
+                padding_right: ch.resolved_pad_right,
+                padding_bottom:ch.resolved_pad_bottom,
+                padding_left:  ch.resolved_pad_left,
+                content_width: Some(ch.resolved_content_width),
                 content_height:Some(child_content_h),
             };
             let cx = content_x + left_edge + child_margin_left + child_rbox_copy.border_left + child_rbox_copy.padding_left;
             let cy = content_y + child_y   + child_border_top  + child_pad_top;
-            let dx = cx - node.children[i].content_rect.x;
-            let dy = cy - node.children[i].content_rect.y;
-            shift_rects(&mut node.children[i], dx, dy);
+            let ch = grid_child_ref(node, path);
+            let dx = cx - ch.content_rect.x;
+            let dy = cy - ch.content_rect.y;
+            shift_rects(grid_child_mut(node, path), dx, dy);
 
-            if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
-                let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
+            if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
+                let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
+                apply_relative_offset(grid_child_mut(node, path), rel_font_px, child_content_w, root_font_px);
             }
 
-            child_y = node.children[i].margin_rect.y - content_y
-                    + node.children[i].margin_rect.h;
+            let ch = grid_child_ref(node, path);
+            child_y = ch.margin_rect.y - content_y + ch.margin_rect.h;
             prev_bottom_margin = child_bottom_margin;
-            last_in_flow_idx = Some(i);
+            last_in_flow_path = Some(path.clone());
             is_first_in_flow = false;
 
-        } else if node.children[i].style.is_inline_level() {
-            // Inline-level children in a block container with mixed content form an
-            // anonymous inline formatting context (CSS §9.2.1.1).  Lay them out with
-            // horizontal flow, wrapping to the next line when they exceed the container.
-            let is_whitespace_only_text = node.children[i].is_text_node()
-                && node.children[i].text.chars().all(|c| c.is_ascii_whitespace());
+        } else if grid_child_ref(node, path).style.is_inline_level() {
+            let is_whitespace_only_text = grid_child_ref(node, path).is_text_node()
+                && grid_child_ref(node, path).text.chars().all(|c| c.is_ascii_whitespace());
             if node.line_cache.is_empty() && !is_whitespace_only_text {
-                // Layout to get dimensions
                 engine.layout_box(
-                    &mut node.children[i], child_content_w, content_x, content_y + child_y,
+                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
                     font_px, root_font_px
                 );
                 // Shrink-to-fit for auto-width InlineBlock children (CSS §10.3.9)
-                if node.children[i].style.width.is_auto()
-                    && matches!(node.children[i].style.display,
+                let ch = grid_child_ref(node, path);
+                if ch.style.width.is_auto()
+                    && matches!(ch.style.display,
                         Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
                 {
-                    let max_line_w = node.children[i].line_cache.iter()
+                    let max_line_w = ch.line_cache.iter()
                         .map(|l| l.width).fold(0.0_f32, f32::max);
                     let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                                      else { compute_intrinsic_width(&node.children[i]) };
+                                      else { compute_intrinsic_width(ch) };
                     if intrinsic_w > 0.0 {
-                        let irb = &node.children[i];
                         let shrink_w = intrinsic_w
-                            + irb.resolved_pad_left + irb.resolved_pad_right
-                            + irb.resolved_border_left + irb.resolved_border_right
-                            + irb.resolved_margin_left + irb.resolved_margin_right;
+                            + ch.resolved_pad_left + ch.resolved_pad_right
+                            + ch.resolved_border_left + ch.resolved_border_right
+                            + ch.resolved_margin_left + ch.resolved_margin_right;
                         if shrink_w < child_content_w {
                             engine.layout_box(
-                                &mut node.children[i], shrink_w, content_x, content_y + child_y,
+                                grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
                                 font_px, root_font_px
                             );
                         }
                     }
                 }
 
-                let child_mw = node.children[i].margin_rect.w;
-                let child_mh = node.children[i].margin_rect.h;
+                let ch = grid_child_ref(node, path);
+                let child_mw = ch.margin_rect.w;
+                let child_mh = ch.margin_rect.h;
 
-                // Horizontal flow: wrap to next line if this child doesn't fit
                 if inline_x > 0.0 && inline_x + child_mw > child_content_w {
-                    // Wrap: advance to next line
                     child_y += inline_line_h;
                     inline_x = 0.0;
                     inline_line_h = 0.0;
                 }
 
-                // Position child at (content_x + inline_x, content_y + child_y)
-                let dx = content_x + inline_x - node.children[i].margin_rect.x;
-                let dy = content_y + child_y  - node.children[i].margin_rect.y;
+                let ch = grid_child_ref(node, path);
+                let dx = content_x + inline_x - ch.margin_rect.x;
+                let dy = content_y + child_y  - ch.margin_rect.y;
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
-                    shift_rects(&mut node.children[i], dx, dy);
+                    shift_rects(grid_child_mut(node, path), dx, dy);
                 }
 
                 inline_x += child_mw;
                 if child_mh > inline_line_h { inline_line_h = child_mh; }
 
-                if matches!(node.children[i].style.position, Position::Relative | Position::Sticky) {
-                    let rel_font_px = node.children[i].style.font_size_px(font_px, root_font_px);
-                    apply_relative_offset(&mut node.children[i], rel_font_px, child_content_w, root_font_px);
+                if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
+                    let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
+                    apply_relative_offset(grid_child_mut(node, path), rel_font_px, child_content_w, root_font_px);
                 }
             }
-            // else: skip — already positioned by LayoutInlines (line_cache exists)
         }
     }
 
@@ -667,9 +669,9 @@ pub fn layout_block_with_fc(
     }
 
     // ─── Parent-last-child bottom margin collapsing ───────────────────────────
-    let _last_child_collapsed_bottom = if let Some(idx) = last_in_flow_idx {
+    let _last_child_collapsed_bottom = if let Some(ref p) = last_in_flow_path {
         if can_collapse_bottom {
-            let lcb = node.children[idx].collapsed_margin_bottom;
+            let lcb = grid_child_ref(node, p).collapsed_margin_bottom;
             child_y -= lcb;
             lcb
         } else {
@@ -702,7 +704,7 @@ pub fn layout_block_with_fc(
 
     // Apply min/max-height
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-    let max_h = if node.style.max_height.is_none() { f32::MAX }
+    let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
                 else {
                     let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
                     if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
@@ -749,16 +751,16 @@ pub fn layout_block_with_fc(
     } else {
         // Parent-first-child collapsing
         if first_child_collapsed {
-            if let Some(idx) = first_in_flow_idx {
+            if let Some(ref p) = first_in_flow_path {
                 node.collapsed_margin_top =
-                    collapse_two(rbox.margin_top, node.children[idx].collapsed_margin_top);
+                    collapse_two(rbox.margin_top, grid_child_ref(node, p).collapsed_margin_top);
             }
         }
         // Parent-last-child collapsing
         if can_collapse_bottom {
-            if let Some(idx) = last_in_flow_idx {
+            if let Some(ref p) = last_in_flow_path {
                 node.collapsed_margin_bottom =
-                    collapse_two(rbox.margin_bottom, node.children[idx].collapsed_margin_bottom);
+                    collapse_two(rbox.margin_bottom, grid_child_ref(node, p).collapsed_margin_bottom);
             }
         }
     }
@@ -772,12 +774,9 @@ pub fn layout_block_with_fc(
     } else {
         engine.pos_cb.get()
     };
-    for &i in &abs_children {
-        layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
-        // For abs children with all insets auto, clamp to containing block's top-left.
-        // layout_positioned leaves them at wherever layout_box placed them (origin 0,0)
-        // which is inside the containing block only if the containing block is at 0,0.
-        let child = &mut node.children[i];
+    for path in &abs_children {
+        layout_positioned(engine, grid_child_mut(node, path), containing_rect, font_px, root_font_px);
+        let child = grid_child_mut(node, path);
         let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                     && child.style.top.is_auto()   && child.style.bottom.is_auto();
         if all_auto && matches!(child.style.position, Position::Absolute) {

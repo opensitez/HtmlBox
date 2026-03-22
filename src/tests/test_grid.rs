@@ -362,3 +362,145 @@ fn row_locked_auto_column_step2_placement() {
     assert!((b.border_rect.x - a.border_rect.x).abs() > 50.0,
         "must be in different columns; a.x={} b.x={}", a.border_rect.x, b.border_rect.x);
 }
+
+// ─── col-span-full (grid-column: 1 / -1) in grids and subgrids ──────────────
+
+#[test]
+fn grid_col_span_full_spans_all_columns() {
+    // grid-column: 1 / -1 should span all explicit columns
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); width:600px; gap:0;">
+            <div id="full" style="grid-column: 1 / -1; height:20px;"></div>
+            <div id="one" style="height:20px;"></div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 600.0);
+    let full = find_by_id(&doc.root, "full").unwrap();
+    assert!(full.content_rect.w > 500.0,
+        "col-span-full must span all 6 columns, got width={}", full.content_rect.w);
+}
+
+#[test]
+fn subgrid_col_span_full_spans_inherited_columns() {
+    // A subgrid child with grid-column: 1 / -1 should span ALL inherited columns,
+    // not just 1.
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); width:600px; gap:0;">
+            <div id="sub" style="grid-column: 1 / -1; display:grid; grid-template-columns: subgrid;">
+                <div id="inner-full" style="grid-column: 1 / -1; height:30px;"></div>
+            </div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 600.0);
+    let sub = find_by_id(&doc.root, "sub").unwrap();
+    let inner = find_by_id(&doc.root, "inner-full").unwrap();
+    assert!(sub.content_rect.w > 500.0,
+        "subgrid must span all 6 columns, got width={}", sub.content_rect.w);
+    assert!(inner.content_rect.w > 500.0,
+        "inner col-span-full in subgrid must span all inherited columns, got width={}", inner.content_rect.w);
+}
+
+#[test]
+fn subgrid_col_span_full_with_sibling() {
+    // In a subgrid spanning 7 of 12 columns, a child with col-span-full
+    // should span all 7 inherited columns, not just 1.
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(12, 1fr); width:1200px; gap:0;">
+            <div style="grid-column: span 5; height:50px;"></div>
+            <div id="sub" style="grid-column: span 7; display:grid; grid-template-columns: subgrid;">
+                <div id="first" style="grid-column: span 3; height:30px;"></div>
+                <div id="rest" style="grid-column: 1 / -1; height:30px;"></div>
+            </div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 1200.0);
+    let sub = find_by_id(&doc.root, "sub").unwrap();
+    let rest = find_by_id(&doc.root, "rest").unwrap();
+    // sub spans 7 columns = 700px
+    assert!(sub.content_rect.w > 600.0,
+        "subgrid spanning 7 columns should be ~700px, got {}", sub.content_rect.w);
+    // rest with col-span-full should also span all 7 inherited columns
+    assert!(rest.content_rect.w > 600.0,
+        "col-span-full in subgrid must span all 7 inherited columns, got {}", rest.content_rect.w);
+}
+
+#[test]
+fn subgrid_column_locked_item_uses_explicit_columns() {
+    // Item with explicit grid-column-start but auto row should be column-locked,
+    // not auto-placed with span=1.
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); width:600px; gap:0;">
+            <div id="sub" style="grid-column: 1 / -1; display:grid; grid-template-columns: subgrid;">
+                <div id="a" style="grid-column: span 2; height:30px;"></div>
+                <div id="b" style="grid-column: 3 / 6; height:30px;"></div>
+            </div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 600.0);
+    let a = find_by_id(&doc.root, "a").unwrap();
+    let b = find_by_id(&doc.root, "b").unwrap();
+    // a: spans 2 columns = 200px
+    assert!(a.content_rect.w > 150.0,
+        "a spanning 2 columns should be ~200px, got {}", a.content_rect.w);
+    // b: columns 3..6 = 3 columns = 300px
+    assert!(b.content_rect.w > 250.0,
+        "b spanning columns 3-6 should be ~300px, got {}", b.content_rect.w);
+}
+
+#[test]
+fn nested_subgrid_col_span_full() {
+    // Two levels of subgrid, innermost has col-span-full
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(12, 1fr); width:1200px; gap:0;">
+            <div id="outer-sub" style="grid-column: span 6; display:grid; grid-template-columns: subgrid;">
+                <div id="inner-sub" style="grid-column: 1 / -1; display:grid; grid-template-columns: subgrid;">
+                    <div id="deep" style="grid-column: 1 / -1; height:20px;"></div>
+                </div>
+            </div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 1200.0);
+    let outer = find_by_id(&doc.root, "outer-sub").unwrap();
+    let inner = find_by_id(&doc.root, "inner-sub").unwrap();
+    let deep = find_by_id(&doc.root, "deep").unwrap();
+    // Each should span 6 columns = 600px
+    assert!(outer.content_rect.w > 500.0,
+        "outer subgrid must be ~600px, got {}", outer.content_rect.w);
+    assert!(inner.content_rect.w > 500.0,
+        "inner subgrid with col-span-full must be ~600px, got {}", inner.content_rect.w);
+    assert!(deep.content_rect.w > 500.0,
+        "deep col-span-full in nested subgrid must be ~600px, got {}", deep.content_rect.w);
+}
+
+#[test]
+fn aol_trending_layout_pattern() {
+    // Mimics the netscape.com trending section:
+    // 12-col grid > [span-5] [span-7 subgrid > [span-3] [col-span-full subgrid]]
+    let html = r#"
+        <div style="display:grid; grid-template-columns: repeat(12, 1fr); width:1200px; column-gap:40px;">
+            <div id="left" style="grid-column: span 5; height:100px;"></div>
+            <div id="right" style="grid-column: span 7; display:grid; grid-template-columns: subgrid;">
+                <div id="col3" style="grid-column: span 3; height:80px;"></div>
+                <div id="articles" style="grid-column: 1 / -1; display:grid; grid-template-columns: subgrid;">
+                    <div id="art1" style="grid-column: span 3; height:40px;"></div>
+                    <div id="art2" style="grid-column: span 3; height:40px;"></div>
+                </div>
+            </div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 1200.0);
+    let right = find_by_id(&doc.root, "right").unwrap();
+    let articles = find_by_id(&doc.root, "articles").unwrap();
+    let art1 = find_by_id(&doc.root, "art1").unwrap();
+
+    // right spans 7 columns
+    assert!(right.content_rect.w > 400.0,
+        "right panel (7 cols) too narrow: {}", right.content_rect.w);
+    // articles with col-span-full should span all 7 inherited columns
+    assert!(articles.content_rect.w > 400.0,
+        "articles col-span-full in subgrid too narrow: {} (should match right={})",
+        articles.content_rect.w, right.content_rect.w);
+    // art1 with span 3 should be ~3/7 of articles width
+    assert!(art1.content_rect.w > 100.0,
+        "art1 span-3 in nested subgrid too narrow: {}", art1.content_rect.w);
+}

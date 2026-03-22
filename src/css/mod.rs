@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::types::*;
 
 // ─── CSS Rule & Selector ─────────────────────────────────────────────────────
@@ -1321,8 +1321,8 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
         let (declarations, important_declarations) = parse_declarations_important(decl_block);
         if declarations.is_empty() && important_declarations.is_empty() { continue; }
 
-        // Split comma-separated selectors
-        for sel_str in selector_text.split(',') {
+        // Split comma-separated selectors (respecting parentheses)
+        for sel_str in split_selectors(selector_text) {
             let sel_str = sel_str.trim();
             if sel_str.is_empty() { continue; }
 
@@ -1598,8 +1598,17 @@ pub fn parse_selector(s: &str) -> CssSelector {
                     if !is_elem {
                         match name.as_str() {
                             "not" => {
-                                let inner_sel = parse_selector(args.trim());
-                                parts.push(SelectorPart::Not(Box::new(inner_sel)));
+                                let selectors: Vec<CssSelector> = args.split(',')
+                                    .map(|s| parse_selector(s.trim()))
+                                    .collect();
+                                if selectors.len() == 1 {
+                                    parts.push(SelectorPart::Not(Box::new(selectors.into_iter().next().unwrap())));
+                                } else {
+                                    // :not(.a,.b) ≡ :not(.a):not(.b)
+                                    for sel in selectors {
+                                        parts.push(SelectorPart::Not(Box::new(sel)));
+                                    }
+                                }
                             }
                             "is" => {
                                 let selectors: Vec<CssSelector> = args.split(',')
@@ -1659,7 +1668,14 @@ pub fn parse_selector(s: &str) -> CssSelector {
 fn read_ident(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     let mut s = String::new();
     while let Some(&c) = chars.peek() {
-        if c.is_alphanumeric() || c == '-' || c == '_' {
+        if c == '\\' {
+            // CSS escape sequence: consume backslash and next character
+            chars.next();
+            if let Some(&escaped) = chars.peek() {
+                s.push(escaped);
+                chars.next();
+            }
+        } else if c.is_alphanumeric() || c == '-' || c == '_' {
             s.push(c);
             chars.next();
         } else {
@@ -1667,6 +1683,27 @@ fn read_ident(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
         }
     }
     s
+}
+
+/// Split a selector list at commas, respecting parentheses nesting.
+/// e.g. "body:not(.a,.b) .c, div" → ["body:not(.a,.b) .c", " div"]
+fn split_selectors(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 /// Consume characters until the matching `)` for an already-consumed `(`.
@@ -1779,6 +1816,91 @@ fn propagate_to_text_descendants(children: &mut Vec<HtmlBox>, props: &[(&str, &s
 }
 
 /// Apply a single CSS property/value pair to a ComputedStyle.
+/// Copy a single CSS property from parent's computed style into `style`.
+/// Used when a rule declares `property: inherit` and must override a lower-specificity
+/// concrete value that already changed the inherited default.
+fn copy_property_from_parent(style: &mut ComputedStyle, parent: &ComputedStyle, prop: &str) {
+    match prop {
+        "font-size"       => style.font_size       = parent.font_size,
+        "font-weight"     => style.font_weight     = parent.font_weight,
+        "font-family"     => style.font_family     = parent.font_family.clone(),
+        "font-style"      => style.font_style      = parent.font_style,
+        "color"           => style.color            = parent.color,
+        "line-height"     => style.line_height      = parent.line_height,
+        "text-align"      => style.text_align       = parent.text_align,
+        "text-decoration" => style.text_decoration  = parent.text_decoration,
+        "letter-spacing"  => style.letter_spacing   = parent.letter_spacing,
+        "word-spacing"    => style.word_spacing     = parent.word_spacing,
+        "white-space"     => style.white_space      = parent.white_space,
+        "text-transform"  => style.text_transform   = parent.text_transform,
+        "direction"       => style.direction        = parent.direction,
+        "visibility"      => style.visibility       = parent.visibility,
+        "cursor"          => style.cursor           = parent.cursor,
+        "display"         => style.display          = parent.display,
+        "width"           => style.width            = parent.width,
+        "height"          => style.height           = parent.height,
+        "margin-top"      => style.margin_top       = parent.margin_top,
+        "margin-right"    => style.margin_right     = parent.margin_right,
+        "margin-bottom"   => style.margin_bottom    = parent.margin_bottom,
+        "margin-left"     => style.margin_left      = parent.margin_left,
+        "padding-top"     => style.padding_top      = parent.padding_top,
+        "padding-right"   => style.padding_right    = parent.padding_right,
+        "padding-bottom"  => style.padding_bottom   = parent.padding_bottom,
+        "padding-left"    => style.padding_left     = parent.padding_left,
+        "border-top-width"    => style.border_top_width    = parent.border_top_width,
+        "border-right-width"  => style.border_right_width  = parent.border_right_width,
+        "border-bottom-width" => style.border_bottom_width = parent.border_bottom_width,
+        "border-left-width"   => style.border_left_width   = parent.border_left_width,
+        "border-top-color"    => style.border_top_color    = parent.border_top_color,
+        "border-right-color"  => style.border_right_color  = parent.border_right_color,
+        "border-bottom-color" => style.border_bottom_color = parent.border_bottom_color,
+        "border-left-color"   => style.border_left_color   = parent.border_left_color,
+        "border" => {
+            style.border_top_width    = parent.border_top_width;
+            style.border_right_width  = parent.border_right_width;
+            style.border_bottom_width = parent.border_bottom_width;
+            style.border_left_width   = parent.border_left_width;
+            style.border_top_color    = parent.border_top_color;
+            style.border_right_color  = parent.border_right_color;
+            style.border_bottom_color = parent.border_bottom_color;
+            style.border_left_color   = parent.border_left_color;
+            style.border_top_style    = parent.border_top_style;
+            style.border_right_style  = parent.border_right_style;
+            style.border_bottom_style = parent.border_bottom_style;
+            style.border_left_style   = parent.border_left_style;
+        }
+        "margin" => {
+            style.margin_top    = parent.margin_top;
+            style.margin_right  = parent.margin_right;
+            style.margin_bottom = parent.margin_bottom;
+            style.margin_left   = parent.margin_left;
+        }
+        "padding" => {
+            style.padding_top    = parent.padding_top;
+            style.padding_right  = parent.padding_right;
+            style.padding_bottom = parent.padding_bottom;
+            style.padding_left   = parent.padding_left;
+        }
+        "background-color" => style.background_color = parent.background_color,
+        "background"       => style.background_color = parent.background_color,
+        "opacity"          => style.opacity     = parent.opacity,
+        "overflow"         => { style.overflow_x = parent.overflow_x; style.overflow_y = parent.overflow_y; }
+        "overflow-x"       => style.overflow_x  = parent.overflow_x,
+        "overflow-y"       => style.overflow_y  = parent.overflow_y,
+        "position"         => style.position    = parent.position,
+        "float"            => style.float       = parent.float,
+        "text-indent"      => style.text_indent = parent.text_indent,
+        "list-style-type"  => style.list_style_type = parent.list_style_type,
+        "vertical-align"   => style.vertical_align  = parent.vertical_align,
+        "text-overflow"    => style.text_overflow    = parent.text_overflow,
+        "word-break"       => style.word_break       = parent.word_break,
+        "overflow-wrap"    => style.overflow_wrap     = parent.overflow_wrap,
+        "font-stretch"     => style.font_stretch     = parent.font_stretch,
+        "text-shadow"      => style.text_shadow      = parent.text_shadow.clone(),
+        _ => {} // Unhandled properties — no-op
+    }
+}
+
 pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
     let v = value.trim();
     // `inherit` means "use the parent's computed value". For inherited properties,
@@ -3874,6 +3996,31 @@ pub fn parse_length(v: &str) -> CssLength {
     if let Some(inner) = v.strip_prefix("calc(").and_then(|s| s.strip_suffix(')')) {
         return parse_calc(inner);
     }
+    // CSS min()/max()/clamp() — pick first argument as approximation
+    if let Some(inner) = v.strip_prefix("min(").and_then(|s| s.strip_suffix(')')) {
+        // min(a, b) → parse first arg (conservative for max-width)
+        if let Some(comma) = find_top_level_comma(inner) {
+            return parse_length(&inner[..comma]);
+        }
+        return parse_length(inner);
+    }
+    if let Some(inner) = v.strip_prefix("max(").and_then(|s| s.strip_suffix(')')) {
+        // max(a, b) → parse first arg (conservative for min-width)
+        if let Some(comma) = find_top_level_comma(inner) {
+            return parse_length(&inner[..comma]);
+        }
+        return parse_length(inner);
+    }
+    if let Some(inner) = v.strip_prefix("clamp(").and_then(|s| s.strip_suffix(')')) {
+        // clamp(min, preferred, max) → use preferred (second arg)
+        if let Some(c1) = find_top_level_comma(inner) {
+            let rest = &inner[c1+1..];
+            if let Some(c2) = find_top_level_comma(rest) {
+                return parse_length(rest[..c2].trim());
+            }
+        }
+        return parse_length(inner);
+    }
     if v.ends_with("px") { return CssLength::Px(v[..v.len()-2].parse().unwrap_or(0.0)); }
     if v.ends_with("rem") { return CssLength::Rem(v[..v.len()-3].parse().unwrap_or(0.0)); }
     if v.ends_with("em") { return CssLength::Em(v[..v.len()-2].parse().unwrap_or(0.0)); }
@@ -3963,6 +4110,20 @@ fn parse_calc(expr: &str) -> CssLength {
         return CssLength::Px(px);
     }
     CssLength::Calc(vals)
+}
+
+/// Find the first comma outside nested parentheses.
+fn find_top_level_comma(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 pub fn parse_length_or_none(v: &str) -> CssLength {
@@ -4400,7 +4561,15 @@ fn tokenize_track_list(v: &str) -> Vec<String> {
     let mut bracket_depth = 0usize;
     for ch in v.chars() {
         match ch {
-            '[' => { bracket_depth += 1; current.push(ch); }
+            '[' => {
+                // If there's content before '[', push it as a separate token
+                if bracket_depth == 0 && paren_depth == 0 {
+                    let s = current.trim().to_string();
+                    if !s.is_empty() { tokens.push(s); }
+                    current = String::new();
+                }
+                bracket_depth += 1; current.push(ch);
+            }
             ']' => {
                 if bracket_depth > 0 { bracket_depth -= 1; }
                 current.push(ch);
@@ -4921,6 +5090,10 @@ pub fn apply_cascade_vp(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Maximum DOM depth before we stop recursing to avoid stack overflow.
+/// 400 levels is more than any well-formed page needs (most pages are < 50 deep).
+const MAX_CASCADE_DEPTH: usize = 400;
+
 fn apply_cascade_inner(
     root: &mut crate::types::HtmlBox,
     stylesheet: &Stylesheet,
@@ -4941,6 +5114,16 @@ fn apply_cascade_inner(
     candidates_buf: &mut Vec<usize>,
     counters: &mut HashMap<String, Vec<i32>>,
 ) {
+    // Guard against stack overflow on deeply nested DOMs.
+    if ancestors.len() >= MAX_CASCADE_DEPTH {
+        // Just inherit from parent and stop — the page may render slightly wrong
+        // at extreme depth, but won't crash.
+        if let Some(p) = parent_style {
+            root.style.inherit_from(p);
+        }
+        return;
+    }
+
     // Synthetic ::before/::after children already have their style set.
     // Skip the cascade for them — just recurse into their children (if any) and return.
     if root.tag == "::before" || root.tag == "::after" {
@@ -5141,11 +5324,27 @@ fn apply_cascade_inner(
     } else {
         inherited_vars
     };
+    // Track properties whose highest-specificity declaration is `inherit`.
+    // After all rules are applied, these properties are reset to the parent's value.
+    let mut inherit_props: HashSet<String> = HashSet::new();
     for &(_, ri) in &matched {
         for (prop, val) in &stylesheet.rules[ri].declarations {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, &local_vars);
-            apply_property(&mut style, prop, &resolved);
+            if resolved.trim() == "inherit" {
+                inherit_props.insert(prop.to_string());
+            } else {
+                inherit_props.remove(prop.as_str());
+                apply_property(&mut style, prop, &resolved);
+            }
+        }
+    }
+    // Re-apply parent values for properties whose winning declaration was `inherit`.
+    if !inherit_props.is_empty() {
+        if let Some(p) = parent_style {
+            for prop in &inherit_props {
+                copy_property_from_parent(&mut style, p, prop);
+            }
         }
     }
     // Hover style — clone the base style and overlay all matched hover declarations.
@@ -5212,7 +5411,11 @@ fn apply_cascade_inner(
         let (n, i) = parse_declarations_important(&inline_style);
         for (prop, val) in &n {
             let resolved = resolve_var_references(val, &local_vars);
-            apply_property(&mut style, prop, &resolved);
+            if resolved.trim() == "inherit" {
+                if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
+            } else {
+                apply_property(&mut style, prop, &resolved);
+            }
         }
         (n, i)
     } else {
@@ -5224,14 +5427,22 @@ fn apply_cascade_inner(
         for (prop, val) in &stylesheet.rules[ri].important_declarations {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, &local_vars);
-            apply_property(&mut style, prop, &resolved);
+            if resolved.trim() == "inherit" {
+                if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
+            } else {
+                apply_property(&mut style, prop, &resolved);
+            }
         }
     }
 
     // Apply inline style !important declarations — highest priority
     for (prop, val) in &inline_important {
         let resolved = resolve_var_references(val, &local_vars);
-        apply_property(&mut style, prop, &resolved);
+        if resolved.trim() == "inherit" {
+            if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
+        } else {
+            apply_property(&mut style, prop, &resolved);
+        }
     }
 
     // Re-apply table layout HTML attributes after CSS rules so UA/author stylesheets

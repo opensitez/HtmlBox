@@ -511,7 +511,12 @@ impl Renderer {
         let br = node.border_rect;
 
         // ── Viewport culling ──────────────────────────────────────────────────
-        if matches!(node.style.position, Position::Static | Position::Relative) {
+        // Skip culling for inline elements: their border_rect is 0×0 and does
+        // not encompass repositioned InlineBlock children (e.g. img inside
+        // span > a).  Culling those would hide the children.
+        if matches!(node.style.position, Position::Static | Position::Relative)
+            && !node.style.is_inline_level()
+        {
             let bx = br.x - sx;
             let by = br.y - sy;
             if bx + br.w < clip.x || by + br.h < clip.y
