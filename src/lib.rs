@@ -53,12 +53,12 @@ pub mod tests;
 
 pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, Announcement,
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
-                AnimState, TransitionState};
+                AnimState, TransitionState, MatchedRule};
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
-pub use renderer::Renderer;
+pub use renderer::{Renderer, draw_inspect_overlay};
 pub use dom::HtmlEventType;
 
 /// High-level convenience: parse HTML, layout, ready to render.
@@ -241,6 +241,17 @@ fn resolve_css_url(base: &str, href: &str) -> String {
 /// Only sets shared headers (UA, Accept-Language, Sec-CH-UA); callers should
 /// add request-specific headers (Accept, Sec-Fetch-Dest, etc.) per request.
 pub fn http_client() -> reqwest::blocking::Client {
+    build_http_client(false)
+}
+
+/// Lenient client that accepts certs where the base domain (without www.)
+/// is in the SAN but the exact subdomain isn't — matches Chrome behaviour
+/// for shared-hosting certs.
+pub fn http_client_lenient() -> reqwest::blocking::Client {
+    build_http_client(true)
+}
+
+fn build_http_client(accept_invalid_certs: bool) -> reqwest::blocking::Client {
     let ua = build_user_agent();
     let ch_ua = sec_ch_ua();
     let mut headers = reqwest::header::HeaderMap::new();
@@ -251,6 +262,7 @@ pub fn http_client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
         .user_agent(ua)
         .default_headers(headers)
+        .danger_accept_invalid_certs(accept_invalid_certs)
         .gzip(true)
         .brotli(true)
         .deflate(true)
@@ -260,16 +272,25 @@ pub fn http_client() -> reqwest::blocking::Client {
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {
-    let client = http_client();
-    let bytes = client.get(url)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .header("Sec-Fetch-Dest", "document")
-        .header("Sec-Fetch-Mode", "navigate")
-        .header("Sec-Fetch-Site", "none")
-        .header("Sec-Fetch-User", "?1")
-        .header("Upgrade-Insecure-Requests", "1")
-        .send().map_err(|e| e.to_string())?
-        .bytes().map_err(|e| e.to_string())?;
+    let do_fetch = |client: &reqwest::blocking::Client| -> Result<Vec<u8>, String> {
+        let resp = client.get(url)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "none")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .send().map_err(|e| e.to_string())?;
+        let bytes = resp.bytes().map_err(|e| e.to_string())?;
+        Ok(bytes.to_vec())
+    };
+    // Try strict TLS first; on failure or empty response, retry with lenient
+    // cert validation (matches Chrome behaviour for shared-hosting certs where
+    // the base domain is in the SAN but www. subdomain isn't).
+    let bytes = match do_fetch(&http_client()) {
+        Ok(b) if !b.is_empty() => b,
+        _ => do_fetch(&http_client_lenient())?,
+    };
     decode_text(&bytes)
 }
 

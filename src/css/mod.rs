@@ -652,6 +652,9 @@ pub struct Stylesheet {
     idx_by_tag:   HashMap<String, Vec<usize>>,
     idx_universal: Vec<usize>,  // rules with * or no specific key selector
     idx_dirty:    bool,
+    /// When true, the cascade stores matched CSS rules on each HtmlBox
+    /// for inspector display. Off by default to avoid memory overhead.
+    pub inspect_mode: bool,
     /// Raw (comment-stripped) CSS sources, kept for re-extracting variables with viewport.
     pub raw_sources:  Vec<String>,
 }
@@ -4021,7 +4024,7 @@ fn apply_font_shorthand(style: &mut ComputedStyle, v: &str) {
             tok
         };
 
-        if is_font_size_token(size_tok) || size_tok.parse::<f32>().is_ok() {
+        if is_font_size_token(size_tok) {
             // Parse size (and optional /line-height).
             if tok.contains('/') {
                 let mut parts = tok.splitn(2, '/');
@@ -4130,132 +4133,168 @@ pub fn parse_length(v: &str) -> CssLength {
     CssLength::Auto
 }
 
-/// Parse the inside of `calc(...)`.  Handles addition and subtraction of
-/// `px`, `%`, `em`, `rem` terms.  Produces `CssLength::Calc(pct, px)` when
-/// mixed units are present, or a simple variant when all terms share a unit.
+/// Parse the inside of `calc(...)` using recursive descent.
+///
+/// Handles arbitrary nesting, mixed units, and correct operator precedence:
+///   calc(100% - 21.5rem + (100vw - 1569px) / 2)
+///
+/// The result is a linear combination of unit coefficients [pct, px, em, rem, vw, vh].
+/// At layout time, each coefficient is multiplied by its resolved unit value.
 fn parse_calc(expr: &str) -> CssLength {
     let expr = expr.trim();
-
-    // Handle outer multiplication/division: "(expr) * N" or "(expr) / N"
-    // where the whole inner expression is scaled by a factor.
-    let outer_factor = {
-        let trimmed = expr.trim();
-        // Pattern: (...) / N  or  (...) * N
-        if trimmed.starts_with('(') {
-            if let Some(close) = find_matching_paren(trimmed) {
-                let after = trimmed[close+1..].trim();
-                if let Some(rest) = after.strip_prefix('/') {
-                    rest.trim().parse::<f32>().ok().map(|n| if n != 0.0 { 1.0 / n } else { 1.0 })
-                } else if let Some(rest) = after.strip_prefix('*') {
-                    rest.trim().parse::<f32>().ok()
-                } else {
-                    None
-                }
-            } else { None }
-        } else { None }
-    };
-
-    // If we found an outer factor, parse the inner expression and scale it
-    let (expr, global_factor) = if let Some(factor) = outer_factor {
-        let close = find_matching_paren(expr).unwrap();
-        (&expr[1..close], factor)
-    } else {
-        // Strip all parens for simpler nested cases (best-effort)
-        // This handles things like calc(100% - 30px) without division
-        (expr, 1.0f32)
-    };
-    let expr: String = expr.chars().filter(|&c| c != '(' && c != ')').collect();
-    let expr = expr.trim();
-
-    let mut pct: f32 = 0.0;
-    let mut px:  f32 = 0.0;
-    let mut em:  f32 = 0.0;
-    let mut rem: f32 = 0.0;
-    let mut vw:  f32 = 0.0;
-    let mut vh:  f32 = 0.0;
-
-    // Split into additive terms at ` + ` and ` - ` (space-delimited to avoid
-    // splitting "-30px").  Each term may contain `*` or `/` with a number.
-    let mut tokens: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let chars: Vec<char> = expr.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if (chars[i] == '+' || chars[i] == '-')
-            && i > 0
-            && (chars[i-1] == ' ' || chars[i-1] == '\t')
-        {
-            let s = current.trim().to_string();
-            if !s.is_empty() { tokens.push(s); }
-            current = String::new();
-            current.push(chars[i]);
-        } else {
-            current.push(chars[i]);
-        }
-        i += 1;
-    }
-    let s = current.trim().to_string();
-    if !s.is_empty() { tokens.push(s); }
-
-    for tok in &tokens {
-        let t: String = tok.chars().filter(|c| !c.is_whitespace()).collect();
-        if t.is_empty() { continue; }
-        // Handle multiplication/division: "100%/3" or "30px*2"
-        let (value_part, multiplier) = if let Some(pos) = t.find('/') {
-            let divisor = t[pos+1..].parse::<f32>().unwrap_or(1.0);
-            (&t[..pos], if divisor != 0.0 { 1.0 / divisor } else { 1.0 })
-        } else if let Some(pos) = t.find('*') {
-            // Could be "2*100%" or "100%*2" — find which side is the number
-            let left = &t[..pos];
-            let right = &t[pos+1..];
-            if let Ok(n) = left.parse::<f32>() {
-                (right, n)
-            } else {
-                (left, right.parse::<f32>().unwrap_or(1.0))
-            }
-        } else {
-            (t.as_str(), 1.0f32)
-        };
-        if value_part.ends_with('%') {
-            pct += value_part[..value_part.len()-1].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("px") {
-            px += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("rem") {
-            rem += value_part[..value_part.len()-3].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("vmin") {
-            vw += value_part[..value_part.len()-4].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("vmax") {
-            vw += value_part[..value_part.len()-4].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("vh") {
-            vh += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("vw") {
-            vw += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if value_part.ends_with("em") {
-            em += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
-        } else if let Ok(n) = value_part.parse::<f32>() {
-            px += n * multiplier;
-        }
-    }
-
-    // Apply outer factor (e.g. the /3 in "(100% - 30px)/3")
-    pct *= global_factor;
-    px  *= global_factor;
-    em  *= global_factor;
-    rem *= global_factor;
-    vw  *= global_factor;
-    vh  *= global_factor;
-
-    let vals = [pct, px, em, rem, vw, vh];
+    let bytes = expr.as_bytes();
+    let mut pos = 0usize;
+    let coeffs = calc_parse_additive(bytes, &mut pos);
+    let vals = coeffs;
+    // Simplify: if only one unit is non-zero, return a simple CssLength variant.
     let n_nonzero = vals.iter().filter(|&&v| v != 0.0).count();
     if n_nonzero <= 1 {
-        if pct != 0.0 { return CssLength::Percent(pct); }
-        if em  != 0.0 { return CssLength::Em(em); }
-        if rem != 0.0 { return CssLength::Rem(rem); }
-        if vw  != 0.0 { return CssLength::Vw(vw); }
-        if vh  != 0.0 { return CssLength::Vh(vh); }
-        return CssLength::Px(px);
+        if vals[0] != 0.0 { return CssLength::Percent(vals[0]); }
+        if vals[2] != 0.0 { return CssLength::Em(vals[2]); }
+        if vals[3] != 0.0 { return CssLength::Rem(vals[3]); }
+        if vals[4] != 0.0 { return CssLength::Vw(vals[4]); }
+        if vals[5] != 0.0 { return CssLength::Vh(vals[5]); }
+        return CssLength::Px(vals[1]);
     }
     CssLength::Calc(vals)
+}
+
+// ── Recursive descent calc() evaluator ───────────────────────────────────────
+// Coefficients: [percent, px, em, rem, vw, vh]
+type Coeffs = [f32; 6];
+const ZERO_COEFFS: Coeffs = [0.0; 6];
+
+fn coeffs_add(a: &Coeffs, b: &Coeffs) -> Coeffs {
+    [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3], a[4]+b[4], a[5]+b[5]]
+}
+fn coeffs_sub(a: &Coeffs, b: &Coeffs) -> Coeffs {
+    [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3], a[4]-b[4], a[5]-b[5]]
+}
+fn coeffs_mul(a: &Coeffs, f: f32) -> Coeffs {
+    [a[0]*f, a[1]*f, a[2]*f, a[3]*f, a[4]*f, a[5]*f]
+}
+
+fn calc_skip_ws(b: &[u8], pos: &mut usize) {
+    while *pos < b.len() && (b[*pos] == b' ' || b[*pos] == b'\t') { *pos += 1; }
+}
+
+/// Additive level: handles `+` and `-` (lowest precedence).
+fn calc_parse_additive(b: &[u8], pos: &mut usize) -> Coeffs {
+    let mut result = calc_parse_multiplicative(b, pos);
+    loop {
+        calc_skip_ws(b, pos);
+        if *pos >= b.len() { break; }
+        // CSS calc requires spaces around + and - operators.
+        // Check for ` + ` or ` - ` pattern (we already consumed leading ws).
+        let op = b[*pos];
+        if (op == b'+' || op == b'-') && *pos + 1 < b.len() && b[*pos + 1] == b' ' {
+            // Make sure the previous char was a space (we consumed it in skip_ws)
+            *pos += 1; // skip operator
+            calc_skip_ws(b, pos);
+            let rhs = calc_parse_multiplicative(b, pos);
+            result = if op == b'+' { coeffs_add(&result, &rhs) } else { coeffs_sub(&result, &rhs) };
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Multiplicative level: handles `*` and `/` (higher precedence).
+fn calc_parse_multiplicative(b: &[u8], pos: &mut usize) -> Coeffs {
+    let mut result = calc_parse_atom(b, pos);
+    loop {
+        calc_skip_ws(b, pos);
+        if *pos >= b.len() { break; }
+        let op = b[*pos];
+        if op == b'*' || op == b'/' {
+            *pos += 1;
+            calc_skip_ws(b, pos);
+            if op == b'*' {
+                // One side must be a plain number. Try: coeffs * number or number * coeffs.
+                // We already have lhs as coeffs, so rhs should be a number.
+                let rhs = calc_parse_atom(b, pos);
+                // If rhs is purely px (unitless number parsed as px), use as scalar.
+                // If lhs is purely px, treat lhs as scalar and rhs as unit-bearing.
+                let rhs_scalar = if rhs[0] == 0.0 && rhs[2] == 0.0 && rhs[3] == 0.0 && rhs[4] == 0.0 && rhs[5] == 0.0 {
+                    Some(rhs[1])
+                } else { None };
+                let lhs_scalar = if result[0] == 0.0 && result[2] == 0.0 && result[3] == 0.0 && result[4] == 0.0 && result[5] == 0.0 {
+                    Some(result[1])
+                } else { None };
+                if let Some(s) = rhs_scalar {
+                    result = coeffs_mul(&result, s);
+                } else if let Some(s) = lhs_scalar {
+                    result = coeffs_mul(&rhs, s);
+                } else {
+                    // Both have units — invalid in CSS, just keep lhs
+                }
+            } else {
+                // Division: coeffs / number
+                let rhs = calc_parse_atom(b, pos);
+                let divisor = rhs[1]; // should be a unitless number (px slot)
+                if divisor != 0.0 {
+                    result = coeffs_mul(&result, 1.0 / divisor);
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Atom level: parenthesized sub-expression or a single value with units.
+fn calc_parse_atom(b: &[u8], pos: &mut usize) -> Coeffs {
+    calc_skip_ws(b, pos);
+    if *pos >= b.len() { return ZERO_COEFFS; }
+
+    // Parenthesized sub-expression
+    if b[*pos] == b'(' {
+        *pos += 1; // skip '('
+        let result = calc_parse_additive(b, pos);
+        calc_skip_ws(b, pos);
+        if *pos < b.len() && b[*pos] == b')' { *pos += 1; }
+        return result;
+    }
+
+    // Parse a number (possibly negative) followed by optional unit
+    let start = *pos;
+    // Allow leading sign
+    if *pos < b.len() && (b[*pos] == b'-' || b[*pos] == b'+') { *pos += 1; }
+    // Allow leading dot like ".875rem"
+    let mut has_digit = false;
+    while *pos < b.len() && b[*pos].is_ascii_digit() { *pos += 1; has_digit = true; }
+    if *pos < b.len() && b[*pos] == b'.' { *pos += 1; }
+    while *pos < b.len() && b[*pos].is_ascii_digit() { *pos += 1; has_digit = true; }
+    if !has_digit { return ZERO_COEFFS; }
+
+    let num_end = *pos;
+    let num_str = std::str::from_utf8(&b[start..num_end]).unwrap_or("0");
+    let num: f32 = num_str.parse().unwrap_or(0.0);
+
+    // Parse unit suffix
+    let unit_start = *pos;
+    while *pos < b.len() && b[*pos].is_ascii_alphabetic() { *pos += 1; }
+    // Also allow '%'
+    if *pos < b.len() && b[*pos] == b'%' { *pos += 1; }
+    let unit = std::str::from_utf8(&b[unit_start..*pos]).unwrap_or("");
+
+    let mut c = ZERO_COEFFS;
+    match unit {
+        "%"    => c[0] = num,
+        "px"   => c[1] = num,
+        "em"   => c[2] = num,
+        "rem"  => c[3] = num,
+        "vw"   => c[4] = num,
+        "vh"   => c[5] = num,
+        "vmin" => c[4] = num, // approximate
+        "vmax" => c[4] = num, // approximate
+        "pt"   => c[1] = num * 4.0 / 3.0,
+        ""     => c[1] = num, // unitless → px
+        _      => c[1] = num, // unknown unit → px
+    }
+    c
 }
 
 /// Find the index of the closing `)` that matches the opening `(` at position 0.
@@ -5677,6 +5716,22 @@ fn apply_cascade_inner(
     // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
     style.list_index = root.style.list_index;
     root.style = style.clone();
+    // Store matched CSS rules for inspector (only when enabled).
+    if stylesheet.inspect_mode {
+        root.matched_rules.clear();
+        for &(sp, ri) in &matched {
+            let rule = &stylesheet.rules[ri];
+            root.matched_rules.push(crate::types::MatchedRule {
+                selector: rule.original_selector.clone(),
+                declarations: rule.declarations.iter()
+                    .map(|(k, v)| (k.clone(), resolve_var_references(v, &local_vars)))
+                    .collect(),
+                specificity: sp,
+                source: if ri < 50 { "ua".to_string() }
+                        else { rule.media_condition.clone() },
+            });
+        }
+    }
     // Mark dirty so the layout subtree pruning (in layout_box_with_fc) knows to
     // re-layout this element.  Cleared by the individual layout algorithms after
     // they have computed the final geometry.

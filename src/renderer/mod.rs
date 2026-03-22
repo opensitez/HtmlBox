@@ -439,6 +439,23 @@ impl Renderer {
             visited_hrefs,
         );
 
+        // ── Fixed elements overlay ────────────────────────────────────────────
+        // Fixed elements must be drawn AFTER all normal content so they aren't
+        // covered by later siblings/descendants with backgrounds.
+        // Collect all fixed elements from the tree, then draw them on top.
+        {
+            let mut fixed_nodes: Vec<*const HtmlBox> = Vec::new();
+            collect_fixed(&doc.root, &mut fixed_nodes);
+            for ptr in fixed_nodes {
+                let node = unsafe { &*ptr };
+                self.render_box(
+                    node, pixmap, 0.0, 0.0,
+                    &clip, None,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                );
+            }
+        }
+
         // ── Caret ─────────────────────────────────────────────────────────────
         // Only draw the caret when the caret box lives inside a contenteditable
         // element — never in read-only document content.
@@ -942,12 +959,9 @@ impl Renderer {
             for child in positioned {
                 match child.style.position {
                     Position::Fixed => {
-                        // Fixed: always renders relative to viewport, never clipped by overflow.
-                        self.render_box(
-                            child, pixmap, 0.0, 0.0,
-                            clip, eff_mask,
-                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
-                        );
+                        // Fixed elements are drawn in a separate overlay pass
+                        // after all normal content, so they're never covered.
+                        // Skip here.
                     }
                     Position::Absolute => {
                         // Absolute: escapes overflow clip of non-positioned ancestors,
@@ -3337,4 +3351,57 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     let g = (hue_to_rgb(p, q, h) * 255.0) as u8;
     let b = (hue_to_rgb(p, q, h - 1.0/3.0) * 255.0) as u8;
     (r, g, b)
+}
+
+/// Draw a box-model overlay for an element (margin=orange, padding=green, content=blue).
+/// The host calls this in inspect mode to highlight the hovered/selected element.
+pub fn draw_inspect_overlay(
+    node:   &HtmlBox,
+    pixmap: &mut Pixmap,
+    scroll_x: f32,
+    scroll_y: f32,
+    scale: f32,
+) {
+    let fill_rect = |pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: u8, g: u8, b: u8, a: u8| {
+        if w <= 0.0 || h <= 0.0 { return; }
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color_rgba8(r, g, b, a);
+        let rect = tiny_skia::Rect::from_xywh(x * scale, y * scale, w * scale, h * scale);
+        if let Some(rect) = rect {
+            pm.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    };
+
+    let m = node.margin_rect;
+    let b = node.border_rect;
+    let p = node.padding_rect;
+    let c = node.content_rect;
+    let sx = scroll_x;
+    let sy = scroll_y;
+
+    // Margin area (orange)
+    fill_rect(pixmap, m.x - sx, m.y - sy, m.w, b.y - m.y, 255, 152, 0, 80);           // top
+    fill_rect(pixmap, m.x - sx, b.y + b.h - sy, m.w, (m.y + m.h) - (b.y + b.h), 255, 152, 0, 80); // bottom
+    fill_rect(pixmap, m.x - sx, b.y - sy, b.x - m.x, b.h, 255, 152, 0, 80);           // left
+    fill_rect(pixmap, b.x + b.w - sx, b.y - sy, (m.x + m.w) - (b.x + b.w), b.h, 255, 152, 0, 80); // right
+
+    // Padding area (green)
+    fill_rect(pixmap, p.x - sx, p.y - sy, p.w, c.y - p.y, 128, 200, 120, 80);         // top
+    fill_rect(pixmap, p.x - sx, c.y + c.h - sy, p.w, (p.y + p.h) - (c.y + c.h), 128, 200, 120, 80); // bottom
+    fill_rect(pixmap, p.x - sx, c.y - sy, c.x - p.x, c.h, 128, 200, 120, 80);         // left
+    fill_rect(pixmap, c.x + c.w - sx, c.y - sy, (p.x + p.w) - (c.x + c.w), c.h, 128, 200, 120, 80); // right
+
+    // Content area (blue)
+    fill_rect(pixmap, c.x - sx, c.y - sy, c.w, c.h, 100, 150, 255, 60);
+}
+
+/// Recursively collect all `position: fixed` nodes in the tree.
+fn collect_fixed(node: &HtmlBox, out: &mut Vec<*const HtmlBox>) {
+    if node.style.position == Position::Fixed && !matches!(node.style.display, Display::None) {
+        out.push(node as *const HtmlBox);
+        return; // don't recurse into fixed element's children (they'll be drawn as part of it)
+    }
+    for child in &node.children {
+        collect_fixed(child, out);
+    }
 }

@@ -1515,6 +1515,24 @@ pub struct HtmlBox {
     /// Cached intrinsic (max-content) width — `NAN` means not yet computed.
     /// Reset at the start of each layout pass.
     pub cached_intrinsic_w: std::cell::Cell<f32>,
+
+    /// Matched CSS rules (populated only when inspect mode is enabled).
+    /// Each entry records the selector, declarations, and source of a rule
+    /// that matched this element during the cascade.
+    pub matched_rules: Vec<MatchedRule>,
+}
+
+/// A CSS rule that matched an element, stored for inspector display.
+#[derive(Clone, Debug)]
+pub struct MatchedRule {
+    /// The original CSS selector text (e.g. ".container-fluid")
+    pub selector: String,
+    /// Property → value pairs from this rule
+    pub declarations: Vec<(String, String)>,
+    /// Specificity of the selector
+    pub specificity: u32,
+    /// Source: "ua" for user-agent, or the stylesheet URL/index
+    pub source: String,
 }
 
 impl HtmlBox {
@@ -1570,6 +1588,7 @@ impl HtmlBox {
 
             data: HashMap::new(),
             cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
+            matched_rules: Vec::new(),
         }
     }
 

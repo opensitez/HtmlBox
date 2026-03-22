@@ -1137,7 +1137,6 @@ impl LayoutEngine {
 pub fn has_block_children(node: &HtmlBox) -> bool {
     node.children.iter().any(|c| {
         if matches!(c.style.display, Display::None) { return false; }
-        // Look through display:contents elements recursively.
         if matches!(c.style.display, Display::Contents) {
             return has_block_children(c);
         }
@@ -1306,6 +1305,9 @@ pub fn shift_rects(node: &mut HtmlBox, dx: f32, dy: f32) {
         line.y += dy;
     }
     for child in &mut node.children {
+        // Fixed-position elements are placed relative to the viewport,
+        // not their parent — don't shift them when a parent moves.
+        if child.style.position == Position::Fixed { continue; }
         shift_rects(child, dx, dy);
     }
 }

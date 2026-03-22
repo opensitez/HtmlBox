@@ -550,14 +550,26 @@ pub fn layout_inline_block(
             let mut cur_x = line_x;
             for item in line_items {
                 if let InlineItemKind::Atomic { path } = &item.kind {
-                    // CSS baseline alignment: the inline-block's bottom margin
-                    // edge sits on the line baseline (cursor_y + line_asc).
-                    let box_h = resolve_path(node, path)
+                    let child_node = resolve_path(node, path);
+                    let box_h = child_node
                         .map(|n| n.margin_rect.h)
                         .unwrap_or(item.height);
-                    let ay = cursor_y + line_asc - box_h;
-                    // Clamp so it doesn't go above line top
-                    let ay = ay.max(cursor_y);
+                    let valign = child_node
+                        .map(|n| n.style.vertical_align)
+                        .unwrap_or(crate::types::VerticalAlign::Baseline);
+                    let ay = match valign {
+                        crate::types::VerticalAlign::Top =>
+                            cursor_y,
+                        crate::types::VerticalAlign::Bottom =>
+                            cursor_y + line_h - box_h,
+                        crate::types::VerticalAlign::Middle =>
+                            cursor_y + (line_h - box_h) / 2.0,
+                        _ => {
+                            // Baseline: bottom margin edge on the line baseline
+                            let ay = cursor_y + line_asc - box_h;
+                            ay.max(cursor_y)
+                        }
+                    };
                     atomic_pos.push((path.clone(), cur_x, ay));
                 }
                 cur_x += item.advance;
