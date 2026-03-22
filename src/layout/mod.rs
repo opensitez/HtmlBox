@@ -1156,6 +1156,23 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
         None
     };
 
+    // Resolve percentage height against the containing block height.
+    // layout_box normally passes containing_h = None, which makes percentage
+    // heights auto.  For abs/fixed elements the containing block height IS
+    // known (it's the positioned ancestor's padding-box height).
+    if matches!(node.style.height, CssLength::Percent(_)) && containing_h > 0.0 {
+        let h = node.style.height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+        node.style.height = CssLength::Px(h.max(0.0));
+    }
+    if matches!(node.style.min_height, CssLength::Percent(_)) && containing_h > 0.0 {
+        let h = node.style.min_height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+        node.style.min_height = CssLength::Px(h.max(0.0));
+    }
+    if matches!(node.style.max_height, CssLength::Percent(_)) && containing_h > 0.0 {
+        let h = node.style.max_height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+        node.style.max_height = CssLength::Px(h.max(0.0));
+    }
+
     // Layout to get natural size (or constrained size)
     let layout_w = constrained_w.unwrap_or(containing_w);
     engine.layout_box(node, layout_w, 0.0, 0.0, font_px, root_font_px);

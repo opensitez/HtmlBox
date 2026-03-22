@@ -236,23 +236,18 @@ fn resolve_css_url(base: &str, href: &str) -> String {
     href.to_string()
 }
 
-/// Build a `reqwest::blocking::Client` with browser-like headers.
-/// The client handles gzip/brotli/deflate decompression, cookies, and
-/// redirects automatically.
+/// Build a `reqwest::blocking::Client` with browser-like defaults.
+/// Handles gzip/brotli/deflate decompression and redirects automatically.
+/// Only sets shared headers (UA, Accept-Language, Sec-CH-UA); callers should
+/// add request-specific headers (Accept, Sec-Fetch-Dest, etc.) per request.
 pub fn http_client() -> reqwest::blocking::Client {
     let ua = build_user_agent();
     let ch_ua = sec_ch_ua();
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8".parse().unwrap());
     headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
-    headers.insert("Sec-Fetch-Dest", "document".parse().unwrap());
-    headers.insert("Sec-Fetch-Mode", "navigate".parse().unwrap());
-    headers.insert("Sec-Fetch-Site", "none".parse().unwrap());
-    headers.insert("Sec-Fetch-User", "?1".parse().unwrap());
     headers.insert("Sec-CH-UA", ch_ua.parse().unwrap());
     headers.insert("Sec-CH-UA-Mobile", "?0".parse().unwrap());
     headers.insert("Sec-CH-UA-Platform", platform_hint().parse().unwrap());
-    headers.insert("Upgrade-Insecure-Requests", "1".parse().unwrap());
     reqwest::blocking::Client::builder()
         .user_agent(ua)
         .default_headers(headers)
@@ -266,7 +261,14 @@ pub fn http_client() -> reqwest::blocking::Client {
 
 fn fetch_text(url: &str) -> Result<String, String> {
     let client = http_client();
-    let bytes = client.get(url).send().map_err(|e| e.to_string())?
+    let bytes = client.get(url)
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-Site", "none")
+        .header("Sec-Fetch-User", "?1")
+        .header("Upgrade-Insecure-Requests", "1")
+        .send().map_err(|e| e.to_string())?
         .bytes().map_err(|e| e.to_string())?;
     decode_text(&bytes)
 }

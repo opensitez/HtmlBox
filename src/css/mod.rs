@@ -5303,8 +5303,8 @@ fn apply_cascade_inner(
         stylesheet.rules[*ri].declarations.keys().any(|p| p.starts_with("--"))
         || stylesheet.rules[*ri].important_declarations.keys().any(|p| p.starts_with("--"))
     });
-    let local_vars_owned;
-    let local_vars: &HashMap<String, String> = if has_new_vars {
+    let mut local_vars_owned = HashMap::new();
+    let mut local_vars: &HashMap<String, String> = if has_new_vars {
         let mut vars = inherited_vars.clone();
         for &(_, ri) in &matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
@@ -5406,11 +5406,29 @@ fn apply_cascade_inner(
         style.visited_style = Some(Box::new(vs));
     }
 
-    // Apply inline style attribute (normal declarations)
+    // Apply inline style attribute (normal declarations).
+    // Inline custom properties (--xxx) are merged into the variable scope
+    // so children (and the element's own later declarations) can resolve var().
     let (_inline_normal, inline_important) = if let Some(inline_style) = root.attributes.get("style").cloned() {
         let (n, i) = parse_declarations_important(&inline_style);
+        let has_inline_vars = n.keys().any(|p| p.starts_with("--"));
+        if has_inline_vars {
+            let mut vars = if has_new_vars {
+                local_vars_owned.clone()
+            } else {
+                inherited_vars.clone()
+            };
+            for (prop, val) in &n {
+                if prop.starts_with("--") {
+                    vars.insert(prop.clone(), val.clone());
+                }
+            }
+            local_vars_owned = vars;
+            local_vars = &local_vars_owned;
+        }
         for (prop, val) in &n {
-            let resolved = resolve_var_references(val, &local_vars);
+            if prop.starts_with("--") { continue; }
+            let resolved = resolve_var_references(val, local_vars);
             if resolved.trim() == "inherit" {
                 if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
             } else {
@@ -5716,6 +5734,7 @@ pub fn ua_stylesheet() -> Stylesheet {
 const UA_CSS: &str = r##"
 head, link, meta, script, style, title { display: none; }
 area, base, basefont, datalist, noembed, noframes, param, rp, source, template { display: none; }
+picture { display: contents; }
 [hidden] { display: none; }
 html { display: block; }
 body { display: block; margin: 8px; }

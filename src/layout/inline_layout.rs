@@ -284,18 +284,25 @@ pub fn layout_inline_block(
                       rbox, margin_left, margin_right);
         node.inline_runs = runs;
         // Still need to lay out absolutely/fixed positioned children.
+        // Use collect_grid_children to flatten through display:contents,
+        // matching block layout behaviour (CSS §2.7).
         let containing_rect = if !matches!(node.style.position, Position::Static) {
             node.padding_rect
         } else {
             engine.pos_cb.get()
         };
-        let abs_indices: Vec<usize> = (0..node.children.len())
-            .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
+        let eff = crate::layout::grid::collect_grid_children(node);
+        let abs_paths: Vec<Vec<usize>> = eff.into_iter()
+            .filter(|path| {
+                let c = crate::layout::grid::grid_child_ref(node, path);
+                matches!(c.style.position, Position::Absolute | Position::Fixed)
+            })
             .collect();
-        for i in abs_indices {
-            layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
+        for path in &abs_paths {
+            let child = crate::layout::grid::grid_child_mut(node, path);
+            layout_positioned(engine, child, containing_rect, font_px, root_font_px);
             // All-auto correction: when no insets are specified, place at containing block's origin.
-            let child = &mut node.children[i];
+            let child = crate::layout::grid::grid_child_mut(node, path);
             let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                         && child.style.top.is_auto()   && child.style.bottom.is_auto();
             if all_auto && matches!(child.style.position, Position::Absolute) {
@@ -701,13 +708,17 @@ pub fn layout_inline_block(
     } else {
         engine.pos_cb.get()
     };
-    let abs_indices: Vec<usize> = (0..node.children.len())
-        .filter(|&i| matches!(node.children[i].style.position, Position::Absolute | Position::Fixed))
+    let eff2 = crate::layout::grid::collect_grid_children(node);
+    let abs_paths2: Vec<Vec<usize>> = eff2.into_iter()
+        .filter(|path| {
+            let c = crate::layout::grid::grid_child_ref(node, path);
+            matches!(c.style.position, Position::Absolute | Position::Fixed)
+        })
         .collect();
-    for i in abs_indices {
-        layout_positioned(engine, &mut node.children[i], containing_rect, font_px, root_font_px);
-        // All-auto correction: when no insets are specified, place at containing block's origin.
-        let child = &mut node.children[i];
+    for path in &abs_paths2 {
+        let child = crate::layout::grid::grid_child_mut(node, path);
+        layout_positioned(engine, child, containing_rect, font_px, root_font_px);
+        let child = crate::layout::grid::grid_child_mut(node, path);
         let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                     && child.style.top.is_auto()   && child.style.bottom.is_auto();
         if all_auto && matches!(child.style.position, Position::Absolute) {
