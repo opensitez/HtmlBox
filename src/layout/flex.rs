@@ -127,7 +127,7 @@ pub fn layout_flex(
 
         // Resolve flex-basis → basis_main (content-box size)
         let basis_main: f32 = if !child.style.flex_basis.is_auto() {
-            let raw = child.style.flex_basis.resolve_vp(child_font, if is_row { content_w } else { 0.0 }, root_font_px, engine.viewport_w, engine.viewport_h);
+            let raw = child.style.flex_basis.resolve_vp(child_font, if is_row { content_w } else { rbox.content_height.unwrap_or(0.0) }, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 if is_row {
                     (raw - irb.border_left - irb.border_right - irb.padding_left - irb.padding_right).max(0.0)
@@ -145,7 +145,8 @@ pub fn layout_flex(
                 raw.max(0.0)
             }
         } else if !is_row && !child.style.height.is_auto() {
-            let raw = child.style.height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
+            let main_ref = rbox.content_height.unwrap_or(0.0);
+            let raw = child.style.height.resolve_vp(child_font, main_ref, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 (raw - irb.border_top - irb.border_bottom - irb.padding_top - irb.padding_bottom).max(0.0)
             } else {
@@ -536,25 +537,24 @@ pub fn layout_flex(
                 let child_font = child.style.font_size_px(font_px, root_font_px);
                 let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
                 let item_containing = if is_row { items[item_idx].main_used + items[item_idx].outer_extra } else { content_w };
-                if is_row && child.style.height.is_auto() {
+                if is_row {
                     let cross_extra = irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                                     + irb.margin_top + irb.margin_bottom;
-                    let stretch_h = (lc - cross_extra).max(0.0);
-                    // Skip re-layout if the child already has the right height
-                    if (stretch_h - child.content_rect.h).abs() > 0.5 {
+                    let target_h = (lc - cross_extra).max(0.0);
+                    // Re-layout if the child doesn't fill the line cross size
+                    if target_h > 0.0 && (target_h - child.content_rect.h).abs() > 0.5 {
                         let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
-                            stretch_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
-                        } else { stretch_h };
+                            target_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
+                        } else { target_h };
                         child.style.height = CssLength::Px(css_h);
                         engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
                         items[item_idx].cross_size = child.margin_rect.h;
                     }
-                } else if !is_row && child.style.width.is_auto() {
+                } else if !is_row {
                     let cross_extra = irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                                     + irb.margin_left + irb.margin_right;
                     let stretch_w = (lc - cross_extra).max(0.0);
-                    // Skip re-layout if the child already has the right width
-                    if (stretch_w - child.content_rect.w).abs() > 0.5 {
+                    if stretch_w > 0.0 && (stretch_w - child.content_rect.w).abs() > 0.5 {
                         let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
                             stretch_w + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                         } else { stretch_w };

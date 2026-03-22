@@ -4039,16 +4039,48 @@ pub fn parse_length(v: &str) -> CssLength {
 /// `px`, `%`, `em`, `rem` terms.  Produces `CssLength::Calc(pct, px)` when
 /// mixed units are present, or a simple variant when all terms share a unit.
 fn parse_calc(expr: &str) -> CssLength {
-    // Tokenise: split on `+` and `-` while keeping the sign.
-    // We normalise whitespace first so " - " becomes " -".
     let expr = expr.trim();
+
+    // Handle outer multiplication/division: "(expr) * N" or "(expr) / N"
+    // where the whole inner expression is scaled by a factor.
+    let outer_factor = {
+        let trimmed = expr.trim();
+        // Pattern: (...) / N  or  (...) * N
+        if trimmed.starts_with('(') {
+            if let Some(close) = find_matching_paren(trimmed) {
+                let after = trimmed[close+1..].trim();
+                if let Some(rest) = after.strip_prefix('/') {
+                    rest.trim().parse::<f32>().ok().map(|n| if n != 0.0 { 1.0 / n } else { 1.0 })
+                } else if let Some(rest) = after.strip_prefix('*') {
+                    rest.trim().parse::<f32>().ok()
+                } else {
+                    None
+                }
+            } else { None }
+        } else { None }
+    };
+
+    // If we found an outer factor, parse the inner expression and scale it
+    let (expr, global_factor) = if let Some(factor) = outer_factor {
+        let close = find_matching_paren(expr).unwrap();
+        (&expr[1..close], factor)
+    } else {
+        // Strip all parens for simpler nested cases (best-effort)
+        // This handles things like calc(100% - 30px) without division
+        (expr, 1.0f32)
+    };
+    let expr: String = expr.chars().filter(|&c| c != '(' && c != ')').collect();
+    let expr = expr.trim();
+
     let mut pct: f32 = 0.0;
     let mut px:  f32 = 0.0;
     let mut em:  f32 = 0.0;
     let mut rem: f32 = 0.0;
+    let mut vw:  f32 = 0.0;
+    let mut vh:  f32 = 0.0;
 
-    // Split into tokens by `+` and `-` that are preceded by whitespace
-    // (to distinguish "100%" from "-360px").
+    // Split into additive terms at ` + ` and ` - ` (space-delimited to avoid
+    // splitting "-30px").  Each term may contain `*` or `/` with a number.
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();
     let chars: Vec<char> = expr.chars().collect();
@@ -4070,38 +4102,57 @@ fn parse_calc(expr: &str) -> CssLength {
     let s = current.trim().to_string();
     if !s.is_empty() { tokens.push(s); }
 
-    let mut vw: f32 = 0.0;
-    let mut vh: f32 = 0.0;
-
     for tok in &tokens {
-        // Strip internal whitespace so "- 40px" becomes "-40px"
         let t: String = tok.chars().filter(|c| !c.is_whitespace()).collect();
         if t.is_empty() { continue; }
-        if t.ends_with('%') {
-            pct += t[..t.len()-1].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("px") {
-            px += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("rem") {
-            rem += t[..t.len()-3].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("vmin") {
-            vw += t[..t.len()-4].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("vmax") {
-            vw += t[..t.len()-4].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("vh") {
-            vh += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("vw") {
-            vw += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
-        } else if t.ends_with("em") {
-            em += t[..t.len()-2].parse::<f32>().unwrap_or(0.0);
-        } else if let Ok(n) = t.parse::<f32>() {
-            px += n;
+        // Handle multiplication/division: "100%/3" or "30px*2"
+        let (value_part, multiplier) = if let Some(pos) = t.find('/') {
+            let divisor = t[pos+1..].parse::<f32>().unwrap_or(1.0);
+            (&t[..pos], if divisor != 0.0 { 1.0 / divisor } else { 1.0 })
+        } else if let Some(pos) = t.find('*') {
+            // Could be "2*100%" or "100%*2" — find which side is the number
+            let left = &t[..pos];
+            let right = &t[pos+1..];
+            if let Ok(n) = left.parse::<f32>() {
+                (right, n)
+            } else {
+                (left, right.parse::<f32>().unwrap_or(1.0))
+            }
+        } else {
+            (t.as_str(), 1.0f32)
+        };
+        if value_part.ends_with('%') {
+            pct += value_part[..value_part.len()-1].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("px") {
+            px += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("rem") {
+            rem += value_part[..value_part.len()-3].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("vmin") {
+            vw += value_part[..value_part.len()-4].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("vmax") {
+            vw += value_part[..value_part.len()-4].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("vh") {
+            vh += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("vw") {
+            vw += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if value_part.ends_with("em") {
+            em += value_part[..value_part.len()-2].parse::<f32>().unwrap_or(0.0) * multiplier;
+        } else if let Ok(n) = value_part.parse::<f32>() {
+            px += n * multiplier;
         }
     }
+
+    // Apply outer factor (e.g. the /3 in "(100% - 30px)/3")
+    pct *= global_factor;
+    px  *= global_factor;
+    em  *= global_factor;
+    rem *= global_factor;
+    vw  *= global_factor;
+    vh  *= global_factor;
 
     let vals = [pct, px, em, rem, vw, vh];
     let n_nonzero = vals.iter().filter(|&&v| v != 0.0).count();
     if n_nonzero <= 1 {
-        // Single unit — use the simple variant
         if pct != 0.0 { return CssLength::Percent(pct); }
         if em  != 0.0 { return CssLength::Em(em); }
         if rem != 0.0 { return CssLength::Rem(rem); }
@@ -4110,6 +4161,19 @@ fn parse_calc(expr: &str) -> CssLength {
         return CssLength::Px(px);
     }
     CssLength::Calc(vals)
+}
+
+/// Find the index of the closing `)` that matches the opening `(` at position 0.
+fn find_matching_paren(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { depth -= 1; if depth == 0 { return Some(i); } }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Find the first comma outside nested parentheses.
@@ -5303,8 +5367,16 @@ fn apply_cascade_inner(
         stylesheet.rules[*ri].declarations.keys().any(|p| p.starts_with("--"))
         || stylesheet.rules[*ri].important_declarations.keys().any(|p| p.starts_with("--"))
     });
+    // Also check inline style for custom properties — these must be available
+    // during var() resolution of stylesheet rules on the same element.
+    let inline_decls = root.attributes.get("style").cloned()
+        .map(|s| parse_declarations_important(&s));
+    let has_inline_vars = inline_decls.as_ref()
+        .map(|(n, _)| n.keys().any(|p| p.starts_with("--")))
+        .unwrap_or(false);
+
     let mut local_vars_owned = HashMap::new();
-    let mut local_vars: &HashMap<String, String> = if has_new_vars {
+    let mut local_vars: &HashMap<String, String> = if has_new_vars || has_inline_vars {
         let mut vars = inherited_vars.clone();
         for &(_, ri) in &matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
@@ -5313,6 +5385,14 @@ fn apply_cascade_inner(
                 }
             }
             for (prop, val) in &stylesheet.rules[ri].important_declarations {
+                if prop.starts_with("--") {
+                    vars.insert(prop.clone(), val.clone());
+                }
+            }
+        }
+        // Inline custom properties override stylesheet ones (higher specificity)
+        if let Some((ref n, _)) = inline_decls {
+            for (prop, val) in n {
                 if prop.starts_with("--") {
                     vars.insert(prop.clone(), val.clone());
                 }
@@ -5407,25 +5487,8 @@ fn apply_cascade_inner(
     }
 
     // Apply inline style attribute (normal declarations).
-    // Inline custom properties (--xxx) are merged into the variable scope
-    // so children (and the element's own later declarations) can resolve var().
-    let (_inline_normal, inline_important) = if let Some(inline_style) = root.attributes.get("style").cloned() {
-        let (n, i) = parse_declarations_important(&inline_style);
-        let has_inline_vars = n.keys().any(|p| p.starts_with("--"));
-        if has_inline_vars {
-            let mut vars = if has_new_vars {
-                local_vars_owned.clone()
-            } else {
-                inherited_vars.clone()
-            };
-            for (prop, val) in &n {
-                if prop.starts_with("--") {
-                    vars.insert(prop.clone(), val.clone());
-                }
-            }
-            local_vars_owned = vars;
-            local_vars = &local_vars_owned;
-        }
+    // Custom properties were already merged into local_vars above.
+    let (_inline_normal, inline_important) = if let Some((n, i)) = inline_decls {
         for (prop, val) in &n {
             if prop.starts_with("--") { continue; }
             let resolved = resolve_var_references(val, local_vars);

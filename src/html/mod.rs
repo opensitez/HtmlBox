@@ -8,104 +8,8 @@ use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
 /// Pre-pass: extract `<svg>…</svg>` blocks and replace with `<img>` placeholders.
 /// Returns (processed_html, map_of_key→svg_markup).
-fn extract_svg_blocks(html: &str) -> (String, HashMap<String, String>) {
-    // Quick check: skip lowercasing and allocation if no SVGs present
-    if crate::css::find_case_insensitive(html, "<svg") .is_none() {
-        return (String::new(), HashMap::new());
-    }
-    let mut result = String::with_capacity(html.len());
-    let mut svg_map: HashMap<String, String> = HashMap::new();
-    let mut pos = 0usize;
-    let mut svg_idx = 0u32;
-
-    while pos < html.len() {
-        // Find next <svg (case-insensitive, no full-string lowercase)
-        let svg_start = match crate::css::find_case_insensitive(&html[pos..], "<svg") {
-            Some(offset) => pos + offset,
-            None => {
-                result.push_str(&html[pos..]);
-                break;
-            }
-        };
-
-        // Copy everything before <svg>
-        result.push_str(&html[pos..svg_start]);
-
-        // Find closing </svg>
-        let svg_end = match crate::css::find_case_insensitive(&html[svg_start..], "</svg>") {
-            Some(offset) => svg_start + offset + 6, // include </svg>
-            None => {
-                // Malformed: no closing tag, emit rest as-is
-                result.push_str(&html[svg_start..]);
-                pos = html.len(); // consumed everything
-                let _ = pos;
-                break;
-            }
-        };
-
-        // Extract and patch <svg> tag if needed
-        let tag_end = html[svg_start..].find('>').map(|o| svg_start + o + 1).unwrap_or(svg_end);
-        let mut svg_tag = html[svg_start..tag_end].to_string();
-        // Patch in xmlns if missing
-        if !svg_tag.contains("xmlns=") {
-            if let Some(insert_pos) = svg_tag.rfind('>') {
-                svg_tag.insert_str(insert_pos, " xmlns=\"http://www.w3.org/2000/svg\"");
-            }
-        }
-        let svg_body = &html[tag_end..svg_end];
-        // Patch in xmlns:xlink if the body uses xlink: but the tag doesn't declare it
-        if svg_body.contains("xlink:") && !svg_tag.contains("xmlns:xlink") {
-            if let Some(insert_pos) = svg_tag.rfind('>') {
-                svg_tag.insert_str(insert_pos, " xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
-            }
-        }
-        // Rebuild svg_markup with patched tag
-        let svg_markup = format!("{}{}", svg_tag, svg_body);
-
-        // Parse all attributes from the SVG opening tag in one pass
-        let tag_content = svg_tag.trim_start_matches('<').trim_end_matches('>');
-        let (_, attrs) = parse_tag_attrs(tag_content);
-
-        let vb = parse_viewbox_value(attrs.get("viewbox").map(|s| s.as_str()));
-        // Inline style width/height take precedence over HTML attributes
-        let style_w = attrs.get("style").and_then(|s| style_px(s, "width"));
-        let style_h = attrs.get("style").and_then(|s| style_px(s, "height"));
-        let attr_w = attrs.get("width").and_then(|s| parse_px(s));
-        let attr_h = attrs.get("height").and_then(|s| parse_px(s));
-        let explicit_w = style_w.or(attr_w);
-        let explicit_h = style_h.or(attr_h);
-
-        let (w, h) = resolve_replaced_size(explicit_w, explicit_h, vb);
-
-        let key = format!("__svg_{}__", svg_idx);
-        svg_idx += 1;
-        svg_map.insert(key.clone(), svg_markup);
-
-        // Build <img> with all SVG attributes forwarded as data-svg-* plus sizing
-        let mut img_tag = format!(
-            "<img src=\"{}\" width=\"{}\" height=\"{}\" data-svg-w=\"{}\" data-svg-h=\"{}\"",
-            key, w, h, w, h
-        );
-        for (k, v) in &attrs {
-            match k.as_str() {
-                "width" | "height" | "xmlns" | "xmlns:xlink" | "version" => {}
-                // Preserve class/id/style so CSS selectors still match the replacement <img>
-                "class" | "id" | "style" => {
-                    img_tag.push_str(&format!(" {}=\"{}\"", k, v));
-                }
-                _ => {
-                    img_tag.push_str(&format!(" data-svg-{}=\"{}\"", k, v));
-                }
-            }
-        }
-        img_tag.push('>');
-        result.push_str(&img_tag);
-
-        pos = svg_end;
-    }
-
-    (result, svg_map)
-}
+// SVG blocks are now handled inline by the tokenizer (collected as raw text)
+// and rasterized by the parser when building the DOM tree.
 
 /// Parse leading integer pixels from a string like "20px", "512", "20px;height:10px".
 fn parse_px(s: &str) -> Option<u32> {
@@ -187,48 +91,9 @@ pub fn load_background_images(node: &mut HtmlBox, base_url: &str) {
     }
 }
 
-fn rasterize_svgs(node: &mut HtmlBox, svg_map: &HashMap<String, String>,
-                   cache: &mut HashMap<(String, u32, u32), (Vec<u8>, u32, u32)>) {
-    if node.tag == "img" {
-        if let Some(src) = node.attributes.get("src") {
-            if src.starts_with("__svg_") {
-                if let Some(svg_source) = svg_map.get(src) {
-                    let w = node.attributes.get("data-svg-w")
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or_else(|| if node.image_width > 0 { node.image_width } else { 200 });
-                    let h = node.attributes.get("data-svg-h")
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or_else(|| if node.image_height > 0 { node.image_height } else { 150 });
-                    let cache_key = (svg_source.clone(), w, h);
-                    if let Some((rgba, cw, ch)) = cache.get(&cache_key) {
-                        node.image_data = Some(rgba.clone());
-                        node.image_width = *cw;
-                        node.image_height = *ch;
-                        node.svg_markup = Some(svg_source.clone());
-                    } else if let Some(rgba) = rasterize_svg_to_rgba(svg_source, w, h) {
-                        node.image_data = Some(rgba.clone());
-                        node.image_width = w;
-                        node.image_height = h;
-                        node.svg_markup = Some(svg_source.clone());
-                        cache.insert(cache_key, (rgba, w, h));
-                    }
-                    if node.style.width.is_auto() {
-                        apply_property(&mut node.style, "width", &format!("{}px", w));
-                    }
-                    if node.style.height.is_auto() {
-                        apply_property(&mut node.style, "height", &format!("{}px", h));
-                    }
-                }
-            }
-        }
-    }
-    for child in &mut node.children {
-        rasterize_svgs(child, svg_map, cache);
-    }
-}
 
 /// Rasterize an SVG string to RGBA pixel data using resvg.
-fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> {
+pub fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> {
     use resvg::usvg;
     let opt = usvg::Options::default();
     let tree = match usvg::Tree::from_str(svg, &opt) {
@@ -260,6 +125,17 @@ fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> 
         }
     }
     Some(rgba)
+}
+
+/// Rasterize an SVG at its intrinsic (viewBox) size. Returns (rgba, w, h).
+pub fn rasterize_svg_intrinsic(svg: &str) -> Option<(Vec<u8>, u32, u32)> {
+    use resvg::usvg;
+    let opt = usvg::Options::default();
+    let tree = usvg::Tree::from_str(svg, &opt).ok()?;
+    let size = tree.size();
+    let w = (size.width().ceil() as u32).max(1);
+    let h = (size.height().ceil() as u32).max(1);
+    rasterize_svg_to_rgba(svg, w, h).map(|rgba| (rgba, w, h))
 }
 
 // ─── Charset detection ─────────────────────────────────────────────────────
@@ -675,9 +551,10 @@ fn tokenize(html: &str) -> Vec<Token> {
             let is_void = is_void_element(&tag);
             tokens.push(Token::OpenTag { tag: tag.clone(), attrs, self_closing: self_closing || is_void });
             i = end;
-            // Raw text elements: content must not be parsed as HTML.
-            // Collect everything until the matching close tag as a single Text token.
-            if matches!(tag.as_str(), "style" | "script" | "noscript") && !(self_closing || is_void) {
+            // Raw text / foreign content elements: content must not be parsed as HTML.
+            // <svg> is foreign content — collect everything until </svg> as raw text
+            // so inner SVG elements (path, circle, etc.) don't interfere with HTML parsing.
+            if matches!(tag.as_str(), "style" | "script" | "noscript" | "svg") && !(self_closing || is_void) {
                 let close_pat = format!("</{}", tag);
                 let raw_end = crate::css::find_case_insensitive(&html[i..], &close_pat)
                     .map(|e| i + e)
@@ -1187,6 +1064,48 @@ impl HtmlParser {
                                 self.stylesheet.rules.push(rule);
                             }
                         }
+                        continue;
+                    }
+
+                    // SVG: collect raw markup and rasterize to an <img> node.
+                    if tag == "svg" {
+                        let svg_body = if !self_closing { self.collect_raw_text_until("svg") } else { String::new() };
+                        // Rebuild full SVG markup with attributes
+                        let mut svg_tag_str = String::from("<svg");
+                        for (k, v) in &attrs {
+                            svg_tag_str.push_str(&format!(" {}=\"{}\"", k, v));
+                        }
+                        if !svg_tag_str.contains("xmlns=") {
+                            svg_tag_str.push_str(" xmlns=\"http://www.w3.org/2000/svg\"");
+                        }
+                        if svg_body.contains("xlink:") && !svg_tag_str.contains("xmlns:xlink") {
+                            svg_tag_str.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+                        }
+                        svg_tag_str.push('>');
+                        let svg_markup = format!("{}{}</svg>", svg_tag_str, svg_body);
+
+                        let vb = parse_viewbox_value(attrs.get("viewbox").map(|s| s.as_str()));
+                        let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
+                        let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
+                        let (w, h) = resolve_replaced_size(explicit_w, explicit_h, vb);
+
+                        let mut node = HtmlBox::new("img");
+                        // Forward SVG attributes as class/id/style for CSS matching
+                        if let Some(cls) = attrs.get("class") { node.attributes.insert("class".to_string(), cls.clone()); }
+                        if let Some(id) = attrs.get("id") { node.attributes.insert("id".to_string(), id.clone()); }
+                        if let Some(st) = attrs.get("style") { node.attributes.insert("style".to_string(), st.clone()); }
+                        apply_property(&mut node.style, "display", "inline-block");
+                        apply_property(&mut node.style, "width", &format!("{}px", w));
+                        apply_property(&mut node.style, "height", &format!("{}px", h));
+                        node.svg_markup = Some(svg_markup.clone());
+
+                        // Rasterize immediately
+                        if let Some(rgba) = rasterize_svg_to_rgba(&svg_markup, w, h) {
+                            node.image_data = Some(rgba);
+                            node.image_width = w;
+                            node.image_height = h;
+                        }
+                        stack.last_mut().unwrap().node.children.push(node);
                         continue;
                     }
 
@@ -1750,11 +1669,8 @@ fn parse_html_full(
     on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
     on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
 ) -> Document {
-    // Pre-pass: extract <svg> blocks, replace with <img> placeholders
-    let (processed_html, svg_map) = extract_svg_blocks(html);
-    let html_to_parse = if svg_map.is_empty() { html } else { &processed_html };
-
-    let tokens = tokenize(html_to_parse);
+    // SVG blocks are now handled inline by the tokenizer/parser — no pre-pass needed.
+    let tokens = tokenize(html);
     let mut parser = HtmlParser::new(tokens);
     parser.base_url = base_url.to_string();
     parser.on_open_tag = on_open_tag;
@@ -1913,12 +1829,6 @@ fn parse_html_full(
     // Post-cascade fixes
     apply_details_summary_post_cascade(&mut doc.root);
     number_lists(&mut doc.root);
-
-    // Post-pass: rasterize SVG placeholders into image data (with dedup cache)
-    if !svg_map.is_empty() {
-        let mut svg_cache = HashMap::new();
-        rasterize_svgs(&mut doc.root, &svg_map, &mut svg_cache);
-    }
 
     doc
 }

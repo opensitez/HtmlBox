@@ -1034,7 +1034,9 @@ impl Renderer {
         let opacity = style.opacity;
 
         if all_same && style.border_top_style != BorderStyle::None {
-            let tw = style.border_top_width.resolve(font_px, br.w, 16.0).max(1.0);
+            let tw = style.border_top_width.resolve(font_px, br.w, 16.0);
+            if tw < 0.01 { return; } // border-width: 0 — nothing to draw
+            let tw = tw.max(1.0);
             let c  = style.border_top_color;
             let ca = ((c.a as f32) * opacity) as u8;
             let mut paint = Paint::default();
