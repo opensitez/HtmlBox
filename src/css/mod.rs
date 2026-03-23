@@ -43,6 +43,7 @@ pub struct AncestorInfo {
     pub sibling_count:      usize,   // total children of parent
     pub type_child_index:   usize,   // 0-based among same-tag siblings
     pub type_sibling_count: usize,   // count of same-tag siblings
+    pub ptr:                *const crate::types::HtmlBox,  // raw pointer for hover chain check
 }
 
 /// Extra context passed down through selector matching.
@@ -58,6 +59,11 @@ pub struct MatchContext<'a> {
     pub type_sibling_count: usize,
     /// Raw pointer to the HtmlBox being matched (for :has()).
     pub html_box:           Option<&'a crate::types::HtmlBox>,
+    /// Set of element pointers on the hover chain (hovered element + all ancestors).
+    /// When non-empty, :hover pseudo-class matches elements in this set.
+    pub hover_chain:        &'a std::collections::HashSet<*const crate::types::HtmlBox>,
+    /// Raw pointer of the element currently being matched (for :hover on ancestors).
+    pub element_ptr:        *const crate::types::HtmlBox,
 }
 
 impl CssSelector {
@@ -104,12 +110,15 @@ impl CssSelector {
 
     /// Match against `b` without ancestor context (for tests / simple selectors).
     pub fn matches_box(&self, b: &HtmlBox) -> bool {
+        let empty_hover = std::collections::HashSet::new();
         let ctx = MatchContext {
             focused_box: std::ptr::null(),
             keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
+            hover_chain: &empty_hover,
+            element_ptr: b as *const HtmlBox,
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[], &ctx)
     }
@@ -122,12 +131,15 @@ impl CssSelector {
         sibling_count: usize,
         ancestors: &[AncestorInfo],
     ) -> bool {
+        let empty_hover = std::collections::HashSet::new();
         let ctx = MatchContext {
             focused_box: std::ptr::null(),
             keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
+            hover_chain: &empty_hover,
+            element_ptr: b as *const HtmlBox,
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, &ctx)
     }
@@ -203,6 +215,8 @@ fn matches_selector_with_ancestors(
                             type_child_index: anc.type_child_index,
                             type_sibling_count: anc.type_sibling_count,
                             html_box: None,
+                            hover_chain: ctx.hover_chain,
+                            element_ptr: anc.ptr,
                         };
                         if matches_selector_with_ancestors(
                             left_parts,
@@ -226,6 +240,8 @@ fn matches_selector_with_ancestors(
                             type_child_index: parent.type_child_index,
                             type_sibling_count: parent.type_sibling_count,
                             html_box: None,
+                            hover_chain: ctx.hover_chain,
+                            element_ptr: parent.ptr,
                         };
                         matches_selector_with_ancestors(
                             left_parts,
@@ -345,7 +361,16 @@ fn matches_part_with_context(
                 "any-link" | "link" => {
                     attrs.contains_key("href") && matches!(tag, "a" | "area" | "link")
                 }
-                "visited" | "active" | "hover" => false,
+                "visited" | "active" => false,
+                "hover" => {
+                    // :hover matches when the element being matched is in the
+                    // hover chain (the hovered element + all its ancestors).
+                    if !ctx.hover_chain.is_empty() && !ctx.element_ptr.is_null() {
+                        ctx.hover_chain.contains(&ctx.element_ptr)
+                    } else {
+                        false
+                    }
+                }
                 "placeholder-shown" | "required" | "optional" | "valid" | "invalid" => false,
                 _ => {
                     // nth-child(expr) / nth-of-type(expr)
@@ -411,6 +436,7 @@ fn has_descendant_matching(
     sel: &CssSelector,
     focused_box: *const crate::types::HtmlBox,
 ) -> bool {
+    let empty_hover = std::collections::HashSet::new();
     for child in &node.children {
         let ctx = MatchContext {
             focused_box,
@@ -418,6 +444,8 @@ fn has_descendant_matching(
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(child),
+            hover_chain: &empty_hover,
+            element_ptr: child as *const HtmlBox,
         };
         if matches_selector_with_ancestors(&sel.parts, &child.tag, &child.attributes, 0, 1, &[], &ctx) {
             return true;
@@ -5192,12 +5220,15 @@ fn apply_container_cascade_inner(
 
     // Apply matching container rules to this element
     if !container_stack.is_empty() {
+        let empty_hover = std::collections::HashSet::new();
         let match_ctx = MatchContext {
             focused_box,
             keyboard_focus,
             type_child_index,
             type_sibling_count,
             html_box: Some(node),
+            hover_chain: &empty_hover,
+            element_ptr: node as *const crate::types::HtmlBox,
         };
         let mut cont_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
         for rule in &stylesheet.rules {
@@ -5268,6 +5299,7 @@ fn apply_container_cascade_inner(
         sibling_count,
         type_child_index,
         type_sibling_count,
+        ptr:              node as *const crate::types::HtmlBox,
     });
 
     // O(n) type counting (was O(n²) with per-child filter passes).
@@ -5326,13 +5358,53 @@ pub fn apply_cascade_vp(
     focused_box: *const crate::types::HtmlBox,
     keyboard_focus: bool,
 ) {
+    let empty_hover = std::collections::HashSet::new();
+    apply_cascade_vp_hover(root, stylesheet, parent_style, root_font_px, vw, vh, focused_box, keyboard_focus, &empty_hover);
+}
+
+/// Cascade with hover chain: elements in hover_chain will match :hover pseudo-class.
+pub fn apply_cascade_vp_hover(
+    root: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    parent_style: Option<&ComputedStyle>,
+    root_font_px: f32,
+    vw: f32,
+    vh: f32,
+    focused_box: *const crate::types::HtmlBox,
+    keyboard_focus: bool,
+    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+) {
     // A single Vec is reused for the entire tree traversal (push/pop per node)
     // instead of cloning the ancestor list at every level — O(depth) allocations
     // instead of O(nodes × depth).
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters);
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain);
+}
+
+/// Build the set of element pointers from root to the hovered element (hover chain).
+/// Returns empty set if target is null or not found in the tree.
+pub fn build_hover_chain(root: &crate::types::HtmlBox, target: *const crate::types::HtmlBox) -> std::collections::HashSet<*const crate::types::HtmlBox> {
+    if target.is_null() { return std::collections::HashSet::new(); }
+    fn walk(node: &crate::types::HtmlBox, target: *const crate::types::HtmlBox, path: &mut Vec<*const crate::types::HtmlBox>) -> bool {
+        path.push(node as *const crate::types::HtmlBox);
+        if std::ptr::eq(node as *const crate::types::HtmlBox, target) { return true; }
+        for child in &node.children {
+            if walk(child, target, path) { return true; }
+        }
+        // Also search shadow tree
+        if let Some(ref sr) = node.shadow_root {
+            for child in &sr.children {
+                if walk(child, target, path) { return true; }
+            }
+        }
+        path.pop();
+        false
+    }
+    let mut path = Vec::new();
+    walk(root, target, &mut path);
+    path.into_iter().collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5359,6 +5431,7 @@ fn apply_cascade_inner(
     inherited_vars: &HashMap<String, String>,
     candidates_buf: &mut Vec<usize>,
     counters: &mut HashMap<String, Vec<i32>>,
+    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
 ) {
     // Guard against stack overflow on deeply nested DOMs.
     if ancestors.len() >= MAX_CASCADE_DEPTH {
@@ -5486,6 +5559,8 @@ fn apply_cascade_inner(
         type_child_index,
         type_sibling_count,
         html_box: Some(root),
+        hover_chain,
+        element_ptr: root as *const crate::types::HtmlBox,
     };
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
@@ -5533,6 +5608,14 @@ fn apply_cascade_inner(
                     if has_hover   { hover_matched.push((rule.specificity, rule_idx)); }
                     if has_active  { active_matched.push((rule.specificity, rule_idx)); }
                     if has_visited { visited_matched.push((rule.specificity, rule_idx)); }
+                    // When hover chain is active, also match the FULL selector
+                    // (with :hover intact). If it matches, apply the rule as a
+                    // normal rule so it affects layout (e.g. display:block on hover).
+                    if has_hover && !hover_chain.is_empty() {
+                        if sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
+                            matched.push((rule.specificity, rule_idx));
+                        }
+                    }
                     break;
                 }
                 continue;
@@ -5948,6 +6031,7 @@ fn apply_cascade_inner(
         sibling_count,
         type_child_index,
         type_sibling_count,
+        ptr:                root as *const crate::types::HtmlBox,
     });
 
     // Helper: cascade a list of children with a given stylesheet
@@ -5963,6 +6047,7 @@ fn apply_cascade_inner(
         inherited_vars: &HashMap<String, String>,
         candidates_buf: &mut Vec<usize>,
         counters: &mut HashMap<String, Vec<i32>>,
+        hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
     ) {
         let n_children = children.len();
         if n_children == 0 { return; }
@@ -5992,6 +6077,7 @@ fn apply_cascade_inner(
                 type_counts[i], type_totals[i],
                 vw, vh, focused_box, keyboard_focus,
                 inherited_vars, candidates_buf, counters,
+                hover_chain,
             );
         }
     }
@@ -6006,20 +6092,20 @@ fn apply_cascade_inner(
         cascade_children(
             &mut sr.children, &sr.stylesheet, &style, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters,
+            &local_vars, candidates_buf, counters, hover_chain,
         );
         root.shadow_root = Some(sr);
         // Also cascade light DOM children (they need document styles for ::slotted)
         cascade_children(
             &mut root.children, stylesheet, &style, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters,
+            &local_vars, candidates_buf, counters, hover_chain,
         );
     } else {
         cascade_children(
             &mut root.children, stylesheet, &style, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters,
+            &local_vars, candidates_buf, counters, hover_chain,
         );
     }
 

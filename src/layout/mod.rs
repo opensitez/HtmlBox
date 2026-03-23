@@ -801,10 +801,16 @@ impl LayoutEngine {
                             != crate::css::evaluate_media(&r.media_condition, viewport_width, self.viewport_h)
                 }));
 
-        let did_cascade = if needs_cascade {
-                crate::css::apply_cascade_vp(
+        let hover_changed = doc.hover_changed;
+        doc.hover_changed = false;
+
+        let did_cascade = if needs_cascade || hover_changed {
+            // Build hover chain only when we're about to cascade
+            let hover_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
+            crate::css::apply_cascade_vp_hover(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
+                &hover_chain,
             );
             self.last_cascade_vw = viewport_width;
             true
@@ -815,8 +821,6 @@ impl LayoutEngine {
         // ── CSS animation / transition runtime ─────────────────────────────
         let now = std::time::Instant::now();
         doc.sync_animations(now);
-        let hover_changed = doc.hover_changed;
-        doc.hover_changed = false;
         if did_cascade || hover_changed { doc.sync_transitions(now, did_cascade); }
         doc.tick_animations(now);
         if !doc.animation_overrides.is_empty() {

@@ -18,5 +18,6 @@ pub mod test_scroll;
 pub mod test_container;
 pub mod test_parser_robustness;
 pub mod test_display_contents;
+pub mod test_hover;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;

@@ -1977,7 +1977,7 @@ pub struct Document {
     /// Set by `tick_animations`; tells the host to request another render frame.
     pub needs_animation_frame: bool,
     /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
-    pub(crate) hover_changed: bool,
+    pub hover_changed: bool,
 
     // ── aria-live region machinery ─────────────────────────────────────────────
     /// Announcements queued since the last call to `take_announcements()`.
