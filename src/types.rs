@@ -2099,9 +2099,19 @@ impl Document {
                 // Only interactive (focusable) elements receive focus on click.
                 // Clicking a non-focusable element blurs the current focus.
                 if etype == HtmlEventType::MouseDown {
-                    let click_focusable = !hit_ptr.is_null()
-                        && is_focusable_node(unsafe { &*hit_ptr });
-                    let new_focus = if click_focusable { hit_ptr } else { std::ptr::null() };
+                    // Walk up from hit target to find the nearest focusable ancestor
+                    let focus_target = if !hit_ptr.is_null() {
+                        let hit = unsafe { &*hit_ptr };
+                        if is_focusable_node(hit) {
+                            hit_ptr
+                        } else {
+                            // Find focusable parent (e.g. #text inside <button> or <input>)
+                            find_form_parent(&self.root, hit_ptr)
+                        }
+                    } else { std::ptr::null() };
+                    let click_focusable = !focus_target.is_null()
+                        && is_focusable_node(unsafe { &*focus_target });
+                    let new_focus = if click_focusable { focus_target } else { std::ptr::null() };
                     if self.focused_box != new_focus {
                         let old_focus = self.focused_box;
                         self.keyboard_focus = false;
@@ -3081,6 +3091,27 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
                     Some(true)
                 }
                 "submit" | "button" | "reset" => {
+                    // Reset button: reset the parent form
+                    if input_type == "reset" {
+                        let form_action = find_parent_form_action(root, target);
+                        // Find and reset the parent form
+                        fn find_form_for_reset(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+                            if node.tag == "form" {
+                                fn contains(n: &HtmlBox, t: *const HtmlBox) -> bool {
+                                    if std::ptr::eq(n, t) { return true; }
+                                    n.children.iter().any(|c| contains(c, t))
+                                }
+                                if contains(node, target) { return Some(node as *const HtmlBox); }
+                            }
+                            for child in &node.children {
+                                if let Some(f) = find_form_for_reset(child, target) { return Some(f); }
+                            }
+                            None
+                        }
+                        if let Some(form_ptr) = find_form_for_reset(root, target) {
+                            reset_form(root, form_ptr);
+                        }
+                    }
                     if let Some(cb) = callback {
                         cb(&FormEvent {
                             tag: tag.clone(), id, name,
@@ -3121,7 +3152,24 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
                     });
                 }
             }
-            Some(false)
+            // Reset buttons reset the form
+            if btn_type == "reset" {
+                fn find_form_ptr(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+                    if node.tag == "form" {
+                        fn has(n: &HtmlBox, t: *const HtmlBox) -> bool {
+                            if std::ptr::eq(n, t) { return true; }
+                            n.children.iter().any(|c| has(c, t))
+                        }
+                        if has(node, target) { return Some(node as *const HtmlBox); }
+                    }
+                    for c in &node.children { if let Some(f) = find_form_ptr(c, target) { return Some(f); } }
+                    None
+                }
+                if let Some(fp) = find_form_ptr(root, target) {
+                    reset_form(root, fp);
+                }
+            }
+            Some(btn_type == "reset") // redraw if reset
         }
         "select" => {
             // Dropdown is handled in process_mouse_event with open_select state
@@ -3179,6 +3227,156 @@ pub fn find_parent_form_action(root: &HtmlBox, target: *const HtmlBox) -> String
         None
     }
     walk(root, target).unwrap_or_default()
+}
+
+/// Collect form data from all named, enabled fields inside a <form> element.
+/// Returns a map of name → value pairs, matching HTML form submission rules:
+/// - Text/password/hidden/email/etc: name → value attribute
+/// - Checkbox: included only if checked, value is "on" or the value attribute
+/// - Radio: included only if checked, value is the value attribute
+/// - Select: value of the selected option
+/// - Textarea: text content
+/// - Disabled elements are excluded
+/// - Elements without a name are excluded
+pub fn collect_form_data(form: &HtmlBox) -> std::collections::HashMap<String, String> {
+    let mut data = std::collections::HashMap::new();
+    collect_form_data_inner(form, &mut data);
+    data
+}
+
+fn collect_form_data_inner(node: &HtmlBox, data: &mut std::collections::HashMap<String, String>) {
+    if node.attributes.contains_key("disabled") { return; }
+    let name = match node.attributes.get("name") {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => {
+            // No name — recurse into children but don't collect this node
+            for child in &node.children { collect_form_data_inner(child, data); }
+            return;
+        }
+    };
+    match node.tag.as_str() {
+        "input" => {
+            let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            match input_type {
+                "checkbox" => {
+                    if node.attributes.contains_key("checked") {
+                        let val = node.attributes.get("value").cloned().unwrap_or_else(|| "on".to_string());
+                        data.insert(name, val);
+                    }
+                }
+                "radio" => {
+                    if node.attributes.contains_key("checked") {
+                        let val = node.attributes.get("value").cloned().unwrap_or_default();
+                        data.insert(name, val);
+                    }
+                }
+                "submit" | "button" | "reset" | "image" => {
+                    // Submit buttons are not included in form data by default
+                }
+                "file" => {
+                    // File inputs would need special handling — skip for now
+                }
+                _ => {
+                    let val = node.attributes.get("value").cloned().unwrap_or_default();
+                    data.insert(name, val);
+                }
+            }
+        }
+        "select" => {
+            let sel_idx: usize = node.data.get("_selected_idx")
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let mut opt_idx = 0usize;
+            for child in &node.children {
+                if child.tag == "option" {
+                    if opt_idx == sel_idx {
+                        let val = child.attributes.get("value").cloned()
+                            .unwrap_or_else(|| {
+                                child.children.iter().filter(|c| c.tag == "#text")
+                                    .map(|c| c.text.as_str()).collect::<String>().trim().to_string()
+                            });
+                        data.insert(name.clone(), val);
+                    }
+                    opt_idx += 1;
+                } else if child.tag == "optgroup" {
+                    for gc in &child.children {
+                        if gc.tag == "option" {
+                            if opt_idx == sel_idx {
+                                let val = gc.attributes.get("value").cloned()
+                                    .unwrap_or_else(|| {
+                                        gc.children.iter().filter(|c| c.tag == "#text")
+                                            .map(|c| c.text.as_str()).collect::<String>().trim().to_string()
+                                    });
+                                data.insert(name.clone(), val);
+                            }
+                            opt_idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+        "textarea" => {
+            let val = input_value(node);
+            data.insert(name, val);
+        }
+        _ => {
+            for child in &node.children { collect_form_data_inner(child, data); }
+        }
+    }
+}
+
+/// Reset all form fields inside a <form> to their default values.
+/// Text inputs reset to their original value attribute (from defaultValue).
+/// Checkboxes/radios reset to their initial checked state.
+/// Selects reset to the initially selected option.
+pub fn reset_form(root: &mut HtmlBox, form_ptr: *const HtmlBox) {
+    fn find_mut<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+        if std::ptr::eq(n, t) { return Some(n); }
+        for c in &mut n.children { if let Some(r) = find_mut(c, t) { return Some(r); } }
+        None
+    }
+    if let Some(form) = find_mut(root, form_ptr) {
+        reset_form_inner(form);
+    }
+}
+
+fn reset_form_inner(node: &mut HtmlBox) {
+    match node.tag.as_str() {
+        "input" => {
+            let input_type = node.attributes.get("type").cloned().unwrap_or_else(|| "text".to_string());
+            match input_type.as_str() {
+                "text" | "password" | "email" | "search" | "url" | "tel" | "number" => {
+                    // Reset to defaultValue (original value from HTML)
+                    let default = node.attributes.get("defaultValue").cloned()
+                        .or_else(|| node.attributes.get("value").cloned())
+                        .unwrap_or_default();
+                    node.attributes.insert("value".into(), default);
+                    node.input_cursor = 0;
+                }
+                "checkbox" | "radio" => {
+                    // Reset to initial checked state
+                    if node.attributes.contains_key("defaultChecked") {
+                        node.attributes.insert("checked".into(), String::new());
+                    } else {
+                        node.attributes.remove("checked");
+                    }
+                }
+                _ => {}
+            }
+        }
+        "textarea" => {
+            // Reset text content to original
+            if let Some(default) = node.attributes.get("defaultValue").cloned() {
+                for child in &mut node.children {
+                    if child.tag == "#text" { child.text = default.clone(); break; }
+                }
+                node.attributes.insert("value".into(), default);
+            }
+            node.input_cursor = 0;
+        }
+        _ => {
+            for child in &mut node.children { reset_form_inner(child); }
+        }
+    }
 }
 
 /// Returns true if this element is a text-editable form input.

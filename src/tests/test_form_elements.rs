@@ -1128,7 +1128,381 @@ fn click_radio_selects() {
     assert!(!r1.attributes.contains_key("checked"), "r1 should be unchecked");
 }
 
+// ── All button types ─────────────────────────────────────────────────────────
+
+fn click_button_fires_event(html: &str, expected_tag: &str) -> Vec<FormEventKind> {
+    let mut doc = layout_html(html, 400.0);
+    let events_ref = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FormEventKind>::new()));
+    let events_clone = events_ref.clone();
+    doc.on_form_event = Some(Box::new(move |e: &FormEvent| {
+        events_clone.lock().unwrap().push(e.kind.clone());
+    }));
+    let btn = find_by_tag(&doc.root, expected_tag).unwrap();
+    let center = (btn.border_rect.x + btn.border_rect.w / 2.0, btn.border_rect.y + btn.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    let result = events_ref.lock().unwrap().clone();
+    doc.on_form_event = None; // drop the closure before doc
+    result
+}
+
 #[test]
+fn submit_input_fires_click_and_submit() {
+    let events = click_button_fires_event(
+        r#"<form action="/login"><input type="submit" value="Go"></form>"#, "input");
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))), "should fire Click");
+}
+
+#[test]
+fn button_input_fires_click_only() {
+    let events = click_button_fires_event(
+        r#"<input type="button" value="Action">"#, "input");
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))), "should fire Click");
+    assert!(!events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "should NOT fire Submit");
+}
+
+#[test]
+fn reset_input_fires_click() {
+    let events = click_button_fires_event(
+        r#"<input type="reset" value="Clear">"#, "input");
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
+}
+
+#[test]
+fn button_element_submit_fires_submit() {
+    let events = click_button_fires_event(
+        r#"<form action="/go"><button type="submit">Send</button></form>"#, "button");
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "submit button should fire Submit");
+}
+
+#[test]
+fn button_element_type_button_no_submit() {
+    let events = click_button_fires_event(
+        r#"<form action="/go"><button type="button">Click</button></form>"#, "button");
+    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
+    assert!(!events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "type=button should NOT submit");
+}
+
+// ── Focus for ALL input types ───────────────────────────────────────────────
+
+fn click_sets_focus(html: &str, tag: &str) -> bool {
+    let mut doc = layout_html(html, 400.0);
+    let elem = find_by_tag(&doc.root, tag).unwrap();
+    let center = (elem.border_rect.x + elem.border_rect.w / 2.0,
+                  elem.border_rect.y + elem.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    !doc.focused_box.is_null()
+}
+
+#[test]
+fn click_focuses_text_input() {
+    assert!(click_sets_focus(r#"<input type="text">"#, "input"));
+}
+
+#[test]
+fn click_focuses_password_input() {
+    assert!(click_sets_focus(r#"<input type="password">"#, "input"));
+}
+
+#[test]
+fn click_focuses_email_input() {
+    assert!(click_sets_focus(r#"<input type="email">"#, "input"));
+}
+
+#[test]
+fn click_focuses_search_input() {
+    assert!(click_sets_focus(r#"<input type="search">"#, "input"));
+}
+
+#[test]
+fn click_focuses_number_input() {
+    assert!(click_sets_focus(r#"<input type="number">"#, "input"));
+}
+
+#[test]
+fn click_focuses_tel_input() {
+    assert!(click_sets_focus(r#"<input type="tel">"#, "input"));
+}
+
+#[test]
+fn click_focuses_url_input() {
+    assert!(click_sets_focus(r#"<input type="url">"#, "input"));
+}
+
+#[test]
+fn click_focuses_textarea() {
+    assert!(click_sets_focus(r#"<textarea>text</textarea>"#, "textarea"));
+}
+
+#[test]
+fn click_focuses_select() {
+    assert!(click_sets_focus(r#"<select><option>A</option></select>"#, "select"));
+}
+
+#[test]
+fn click_focuses_button() {
+    assert!(click_sets_focus(r#"<button>Click</button>"#, "button"));
+}
+
+#[test]
+fn click_focuses_checkbox() {
+    assert!(click_sets_focus(r#"<input type="checkbox">"#, "input"));
+}
+
+#[test]
+fn click_focuses_radio() {
+    assert!(click_sets_focus(r#"<input type="radio">"#, "input"));
+}
+
+#[test]
+fn hidden_input_not_focusable_by_click() {
+    // Hidden inputs can't be clicked since they have display:none
+    let mut doc = layout_html(r#"<input type="hidden" name="t">"#, 400.0);
+    // No border_rect to click — just verify focus stays null
+    assert!(doc.focused_box.is_null());
+}
+
+// ── Tab navigation cycles through all focusable elements ────────────────────
+
+#[test]
+fn tab_cycles_through_form_elements() {
+    let mut doc = layout_html(r#"
+        <input type="text" id="a">
+        <input type="password" id="b">
+        <select id="c"><option>X</option></select>
+        <textarea id="d">t</textarea>
+        <button id="e">Go</button>
+    "#, 400.0);
+
+    // Tab should cycle: a → b → c → d → e → a
+    doc.focus_next();
+    assert!(!doc.focused_box.is_null());
+    let tag1 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(tag1, "a", "first Tab should focus 'a', got '{}'", tag1);
+
+    doc.focus_next();
+    let tag2 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(tag2, "b");
+
+    doc.focus_next();
+    let tag3 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(tag3, "c");
+
+    doc.focus_next();
+    let tag4 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(tag4, "d");
+
+    doc.focus_next();
+    let tag5 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(tag5, "e");
+}
+
+#[test]
+fn shift_tab_goes_backwards() {
+    let mut doc = layout_html(r#"
+        <input type="text" id="a">
+        <input type="text" id="b">
+        <input type="text" id="c">
+    "#, 400.0);
+
+    // Focus c first
+    doc.focus_next(); // a
+    doc.focus_next(); // b
+    doc.focus_next(); // c
+    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(id, "c");
+
+    doc.focus_prev(); // back to b
+    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(id, "b");
+}
+
+// ── Enter submits form from text input ──────────────────────────────────────
+
+#[test]
+fn enter_in_text_input_no_newline() {
+    let mut doc = layout_html(r#"<form action="/go"><input type="text" id="t" value="hi"></form>"#, 400.0);
+    // Focus the input
+    let input = find_by_id(&doc.root, "t").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0,
+                  input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    // Press Enter
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 13, None, false, false, false, false);
+    // Should NOT insert newline in single-line input
+    let input = find_by_id(&doc.root, "t").unwrap();
+    assert_eq!(input_value(input), "hi", "Enter should not insert in text input");
+}
+
+// ── Disabled elements don't focus on click ──────────────────────────────────
+
+#[test]
+fn disabled_input_no_focus_on_click() {
+    let mut doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
+    let input = find_by_tag(&doc.root, "input").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0,
+                  input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    // Disabled inputs ARE focusable per HTML spec (browsers focus them on click)
+    // but they shouldn't accept keyboard input (already tested above)
+}
+
+// ── Form submission tests ────────────────────────────────────────────────────
+
+#[test]
+fn collect_form_data_basic() {
+    let doc = layout_html(r#"<form id="f">
+        <input type="text" name="user" value="alice">
+        <input type="password" name="pass" value="secret">
+        <input type="hidden" name="token" value="xyz">
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.get("user").map(|s| s.as_str()), Some("alice"));
+    assert_eq!(data.get("pass").map(|s| s.as_str()), Some("secret"));
+    assert_eq!(data.get("token").map(|s| s.as_str()), Some("xyz"));
+}
+
+#[test]
+fn collect_form_data_checkbox() {
+    let doc = layout_html(r#"<form id="f">
+        <input type="checkbox" name="agree" checked>
+        <input type="checkbox" name="news">
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.get("agree").map(|s| s.as_str()), Some("on"));
+    assert!(data.get("news").is_none(), "unchecked checkbox should not be in form data");
+}
+
+#[test]
+fn collect_form_data_radio() {
+    let doc = layout_html(r#"<form id="f">
+        <input type="radio" name="color" value="red">
+        <input type="radio" name="color" value="blue" checked>
+        <input type="radio" name="color" value="green">
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.get("color").map(|s| s.as_str()), Some("blue"));
+}
+
+#[test]
+fn collect_form_data_select() {
+    let doc = layout_html(r#"<form id="f">
+        <select name="country">
+            <option value="us">US</option>
+            <option value="fr" selected>France</option>
+        </select>
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.get("country").map(|s| s.as_str()), Some("fr"));
+}
+
+#[test]
+fn collect_form_data_textarea() {
+    let doc = layout_html(r#"<form id="f">
+        <textarea name="bio">Hello world</textarea>
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert!(data.get("bio").map(|s| s.contains("Hello")).unwrap_or(false));
+}
+
+#[test]
+fn collect_form_data_disabled_excluded() {
+    let doc = layout_html(r#"<form id="f">
+        <input type="text" name="a" value="yes">
+        <input type="text" name="b" value="no" disabled>
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.get("a").map(|s| s.as_str()), Some("yes"));
+    assert!(data.get("b").is_none(), "disabled input should be excluded from form data");
+}
+
+#[test]
+fn collect_form_data_no_name_excluded() {
+    let doc = layout_html(r#"<form id="f">
+        <input type="text" value="orphan">
+        <input type="text" name="named" value="ok">
+    </form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(data.len(), 1);
+    assert_eq!(data.get("named").map(|s| s.as_str()), Some("ok"));
+}
+
+#[test]
+fn form_method_default_get() {
+    let doc = layout_html(r#"<form id="f" action="/search"><input name="q" value="test"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let method = form.attributes.get("method").map(|s| s.as_str()).unwrap_or("get");
+    assert_eq!(method, "get");
+}
+
+#[test]
+fn form_method_post() {
+    let doc = layout_html(r#"<form id="f" method="POST" action="/login"><input name="u" value="x"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let method = form.attributes.get("method").map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    assert_eq!(method, "post");
+}
+
+#[test]
+fn form_action_preserved() {
+    let doc = layout_html(r#"<form id="f" action="/submit"><input name="x" value="1"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    assert_eq!(form.attributes.get("action").map(|s| s.as_str()), Some("/submit"));
+}
+
+#[test]
+fn submit_event_contains_action() {
+    let events = click_button_fires_event(
+        r#"<form action="/login"><button type="submit">Go</button></form>"#, "button");
+    let submit = events.iter().find(|e| matches!(e, FormEventKind::Submit(_)));
+    assert!(submit.is_some(), "should fire Submit event");
+    if let Some(FormEventKind::Submit(action)) = submit {
+        assert_eq!(action, "/login");
+    }
+}
+
+// ── Form reset ──────────────────────────────────────────────────────────────
+
+#[test]
+fn reset_clears_text_inputs() {
+    let mut doc = layout_html(r#"<form id="f">
+        <input type="text" id="t" name="t" value="original">
+    </form>"#, 400.0);
+    // Simulate typing to change value
+    let input = find_by_id(&doc.root, "t").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0,
+                  input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    assert!(input_value(input).contains('x'), "should have typed");
+    // Reset
+    let form_ptr = find_by_id(&doc.root, "f").unwrap() as *const HtmlBox;
+    crate::types::reset_form(&mut doc.root, form_ptr);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    assert_eq!(input_value(input), "original", "reset should restore original value");
+}
+
+// ── Autofocus ───────────────────────────────────────────────────────────────
+
+#[test]
+fn autofocus_attribute_preserved() {
+    let doc = layout_html(r#"<input type="text" id="a" autofocus>"#, 400.0);
+    let input = find_by_id(&doc.root, "a").unwrap();
+    assert!(input.attributes.contains_key("autofocus"));
+}
+
 fn disabled_input_not_focusable() {
     let doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();

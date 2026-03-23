@@ -1317,8 +1317,15 @@ impl HtmlParser {
             // Set overflow hidden so options don't leak
             apply_property(&mut node.style, "overflow", "hidden");
         }
-        // <input>: create text child for button types
+        // <input>: save defaultValue for form reset, create text child for buttons
         if node.tag == "input" {
+            // Save original value for form reset
+            if let Some(val) = node.attributes.get("value").cloned() {
+                node.attributes.entry("defaultValue".to_string()).or_insert(val);
+            }
+            if node.attributes.contains_key("checked") {
+                node.attributes.insert("defaultChecked".into(), String::new());
+            }
             let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
             match input_type {
                 "submit" | "button" | "reset" => {
