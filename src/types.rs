@@ -2403,7 +2403,88 @@ impl Document {
                 && etype == crate::dom::HtmlEventType::KeyDown
             {
                 let focused = unsafe { &*self.focused_box };
-                if is_text_input(focused) {
+                // Select: arrow up/down changes selected option
+                if focused.tag == "select" && (key_code == 38 || key_code == 40) {
+                    let ptr = self.focused_box;
+                    fn find_m<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+                        if std::ptr::eq(n, t) { return Some(n); }
+                        for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
+                        None
+                    }
+                    if let Some(sel) = find_m(&mut self.root, ptr) {
+                        let cur: usize = sel.data.get("_selected_idx").and_then(|s| s.parse().ok()).unwrap_or(0);
+                        let opt_count = sel.children.iter().filter(|c| c.tag == "option").count()
+                            + sel.children.iter().filter(|c| c.tag == "optgroup")
+                                .flat_map(|g| g.children.iter()).filter(|c| c.tag == "option").count();
+                        let new_idx = if key_code == 40 { // down
+                            (cur + 1).min(opt_count.saturating_sub(1))
+                        } else { // up
+                            cur.saturating_sub(1)
+                        };
+                        if new_idx != cur {
+                            sel.data.insert("_selected_idx".into(), new_idx.to_string());
+                            // Update display text
+                            let mut idx = 0usize;
+                            let mut new_text = String::new();
+                            for child in &sel.children {
+                                if child.tag == "option" {
+                                    if idx == new_idx {
+                                        new_text = child.children.iter().filter(|c| c.tag == "#text")
+                                            .map(|c| c.text.as_str()).collect::<String>().trim().to_string();
+                                    }
+                                    idx += 1;
+                                } else if child.tag == "optgroup" {
+                                    for gc in &child.children {
+                                        if gc.tag == "option" {
+                                            if idx == new_idx {
+                                                new_text = gc.children.iter().filter(|c| c.tag == "#text")
+                                                    .map(|c| c.text.as_str()).collect::<String>().trim().to_string();
+                                            }
+                                            idx += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(tn) = sel.children.iter_mut().rev().find(|c| c.tag == "#text") {
+                                tn.text = new_text;
+                            }
+                            sel.layout_dirty = true;
+                        }
+                    }
+                    true
+                }
+                // Number input: arrow up/down increments/decrements
+                else if focused.tag == "input"
+                    && focused.attributes.get("type").map(|s| s.as_str()) == Some("number")
+                    && (key_code == 38 || key_code == 40)
+                {
+                    let ptr = self.focused_box;
+                    fn find_n<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+                        if std::ptr::eq(n, t) { return Some(n); }
+                        for c in &mut n.children { if let Some(r) = find_n(c, t) { return Some(r); } }
+                        None
+                    }
+                    if let Some(input) = find_n(&mut self.root, ptr) {
+                        let val: f64 = input.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                        let step: f64 = input.attributes.get("step").and_then(|s| s.parse().ok()).unwrap_or(1.0);
+                        let min: Option<f64> = input.attributes.get("min").and_then(|s| s.parse().ok());
+                        let max: Option<f64> = input.attributes.get("max").and_then(|s| s.parse().ok());
+                        let new_val = if key_code == 38 { val + step } else { val - step };
+                        let new_val = if let Some(mx) = max { new_val.min(mx) } else { new_val };
+                        let new_val = if let Some(mn) = min { new_val.max(mn) } else { new_val };
+                        if new_val != val {
+                            let s = if new_val == new_val.floor() {
+                                format!("{}", new_val as i64)
+                            } else {
+                                format!("{}", new_val)
+                            };
+                            input.attributes.insert("value".into(), s);
+                            input.layout_dirty = true;
+                        }
+                    }
+                    true
+                }
+                else if is_text_input(focused) {
                     // Find the focused node mutably and process the key
                     let ptr = self.focused_box;
                     fn find_input<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
@@ -2414,7 +2495,7 @@ impl Document {
                         None
                     }
                     if let Some(input) = find_input(&mut self.root, ptr) {
-                        let changed = process_form_input_key(input, key_code, ch);
+                        let changed = process_form_input_key(input, key_code, ch, ctrl, shift);
                         // Reset caret blink so it stays visible while typing
                         self.caret_blink_epoch = std::time::Instant::now();
                         if changed {
@@ -3379,6 +3460,65 @@ fn reset_form_inner(node: &mut HtmlBox) {
     }
 }
 
+/// Encode form data as application/x-www-form-urlencoded string.
+pub fn encode_form_urlencoded(data: &std::collections::HashMap<String, String>) -> String {
+    let mut pairs: Vec<String> = data.iter().map(|(k, v)| {
+        format!("{}={}", url_encode(k), url_encode(v))
+    }).collect();
+    pairs.sort(); // deterministic order for testing
+    pairs.join("&")
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                out.push('%');
+                out.push_str(&format!("{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
+/// Build the submission URL for a form.
+/// GET: appends encoded data as query string.
+/// POST: returns action URL unchanged (data goes in body).
+pub fn build_form_submit_url(action: &str, method: &str, data: &std::collections::HashMap<String, String>) -> String {
+    if method.eq_ignore_ascii_case("post") {
+        action.to_string()
+    } else {
+        let encoded = encode_form_urlencoded(data);
+        if encoded.is_empty() {
+            action.to_string()
+        } else {
+            let sep = if action.contains('?') { "&" } else { "?" };
+            format!("{}{}{}", action, sep, encoded)
+        }
+    }
+}
+
+/// Apply autofocus: find the first element with the `autofocus` attribute and focus it.
+pub fn apply_autofocus(doc: &mut Document) {
+    fn find_autofocus(node: &HtmlBox) -> Option<*const HtmlBox> {
+        if node.attributes.contains_key("autofocus") && is_focusable_node(node) {
+            return Some(node as *const HtmlBox);
+        }
+        for child in &node.children {
+            if let Some(ptr) = find_autofocus(child) { return Some(ptr); }
+        }
+        None
+    }
+    if let Some(ptr) = find_autofocus(&doc.root) {
+        doc.focused_box = ptr;
+    }
+}
+
 /// Returns true if this element is a text-editable form input.
 pub fn is_text_input(node: &HtmlBox) -> bool {
     match node.tag.as_str() {
@@ -3405,7 +3545,7 @@ pub fn input_value(node: &HtmlBox) -> String {
 }
 
 /// Process a key event on a focused form input. Returns true if the value changed.
-pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>) -> bool {
+pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>, ctrl: bool, shift: bool) -> bool {
     if !is_text_input(node) { return false; }
     // Disabled elements don't accept any input
     if node.attributes.contains_key("disabled") { return false; }
@@ -3416,27 +3556,56 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
     let mut value = input_value(node);
     let len = value.chars().count();
     let cursor = node.input_cursor.min(len);
+    let anchor = node.input_sel_anchor.min(len);
+    let has_selection = cursor != anchor;
+    let sel_start = cursor.min(anchor);
+    let sel_end = cursor.max(anchor);
     let mut new_cursor = cursor;
     let mut changed = false;
     let maxlength: Option<usize> = node.attributes.get("maxlength")
         .and_then(|s| s.parse().ok());
 
+    // Ctrl+A: select all
+    if ctrl && (key_code == 65 || ch == Some('a') || ch == Some('A')) {
+        node.input_sel_anchor = 0;
+        node.input_cursor = len;
+        return true; // cursor moved, no content change
+    }
+
+    // Helper: delete selected range
+    let delete_selection = |value: &mut String, sel_s: usize, sel_e: usize| -> usize {
+        let byte_s = value.char_indices().nth(sel_s).map(|(i, _)| i).unwrap_or(value.len());
+        let byte_e = value.char_indices().nth(sel_e).map(|(i, _)| i).unwrap_or(value.len());
+        value.replace_range(byte_s..byte_e, "");
+        sel_s
+    };
+
     match key_code {
         8 => { // Backspace
-            if !is_readonly && cursor > 0 {
-                let byte_pos = value.char_indices().nth(cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                let byte_end = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
-                value.replace_range(byte_pos..byte_end, "");
-                new_cursor = cursor - 1;
-                changed = true;
+            if !is_readonly {
+                if has_selection {
+                    new_cursor = delete_selection(&mut value, sel_start, sel_end);
+                    changed = true;
+                } else if cursor > 0 {
+                    let byte_pos = value.char_indices().nth(cursor - 1).map(|(i, _)| i).unwrap_or(0);
+                    let byte_end = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    value.replace_range(byte_pos..byte_end, "");
+                    new_cursor = cursor - 1;
+                    changed = true;
+                }
             }
         }
         46 => { // Delete
-            if !is_readonly && cursor < len {
-                let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
-                let byte_end = value.char_indices().nth(cursor + 1).map(|(i, _)| i).unwrap_or(value.len());
-                value.replace_range(byte_pos..byte_end, "");
-                changed = true;
+            if !is_readonly {
+                if has_selection {
+                    new_cursor = delete_selection(&mut value, sel_start, sel_end);
+                    changed = true;
+                } else if cursor < len {
+                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    let byte_end = value.char_indices().nth(cursor + 1).map(|(i, _)| i).unwrap_or(value.len());
+                    value.replace_range(byte_pos..byte_end, "");
+                    changed = true;
+                }
             }
         }
         37 => { // Left arrow
@@ -3464,12 +3633,16 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
         _ => {
             // Character input
             if let Some(c) = ch {
-                if !c.is_control() && !is_readonly {
-                    // Check maxlength
-                    if maxlength.map(|m| len < m).unwrap_or(true) {
-                        let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                if !c.is_control() && !is_readonly && !ctrl {
+                    // Delete selection first if any
+                    if has_selection {
+                        new_cursor = delete_selection(&mut value, sel_start, sel_end);
+                    }
+                    let cur_len = value.chars().count();
+                    if maxlength.map(|m| cur_len < m).unwrap_or(true) {
+                        let byte_pos = value.char_indices().nth(new_cursor).map(|(i, _)| i).unwrap_or(value.len());
                         value.insert(byte_pos, c);
-                        new_cursor = cursor + 1;
+                        new_cursor += 1;
                         changed = true;
                     }
                 }

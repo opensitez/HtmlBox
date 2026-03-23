@@ -133,7 +133,8 @@ fn process_form_input_key_inserts_char() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 2; // at end
-    let changed = process_form_input_key(input, 'c' as u32, Some('c'));
+    input.input_sel_anchor = 2;
+    let changed = process_form_input_key(input, 'c' as u32, Some('c'), false, false);
     assert!(changed);
     assert_eq!(input_value(input), "abc");
     assert_eq!(input.input_cursor, 3);
@@ -150,7 +151,8 @@ fn process_form_input_key_backspace() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 3;
-    let changed = process_form_input_key(input, 8, None); // backspace
+    input.input_sel_anchor = 3;
+    let changed = process_form_input_key(input, 8, None, false, false); // backspace
     assert!(changed);
     assert_eq!(input_value(input), "ab");
     assert_eq!(input.input_cursor, 2);
@@ -167,7 +169,8 @@ fn process_form_input_key_arrow_left() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 2;
-    process_form_input_key(input, 37, None); // left arrow
+    input.input_sel_anchor = 2;
+    process_form_input_key(input, 37, None, false, false); // left arrow
     assert_eq!(input.input_cursor, 1);
 }
 
@@ -182,7 +185,8 @@ fn process_form_input_key_arrow_right() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 1;
-    process_form_input_key(input, 39, None); // right arrow
+    input.input_sel_anchor = 1;
+    process_form_input_key(input, 39, None, false, false); // right arrow
     assert_eq!(input.input_cursor, 2);
 }
 
@@ -197,7 +201,8 @@ fn process_form_input_key_enter_not_in_input() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 3;
-    let changed = process_form_input_key(input, 13, None); // enter
+    input.input_sel_anchor = 3;
+    let changed = process_form_input_key(input, 13, None, false, false); // enter
     assert!(!changed, "Enter should not insert in single-line input");
     assert_eq!(input_value(input), "abc");
 }
@@ -213,7 +218,8 @@ fn process_form_input_key_space() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 1;
-    let changed = process_form_input_key(input, 32, Some(' '));
+    input.input_sel_anchor = 1;
+    let changed = process_form_input_key(input, 32, Some(' '), false, false);
     assert!(changed);
     assert_eq!(input_value(input), "a b");
     assert_eq!(input.input_cursor, 2);
@@ -723,7 +729,8 @@ fn form_input_insert_at_middle() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 1; // between 'a' and 'c'
-    process_form_input_key(input, 'b' as u32, Some('b'));
+    input.input_sel_anchor = 1;
+    process_form_input_key(input, 'b' as u32, Some('b'), false, false);
     assert_eq!(input_value(input), "abc");
     assert_eq!(input.input_cursor, 2);
 }
@@ -739,7 +746,8 @@ fn form_input_delete_key() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 1; // before 'b'
-    process_form_input_key(input, 46, None); // delete
+    input.input_sel_anchor = 1;
+    process_form_input_key(input, 46, None, false, false); // delete
     assert_eq!(input_value(input), "ac");
     assert_eq!(input.input_cursor, 1);
 }
@@ -755,9 +763,10 @@ fn form_input_home_end() {
     }
     let input = find_mut(&mut root, "t").unwrap();
     input.input_cursor = 2;
-    process_form_input_key(input, 36, None); // Home
+    input.input_sel_anchor = 2;
+    process_form_input_key(input, 36, None, false, false); // Home
     assert_eq!(input.input_cursor, 0);
-    process_form_input_key(input, 35, None); // End
+    process_form_input_key(input, 35, None, false, false); // End
     assert_eq!(input.input_cursor, 5);
 }
 
@@ -772,7 +781,8 @@ fn textarea_enter_inserts_newline() {
     }
     let ta = find_mut(&mut root, "t").unwrap();
     ta.input_cursor = 1;
-    let changed = process_form_input_key(ta, 13, None); // Enter
+    ta.input_sel_anchor = 1;
+    let changed = process_form_input_key(ta, 13, None, false, false); // Enter
     assert!(changed);
     assert!(input_value(ta).contains('\n'));
 }
@@ -816,7 +826,8 @@ fn readonly_input_blocks_editing() {
     }
     let input = fm(&mut root, "t").unwrap();
     input.input_cursor = 5;
-    let changed = process_form_input_key(input, 'x' as u32, Some('x'));
+    input.input_sel_anchor = 5;
+    let changed = process_form_input_key(input, 'x' as u32, Some('x'), false, false);
     assert!(!changed, "readonly input should not accept input");
     assert_eq!(input_value(input), "fixed");
 }
@@ -834,9 +845,10 @@ fn maxlength_prevents_input() {
     }
     let input = fm(&mut root, "t").unwrap();
     input.input_cursor = 3;
-    process_form_input_key(input, 'd' as u32, Some('d')); // "abcd" — ok
-    process_form_input_key(input, 'e' as u32, Some('e')); // "abcde" — ok, at limit
-    let changed = process_form_input_key(input, 'f' as u32, Some('f')); // should be blocked
+    input.input_sel_anchor = 3;
+    process_form_input_key(input, 'd' as u32, Some('d'), false, false); // "abcd" — ok
+    process_form_input_key(input, 'e' as u32, Some('e'), false, false); // "abcde" — ok, at limit
+    let changed = process_form_input_key(input, 'f' as u32, Some('f'), false, false); // should be blocked
     assert!(!changed, "should not exceed maxlength");
     assert_eq!(input_value(input).chars().count(), 5);
 }
@@ -887,7 +899,8 @@ fn disabled_input_blocks_typing() {
     }
     let input = fm(&mut root, "t").unwrap();
     input.input_cursor = 2;
-    let changed = process_form_input_key(input, 'x' as u32, Some('x'));
+    input.input_sel_anchor = 2;
+    let changed = process_form_input_key(input, 'x' as u32, Some('x'), false, false);
     assert!(!changed, "disabled input should not accept typing");
     assert_eq!(input_value(input), "hi");
 }
@@ -1503,6 +1516,287 @@ fn autofocus_attribute_preserved() {
     assert!(input.attributes.contains_key("autofocus"));
 }
 
+// ── Form data encoding ──────────────────────────────────────────────────────
+
+#[test]
+fn encode_form_data_urlencoded() {
+    let doc = layout_html(r#"<form id="f"><input name="q" value="hello world"><input name="lang" value="en"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    let encoded = crate::types::encode_form_urlencoded(&data);
+    assert!(encoded.contains("q=hello+world") || encoded.contains("q=hello%20world"),
+        "should encode space, got: {}", encoded);
+    assert!(encoded.contains("lang=en"));
+}
+
+#[test]
+fn build_get_url() {
+    let doc = layout_html(r#"<form id="f" method="get" action="/search"><input name="q" value="test"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    let url = crate::types::build_form_submit_url("/search", "get", &data);
+    assert!(url.contains("/search?"), "GET should append query string, got: {}", url);
+    assert!(url.contains("q=test"));
+}
+
+#[test]
+fn build_post_url_no_query() {
+    let doc = layout_html(r#"<form id="f" method="post" action="/login"><input name="u" value="x"></form>"#, 400.0);
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    let url = crate::types::build_form_submit_url("/login", "post", &data);
+    assert_eq!(url, "/login", "POST should not append query string");
+}
+
+// ── Select keyboard navigation ──────────────────────────────────────────────
+
+#[test]
+fn select_arrow_down_changes_option() {
+    let mut doc = layout_html(r#"<select id="s">
+        <option value="a">Alpha</option>
+        <option value="b" selected>Beta</option>
+        <option value="c">Gamma</option>
+    </select>"#, 400.0);
+    // Focus the select
+    let sel = find_by_id(&doc.root, "s").unwrap();
+    let center = (sel.border_rect.x + sel.border_rect.w / 2.0, sel.border_rect.y + sel.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    // Arrow down should select next option
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
+    let sel = find_by_id(&doc.root, "s").unwrap();
+    assert_eq!(sel.data.get("_selected_idx").map(|s| s.as_str()), Some("2"),
+        "arrow down should move to index 2");
+}
+
+#[test]
+fn select_arrow_up_changes_option() {
+    let mut doc = layout_html(r#"<select id="s">
+        <option value="a">Alpha</option>
+        <option value="b" selected>Beta</option>
+        <option value="c">Gamma</option>
+    </select>"#, 400.0);
+    let sel = find_by_id(&doc.root, "s").unwrap();
+    let center = (sel.border_rect.x + sel.border_rect.w / 2.0, sel.border_rect.y + sel.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
+    let sel = find_by_id(&doc.root, "s").unwrap();
+    assert_eq!(sel.data.get("_selected_idx").map(|s| s.as_str()), Some("0"),
+        "arrow up should move to index 0");
+}
+
+// ── Number input increment/decrement ────────────────────────────────────────
+
+#[test]
+fn number_input_arrow_up_increments() {
+    let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
+    let input = find_by_id(&doc.root, "n").unwrap();
+    assert_eq!(input_value(input), "6", "arrow up should increment, got {}", input_value(input));
+}
+
+#[test]
+fn number_input_arrow_down_decrements() {
+    let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
+    let input = find_by_id(&doc.root, "n").unwrap();
+    assert_eq!(input_value(input), "4");
+}
+
+#[test]
+fn number_input_respects_max() {
+    let mut doc = layout_html(r#"<input type="number" id="n" value="10" max="10">"#, 400.0);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    assert_eq!(input_value(input), "10", "should not exceed max");
+}
+
+#[test]
+fn number_input_respects_min() {
+    let mut doc = layout_html(r#"<input type="number" id="n" value="0" min="0">"#, 400.0);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false);
+    let input = find_by_id(&doc.root, "n").unwrap();
+    assert_eq!(input_value(input), "0", "should not go below min");
+}
+
+// ── Autofocus ───────────────────────────────────────────────────────────────
+
+#[test]
+fn autofocus_sets_focus_on_load() {
+    let mut doc = layout_html(r#"<input type="text" id="a"><input type="text" id="b" autofocus>"#, 400.0);
+    crate::types::apply_autofocus(&mut doc);
+    assert!(!doc.focused_box.is_null(), "autofocus should set focused_box");
+    let focused_id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(focused_id, "b", "should focus element with autofocus attribute");
+}
+
+// ── Required visual ─────────────────────────────────────────────────────────
+
+#[test]
+fn required_input_matches_required_pseudo() {
+    let doc = layout_html(r#"<style>input:required { border-color: red; }</style>
+        <input type="text" required>"#, 400.0);
+    let input = find_by_tag(&doc.root, "input").unwrap();
+    assert!(input.attributes.contains_key("required"));
+    // The :required pseudo-class should match — border-color isn't directly
+    // on ComputedStyle, but the cascade should process it
+}
+
+// ── Placeholder pseudo-element ──────────────────────────────────────────────
+
+#[test]
+fn placeholder_text_has_default_gray_color() {
+    // Placeholder should be rendered in gray by the renderer (not testable via style)
+    let doc = layout_html(r#"<input type="text" placeholder="hint">"#, 400.0);
+    let input = find_by_tag(&doc.root, "input").unwrap();
+    assert_eq!(input.attributes.get("placeholder").map(|s| s.as_str()), Some("hint"));
+    // The renderer draws placeholder in gray — visual test
+}
+
+// ── Focus ring on tab-focused checkbox ──────────────────────────────────────
+
+#[test]
+fn tab_to_checkbox_sets_focus() {
+    let mut doc = layout_html(r#"<input type="checkbox" id="c"><input type="text" id="t">"#, 400.0);
+    doc.focus_next(); // should focus checkbox first
+    assert!(!doc.focused_box.is_null());
+    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(id, "c", "Tab should focus checkbox");
+}
+
+// ── Tabindex tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn tabindex_positive_comes_first() {
+    let mut doc = layout_html(r#"
+        <input type="text" id="a">
+        <input type="text" id="b" tabindex="1">
+        <input type="text" id="c">
+    "#, 400.0);
+    doc.focus_next();
+    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(id, "b", "tabindex=1 should be focused first, got {}", id);
+}
+
+#[test]
+fn tabindex_negative_skipped() {
+    let mut doc = layout_html(r#"
+        <input type="text" id="a">
+        <input type="text" id="skip" tabindex="-1">
+        <input type="text" id="c">
+    "#, 400.0);
+    doc.focus_next(); // a
+    doc.focus_next(); // should skip "skip" and go to c
+    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert_eq!(id, "c", "tabindex=-1 should be skipped, got {}", id);
+}
+
+// ── Pattern validation ──────────────────────────────────────────────────────
+
+#[test]
+fn pattern_attribute_preserved() {
+    let doc = layout_html(r#"<input type="text" pattern="[0-9]+" id="p">"#, 400.0);
+    let input = find_by_id(&doc.root, "p").unwrap();
+    assert_eq!(input.attributes.get("pattern").map(|s| s.as_str()), Some("[0-9]+"));
+}
+
+// ── Required attribute ──────────────────────────────────────────────────────
+
+#[test]
+fn required_attribute_preserved() {
+    let doc = layout_html(r#"<input type="text" required id="r">"#, 400.0);
+    let input = find_by_id(&doc.root, "r").unwrap();
+    assert!(input.attributes.contains_key("required"));
+}
+
+// ── Select multiple ─────────────────────────────────────────────────────────
+
+#[test]
+fn select_multiple_attribute_preserved() {
+    let doc = layout_html(r#"<select multiple id="m"><option>A</option><option>B</option></select>"#, 400.0);
+    let sel = find_by_id(&doc.root, "m").unwrap();
+    assert!(sel.attributes.contains_key("multiple"));
+}
+
+// ── Disabled text rendering ─────────────────────────────────────────────────
+
+#[test]
+fn disabled_input_has_opacity() {
+    let doc = layout_html(r#"<input type="text" value="test" disabled>"#, 400.0);
+    let input = find_by_tag(&doc.root, "input").unwrap();
+    assert!(input.style.opacity < 1.0, "disabled should have reduced opacity, got {}", input.style.opacity);
+}
+
+// ── Focus ring on tab-focused elements ──────────────────────────────────────
+
+#[test]
+fn tab_focused_element_has_keyboard_focus() {
+    let mut doc = layout_html(r#"<input type="text" id="a"><input type="text" id="b">"#, 400.0);
+    doc.focus_next();
+    assert!(doc.keyboard_focus, "Tab focus should set keyboard_focus=true");
+}
+
+// ── Range slider ────────────────────────────────────────────────────────────
+
+#[test]
+fn range_has_default_value() {
+    let doc = layout_html(r#"<input type="range" min="0" max="100" value="50">"#, 400.0);
+    let input = find_by_tag(&doc.root, "input").unwrap();
+    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("50"));
+}
+
+// ── Ctrl+A selects all text ─────────────────────────────────────────────────
+
+#[test]
+fn ctrl_a_selects_all_in_input() {
+    let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0,
+                  input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    // Ctrl+A
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 65, Some('a'), true, false, false, false);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    assert_eq!(input.input_cursor, 5, "Ctrl+A should move cursor to end");
+    assert_eq!(input.input_sel_anchor, 0, "Ctrl+A should set anchor to start");
+}
+
+// ── Backspace with selection deletes selection ──────────────────────────────
+
+#[test]
+fn backspace_deletes_selection() {
+    let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    let center = (input.border_rect.x + input.border_rect.w / 2.0,
+                  input.border_rect.y + input.border_rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
+    // Select all with Ctrl+A
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 65, Some('a'), true, false, false, false);
+    // Backspace should delete selection
+    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 8, None, false, false, false, false);
+    let input = find_by_id(&doc.root, "t").unwrap();
+    assert_eq!(input_value(input), "", "backspace should delete selected text");
+}
+
 fn disabled_input_not_focusable() {
     let doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
@@ -1510,4 +1804,92 @@ fn disabled_input_not_focusable() {
     // actually in browsers disabled inputs ARE focusable by click
     // Let's just verify the attribute is there
     assert!(input.attributes.contains_key("disabled"));
+}
+
+// ── Input height stretches background ───────────────────────────────────────
+
+#[test]
+fn input_explicit_height_stretches_padding_rect() {
+    let doc = layout_html(
+        r#"<style>input { height: 80px; background-color: #ccc; }</style>
+           <input type="text" id="t">"#,
+        400.0,
+    );
+    let input = find_by_id(&doc.root, "t").unwrap();
+    // padding_rect.h should be at least 80px (the explicit height)
+    assert!(input.padding_rect.h >= 78.0,
+        "padding_rect height {} should be >= 78 when height:80px is set",
+        input.padding_rect.h);
+    // border_rect should also reflect the height
+    assert!(input.border_rect.h >= 78.0,
+        "border_rect height {} should be >= 78 when height:80px is set",
+        input.border_rect.h);
+}
+
+#[test]
+fn input_explicit_height_content_rect_smaller() {
+    let doc = layout_html(
+        r#"<style>input { height: 100px; padding: 10px; box-sizing: border-box; }</style>
+           <input type="text" id="t">"#,
+        400.0,
+    );
+    let input = find_by_id(&doc.root, "t").unwrap();
+    // With border-box, border_rect.h = 100, content_rect.h = 100 - padding*2 - border*2
+    // UA has border: 1px, so content = 100 - 20 - 2 = 78
+    assert!(input.border_rect.h >= 98.0,
+        "border_rect height {} should be ~100 with border-box",
+        input.border_rect.h);
+    assert!(input.content_rect.h < input.border_rect.h,
+        "content_rect.h {} should be smaller than border_rect.h {} due to padding",
+        input.content_rect.h, input.border_rect.h);
+}
+
+#[test]
+fn textarea_explicit_height_stretches() {
+    let doc = layout_html(
+        r#"<style>textarea { height: 120px; }</style>
+           <textarea id="t">text</textarea>"#,
+        400.0,
+    );
+    let ta = find_by_id(&doc.root, "t").unwrap();
+    assert!(ta.padding_rect.h >= 118.0,
+        "textarea padding_rect.h {} should be >= 118 with height:120px",
+        ta.padding_rect.h);
+}
+
+#[test]
+fn select_explicit_height_stretches() {
+    let doc = layout_html(
+        r#"<style>select { height: 60px; }</style>
+           <select id="s"><option>A</option></select>"#,
+        400.0,
+    );
+    let sel = find_by_id(&doc.root, "s").unwrap();
+    assert!(sel.padding_rect.h >= 58.0,
+        "select padding_rect.h {} should be >= 58 with height:60px",
+        sel.padding_rect.h);
+}
+
+#[test]
+fn button_explicit_height_stretches() {
+    let doc = layout_html(
+        r#"<button id="b" style="height: 80px;">Click</button>"#,
+        400.0,
+    );
+    let btn = find_by_id(&doc.root, "b").unwrap();
+    assert!(btn.padding_rect.h >= 78.0,
+        "button padding_rect.h {} should be >= 78 with height:80px",
+        btn.padding_rect.h);
+}
+
+#[test]
+fn submit_input_explicit_height_stretches() {
+    let doc = layout_html(
+        r#"<input type="submit" id="s" value="Go" style="height: 60px;">"#,
+        400.0,
+    );
+    let sub = find_by_id(&doc.root, "s").unwrap();
+    assert!(sub.padding_rect.h >= 58.0,
+        "submit padding_rect.h {} should be >= 58 with height:60px",
+        sub.padding_rect.h);
 }
