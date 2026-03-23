@@ -51,6 +51,18 @@ pub struct Renderer {
     pub content_offset_y: f32,
     /// Caret blink epoch from Document — reset on keystroke.
     caret_epoch: std::time::Instant,
+    /// Deferred positioned elements with z-index > 0 — rendered in an overlay
+    /// pass so dropdown menus appear above later DOM content.
+    deferred_z: Vec<DeferredZNode>,
+}
+
+/// A positioned element deferred for overlay rendering (z-index stacking).
+struct DeferredZNode {
+    ptr:   *const HtmlBox,
+    sx:    f32,
+    sy:    f32,
+    clip:  Rect,
+    z:     i32,
 }
 
 impl Renderer {
@@ -75,6 +87,7 @@ impl Renderer {
             dropdown_hover_idx: -1,
             content_offset_y: 0.0,
             caret_epoch: std::time::Instant::now(),
+            deferred_z: Vec::new(),
         }
     }
 
@@ -511,6 +524,7 @@ impl Renderer {
         self.focused_ptr = doc.focused_box;
         self.dropdown_hover_idx = doc.dropdown_hover_idx;
         self.caret_epoch = doc.caret_blink_epoch;
+        self.deferred_z.clear();
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -522,6 +536,28 @@ impl Renderer {
             active_ptr,
             visited_hrefs,
         );
+
+        // ── High z-index overlay (dropdown menus, popups) ────────────────────
+        // Positioned-absolute elements with z-index > 0 were deferred during the
+        // tree walk so they paint above later DOM content (e.g. images below a nav).
+        if !self.deferred_z.is_empty() {
+            self.deferred_z.sort_by_key(|d| d.z);
+            // Take the list to avoid borrow issues (render_box may push more entries)
+            let deferred = std::mem::take(&mut self.deferred_z);
+            for d in &deferred {
+                let node = unsafe { &*d.ptr };
+                self.render_box(
+                    node, pixmap, d.sx, d.sy,
+                    &d.clip, None,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                );
+            }
+            // Restore any newly deferred elements from the overlay pass
+            if self.deferred_z.is_empty() {
+                self.deferred_z = deferred;
+                self.deferred_z.clear();
+            }
+        }
 
         // ── Fixed elements overlay ────────────────────────────────────────────
         // Fixed elements must be drawn AFTER all normal content so they aren't
@@ -1058,11 +1094,21 @@ impl Renderer {
                         // after all normal content, so they're never covered.
                         // Skip here.
                     }
+                    Position::Absolute if child.style.z_index > 0 => {
+                        // High z-index absolute elements (dropdown menus, popups)
+                        // are deferred to an overlay pass so they paint above later
+                        // DOM siblings (e.g. images below a nav bar).
+                        let c = if overflow_clips { child_clip } else { *clip };
+                        self.deferred_z.push(DeferredZNode {
+                            ptr: child as *const HtmlBox,
+                            sx:  child_sx,
+                            sy:  child_sy,
+                            clip: c,
+                            z:   child.style.z_index,
+                        });
+                    }
                     Position::Absolute => {
-                        // Absolute: escapes overflow clip of non-positioned ancestors,
-                        // but IS clipped by the nearest positioned overflow ancestor
-                        // (which is this element if it has overflow != visible).
-                        // Current node is its containing block only if positioned.
+                        // Absolute with z-index <= 0: render in normal order.
                         let (c, m) = if overflow_clips {
                             (&child_clip, child_mask)
                         } else {

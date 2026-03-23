@@ -5764,9 +5764,17 @@ fn apply_cascade_inner(
 
     // Apply inline style attribute (normal declarations).
     // Custom properties were already merged into local_vars above.
+    // Also collect inline hover-* properties for building hover_style.
+    let mut inline_hover_props: Vec<(String, String)> = Vec::new();
     let (_inline_normal, inline_important) = if let Some((n, i)) = inline_decls {
         for (prop, val) in &n {
             if prop.starts_with("--") { continue; }
+            // Inline hover-* properties: hover-background-color → background-color on hover
+            if let Some(real_prop) = prop.strip_prefix("hover-") {
+                let resolved = resolve_var_references(val, local_vars);
+                inline_hover_props.push((real_prop.to_string(), resolved));
+                continue;
+            }
             let resolved = resolve_var_references(val, local_vars);
             if resolved.trim() == "inherit" {
                 if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
@@ -5778,6 +5786,19 @@ fn apply_cascade_inner(
     } else {
         (HashMap::new(), HashMap::new())
     };
+    // Merge inline hover-* properties into hover_style
+    if !inline_hover_props.is_empty() {
+        let mut hs = if let Some(existing) = style.hover_style.take() {
+            *existing
+        } else {
+            style.clone()
+        };
+        for (prop, val) in &inline_hover_props {
+            apply_property(&mut hs, prop, val);
+        }
+        hs.hover_style = None; hs.active_style = None; hs.visited_style = None;
+        style.hover_style = Some(Box::new(hs));
+    }
 
     // Apply !important stylesheet declarations — these override inline styles
     for &(_, ri) in &matched {
