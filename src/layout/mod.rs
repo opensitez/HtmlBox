@@ -455,6 +455,10 @@ pub struct LayoutEngine {
     pub pos_cb: Cell<Rect>,
     /// Current recursion depth — prevents stack overflow on deeply nested DOMs.
     layout_depth: Cell<usize>,
+    /// Total layout_box calls — detect infinite loops.
+    layout_calls: Cell<usize>,
+    /// Layout start time — detect long-running layout.
+    layout_start: Cell<Option<std::time::Instant>>,
 }
 
 /// Maximum layout recursion depth to prevent stack overflow.
@@ -478,6 +482,8 @@ impl LayoutEngine {
             fonts_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             pos_cb: Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)),
             layout_depth: Cell::new(0),
+            layout_calls: Cell::new(0),
+            layout_start: Cell::new(None),
         }
     }
 
@@ -796,7 +802,7 @@ impl LayoutEngine {
                 }));
 
         let did_cascade = if needs_cascade {
-            crate::css::apply_cascade_vp(
+                crate::css::apply_cascade_vp(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
             );
@@ -867,6 +873,8 @@ impl LayoutEngine {
     }
 
     fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
+        self.layout_calls.set(0);
+        self.layout_start.set(Some(std::time::Instant::now()));
         // Propagate layout_dirty upward: if any descendant is dirty, mark
         // ancestors dirty so the subtree-pruning check doesn't skip them.
         propagate_dirty(&mut doc.root);
@@ -911,6 +919,17 @@ impl LayoutEngine {
         root_font_px:   f32,
         fc:  Option<&mut FloatContext>,
     ) -> f32 {
+        // Guard against infinite layout loops.
+        let calls = self.layout_calls.get();
+        self.layout_calls.set(calls + 1);
+        if calls > 5_000_000 {
+            eprintln!("  [layout] ABORTING: >5M layout calls — infinite loop detected");
+            node.content_rect = Rect::new(x, y, containing_w, 0.0);
+            node.padding_rect = node.content_rect;
+            node.border_rect  = node.content_rect;
+            node.margin_rect  = node.content_rect;
+            return 0.0;
+        }
         // Guard against stack overflow on deeply nested DOMs.
         let depth = self.layout_depth.get();
         if depth >= MAX_LAYOUT_DEPTH {

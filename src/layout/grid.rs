@@ -132,7 +132,6 @@ pub fn layout_grid_subgrid(
     let content_w: f32 = col_px.iter().sum::<f32>()
         + col_gap * col_px.len().saturating_sub(1) as f32;
     let n_cols = col_px.len().max(1);
-
     // --- Collect visible items ---
     let mut item_indices: Vec<Vec<usize>> = collect_grid_children(node)
         .into_iter()
@@ -183,6 +182,7 @@ pub fn layout_grid_subgrid(
         let span_col = get_span_col(child).min(n_cols);
         let span_row = get_span_row(child);
         'outer: loop {
+            if auto_row > MAX_GRID_SPAN { break 'outer; }
             ensure_row(&mut occ, auto_row + span_row, max_col);
             if auto_col + span_col > max_col { auto_row += 1; auto_col = 0; continue; }
             let mut fits = true;
@@ -530,7 +530,11 @@ pub fn layout_grid(
         if cs_has_name2 || (!cs_is_span2 && cs_val2 != 0) { continue; }
 
         let span_col = get_span_col(child);
-        let span_row = get_span_row(child);
+        let span_row = get_span_row(child).max(1);
+        // If span exceeds grid columns, expand the grid to fit
+        if span_col > max_col {
+            max_col = span_col;
+        }
 
         if dense { auto_row = 0; auto_col = 0; }
 
@@ -540,6 +544,7 @@ pub fn layout_grid(
             let col_row_limit = n_rows_from_template(&row_tracks, n_items);
             // auto_col = current column, auto_row = current row within column
             'outer_col: loop {
+                if auto_row > MAX_GRID_SPAN || auto_col > MAX_GRID_SPAN { break 'outer_col; }
                 ensure_row(&mut occ, auto_row + span_row, max_col);
                 if auto_row + span_row > col_row_limit {
                     // Move to next column
@@ -562,6 +567,7 @@ pub fn layout_grid(
         } else {
             // Row-flow: fill across each row, then move to next row
             'outer: loop {
+                if auto_row > MAX_GRID_SPAN { break 'outer; }
                 ensure_row(&mut occ, auto_row + span_row, max_col);
                 if auto_col + span_col > max_col {
                     auto_row += 1;
@@ -588,10 +594,12 @@ pub fn layout_grid(
         placements[ii] = (auto_col, auto_col + span_col, auto_row, auto_row + span_row);
 
         // Mark occupied
-        for r in auto_row..auto_row + span_row {
-            ensure_row(&mut occ, r, max_col);
-            for c in auto_col..auto_col + span_col {
-                if c < occ[r].len() { occ[r][c] = true; }
+        if auto_row + span_row <= MAX_GRID_SPAN {
+            for r in auto_row..auto_row + span_row {
+                ensure_row(&mut occ, r, max_col);
+                for c in auto_col..auto_col + span_col {
+                    if c < occ[r].len() { occ[r][c] = true; }
+                }
             }
         }
         if re_from(&placements[ii]) > max_row { max_row = re_from(&placements[ii]); }
@@ -1034,6 +1042,9 @@ fn resolve_placement(
     (cs, ce, rs, re)
 }
 
+/// Maximum grid span/row/col to prevent pathological allocation.
+const MAX_GRID_SPAN: usize = 200;
+
 fn get_span_col(child: &HtmlBox) -> usize {
     let (end_is_span, end_val) = decode_grid_line(child.style.grid_column_end);
     if end_is_span { return end_val as usize; }
@@ -1061,6 +1072,8 @@ fn n_rows_from_template(row_tracks: &[GridTrackSize], n_items: usize) -> usize {
 }
 
 fn ensure_row(occ: &mut Vec<Vec<bool>>, row: usize, n_cols: usize) {
+    let row = row.min(MAX_GRID_SPAN);
+    let n_cols = n_cols.min(MAX_GRID_SPAN);
     while occ.len() <= row {
         occ.push(vec![false; n_cols.max(1)]);
     }

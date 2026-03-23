@@ -362,7 +362,7 @@ pub fn layout_block_with_fc(
     let reserve_v_scrollbar =
         matches!(node.style.overflow_y, Overflow::Scroll)
         || (matches!(node.style.overflow_y, Overflow::Auto)
-            && !node.style.max_height.is_none() || node.style.max_height.is_auto());
+            && !node.style.max_height.is_none() && !node.style.max_height.is_auto());
     let child_content_w = if reserve_v_scrollbar { (content_w - SBW).max(0.0) } else { content_w };
 
     // Auto margin centering (CSS 2.1 §10.3.3)
