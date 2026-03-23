@@ -251,7 +251,7 @@ pub fn layout_inline_block(
                 height: line_h,
                 ascent: eff_fpx,
                 descent: eff_fpx * 0.2,
-                extra_space_per_word: 0.0,
+                extra_space_per_word: 0.0, text_x_offset: 0.0,
                 visual_segments: Vec::new(),
                 char_x: Vec::new(),
             }];
@@ -577,6 +577,15 @@ pub fn layout_inline_block(
         }
 
         // Build LayoutLine
+        // Compute text_x_offset: sum of advances of items before first text item
+        let mut text_x_off = 0.0f32;
+        for item in line_items.iter() {
+            match &item.kind {
+                InlineItemKind::Text { .. } => break,
+                _ => text_x_off += item.advance,
+            }
+        }
+
         let mut ll = LayoutLine {
             text_start:  text_s,
             text_length: text_e.saturating_sub(text_s),
@@ -587,6 +596,7 @@ pub fn layout_inline_block(
             ascent: line_asc,
             descent: line_desc,
             extra_space_per_word: extra_per_gap,
+            text_x_offset: text_x_off,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
         };
@@ -620,7 +630,7 @@ pub fn layout_inline_block(
             height: font_px * 1.2,
             ascent: font_px * 1.2,
             descent: 0.0,
-            extra_space_per_word: 0.0,
+            extra_space_per_word: 0.0, text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
         });
@@ -638,7 +648,7 @@ pub fn layout_inline_block(
             height: font_px * 1.2,
             ascent: font_px * 1.2,
             descent: 0.0,
-            extra_space_per_word: 0.0,
+            extra_space_per_word: 0.0, text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
         });

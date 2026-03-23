@@ -8,6 +8,7 @@ pub mod test_html;
 pub mod test_inheritance;
 pub mod test_grid;
 mod test_floats;
+mod test_form_elements;
 pub mod test_dom_events;
 pub mod test_render;
 pub mod test_caret;

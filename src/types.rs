@@ -1430,12 +1430,12 @@ pub struct LayoutLine {
     pub ascent:  f32,
     pub descent: f32,
     pub extra_space_per_word: f32,  // for text-align: justify
+    /// X offset from `self.x` where text content actually starts.
+    /// Non-zero when atomic inline items (e.g. checkbox, image) precede text on this line.
+    pub text_x_offset: f32,
     /// BiDi visual segments in visual order. Empty = pure LTR, use logical order.
     pub visual_segments: Vec<VisualSegment>,
-    /// Per-character-boundary x positions relative to `self.x`, in logical pixels.
-    /// `char_x[i]` = visual x of the caret at byte offset `text_start + i`.
-    /// Length = `text_length + 1` (last entry = position after the final character).
-    /// Empty when no FontSystem was available during layout (falls back to approximation).
+    /// Per-character-boundary x positions relative to `self.x + text_x_offset`, in logical pixels.
     pub char_x: Vec<f32>,
 }
 
@@ -1494,6 +1494,12 @@ pub struct HtmlBox {
     pub layout_dirty:          bool,
     pub last_containing_width: f32,
 
+    // ── Form input editing state ─────────────────────────────────────────
+    /// Cursor position (char index) within the input's value string.
+    pub input_cursor: usize,
+    /// Selection anchor (char index). When equal to input_cursor, no selection.
+    pub input_sel_anchor: usize,
+
     // Custom data store (arbitrary key/value pairs set by application code)
     pub data: HashMap<String, String>,
 
@@ -1521,6 +1527,44 @@ pub struct HtmlBox {
     /// that matched this element during the cascade.
     pub matched_rules: Vec<MatchedRule>,
 }
+
+/// Form interaction event — fired by the engine, handled by the host.
+#[derive(Debug, Clone)]
+pub struct FormEvent {
+    /// Element tag (e.g. "input", "select", "textarea")
+    pub tag: String,
+    /// Element id attribute (empty if none)
+    pub id: String,
+    /// Element name attribute (empty if none)
+    pub name: String,
+    /// Event kind
+    pub kind: FormEventKind,
+    /// Pointer to the element (for direct manipulation)
+    pub element: *const HtmlBox,
+}
+
+unsafe impl Send for FormEvent {}
+
+#[derive(Debug, Clone)]
+pub enum FormEventKind {
+    /// Text input value changed (new value)
+    Input(String),
+    /// Value committed (e.g. Enter in text field, option selected)
+    Change(String),
+    /// Checkbox/radio toggled (new checked state)
+    Toggle(bool),
+    /// Button clicked (value attribute)
+    Click(String),
+    /// Form submitted (form element's action URL)
+    Submit(String),
+    /// Focus gained
+    Focus,
+    /// Focus lost
+    Blur,
+}
+
+/// Callback type for form events. The host sets this to handle form interactions.
+pub type FormEventCallback = Box<dyn FnMut(&FormEvent) + Send>;
 
 /// A CSS rule that matched an element, stored for inspector display.
 #[derive(Clone, Debug)]
@@ -1571,6 +1615,8 @@ impl HtmlBox {
             scroll_left:   0.0,
             layout_dirty:          false,
             last_containing_width: 0.0,
+            input_cursor: 0,
+            input_sel_anchor: 0,
 
             resolved_margin_top:    0.0,
             resolved_margin_right:  0.0,
@@ -1786,7 +1832,6 @@ pub struct Announcement {
 }
 
 /// The root document: box tree + stylesheet + metadata.
-#[derive(Debug)]
 pub struct Document {
     pub root:            HtmlBox,
     pub stylesheet:      Stylesheet,
@@ -1824,6 +1869,13 @@ pub struct Document {
     pub viewport_h:      f32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
     pub keyboard_focus:  bool,
+    /// Currently open select dropdown (pointer to select element, null if none open).
+    pub open_select: *const HtmlBox,
+    /// Hovered option index in open dropdown (-1 = none).
+    pub dropdown_hover_idx: i32,
+    /// Form event callback — set by the host to handle form interactions.
+    /// Called when users interact with form elements (click checkbox, type in input, etc.).
+    pub on_form_event:   Option<FormEventCallback>,
 
     // ── CSS animation / transition runtime ────────────────────────────────────
     /// All currently running CSS animations (one entry per animation per element).
@@ -1889,6 +1941,8 @@ impl Document {
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
+            open_select:       std::ptr::null(), dropdown_hover_idx: -1,
+            on_form_event:     None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
             prev_styles:           HashMap::new(),
@@ -1975,6 +2029,38 @@ impl Document {
                     self.hovered_box = hit_ptr;
                     self.hover_changed = true;
                     redraw = true;
+                }
+                // Track hover over open dropdown
+                if !self.open_select.is_null() {
+                    let sel = unsafe { &*self.open_select };
+                    let dropdown_y = sel.border_rect.y + sel.border_rect.h;
+                    let font_px = sel.style.font_size_px(16.0, 16.0);
+                    let item_h = font_px * 1.8;
+                    let group_h = font_px * 1.5;
+                    let mut y_acc = 0.0f32;
+                    let mut new_hover: i32 = -1;
+                    let mut opt_i = 0usize;
+                    let rel_y = doc_pt.1 - dropdown_y - 4.0;
+                    for child in &sel.children {
+                        if child.tag == "option" {
+                            if rel_y >= y_acc && rel_y < y_acc + item_h { new_hover = opt_i as i32; }
+                            y_acc += item_h;
+                            opt_i += 1;
+                        } else if child.tag == "optgroup" {
+                            y_acc += group_h;
+                            for gc in &child.children {
+                                if gc.tag == "option" {
+                                    if rel_y >= y_acc && rel_y < y_acc + item_h { new_hover = opt_i as i32; }
+                                    y_acc += item_h;
+                                    opt_i += 1;
+                                }
+                            }
+                        }
+                    }
+                    if new_hover != self.dropdown_hover_idx {
+                        self.dropdown_hover_idx = new_hover;
+                        redraw = true;
+                    }
                 }
                 // Drag: if mouse button held and moved past threshold, fire DragStart/Drag.
                 if !self.drag_source.is_null() {
@@ -2066,6 +2152,125 @@ impl Document {
                         click.target = hit_ptr; click.doc_pos = doc_pt; click.client_pos = client_pos;
                         click.button = button;
                         if self.events.dispatch(&self.root, click) { redraw = true; }
+
+                        // Form element interactions
+                        if !hit_ptr.is_null() && button == 0 {
+                            if let Some(form_redraw) = handle_form_click(&mut self.root, hit_ptr, &mut self.on_form_event) {
+                                if form_redraw { redraw = true; }
+                            }
+                            // Handle select dropdown
+                            if !self.open_select.is_null() {
+                                // Collect options from DOM children
+                                let sel = unsafe { &*self.open_select };
+                                let font_px = sel.style.font_size_px(16.0, 16.0);
+                                let item_h = font_px * 1.8;
+                                let group_h = font_px * 1.5;
+
+                                // Count items (options + optgroups) for height
+                                let mut opt_texts: Vec<String> = Vec::new();
+                                let mut opt_values: Vec<String> = Vec::new();
+                                let mut total_h = 8.0f32; // padding
+                                for child in &sel.children {
+                                    if child.tag == "option" {
+                                        let txt: String = child.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                                        let val = child.attributes.get("value").cloned().unwrap_or_else(|| txt.clone());
+                                        opt_texts.push(txt.trim().to_string());
+                                        opt_values.push(val.trim().to_string());
+                                        total_h += item_h;
+                                    } else if child.tag == "optgroup" {
+                                        total_h += group_h;
+                                        for gc in &child.children {
+                                            if gc.tag == "option" {
+                                                let txt: String = gc.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                                                let val = gc.attributes.get("value").cloned().unwrap_or_else(|| txt.clone());
+                                                opt_texts.push(txt.trim().to_string());
+                                                opt_values.push(val.trim().to_string());
+                                                total_h += item_h;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                let dropdown_y = sel.border_rect.y + sel.border_rect.h;
+                                let popup_w = sel.border_rect.w.max(150.0);
+                                let click_y = doc_pt.1;
+                                let click_x = doc_pt.0;
+
+                                if click_y >= dropdown_y && click_y < dropdown_y + total_h
+                                    && click_x >= sel.border_rect.x && click_x < sel.border_rect.x + popup_w
+                                {
+                                    // Determine which option was clicked
+                                    let rel_y = click_y - dropdown_y - 4.0;
+                                    let mut y_acc = 0.0f32;
+                                    let mut clicked_opt: Option<usize> = None;
+                                    let mut opt_i = 0usize;
+                                    for child in &sel.children {
+                                        if child.tag == "option" {
+                                            if rel_y >= y_acc && rel_y < y_acc + item_h {
+                                                clicked_opt = Some(opt_i);
+                                                break;
+                                            }
+                                            y_acc += item_h;
+                                            opt_i += 1;
+                                        } else if child.tag == "optgroup" {
+                                            y_acc += group_h;
+                                            for gc in &child.children {
+                                                if gc.tag == "option" {
+                                                    if rel_y >= y_acc && rel_y < y_acc + item_h {
+                                                        clicked_opt = Some(opt_i);
+                                                        break;
+                                                    }
+                                                    y_acc += item_h;
+                                                    opt_i += 1;
+                                                }
+                                            }
+                                            if clicked_opt.is_some() { break; }
+                                        }
+                                    }
+
+                                    if let Some(opt_idx) = clicked_opt {
+                                        let sel_ptr = self.open_select;
+                                        fn find_m<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+                                            if std::ptr::eq(n, t) { return Some(n); }
+                                            for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
+                                            None
+                                        }
+                                        let new_text = opt_texts.get(opt_idx).cloned().unwrap_or_default();
+                                        let new_value = opt_values.get(opt_idx).cloned().unwrap_or_default();
+                                        if let Some(sel_mut) = find_m(&mut self.root, sel_ptr) {
+                                            sel_mut.data.insert("_selected_idx".into(), opt_idx.to_string());
+                                            // Update display text node
+                                            if let Some(tn) = sel_mut.children.iter_mut().rev().find(|c| c.tag == "#text") {
+                                                tn.text = new_text;
+                                            }
+                                            sel_mut.layout_dirty = true;
+                                            if let Some(ref mut cb) = self.on_form_event {
+                                                cb(&FormEvent {
+                                                    tag: "select".into(),
+                                                    id: sel_mut.attributes.get("id").cloned().unwrap_or_default(),
+                                                    name: sel_mut.attributes.get("name").cloned().unwrap_or_default(),
+                                                    kind: FormEventKind::Change(new_value),
+                                                    element: sel_ptr,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    self.open_select = std::ptr::null();
+                                    redraw = true;
+                                } else {
+                                    self.open_select = std::ptr::null();
+                                    redraw = true;
+                                }
+                            } else {
+                                // Check if clicking a select to open it
+                                let effective = find_form_parent(&self.root, hit_ptr);
+                                let eff_node = unsafe { &*effective };
+                                if eff_node.tag == "select" {
+                                    self.open_select = effective;
+                                    redraw = true;
+                                }
+                            }
+                        }
 
                         // DblClick: same target within 400 ms.
                         let now = std::time::Instant::now();
@@ -2181,7 +2386,43 @@ impl Document {
         let mut redraw = handled;
 
         if !evt.default_prevented {
-            if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
+            // Check if a form input is focused — route keys there first
+            let form_handled = if !self.focused_box.is_null()
+                && etype == crate::dom::HtmlEventType::KeyDown
+            {
+                let focused = unsafe { &*self.focused_box };
+                if is_text_input(focused) {
+                    // Find the focused node mutably and process the key
+                    let ptr = self.focused_box;
+                    fn find_input<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+                        if std::ptr::eq(n, t) { return Some(n); }
+                        for c in &mut n.children {
+                            if let Some(r) = find_input(c, t) { return Some(r); }
+                        }
+                        None
+                    }
+                    if let Some(input) = find_input(&mut self.root, ptr) {
+                        let changed = process_form_input_key(input, key_code, ch);
+                        if changed {
+                            // Fire form event callback
+                            if let Some(ref mut cb) = self.on_form_event {
+                                cb(&FormEvent {
+                                    tag: input.tag.clone(),
+                                    id: input.attributes.get("id").cloned().unwrap_or_default(),
+                                    name: input.attributes.get("name").cloned().unwrap_or_default(),
+                                    kind: FormEventKind::Input(input_value(input)),
+                                    element: ptr,
+                                });
+                            }
+                        }
+                        changed
+                    } else { false }
+                } else { false }
+            } else { false };
+
+            if form_handled {
+                redraw = true;
+            } else if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
                 redraw = true;
             }
         }
@@ -2738,6 +2979,266 @@ impl Document {
 /// Returns true if `node` is a focusable element (native or via tabindex/contenteditable).
 /// tabindex=-1 elements return true (focusable by script/click) but are excluded from
 /// the *tab* order by `collect_focusable_ordered`.
+/// Handle a click on a form element: toggle checkbox, select radio, fire form events.
+/// Returns Some(true) if a redraw is needed, Some(false) if handled but no redraw, None if not a form element.
+fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut Option<FormEventCallback>) -> Option<bool> {
+    // Find the target node mutably in the tree
+    fn find_mut<'a>(node: &'a mut HtmlBox, target: *const HtmlBox) -> Option<&'a mut HtmlBox> {
+        if std::ptr::eq(node, target) { return Some(node); }
+        for child in &mut node.children {
+            if let Some(found) = find_mut(child, target) { return Some(found); }
+        }
+        None
+    }
+
+    // If the target is a #text node, find the parent form element instead.
+    // This handles clicks on text inside <select>, <button>, etc.
+    let effective_target = {
+        let node = unsafe { &*target };
+        if node.tag == "#text" {
+            // Walk the tree to find the parent of this text node
+            fn find_parent(node: &HtmlBox, child: *const HtmlBox) -> Option<*const HtmlBox> {
+                for c in &node.children {
+                    if std::ptr::eq(c, unsafe { &*child }) {
+                        return Some(node as *const HtmlBox);
+                    }
+                    if let Some(p) = find_parent(c, child) { return Some(p); }
+                }
+                None
+            }
+            find_parent(root, target).unwrap_or(target)
+        } else {
+            target
+        }
+    };
+    let target = effective_target;
+
+    // Read target info before mutation
+    let (tag, input_type, name, id, value) = {
+        let node = unsafe { &*target };
+        let tag = node.tag.clone();
+        let input_type = node.attributes.get("type").cloned().unwrap_or_default();
+        let name = node.attributes.get("name").cloned().unwrap_or_default();
+        let id = node.attributes.get("id").cloned().unwrap_or_default();
+        let value = node.attributes.get("value").cloned().unwrap_or_default();
+        (tag, input_type, name, id, value)
+    };
+
+    match tag.as_str() {
+        "input" => {
+            match input_type.as_str() {
+                "checkbox" => {
+                    let node = find_mut(root, target)?;
+                    let was_checked = node.attributes.contains_key("checked");
+                    if was_checked {
+                        node.attributes.remove("checked");
+                    } else {
+                        node.attributes.insert("checked".into(), String::new());
+                    }
+                    let new_checked = !was_checked;
+                    if let Some(cb) = callback {
+                        cb(&FormEvent {
+                            tag: tag.clone(), id, name,
+                            kind: FormEventKind::Toggle(new_checked),
+                            element: target,
+                        });
+                    }
+                    Some(true)
+                }
+                "radio" => {
+                    // Uncheck other radios with the same name, check this one
+                    if !name.is_empty() {
+                        fn uncheck_radios(node: &mut HtmlBox, name: &str, except: *const HtmlBox) {
+                            if node.tag == "input"
+                                && node.attributes.get("type").map(|s| s.as_str()) == Some("radio")
+                                && node.attributes.get("name").map(|s| s.as_str()) == Some(name)
+                                && !std::ptr::eq(node, unsafe { &*except })
+                            {
+                                node.attributes.remove("checked");
+                            }
+                            for child in &mut node.children {
+                                uncheck_radios(child, name, except);
+                            }
+                        }
+                        uncheck_radios(root, &name, target);
+                    }
+                    let node = find_mut(root, target)?;
+                    node.attributes.insert("checked".into(), String::new());
+                    if let Some(cb) = callback {
+                        cb(&FormEvent {
+                            tag: tag.clone(), id, name,
+                            kind: FormEventKind::Change(value),
+                            element: target,
+                        });
+                    }
+                    Some(true)
+                }
+                "submit" | "button" | "reset" => {
+                    if let Some(cb) = callback {
+                        cb(&FormEvent {
+                            tag: tag.clone(), id, name,
+                            kind: FormEventKind::Click(value),
+                            element: target,
+                        });
+                    }
+                    Some(false)
+                }
+                "text" | "password" | "email" | "search" | "url" | "tel" | "number" => {
+                    // Text input clicked — set cursor to end of value
+                    let node = find_mut(root, target)?;
+                    let len = input_value(node).chars().count();
+                    node.input_cursor = len;
+                    node.input_sel_anchor = len;
+                    Some(true)
+                }
+                _ => None,
+            }
+        }
+        "button" => {
+            if let Some(cb) = callback {
+                let text = unsafe { &*target }.text.clone();
+                cb(&FormEvent {
+                    tag, id, name,
+                    kind: FormEventKind::Click(if value.is_empty() { text } else { value }),
+                    element: target,
+                });
+            }
+            Some(false)
+        }
+        "select" => {
+            // Dropdown is handled in process_mouse_event with open_select state
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Find the form element parent of a target (walks up from #text to select/input/button).
+fn find_form_parent(root: &HtmlBox, target: *const HtmlBox) -> *const HtmlBox {
+    let node = unsafe { &*target };
+    if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button") {
+        return target;
+    }
+    // Walk tree to find parent
+    fn walk(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+        for child in &node.children {
+            if std::ptr::eq(child, unsafe { &*target }) {
+                if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button" | "label") {
+                    return Some(node as *const HtmlBox);
+                }
+            }
+            if let Some(p) = walk(child, target) { return Some(p); }
+        }
+        None
+    }
+    walk(root, target).unwrap_or(target)
+}
+
+/// Returns true if this element is a text-editable form input.
+pub fn is_text_input(node: &HtmlBox) -> bool {
+    match node.tag.as_str() {
+        "textarea" => true,
+        "input" => {
+            let t = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            matches!(t, "text" | "password" | "email" | "search" | "url" | "tel" | "number")
+        }
+        _ => false,
+    }
+}
+
+/// Get the current value of a form input.
+pub fn input_value(node: &HtmlBox) -> String {
+    if node.tag == "textarea" {
+        // Textarea value is in child text nodes
+        node.children.iter()
+            .filter(|c| c.tag == "#text")
+            .map(|c| c.text.as_str())
+            .collect()
+    } else {
+        node.attributes.get("value").cloned().unwrap_or_default()
+    }
+}
+
+/// Process a key event on a focused form input. Returns true if the value changed.
+pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>) -> bool {
+    if !is_text_input(node) { return false; }
+    let is_textarea = node.tag == "textarea";
+
+    let mut value = input_value(node);
+    let len = value.chars().count();
+    let cursor = node.input_cursor.min(len);
+    let mut new_cursor = cursor;
+    let mut changed = false;
+
+    match key_code {
+        8 => { // Backspace
+            if cursor > 0 {
+                let byte_pos = value.char_indices().nth(cursor - 1).map(|(i, _)| i).unwrap_or(0);
+                let byte_end = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                value.replace_range(byte_pos..byte_end, "");
+                new_cursor = cursor - 1;
+                changed = true;
+            }
+        }
+        46 => { // Delete
+            if cursor < len {
+                let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                let byte_end = value.char_indices().nth(cursor + 1).map(|(i, _)| i).unwrap_or(value.len());
+                value.replace_range(byte_pos..byte_end, "");
+                changed = true;
+            }
+        }
+        37 => { // Left arrow
+            if cursor > 0 { new_cursor = cursor - 1; }
+        }
+        39 => { // Right arrow
+            if cursor < len { new_cursor = cursor + 1; }
+        }
+        36 => { // Home
+            new_cursor = 0;
+        }
+        35 => { // End
+            new_cursor = len;
+        }
+        13 => { // Enter
+            if is_textarea {
+                let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                value.insert(byte_pos, '\n');
+                new_cursor = cursor + 1;
+                changed = true;
+            }
+            // For single-line inputs, Enter doesn't insert — it would submit the form
+        }
+        _ => {
+            // Character input
+            if let Some(c) = ch {
+                if !c.is_control() {
+                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    value.insert(byte_pos, c);
+                    new_cursor = cursor + 1;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    node.input_cursor = new_cursor;
+    node.input_sel_anchor = new_cursor;
+
+    if changed {
+        if node.tag == "textarea" {
+            // Update text content in child nodes
+            if let Some(text_node) = node.children.iter_mut().find(|c| c.tag == "#text") {
+                text_node.text = value.clone();
+            }
+        }
+        node.attributes.insert("value".into(), value);
+        node.layout_dirty = true;
+    }
+
+    changed || key_code == 37 || key_code == 39 || key_code == 36 || key_code == 35
+}
+
 pub fn is_focusable_node(node: &HtmlBox) -> bool {
     if matches!(node.style.display, Display::None) { return false; }
     if !node.style.visibility { return false; }
@@ -2815,6 +3316,7 @@ impl Clone for Document {
             viewport_w:      self.viewport_w,
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
+            open_select:     std::ptr::null(), dropdown_hover_idx: -1,
             active_animations:     self.active_animations.clone(),
             transition_states:     self.transition_states.clone(),
             prev_styles:           self.prev_styles.clone(),
@@ -2828,7 +3330,17 @@ impl Clone for Document {
             // Async image state is not cloned — cloned docs start with no pending fetches.
             pending_images:   None,
             images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            on_form_event: None, // callbacks not cloned
         }
+    }
+}
+
+impl std::fmt::Debug for Document {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Document")
+            .field("title", &self.title)
+            .field("base_url", &self.base_url)
+            .finish()
     }
 }
 

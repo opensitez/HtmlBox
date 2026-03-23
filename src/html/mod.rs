@@ -1184,7 +1184,8 @@ impl HtmlParser {
                     }
 
                     if self_closing {
-                        // Void element — push directly to current frame.
+                        // Void element — post-process then push to current frame.
+                        Self::post_process_node(&mut node, &self.base_url);
                         stack.last_mut().unwrap().node.children.push(node);
                     } else {
                         // Non-void — push a new frame; children will be collected
@@ -1217,40 +1218,97 @@ impl HtmlParser {
         if node.tag == "picture" {
             resolve_picture_source(node, base_url, 0.0, 0.0);
         }
-        // <select>: show selected/first option text, hide all option children
+        // <select>: keep option children in the DOM for CSS styling.
+        // The selected option's text is shown inline; others are display:none.
+        // When the dropdown opens, all options are rendered as a popup.
         if node.tag == "select" {
-            // Find selected option text (or first option)
-            let mut selected_text = String::new();
-            fn find_option_text(children: &[HtmlBox], selected: &mut String, first: &mut String) {
-                for child in children {
-                    if child.tag == "option" {
-                        let txt = collect_text(child);
-                        if first.is_empty() { *first = txt.clone(); }
-                        if child.attributes.contains_key("selected") {
-                            *selected = txt;
-                            return;
+            let mut selected_idx: usize = 0;
+            let mut found_selected = false;
+            let mut opt_count = 0usize;
+            // Find which option is selected
+            for child in &node.children {
+                if child.tag == "option" {
+                    if child.attributes.contains_key("selected") {
+                        selected_idx = opt_count;
+                        found_selected = true;
+                    }
+                    opt_count += 1;
+                } else if child.tag == "optgroup" {
+                    for gc in &child.children {
+                        if gc.tag == "option" {
+                            if gc.attributes.contains_key("selected") {
+                                selected_idx = opt_count;
+                                found_selected = true;
+                            }
+                            opt_count += 1;
                         }
-                    } else if child.tag == "optgroup" {
-                        find_option_text(&child.children, selected, first);
-                        if !selected.is_empty() { return; }
                     }
                 }
             }
-            fn collect_text(n: &HtmlBox) -> String {
-                if n.tag == "#text" { return n.text.clone(); }
-                let mut s = String::new();
-                for c in &n.children { s.push_str(&collect_text(c)); }
-                s
+            node.data.insert("_selected_idx".into(), selected_idx.to_string());
+            // Set all options to display:none except put the selected text as a visible child
+            // Keep the original options for the dropdown popup
+            let mut selected_text = String::new();
+            opt_count = 0;
+            for child in &mut node.children {
+                if child.tag == "option" {
+                    if opt_count == selected_idx {
+                        // Extract text for display
+                        for tc in &child.children {
+                            if tc.tag == "#text" { selected_text.push_str(&tc.text); }
+                        }
+                    }
+                    // All options hidden — shown only in dropdown popup
+                    apply_property(&mut child.style, "display", "none");
+                    opt_count += 1;
+                } else if child.tag == "optgroup" {
+                    apply_property(&mut child.style, "display", "none");
+                    for gc in &mut child.children {
+                        if gc.tag == "option" {
+                            if opt_count == selected_idx {
+                                for tc in &gc.children {
+                                    if tc.tag == "#text" { selected_text.push_str(&tc.text); }
+                                }
+                            }
+                            opt_count += 1;
+                        }
+                    }
+                }
             }
-            let mut first_text = String::new();
-            find_option_text(&node.children, &mut selected_text, &mut first_text);
-            if selected_text.is_empty() { selected_text = first_text; }
-            // Replace children with a single text node showing the selected option
-            node.children.clear();
-            if !selected_text.is_empty() {
-                let mut text_node = HtmlBox::new("#text");
-                text_node.text = selected_text.trim().to_string();
-                node.children.push(text_node);
+            // Add a display text node for the currently selected option
+            let mut display_node = HtmlBox::new("#text");
+            display_node.text = selected_text.trim().to_string();
+            node.children.push(display_node);
+            // Set overflow hidden so options don't leak
+            apply_property(&mut node.style, "overflow", "hidden");
+        }
+        // <input>: create text child for button types
+        if node.tag == "input" {
+            let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            match input_type {
+                "submit" | "button" | "reset" => {
+                    let label = node.attributes.get("value")
+                        .cloned()
+                        .unwrap_or_else(|| match input_type {
+                            "submit" => "Submit".to_string(),
+                            "reset"  => "Reset".to_string(),
+                            _ => String::new(),
+                        });
+                    if !label.is_empty() {
+                        node.children.clear();
+                        let mut text_node = HtmlBox::new("#text");
+                        text_node.text = label;
+                        node.children.push(text_node);
+                    }
+                }
+                "image" => {
+                    // Image input: treat src like <img src>
+                    if let Some(src) = node.attributes.get("src").cloned() {
+                        let resolved = resolve_url(&src, base_url);
+                        node.attributes.insert("_resolved_src".into(), resolved);
+                    }
+                }
+                _ => {}
             }
         }
         if node.tag == "details" {
@@ -1349,10 +1407,9 @@ impl HtmlParser {
 
         if !self_closing {
             let mut inner_ol = 0i32;
-            // Delegates to the iterative parse_children_into — no recursion risk.
             self.parse_children_into(&tag, &mut node.children, &mut inner_ol);
-            Self::post_process_node(&mut node, &self.base_url);
         }
+        Self::post_process_node(&mut node, &self.base_url);
 
         children.push(node);
     }
@@ -1818,6 +1875,7 @@ fn parse_html_full(
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,
+        open_select:       std::ptr::null(), dropdown_hover_idx: -1,
         active_animations:     Vec::new(),
         transition_states:     std::collections::HashMap::new(),
         prev_styles:           std::collections::HashMap::new(),
@@ -1830,6 +1888,7 @@ fn parse_html_full(
         live_regions_initialized: false,
         pending_images:      None,
         images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        on_form_event:       None,
     };
 
     // NOTE: External CSS fetching, cascade, layout, and image loading are

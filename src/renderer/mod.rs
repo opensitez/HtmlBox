@@ -43,6 +43,10 @@ pub struct Renderer {
     /// or animation overrides. When set, the renderer uses node.style (already has
     /// the interpolated values applied) rather than hover_style for these elements.
     transitioning_ids: std::collections::HashSet<usize>,
+    /// Focused element pointer — set during render() for form element caret drawing.
+    focused_ptr: *const HtmlBox,
+    /// Hovered dropdown option index (-1 = none).
+    dropdown_hover_idx: i32,
 }
 
 impl Renderer {
@@ -63,6 +67,8 @@ impl Renderer {
             cursor_physical: (0.0, 0.0),
             viewport_h: 700.0,
             transitioning_ids: std::collections::HashSet::new(),
+            focused_ptr: std::ptr::null(),
+            dropdown_hover_idx: -1,
         }
     }
 
@@ -427,6 +433,8 @@ impl Renderer {
         // Collect element IDs that have active transitions so render_box can
         // use node.style (already has interpolated overrides) instead of hover_style.
         self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
+        self.focused_ptr = doc.focused_box;
+        self.dropdown_hover_idx = doc.dropdown_hover_idx;
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -454,6 +462,12 @@ impl Renderer {
                     sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
                 );
             }
+        }
+
+        // ── Select dropdown popup ────────────────────────────────────────────
+        if !doc.open_select.is_null() {
+            let sel = unsafe { &*doc.open_select };
+            self.draw_select_dropdown(sel, pixmap, scroll_x, scroll_y);
         }
 
         // ── Caret ─────────────────────────────────────────────────────────────
@@ -909,6 +923,9 @@ impl Renderer {
         if node.tag == "hr" {
             self.draw_hr(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
+
+        // ── Form element rendering ────────────────────────────────────────────
+        self.draw_form_element(node, pixmap, eff_sx, eff_sy, eff_mask);
 
         // ── Custom Component Painting ────────────────────────────────────────
         if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
@@ -1484,7 +1501,7 @@ impl Renderer {
                 }
             }
 
-            let mut cursor_x = lx;
+            let mut cursor_x = lx + line.text_x_offset;
 
             for chunk in &chunks {
                 let s = floor_char_boundary(flat, chunk.s);
@@ -2110,6 +2127,508 @@ impl Renderer {
         if let Some(path) = line_path(cr.x - sx, y, cr.right() - sx, y) {
             pixmap.stroke_path(&path, &paint, &stroke, Transform::from_scale(self.scale, self.scale), mask);
         }
+    }
+
+    // ─── Form element rendering ────────────────────────────────────────────
+
+    fn draw_form_element(
+        &mut self,
+        node:   &HtmlBox,
+        pixmap: &mut Pixmap,
+        sx:     f32,
+        sy:     f32,
+        mask:   Option<&Mask>,
+    ) {
+        let tag = node.tag.as_str();
+        let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+
+        match tag {
+            "input" => match input_type {
+                "checkbox" => self.draw_checkbox(node, pixmap, sx, sy, mask),
+                "radio"    => self.draw_radio(node, pixmap, sx, sy, mask),
+                "range"    => self.draw_range(node, pixmap, sx, sy, mask),
+                "hidden"   => {}
+                "submit" | "button" | "reset" => self.draw_button_input(node, pixmap, sx, sy, mask),
+                "file"     => self.draw_file_input(node, pixmap, sx, sy, mask),
+                "color"    => self.draw_color_input(node, pixmap, sx, sy, mask),
+                "date" | "time" | "datetime-local" | "month" | "week" =>
+                    self.draw_date_input(node, pixmap, sx, sy, mask),
+                "image"    => {
+                    // Render like <img> — use draw_image_placeholder
+                    self.draw_image_placeholder(node, pixmap, sx, sy, mask);
+                }
+                // Text-like inputs: text, password, search, email, url, tel, number
+                _ => self.draw_text_input(node, pixmap, sx, sy, mask),
+            },
+            "textarea" => self.draw_textarea(node, pixmap, sx, sy, mask),
+            "select"   => self.draw_select(node, pixmap, sx, sy, mask),
+            "button"   => self.draw_button(node, pixmap, sx, sy, mask),
+            "progress" => self.draw_progress(node, pixmap, sx, sy, mask),
+            "meter"    => self.draw_meter(node, pixmap, sx, sy, mask),
+            "output"   => {} // inline text, handled by normal flow
+            _ => {}
+        }
+    }
+
+    fn draw_text_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let pr = node.padding_rect;
+        let cr = node.content_rect;
+        let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+
+        // Focus ring
+        let is_focused = !self.focused_ptr.is_null() && std::ptr::eq(node, unsafe { &*self.focused_ptr });
+        if is_focused {
+            self.stroke_rect(pixmap, pr.x - sx - 1.0, pr.y - sy - 1.0, pr.w + 2.0, pr.h + 2.0,
+                [66, 133, 244, 255], 2.0, mask);
+        }
+
+        // Draw value text or placeholder
+        let value = node.attributes.get("value").map(|s| s.as_str()).unwrap_or("");
+        let placeholder = node.attributes.get("placeholder").map(|s| s.as_str()).unwrap_or("");
+        let (text, is_placeholder) = if value.is_empty() { (placeholder, true) } else { (value, false) };
+
+        let font_px = node.style.font_size_px(16.0, 16.0);
+        let line_h = font_px * 1.2;
+        let ty = cr.y - sy + (cr.h - line_h).max(0.0) / 2.0;
+
+        if !text.is_empty() {
+            let (display_text, draw_font_px) = if input_type == "password" {
+                ("\u{2022}".repeat(text.chars().count()), font_px * 0.7)
+            } else {
+                (text.to_string(), font_px)
+            };
+            let color = if is_placeholder {
+                CTextColor::rgba(160, 160, 160, 255)
+            } else {
+                let c = node.style.color;
+                CTextColor::rgba(c.r, c.g, c.b, c.a)
+            };
+            let draw_line_h = draw_font_px * 1.2;
+            let draw_ty = cr.y - sy + (cr.h - draw_line_h).max(0.0) / 2.0;
+            self.draw_text_run(
+                &display_text, cr.x - sx, draw_ty, draw_font_px, draw_line_h,
+                node.style.font_weight, node.style.font_style, &node.style.font_family,
+                color, pixmap, mask,
+            );
+        }
+
+        // Caret when focused — use node.input_cursor for position
+        if is_focused {
+            // Blink: visible for 500ms, hidden for 500ms
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let caret_visible = (ms / 500) % 2 == 0;
+
+            if caret_visible {
+                let cursor_pos = node.input_cursor.min(value.chars().count());
+                let text_before_cursor: String = if input_type == "password" {
+                    "\u{2022}".repeat(cursor_pos)
+                } else {
+                    value.chars().take(cursor_pos).collect()
+                };
+                let caret_offset = text_before_cursor.len() as f32 * font_px * 0.55;
+                let caret_x = (cr.x - sx + caret_offset).min(cr.x - sx + cr.w - 1.0);
+                // Use text color for caret (visible on dark backgrounds)
+                let c = node.style.color;
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(c.r, c.g, c.b, c.a);
+                let ts = Transform::from_scale(self.scale, self.scale);
+                if let Some(path) = line_path(caret_x, ty, caret_x, ty + line_h) {
+                    let mut stroke = Stroke::default();
+                    stroke.width = 1.5;
+                    pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+                }
+            }
+        }
+    }
+
+
+    fn draw_textarea(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let pr = node.padding_rect;
+        let x = pr.x - sx;
+        let y = pr.y - sy;
+        // Border handled by CSS. Draw resize grip only.
+        let gx = x + pr.w - 12.0;
+        let gy = y + pr.h - 12.0;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(169, 169, 169, 200);
+        let ts = Transform::from_scale(self.scale, self.scale);
+        // Draw two small diagonal lines for the grip
+        for i in 0..3 {
+            let offset = i as f32 * 4.0;
+            if let Some(path) = line_path(gx + offset + 8.0, gy + 10.0, gx + 10.0, gy + offset + 8.0) {
+                let mut stroke = Stroke::default();
+                stroke.width = 1.0;
+                pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+            }
+        }
+    }
+
+    fn draw_checkbox(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        // Inset slightly so the border stays inside the content rect
+        let inset = 1.0;
+        let x = cr.x - sx + inset;
+        let y = cr.y - sy + inset;
+        let size = (cr.w - inset * 2.0).max(10.0);
+        let ts = Transform::from_scale(self.scale, self.scale);
+
+        let checked = node.attributes.get("checked").is_some();
+
+        if checked {
+            // Filled blue background with white checkmark (like Chrome)
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(66, 133, 244, 255);
+            if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, size * self.scale, size * self.scale) {
+                pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+            }
+            // White checkmark
+            paint.set_color_rgba8(255, 255, 255, 255);
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + size * 0.2, y + size * 0.5);
+            pb.line_to(x + size * 0.42, y + size * 0.72);
+            pb.line_to(x + size * 0.8, y + size * 0.28);
+            if let Some(path) = pb.finish() {
+                let mut stroke = Stroke::default();
+                stroke.width = 2.0;
+                pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+            }
+        } else {
+            // Empty box with border
+            self.stroke_rect(pixmap, x, y, size, size, [169, 169, 169, 255], 1.5, mask);
+        }
+    }
+
+    fn draw_radio(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        let cx = cr.x - sx + cr.w / 2.0;
+        let cy = cr.y - sy + cr.h / 2.0;
+        let r = (cr.w.min(cr.h) / 2.0 - 1.0).max(5.0);
+        let ts = Transform::from_scale(self.scale, self.scale);
+        let checked = node.attributes.get("checked").is_some();
+
+        // Outer circle
+        let mut paint = Paint::default();
+        let border_color = if checked { [66, 133, 244, 255] } else { [169, 169, 169, 255] };
+        paint.set_color_rgba8(border_color[0], border_color[1], border_color[2], border_color[3]);
+        if let Some(path) = {
+            let mut pb = PathBuilder::new();
+            pb.push_circle(cx, cy, r);
+            pb.finish()
+        } {
+            let mut stroke = Stroke::default();
+            stroke.width = 1.5;
+            pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+        }
+
+        // Inner dot if checked (blue filled)
+        if checked {
+            paint.set_color_rgba8(66, 133, 244, 255);
+            if let Some(path) = {
+                let mut pb = PathBuilder::new();
+                pb.push_circle(cx, cy, r * 0.45);
+                pb.finish()
+            } {
+                pixmap.fill_path(&path, &paint, FillRule::Winding, ts, mask);
+            }
+        }
+    }
+
+    fn draw_range(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        let x = cr.x - sx;
+        let y = cr.y - sy;
+        let w = cr.w;
+        let h = cr.h;
+        let ts = Transform::from_scale(self.scale, self.scale);
+
+        // Parse value, min, max
+        let min: f32 = node.attributes.get("min").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let max: f32 = node.attributes.get("max").and_then(|s| s.parse().ok()).unwrap_or(100.0);
+        let val: f32 = node.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or((min + max) / 2.0);
+        let pct = ((val - min) / (max - min).max(0.001)).clamp(0.0, 1.0);
+
+        // Track
+        let track_h = 4.0;
+        let track_y = y + h / 2.0 - track_h / 2.0;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(200, 200, 200, 255);
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, track_y * self.scale, w * self.scale, track_h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        // Filled portion
+        paint.set_color_rgba8(66, 133, 244, 255);
+        let fill_w = w * pct;
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, track_y * self.scale, fill_w * self.scale, track_h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+
+        // Thumb
+        let thumb_x = x + fill_w;
+        let thumb_r = 7.0;
+        paint.set_color_rgba8(66, 133, 244, 255);
+        if let Some(path) = {
+            let mut pb = PathBuilder::new();
+            pb.push_circle(thumb_x, y + h / 2.0, thumb_r);
+            pb.finish()
+        } {
+            pixmap.fill_path(&path, &paint, FillRule::Winding, ts, mask);
+        }
+    }
+
+    fn draw_select(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let pr = node.padding_rect;
+        let y = pr.y - sy;
+        let h = pr.h;
+        let x = pr.x - sx;
+        let w = pr.w;
+        let ts = Transform::from_scale(self.scale, self.scale);
+
+        // Focus ring
+        let is_focused = !self.focused_ptr.is_null() && std::ptr::eq(node, unsafe { &*self.focused_ptr });
+        if is_focused {
+            self.stroke_rect(pixmap, x - 1.0, y - 1.0, w + 2.0, h + 2.0,
+                [66, 133, 244, 255], 2.0, mask);
+        }
+
+        // Down arrow on right side (text is rendered by the child text node via inline layout)
+        let arrow_x = x + w - 18.0;
+        let arrow_y = y + h / 2.0;
+        let c = node.style.color;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c.r, c.g, c.b, (c.a as f32 * 0.6) as u8);
+        let mut pb = PathBuilder::new();
+        pb.move_to(arrow_x, arrow_y - 3.0);
+        pb.line_to(arrow_x + 6.0, arrow_y + 3.0);
+        pb.line_to(arrow_x + 12.0, arrow_y - 3.0);
+        if let Some(path) = pb.finish() {
+            let mut stroke = Stroke::default();
+            stroke.width = 1.5;
+            pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+        }
+    }
+
+    fn draw_button_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        // Button inputs have text children created by the parser.
+        // The background comes from CSS (default #efefef from UA).
+        // The border comes from CSS (1px solid #767676 from UA).
+        // We only need to add a default background if CSS doesn't set one.
+        let pr = node.padding_rect;
+        let bg = node.style.background_color;
+        if bg.a == 0 {
+            let x = pr.x - sx;
+            let y = pr.y - sy;
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(239, 239, 239, 255);
+            if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, pr.w * self.scale, pr.h * self.scale) {
+                pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+            }
+        }
+        // Text rendering is handled by the text children created in post_process_node.
+    }
+
+    fn draw_button(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        // <button> renders text children via normal inline layout.
+        // Add default background if CSS doesn't set one. Border from CSS.
+        let pr = node.padding_rect;
+        let bg = node.style.background_color;
+        if bg.a == 0 {
+            let x = pr.x - sx;
+            let y = pr.y - sy;
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(239, 239, 239, 255);
+            if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, pr.w * self.scale, pr.h * self.scale) {
+                pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+            }
+        }
+    }
+
+    fn draw_progress(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        let x = cr.x - sx;
+        let y = cr.y - sy;
+
+        let val: f32 = node.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let max: f32 = node.attributes.get("max").and_then(|s| s.parse().ok()).unwrap_or(1.0);
+        let pct = (val / max.max(0.001)).clamp(0.0, 1.0);
+
+        // Track background
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(220, 220, 220, 255);
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, cr.w * self.scale, cr.h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        // Filled portion
+        paint.set_color_rgba8(66, 133, 244, 255);
+        let fill_w = cr.w * pct;
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, fill_w * self.scale, cr.h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+    }
+
+    /// Helper: stroke a rectangle outline.
+    fn stroke_rect(&self, pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32,
+                    color: [u8; 4], width: f32, mask: Option<&Mask>) {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+        let ts = Transform::from_scale(self.scale, self.scale);
+        let mut pb = PathBuilder::new();
+        pb.move_to(x, y);
+        pb.line_to(x + w, y);
+        pb.line_to(x + w, y + h);
+        pb.line_to(x, y + h);
+        pb.close();
+        if let Some(path) = pb.finish() {
+            let mut stroke = Stroke::default();
+            stroke.width = width;
+            pixmap.stroke_path(&path, &paint, &stroke, ts, mask);
+        }
+    }
+
+    fn draw_file_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let pr = node.padding_rect;
+        let x = pr.x - sx;
+        let y = pr.y - sy;
+
+        // "Choose File" button portion
+        let btn_w = 85.0f32;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(239, 239, 239, 255);
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, btn_w * self.scale, pr.h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        self.stroke_rect(pixmap, x, y, btn_w, pr.h, [118, 118, 118, 255], 1.0, mask);
+
+        let font_px = node.style.font_size_px(16.0, 16.0);
+        let line_h = font_px * 1.2;
+        let text_y = y + (pr.h - line_h).max(0.0) / 2.0;
+        let c = node.style.color;
+        self.draw_text_run(
+            "Choose File", x + 4.0, text_y, font_px, line_h,
+            node.style.font_weight, node.style.font_style, &node.style.font_family,
+            CTextColor::rgba(c.r, c.g, c.b, c.a), pixmap, mask,
+        );
+
+        // "No file chosen" text
+        let file_text = node.attributes.get("value")
+            .filter(|v| !v.is_empty())
+            .map(|v| v.as_str())
+            .unwrap_or("No file chosen");
+        self.draw_text_run(
+            file_text, x + btn_w + 6.0, text_y, font_px, line_h,
+            node.style.font_weight, node.style.font_style, &node.style.font_family,
+            CTextColor::rgba(100, 100, 100, 255), pixmap, mask,
+        );
+    }
+
+    fn draw_color_input(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        let x = cr.x - sx;
+        let y = cr.y - sy;
+
+        // Parse color value
+        let color_str = node.attributes.get("value").map(|s| s.as_str()).unwrap_or("#000000");
+        let (r, g, b) = parse_hex_color(color_str);
+
+        // Color swatch
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(r, g, b, 255);
+        let inset = 3.0;
+        if let Some(rect) = tiny_skia::Rect::from_xywh(
+            (x + inset) * self.scale, (y + inset) * self.scale,
+            (cr.w - inset * 2.0) * self.scale, (cr.h - inset * 2.0) * self.scale,
+        ) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        // Border from CSS
+    }
+
+    fn draw_date_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let pr = node.padding_rect;
+        let cr = node.content_rect;
+        let x = pr.x - sx;
+        let y = pr.y - sy;
+
+        // Value or placeholder
+        let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("date");
+        let value = node.attributes.get("value").map(|s| s.as_str()).unwrap_or("");
+        let placeholder = match input_type {
+            "date"           => "yyyy-mm-dd",
+            "time"           => "hh:mm",
+            "datetime-local" => "yyyy-mm-ddThh:mm",
+            "month"          => "yyyy-mm",
+            "week"           => "yyyy-Www",
+            _ => "",
+        };
+        let (text, is_placeholder) = if value.is_empty() { (placeholder, true) } else { (value, false) };
+        let font_px = node.style.font_size_px(16.0, 16.0);
+        let color = if is_placeholder {
+            CTextColor::rgba(169, 169, 169, 255)
+        } else {
+            let c = node.style.color;
+            CTextColor::rgba(c.r, c.g, c.b, c.a)
+        };
+        let line_h = font_px * 1.2;
+        let text_y = cr.y - sy + (cr.h - line_h).max(0.0) / 2.0;
+        self.draw_text_run(
+            text, cr.x - sx, text_y, font_px, line_h,
+            node.style.font_weight, node.style.font_style, &node.style.font_family,
+            color, pixmap, mask,
+        );
+
+        // Calendar icon on right
+        let ts = Transform::from_scale(self.scale, self.scale);
+        let ix = x + pr.w - 18.0;
+        let iy = y + pr.h / 2.0 - 6.0;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(120, 120, 120, 255);
+        // Simple calendar icon: rectangle + two lines at top
+        self.stroke_rect(pixmap, ix, iy + 3.0, 12.0, 10.0, [120, 120, 120, 255], 1.0, mask);
+        if let Some(path) = line_path(ix + 3.0, iy, ix + 3.0, iy + 4.0) {
+            let mut s = Stroke::default(); s.width = 1.5;
+            pixmap.stroke_path(&path, &paint, &s, ts, mask);
+        }
+        if let Some(path) = line_path(ix + 9.0, iy, ix + 9.0, iy + 4.0) {
+            let mut s = Stroke::default(); s.width = 1.5;
+            pixmap.stroke_path(&path, &paint, &s, ts, mask);
+        }
+    }
+
+    fn draw_meter(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
+        let cr = node.content_rect;
+        let x = cr.x - sx;
+        let y = cr.y - sy;
+
+        let val: f32 = node.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let min: f32 = node.attributes.get("min").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let max: f32 = node.attributes.get("max").and_then(|s| s.parse().ok()).unwrap_or(1.0);
+        let low: f32 = node.attributes.get("low").and_then(|s| s.parse().ok()).unwrap_or(min);
+        let high: f32 = node.attributes.get("high").and_then(|s| s.parse().ok()).unwrap_or(max);
+        let pct = ((val - min) / (max - min).max(0.001)).clamp(0.0, 1.0);
+
+        // Track background
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(220, 220, 220, 255);
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, cr.w * self.scale, cr.h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        // Fill color based on value range
+        let fill_color = if val < low {
+            [255, 80, 80, 255] // red: below low
+        } else if val > high {
+            [255, 200, 0, 255] // yellow: above high
+        } else {
+            [80, 200, 80, 255] // green: in range
+        };
+        paint.set_color_rgba8(fill_color[0], fill_color[1], fill_color[2], fill_color[3]);
+        let fill_w = cr.w * pct;
+        if let Some(rect) = tiny_skia::Rect::from_xywh(x * self.scale, y * self.scale, fill_w * self.scale, cr.h * self.scale) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), mask);
+        }
+        // Border
+        self.stroke_rect(pixmap, x, y, cr.w, cr.h, [169, 169, 169, 255], 0.5, mask);
     }
 
     // ─── Image drawing ───────────────────────────────────────────────────────
@@ -3393,6 +3912,168 @@ pub fn draw_inspect_overlay(
 
     // Content area (blue)
     fill_rect(pixmap, c.x - sx, c.y - sy, c.w, c.h, 100, 150, 255, 60);
+}
+
+impl Renderer {
+    /// Draw the dropdown popup for an open <select> element.
+    /// Renders actual option/optgroup DOM children with their CSS styles.
+    fn draw_select_dropdown(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
+        let br = node.border_rect;
+        let popup_x = br.x - sx;
+        let popup_y = br.y + br.h - sy; // below the select
+        let popup_w = br.w.max(150.0);
+
+        let selected_idx: usize = node.data.get("_selected_idx")
+            .and_then(|s| s.parse().ok()).unwrap_or(0);
+
+        // Collect options and optgroups from children
+        struct DropdownItem<'a> {
+            node: &'a HtmlBox,
+            is_group: bool,
+            text: String,
+            index: usize, // option index (for selection)
+        }
+        let mut items: Vec<DropdownItem> = Vec::new();
+        let mut opt_idx = 0usize;
+        for child in &node.children {
+            if child.tag == "option" {
+                let text: String = child.children.iter()
+                    .filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                items.push(DropdownItem { node: child, is_group: false, text: text.trim().to_string(), index: opt_idx });
+                opt_idx += 1;
+            } else if child.tag == "optgroup" {
+                let label = child.attributes.get("label").cloned().unwrap_or_default();
+                items.push(DropdownItem { node: child, is_group: true, text: label, index: usize::MAX });
+                for gc in &child.children {
+                    if gc.tag == "option" {
+                        let text: String = gc.children.iter()
+                            .filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                        items.push(DropdownItem { node: gc, is_group: false, text: text.trim().to_string(), index: opt_idx });
+                        opt_idx += 1;
+                    }
+                }
+            }
+        }
+        if items.is_empty() { return; }
+
+        let font_px = node.style.font_size_px(16.0, 16.0);
+        let item_h = font_px * 1.8;
+        let group_h = font_px * 1.5;
+        let padding = 4.0;
+        let total_h: f32 = items.iter().map(|i| if i.is_group { group_h } else { item_h }).sum::<f32>() + padding * 2.0;
+        let ts = Transform::from_scale(self.scale, self.scale);
+
+        // Shadow
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(0, 0, 0, 50);
+        if let Some(r) = tiny_skia::Rect::from_xywh(
+            (popup_x + 3.0) * self.scale, (popup_y + 3.0) * self.scale,
+            popup_w * self.scale, total_h * self.scale) {
+            pixmap.fill_rect(r, &paint, Transform::identity(), None);
+        }
+
+        // Background
+        paint.set_color_rgba8(255, 255, 255, 252);
+        if let Some(r) = tiny_skia::Rect::from_xywh(
+            popup_x * self.scale, popup_y * self.scale,
+            popup_w * self.scale, total_h * self.scale) {
+            pixmap.fill_rect(r, &paint, Transform::identity(), None);
+        }
+
+        // Border
+        self.stroke_rect(pixmap, popup_x, popup_y, popup_w, total_h, [180, 180, 180, 255], 1.0, None);
+
+        // Draw each item
+        let mut y = popup_y + padding;
+        for item in &items {
+            if item.is_group {
+                // Optgroup label — bold, gray background
+                paint.set_color_rgba8(245, 245, 245, 255);
+                if let Some(r) = tiny_skia::Rect::from_xywh(
+                    (popup_x + 1.0) * self.scale, y * self.scale,
+                    (popup_w - 2.0) * self.scale, group_h * self.scale) {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+                let label_y = y + (group_h - font_px * 1.2) / 2.0;
+                self.draw_text_run(
+                    &item.text, popup_x + 8.0, label_y,
+                    font_px * 0.85, font_px,
+                    crate::types::FontWeight::Bold, node.style.font_style, &node.style.font_family,
+                    CTextColor::rgba(100, 100, 100, 255), pixmap, None,
+                );
+                y += group_h;
+            } else {
+                let is_selected = item.index == selected_idx;
+                let is_hovered = item.index as i32 == self.dropdown_hover_idx;
+                let opt_bg = item.node.style.background_color;
+                let opt_color = item.node.style.color;
+
+                // Background: selected (blue) > hovered (light blue) > option CSS bg > none
+                if is_selected {
+                    paint.set_color_rgba8(66, 133, 244, 255);
+                    if let Some(r) = tiny_skia::Rect::from_xywh(
+                        (popup_x + 1.0) * self.scale, y * self.scale,
+                        (popup_w - 2.0) * self.scale, item_h * self.scale) {
+                        pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                    }
+                } else if is_hovered {
+                    paint.set_color_rgba8(229, 239, 255, 255);
+                    if let Some(r) = tiny_skia::Rect::from_xywh(
+                        (popup_x + 1.0) * self.scale, y * self.scale,
+                        (popup_w - 2.0) * self.scale, item_h * self.scale) {
+                        pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                    }
+                } else if opt_bg.a > 0 {
+                    paint.set_color_rgba8(opt_bg.r, opt_bg.g, opt_bg.b, opt_bg.a);
+                    if let Some(r) = tiny_skia::Rect::from_xywh(
+                        (popup_x + 1.0) * self.scale, y * self.scale,
+                        (popup_w - 2.0) * self.scale, item_h * self.scale) {
+                        pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                    }
+                }
+
+                // Text color: selected = white, hovered = dark,
+                // otherwise use dark text on white popup (don't inherit light text from dark-themed select)
+                let text_color = if is_selected {
+                    CTextColor::rgba(255, 255, 255, 255)
+                } else if opt_bg.a > 0 {
+                    // Option has explicit background — use its color as-is
+                    CTextColor::rgba(opt_color.r, opt_color.g, opt_color.b, opt_color.a)
+                } else {
+                    // Default white popup background — use dark text for readability
+                    CTextColor::rgba(33, 33, 33, 255)
+                };
+                let x_indent = 8.0;
+
+                let text_y = y + (item_h - font_px * 1.2) / 2.0;
+                self.draw_text_run(
+                    &item.text, popup_x + x_indent, text_y,
+                    font_px, font_px * 1.2,
+                    item.node.style.font_weight, item.node.style.font_style,
+                    if item.node.style.font_family.is_empty() { &node.style.font_family } else { &item.node.style.font_family },
+                    text_color, pixmap, None,
+                );
+                y += item_h;
+            }
+        }
+    }
+}
+
+fn parse_hex_color(s: &str) -> (u8, u8, u8) {
+    let s = s.trim_start_matches('#');
+    if s.len() >= 6 {
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or(0);
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or(0);
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or(0);
+        (r, g, b)
+    } else if s.len() >= 3 {
+        let r = u8::from_str_radix(&s[0..1], 16).unwrap_or(0) * 17;
+        let g = u8::from_str_radix(&s[1..2], 16).unwrap_or(0) * 17;
+        let b = u8::from_str_radix(&s[2..3], 16).unwrap_or(0) * 17;
+        (r, g, b)
+    } else {
+        (0, 0, 0)
+    }
 }
 
 /// Recursively collect all `position: fixed` nodes in the tree.

@@ -1455,6 +1455,28 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
 }
 
 /// Returns true if `target` is `node` or a descendant of a node that has
+/// Returns true if `target` is inside a text-editable form input (<input> or <textarea>).
+pub fn is_in_form_input(node: &HtmlBox, target: *const HtmlBox) -> bool {
+    // Check if this node IS a text input and contains the target
+    let is_text_input = match node.tag.as_str() {
+        "textarea" => true,
+        "input" => {
+            let t = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            matches!(t, "text" | "password" | "email" | "search" | "url" | "tel" | "number")
+        }
+        _ => false,
+    };
+    if is_text_input {
+        if std::ptr::eq(node as *const HtmlBox, target) || node_contains(node, target) {
+            return true;
+        }
+    }
+    for child in &node.children {
+        if is_in_form_input(child, target) { return true; }
+    }
+    false
+}
+
 /// `contenteditable="true"`.  Used to allow key events inside contenteditable
 /// elements when the document-level editor is otherwise read-only.
 pub fn is_in_contenteditable(node: &HtmlBox, target: *const HtmlBox) -> bool {

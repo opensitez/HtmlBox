@@ -6032,14 +6032,32 @@ th { font-weight: bold; text-align: center; }
 thead, tbody, tfoot, tr { vertical-align: middle; }
 button, input[type=submit], input[type=button], input[type=reset] {
   display: inline-flex; align-items: center; justify-content: center;
-  padding-left: 6px; padding-right: 6px; cursor: default;
+  padding: 1px 6px; cursor: default; background-color: #e8e8e8; border: 1px solid #767676;
+  white-space: nowrap; border-radius: 3px;
+}
+button:hover, input[type=submit]:hover, input[type=button]:hover, input[type=reset]:hover {
+  background-color: #e0e0e0; border-color: #666;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: #4285f4; outline: none;
 }
 input[type=hidden] { display: none; }
-input[type=radio], input[type=checkbox] { display: inline-block; width: 13px; height: 13px; }
+input[type=radio], input[type=checkbox] { display: inline-block; width: 16px; height: 16px; vertical-align: middle; margin: 0 6px 0 2px; border: none; padding: 0; background: transparent; }
 label { display: inline-block; }
-input { display: inline-block; height: 1.4em; }
-select { display: inline-block; height: 1.4em; }
-textarea { display: inline-block; white-space: pre-wrap; }
+input { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; }
+input[type=submit], input[type=button], input[type=reset] { width: auto; height: auto; border: 1px solid #767676; padding: 3px 8px; background-color: #e8e8e8; }
+select { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; }
+option, optgroup { display: none; }
+textarea { display: inline-block; white-space: pre-wrap; width: 200px; height: 3em; padding: 2px; border: 1px solid #767676; box-sizing: border-box; }
+input[type=range] { width: 160px; height: 1.2em; border: none; padding: 0; }
+input[type=color] { width: 44px; height: 23px; padding: 1px 2px; border: 1px solid #767676; box-sizing: border-box; }
+input[type=file] { width: 240px; height: 1.6em; border: none; padding: 0; }
+input[type=date], input[type=time], input[type=datetime-local], input[type=month], input[type=week] {
+  width: 160px; height: 1.4em; padding: 1px 2px; border: 1px solid #767676; box-sizing: border-box;
+}
+progress { display: inline-block; width: 160px; height: 16px; vertical-align: middle; }
+meter { display: inline-block; width: 80px; height: 16px; vertical-align: middle; }
+output { display: inline; }
 fieldset { display: block; margin-left: 2px; margin-right: 2px; padding-top: 0.35em; padding-bottom: 0.625em; padding-left: 0.75em; padding-right: 0.75em; border: 2px groove #ccc; }
 legend { padding-left: 2px; padding-right: 2px; }
 bdo { unicode-bidi: bidi-override; }
