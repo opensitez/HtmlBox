@@ -5737,6 +5737,16 @@ fn apply_cascade_inner(
     // they have computed the final geometry.
     root.layout_dirty = true;
 
+    // <form> inside table elements: browsers treat it as transparent (display:contents)
+    // so it doesn't break table row grouping. Check if any ancestor is a table element.
+    if root.tag == "form" {
+        let in_table = ancestors.iter().any(|a|
+            matches!(a.tag.as_str(), "table" | "thead" | "tbody" | "tfoot" | "tr"));
+        if in_table {
+            root.style.display = Display::Contents;
+        }
+    }
+
     // Build full ComputedStyle for ::before / ::after pseudo-elements.
     // Each inherits from the element's computed style, then has its own declarations applied.
     let build_pseudo_style = |matched: &mut Vec<(u32, usize)>,
@@ -6041,12 +6051,15 @@ button:hover, input[type=submit]:hover, input[type=button]:hover, input[type=res
 input:focus, select:focus, textarea:focus {
   border-color: #4285f4; outline: none;
 }
+input:disabled, select:disabled, textarea:disabled, button:disabled {
+  opacity: 0.6; cursor: default;
+}
 input[type=hidden] { display: none; }
 input[type=radio], input[type=checkbox] { display: inline-block; width: 16px; height: 16px; vertical-align: middle; margin: 0 6px 0 2px; border: none; padding: 0; background: transparent; }
 label { display: inline-block; }
-input { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; }
+input { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
 input[type=submit], input[type=button], input[type=reset] { width: auto; height: auto; border: 1px solid #767676; padding: 3px 8px; background-color: #e8e8e8; }
-select { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; }
+select { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
 option, optgroup { display: none; }
 textarea { display: inline-block; white-space: pre-wrap; width: 200px; height: 3em; padding: 2px; border: 1px solid #767676; box-sizing: border-box; }
 input[type=range] { width: 160px; height: 1.2em; border: none; padding: 0; }

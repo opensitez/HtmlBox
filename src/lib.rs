@@ -55,7 +55,8 @@ pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, A
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState, MatchedRule,
                 FormEvent, FormEventKind, FormEventCallback,
-                is_text_input, input_value, process_form_input_key};
+                is_text_input, input_value, process_form_input_key,
+                find_parent_form_action};
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;

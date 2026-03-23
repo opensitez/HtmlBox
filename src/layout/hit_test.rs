@@ -292,11 +292,14 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 1: deepest child whose borderRect (absolute) contains the point
     for child in node.children.iter().rev() {
+        // display:contents elements are transparent — recurse into their children directly
+        if matches!(child.style.display, crate::types::Display::Contents) {
+            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
+            continue;
+        }
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-            // Child contains the point but hit-test inside returned None
-            // (e.g. leaf node with no text). Return the child itself.
             return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
         }
     }

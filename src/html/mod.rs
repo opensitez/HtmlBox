@@ -789,6 +789,32 @@ fn apply_presentational_attrs(node: &mut HtmlBox) {
             "face" if tag == "font" => {
                 apply_property(&mut node.style, "font-family", val);
             }
+            "size" if tag == "input" => {
+                // HTML input size attribute: number of characters wide
+                // Inject as inline style so it overrides UA width
+                if let Ok(n) = val.parse::<f32>() {
+                    let w = n * 0.6;
+                    let style_str = format!("width:{}em", w);
+                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
+                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                }
+            }
+            "rows" if tag == "textarea" => {
+                if let Ok(n) = val.parse::<f32>() {
+                    let h = n * 1.4;
+                    let style_str = format!("height:{}em", h);
+                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
+                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                }
+            }
+            "cols" if tag == "textarea" => {
+                if let Ok(n) = val.parse::<f32>() {
+                    let w = n * 0.6;
+                    let style_str = format!("width:{}em", w);
+                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
+                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                }
+            }
             "size" if tag == "font" => {
                 // HTML font size 1-7 → approximate px sizes
                 let px: f32 = match val.trim() {
@@ -1217,6 +1243,15 @@ impl HtmlParser {
     fn post_process_node(node: &mut HtmlBox, base_url: &str) {
         if node.tag == "picture" {
             resolve_picture_source(node, base_url, 0.0, 0.0);
+        }
+        // <form> inside <table>: browsers treat form as transparent (display:contents)
+        // so it doesn't break table row structure.
+        if matches!(node.tag.as_str(), "table" | "thead" | "tbody" | "tfoot") {
+            for child in &mut node.children {
+                if child.tag == "form" {
+                    child.style.display = Display::Contents;
+                }
+            }
         }
         // <select>: keep option children in the DOM for CSS styling.
         // The selected option's text is shown inline; others are display:none.
@@ -1875,7 +1910,7 @@ fn parse_html_full(
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,
-        open_select:       std::ptr::null(), dropdown_hover_idx: -1,
+        caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
         active_animations:     Vec::new(),
         transition_states:     std::collections::HashMap::new(),
         prev_styles:           std::collections::HashMap::new(),

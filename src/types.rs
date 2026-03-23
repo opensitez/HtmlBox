@@ -1869,6 +1869,8 @@ pub struct Document {
     pub viewport_h:      f32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
     pub keyboard_focus:  bool,
+    /// Caret blink epoch — reset on each keystroke so caret stays visible while typing.
+    pub caret_blink_epoch: std::time::Instant,
     /// Currently open select dropdown (pointer to select element, null if none open).
     pub open_select: *const HtmlBox,
     /// Hovered option index in open dropdown (-1 = none).
@@ -1941,7 +1943,7 @@ impl Document {
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
-            open_select:       std::ptr::null(), dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
             on_form_event:     None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
@@ -2403,6 +2405,8 @@ impl Document {
                     }
                     if let Some(input) = find_input(&mut self.root, ptr) {
                         let changed = process_form_input_key(input, key_code, ch);
+                        // Reset caret blink so it stays visible while typing
+                        self.caret_blink_epoch = std::time::Instant::now();
                         if changed {
                             // Fire form event callback
                             if let Some(ref mut cb) = self.on_form_event {
@@ -2981,7 +2985,7 @@ impl Document {
 /// the *tab* order by `collect_focusable_ordered`.
 /// Handle a click on a form element: toggle checkbox, select radio, fire form events.
 /// Returns Some(true) if a redraw is needed, Some(false) if handled but no redraw, None if not a form element.
-fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut Option<FormEventCallback>) -> Option<bool> {
+pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut Option<FormEventCallback>) -> Option<bool> {
     // Find the target node mutably in the tree
     fn find_mut<'a>(node: &'a mut HtmlBox, target: *const HtmlBox) -> Option<&'a mut HtmlBox> {
         if std::ptr::eq(node, target) { return Some(node); }
@@ -3012,6 +3016,9 @@ fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut 
         }
     };
     let target = effective_target;
+
+    // Disabled elements don't respond to clicks
+    if unsafe { &*target }.attributes.contains_key("disabled") { return None; }
 
     // Read target info before mutation
     let (tag, input_type, name, id, value) = {
@@ -3095,13 +3102,24 @@ fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut 
             }
         }
         "button" => {
+            let btn_type = unsafe { &*target }.attributes.get("type")
+                .cloned().unwrap_or_else(|| "submit".to_string());
             if let Some(cb) = callback {
                 let text = unsafe { &*target }.text.clone();
                 cb(&FormEvent {
-                    tag, id, name,
-                    kind: FormEventKind::Click(if value.is_empty() { text } else { value }),
+                    tag: tag.clone(), id: id.clone(), name: name.clone(),
+                    kind: FormEventKind::Click(if value.is_empty() { text } else { value.clone() }),
                     element: target,
                 });
+                // Submit buttons trigger form submission
+                if btn_type == "submit" {
+                    let action = find_parent_form_action(root, target);
+                    cb(&FormEvent {
+                        tag: "form".into(), id: String::new(), name: String::new(),
+                        kind: FormEventKind::Submit(action),
+                        element: target,
+                    });
+                }
             }
             Some(false)
         }
@@ -3134,6 +3152,35 @@ fn find_form_parent(root: &HtmlBox, target: *const HtmlBox) -> *const HtmlBox {
     walk(root, target).unwrap_or(target)
 }
 
+/// Find the action URL of the nearest ancestor <form> element.
+pub fn find_parent_form_action(root: &HtmlBox, target: *const HtmlBox) -> String {
+    fn walk(node: &HtmlBox, target: *const HtmlBox) -> Option<String> {
+        for child in &node.children {
+            if std::ptr::eq(child as *const HtmlBox, target) {
+                if node.tag == "form" {
+                    return Some(node.attributes.get("action").cloned().unwrap_or_default());
+                }
+                return None; // found target but parent isn't form — caller keeps looking
+            }
+            if let Some(action) = walk(child, target) {
+                return Some(action);
+            }
+            // Check if child contains target and this node is a form
+            if node.tag == "form" {
+                fn contains(node: &HtmlBox, target: *const HtmlBox) -> bool {
+                    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
+                    node.children.iter().any(|c| contains(c, target))
+                }
+                if contains(child, target) {
+                    return Some(node.attributes.get("action").cloned().unwrap_or_default());
+                }
+            }
+        }
+        None
+    }
+    walk(root, target).unwrap_or_default()
+}
+
 /// Returns true if this element is a text-editable form input.
 pub fn is_text_input(node: &HtmlBox) -> bool {
     match node.tag.as_str() {
@@ -3162,6 +3209,10 @@ pub fn input_value(node: &HtmlBox) -> String {
 /// Process a key event on a focused form input. Returns true if the value changed.
 pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>) -> bool {
     if !is_text_input(node) { return false; }
+    // Disabled elements don't accept any input
+    if node.attributes.contains_key("disabled") { return false; }
+    // Readonly elements allow cursor movement but not content changes
+    let is_readonly = node.attributes.contains_key("readonly");
     let is_textarea = node.tag == "textarea";
 
     let mut value = input_value(node);
@@ -3169,10 +3220,12 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
     let cursor = node.input_cursor.min(len);
     let mut new_cursor = cursor;
     let mut changed = false;
+    let maxlength: Option<usize> = node.attributes.get("maxlength")
+        .and_then(|s| s.parse().ok());
 
     match key_code {
         8 => { // Backspace
-            if cursor > 0 {
+            if !is_readonly && cursor > 0 {
                 let byte_pos = value.char_indices().nth(cursor - 1).map(|(i, _)| i).unwrap_or(0);
                 let byte_end = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
                 value.replace_range(byte_pos..byte_end, "");
@@ -3181,7 +3234,7 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
             }
         }
         46 => { // Delete
-            if cursor < len {
+            if !is_readonly && cursor < len {
                 let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
                 let byte_end = value.char_indices().nth(cursor + 1).map(|(i, _)| i).unwrap_or(value.len());
                 value.replace_range(byte_pos..byte_end, "");
@@ -3201,22 +3254,26 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
             new_cursor = len;
         }
         13 => { // Enter
-            if is_textarea {
-                let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
-                value.insert(byte_pos, '\n');
-                new_cursor = cursor + 1;
-                changed = true;
+            if is_textarea && !is_readonly {
+                if maxlength.map(|m| len < m).unwrap_or(true) {
+                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    value.insert(byte_pos, '\n');
+                    new_cursor = cursor + 1;
+                    changed = true;
+                }
             }
-            // For single-line inputs, Enter doesn't insert — it would submit the form
         }
         _ => {
             // Character input
             if let Some(c) = ch {
-                if !c.is_control() {
-                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
-                    value.insert(byte_pos, c);
-                    new_cursor = cursor + 1;
-                    changed = true;
+                if !c.is_control() && !is_readonly {
+                    // Check maxlength
+                    if maxlength.map(|m| len < m).unwrap_or(true) {
+                        let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                        value.insert(byte_pos, c);
+                        new_cursor = cursor + 1;
+                        changed = true;
+                    }
                 }
             }
         }
@@ -3316,7 +3373,7 @@ impl Clone for Document {
             viewport_w:      self.viewport_w,
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
-            open_select:     std::ptr::null(), dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
             active_animations:     self.active_animations.clone(),
             transition_states:     self.transition_states.clone(),
             prev_styles:           self.prev_styles.clone(),

@@ -47,6 +47,10 @@ pub struct Renderer {
     focused_ptr: *const HtmlBox,
     /// Hovered dropdown option index (-1 = none).
     dropdown_hover_idx: i32,
+    /// Vertical offset for content area (e.g. browser chrome height).
+    pub content_offset_y: f32,
+    /// Caret blink epoch from Document — reset on keystroke.
+    caret_epoch: std::time::Instant,
 }
 
 impl Renderer {
@@ -69,6 +73,8 @@ impl Renderer {
             transitioning_ids: std::collections::HashSet::new(),
             focused_ptr: std::ptr::null(),
             dropdown_hover_idx: -1,
+            content_offset_y: 0.0,
+            caret_epoch: std::time::Instant::now(),
         }
     }
 
@@ -235,7 +241,8 @@ impl Renderer {
                     let sc   = self.scale.max(1.0);
                     let zoom = self.zoom;
                     let sx = self.cursor_physical.0 / sc;
-                    let sy = self.cursor_physical.1 / sc;
+                    let sy = (self.cursor_physical.1 / sc) - self.content_offset_y;
+                    if sy < 0.0 { return false; } // click in chrome area, not content
                     let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                     let mut redraw = doc.process_mouse_event(crate::dom::HtmlEventType::MouseMove, pt, 0);
                     // PointerMove mirrors MouseMove
@@ -259,7 +266,8 @@ impl Renderer {
                     let sc   = self.scale.max(1.0);
                     let zoom = self.zoom;
                     let sx = self.cursor_physical.0 / sc;
-                    let sy = self.cursor_physical.1 / sc;
+                    let sy = (self.cursor_physical.1 / sc) - self.content_offset_y;
+                    if sy < 0.0 { return false; }
                     let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                     let (mouse_type, ptr_type) = if *state == winit::event::ElementState::Pressed {
                         (crate::dom::HtmlEventType::MouseDown, crate::dom::HtmlEventType::PointerDown)
@@ -288,6 +296,7 @@ impl Renderer {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == winit::event::ElementState::Pressed =>
             {
+                // Tab: focus navigation
                 if let Key::Named(winit::keyboard::NamedKey::Tab) = &event.logical_key {
                     if let Some(doc) = doc {
                         return if self.shift_held {
@@ -297,12 +306,45 @@ impl Renderer {
                         };
                     }
                 }
+                // Route keyboard to focused form inputs (standard form behavior)
+                if let Some(doc) = doc {
+                    let ch = match &event.logical_key {
+                        Key::Character(s) => s.chars().next(),
+                        Key::Named(winit::keyboard::NamedKey::Space) => Some(' '),
+                        _ => None,
+                    };
+                    let kc = match &event.logical_key {
+                        Key::Named(winit::keyboard::NamedKey::Backspace) => 8u32,
+                        Key::Named(winit::keyboard::NamedKey::Delete) => 46,
+                        Key::Named(winit::keyboard::NamedKey::Enter) => 13,
+                        Key::Named(winit::keyboard::NamedKey::ArrowLeft) => 37,
+                        Key::Named(winit::keyboard::NamedKey::ArrowRight) => 39,
+                        Key::Named(winit::keyboard::NamedKey::Home) => 36,
+                        Key::Named(winit::keyboard::NamedKey::End) => 35,
+                        Key::Named(winit::keyboard::NamedKey::Space) => 32,
+                        Key::Character(_) => 0, // char handled via ch
+                        _ => 0,
+                    };
+                    if kc != 0 || ch.is_some() {
+                        let effective_kc = if kc != 0 { kc } else { ch.unwrap_or(' ') as u32 };
+                        if doc.process_key_event(
+                            crate::dom::HtmlEventType::KeyDown,
+                            effective_kc, ch,
+                            self.ctrl_held, self.shift_held, false, false,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
                 false
             }
 
             _ => false,
         }
     }
+
+    /// Returns whether the Shift key is currently held (tracked via ModifiersChanged).
+    pub fn is_shift_held(&self) -> bool { self.shift_held }
 
     pub fn register_component(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
         self.component_registry.register(tag, measure, paint);
@@ -435,6 +477,7 @@ impl Renderer {
         self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
         self.focused_ptr = doc.focused_box;
         self.dropdown_hover_idx = doc.dropdown_hover_idx;
+        self.caret_epoch = doc.caret_blink_epoch;
         self.render_box(
             &doc.root, pixmap,
             scroll_x, scroll_y,
@@ -2191,20 +2234,25 @@ impl Renderer {
         let line_h = font_px * 1.2;
         let ty = cr.y - sy + (cr.h - line_h).max(0.0) / 2.0;
 
+        let draw_font_px = if input_type == "password" { font_px * 0.7 } else { font_px };
+        let draw_line_h = draw_font_px * 1.2;
+        let draw_ty = cr.y - sy + (cr.h - draw_line_h).max(0.0) / 2.0;
+
+        // Build display text (password masking)
+        let display_value: String = if input_type == "password" {
+            "\u{2022}".repeat(value.chars().count())
+        } else {
+            value.to_string()
+        };
+
         if !text.is_empty() {
-            let (display_text, draw_font_px) = if input_type == "password" {
-                ("\u{2022}".repeat(text.chars().count()), font_px * 0.7)
-            } else {
-                (text.to_string(), font_px)
-            };
+            let display_text = if is_placeholder { text.to_string() } else { display_value.clone() };
             let color = if is_placeholder {
                 CTextColor::rgba(160, 160, 160, 255)
             } else {
                 let c = node.style.color;
                 CTextColor::rgba(c.r, c.g, c.b, c.a)
             };
-            let draw_line_h = draw_font_px * 1.2;
-            let draw_ty = cr.y - sy + (cr.h - draw_line_h).max(0.0) / 2.0;
             self.draw_text_run(
                 &display_text, cr.x - sx, draw_ty, draw_font_px, draw_line_h,
                 node.style.font_weight, node.style.font_style, &node.style.font_family,
@@ -2212,25 +2260,27 @@ impl Renderer {
             );
         }
 
-        // Caret when focused — use node.input_cursor for position
+        // Caret when focused
         if is_focused {
-            // Blink: visible for 500ms, hidden for 500ms
-            let ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let caret_visible = (ms / 500) % 2 == 0;
-
+            let since_key = self.caret_epoch.elapsed().as_millis();
+            let caret_visible = (since_key / 500) % 2 == 0;
             if caret_visible {
                 let cursor_pos = node.input_cursor.min(value.chars().count());
-                let text_before_cursor: String = if input_type == "password" {
+                // Measure width of text before cursor using real font shaping
+                let text_before: String = if input_type == "password" {
                     "\u{2022}".repeat(cursor_pos)
                 } else {
                     value.chars().take(cursor_pos).collect()
                 };
-                let caret_offset = text_before_cursor.len() as f32 * font_px * 0.55;
+                let caret_offset = if !text_before.is_empty() {
+                    self.measure_text_width(
+                        &text_before, draw_font_px,
+                        node.style.font_weight, node.style.font_style, &node.style.font_family,
+                    )
+                } else {
+                    0.0
+                };
                 let caret_x = (cr.x - sx + caret_offset).min(cr.x - sx + cr.w - 1.0);
-                // Use text color for caret (visible on dark backgrounds)
                 let c = node.style.color;
                 let mut paint = Paint::default();
                 paint.set_color_rgba8(c.r, c.g, c.b, c.a);
@@ -4056,6 +4106,45 @@ impl Renderer {
                 y += item_h;
             }
         }
+    }
+}
+
+impl Renderer {
+    /// Measure the width of text using the same font shaping as draw_text_run.
+    fn measure_text_width(&mut self, text: &str, font_px: f32,
+                          weight: FontWeight, font_style: FontStyle, font_family: &str) -> f32 {
+        if text.is_empty() { return 0.0; }
+        let sc = self.scale;
+        let phys_px = font_px * sc;
+        let phys_lh = phys_px * 1.2;
+        let metrics = Metrics::new(phys_px, phys_lh);
+        let family = css_family_to_cosmic(font_family);
+        let ct_w = weight_from_style(weight, &[]);
+        let ct_s = match font_style {
+            FontStyle::Italic  => CTextStyle::Italic,
+            FontStyle::Oblique => CTextStyle::Oblique,
+            FontStyle::Normal  => CTextStyle::Normal,
+        };
+        let attrs = Attrs::new().weight(ct_w).style(ct_s).family(family);
+
+        if self.shape_buf.is_none() {
+            self.shape_buf = Some(Buffer::new(&mut self.font_system, metrics));
+        }
+        let mut buf = self.shape_buf.take().unwrap();
+        buf.set_metrics(&mut self.font_system, metrics);
+        buf.set_size(&mut self.font_system, None, Some(phys_lh + 4.0));
+        buf.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, None);
+        buf.shape_until_scroll(&mut self.font_system, false);
+
+        let mut width = 0.0f32;
+        for run in buf.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                let end = glyph.x + glyph.w;
+                if end > width { width = end; }
+            }
+        }
+        self.shape_buf = Some(buf);
+        width / sc // convert physical to logical
     }
 }
 
