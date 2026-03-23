@@ -7,12 +7,16 @@ use crate::css::parse_single_track;
 /// Resolve a child by path through `display: contents` wrappers.
 pub fn grid_child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
     let mut n = node;
-    for &i in path { n = &n.children[i]; }
+    for (depth, &i) in path.iter().enumerate() {
+        n = if depth == 0 { &n.effective_children()[i] } else { &n.children[i] };
+    }
     n
 }
 pub fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
     let mut n = node;
-    for &i in path { n = &mut n.children[i]; }
+    for (depth, &i) in path.iter().enumerate() {
+        n = if depth == 0 { &mut n.effective_children_mut()[i] } else { &mut n.children[i] };
+    }
     n
 }
 
@@ -25,7 +29,7 @@ pub fn collect_grid_children(node: &HtmlBox) -> Vec<Vec<usize>> {
     result
 }
 fn collect_grid_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
-    for (idx, child) in node.children.iter().enumerate() {
+    for (idx, child) in node.effective_children().iter().enumerate() {
         path.push(idx);
         if matches!(child.style.display, Display::Contents) {
             collect_grid_inner(child, path, result);
@@ -647,7 +651,6 @@ pub fn layout_grid(
                                    content_w, col_gap, n_explicit_cols.max(max_col),
                                    font_px, root_font_px, &col_content_widths);
     let n_cols_actual = col_px.len();
-
     // justify-content: compute extra horizontal space distribution
     let grid_total_w: f32 = col_px.iter().sum::<f32>()
         + col_gap * n_cols_actual.saturating_sub(1) as f32;
@@ -1542,8 +1545,12 @@ fn expand_repeat(template: &str, container: f32) -> String {
         let count = if count_str == "auto-fill" || count_str == "auto-fit" {
             let ts = crate::css::parse_length(track_str).resolve(16.0, container, 16.0).max(1.0);
             (container / ts) as usize
+        } else if let Ok(n) = count_str.parse::<usize>() {
+            n
         } else {
-            count_str.parse::<usize>().unwrap_or(1)
+            // Handle calc() in repeat count, e.g. repeat(calc(5 - 1), ...)
+            let resolved = crate::css::parse_length(count_str).resolve(16.0, container, 16.0);
+            if resolved > 0.0 { resolved as usize } else { 1 }
         };
 
         for i in 0..count {

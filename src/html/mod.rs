@@ -1134,10 +1134,21 @@ impl HtmlParser {
                         continue;
                     }
                     // Style block: extract CSS
+                    // Inside <template shadowrootmode>, keep <style> as a node
+                    // (will be extracted into shadow stylesheet by post_process_node)
                     if tag == "style" {
                         let css = self.collect_raw_text_until("style");
                         let css = normalize_css_text(&css);
-                        self.stylesheet.parse_and_add(&css);
+                        // Inside <template shadowrootmode>, keep <style> as a node
+                        // (will be extracted into shadow stylesheet by post_process_node)
+                        let cur_parent = stack.last().map(|f| f.parent_tag.as_str()).unwrap_or(parent_tag);
+                        if cur_parent == "template" {
+                            let mut style_node = HtmlBox::new("style");
+                            style_node.text = css;
+                            stack.last_mut().unwrap().node.children.push(style_node);
+                        } else {
+                            self.stylesheet.parse_and_add(&css);
+                        }
                         continue;
                     }
                     // Title
@@ -1241,6 +1252,54 @@ impl HtmlParser {
 
     /// Post-processing applied to a node after its children have been parsed.
     fn post_process_node(node: &mut HtmlBox, base_url: &str) {
+        // Declarative Shadow DOM: <template shadowrootmode="open|closed">
+        // Convert the template's children into a shadow root on the parent.
+        let has_shadow_template = node.children.iter().any(|c|
+            c.tag == "template" && c.attributes.contains_key("shadowrootmode"));
+        if has_shadow_template {
+            let mut shadow_children = Vec::new();
+            let mut shadow_css = String::new();
+            let mut shadow_mode = crate::types::ShadowMode::Open;
+            // Extract the template with shadowrootmode
+            node.children.retain(|c| {
+                if c.tag == "template" {
+                    if let Some(mode) = c.attributes.get("shadowrootmode") {
+                        shadow_mode = if mode == "closed" {
+                            crate::types::ShadowMode::Closed
+                        } else {
+                            crate::types::ShadowMode::Open
+                        };
+                        // Collect template children as shadow tree
+                        for child in &c.children {
+                            if child.tag == "style" {
+                                // Extract style text for scoped stylesheet
+                                shadow_css.push_str(&child.text);
+                                for tc in &child.children {
+                                    if tc.tag == "#text" { shadow_css.push_str(&tc.text); }
+                                }
+                            } else {
+                                shadow_children.push(child.clone());
+                            }
+                        }
+                        return false; // remove the template from light DOM
+                    }
+                }
+                true
+            });
+            if !shadow_children.is_empty() || !shadow_css.is_empty() {
+                // Start with UA stylesheet so shadow tree gets default styles
+                let mut stylesheet = crate::css::ua_stylesheet();
+                if !shadow_css.is_empty() {
+                    stylesheet.parse_and_add(&shadow_css);
+                }
+                node.shadow_root = Some(Box::new(crate::types::ShadowRoot {
+                    children: shadow_children,
+                    stylesheet,
+                    mode: shadow_mode,
+                }));
+            }
+        }
+
         if node.tag == "picture" {
             resolve_picture_source(node, base_url, 0.0, 0.0);
         }

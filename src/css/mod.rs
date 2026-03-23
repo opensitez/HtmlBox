@@ -2303,6 +2303,31 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _     => Direction::LTR,
             };
         }
+        "cursor" => {
+            // CSS cursor can have fallbacks like "url(...), pointer" — use last keyword
+            let keyword = v.split(',').last().unwrap_or(v).trim();
+            style.cursor = match keyword {
+                "pointer"     => CSSCursor::Pointer,
+                "text"        => CSSCursor::Text,
+                "default"     => CSSCursor::Default,
+                "move"        => CSSCursor::Move,
+                "not-allowed" => CSSCursor::NotAllowed,
+                "grab"        => CSSCursor::Grab,
+                "grabbing"    => CSSCursor::Grabbing,
+                "col-resize"  => CSSCursor::ColResize,
+                "row-resize"  => CSSCursor::RowResize,
+                "crosshair"   => CSSCursor::Crosshair,
+                "help"        => CSSCursor::Help,
+                "wait"        => CSSCursor::Wait,
+                "progress"    => CSSCursor::Wait,  // approximate
+                "none"        => CSSCursor::None,
+                "n-resize"    => CSSCursor::NResize,
+                "e-resize"    => CSSCursor::EResize,
+                "s-resize"    => CSSCursor::SResize,
+                "w-resize"    => CSSCursor::WResize,
+                _             => CSSCursor::Auto,
+            };
+        }
 
         "list-style-type" => {
             style.list_style_type = match v {
@@ -4735,15 +4760,33 @@ pub fn parse_track_list_with_names(
             } else {
                 t.to_string()
             };
-            let inner = repeat_str.trim_start_matches("repeat(").trim_end_matches(')');
-            let comma = inner.find(',').unwrap_or(0);
+            // Strip "repeat(" prefix and single trailing ")" — not trim which strips multiple
+            let stripped = repeat_str.strip_prefix("repeat(").unwrap_or(&repeat_str);
+            let inner = stripped.strip_suffix(')').unwrap_or(stripped);
+            // Find top-level comma (not inside parens)
+            let comma = {
+                let mut depth = 0;
+                let mut pos = None;
+                for (i, ch) in inner.chars().enumerate() {
+                    if ch == '(' { depth += 1; }
+                    if ch == ')' { depth -= 1; }
+                    if ch == ',' && depth == 0 { pos = Some(i); break; }
+                }
+                pos.unwrap_or(0)
+            };
             let count_str = inner[..comma].trim();
             let track_str = inner[comma+1..].trim();
             let track = parse_single_track(track_str);
             if count_str == "auto-fill" || count_str == "auto-fit" {
                 auto_repeat_cols.push(track.clone());
             } else {
-                let count = count_str.parse::<usize>().unwrap_or(1);
+                let count = if let Ok(n) = count_str.parse::<usize>() {
+                    n
+                } else {
+                    // Handle calc() in repeat count, e.g. repeat(calc(5 - 1), ...)
+                    let resolved = parse_length(count_str).resolve(16.0, 0.0, 16.0);
+                    if resolved > 0.0 { resolved as usize } else { 1 }
+                };
                 for _ in 0..count {
                     result.push(track.clone());
                 }
@@ -5896,9 +5939,6 @@ fn apply_cascade_inner(
         root.style.after_content = String::new();
     }
 
-    let n_children = root.children.len();
-    if n_children == 0 { return; }
-
     // Push this element's info so children can see it as an ancestor.
     // Popped after children are processed — the Vec is reused for the whole tree.
     ancestors.push(AncestorInfo {
@@ -5910,45 +5950,76 @@ fn apply_cascade_inner(
         type_sibling_count,
     });
 
-    // Pre-compute type_child_index and type_sibling_count for each child in O(n).
-    // The old approach was O(n²): for each child, filter the whole sibling list.
-    let child_tags: Vec<String> = root.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
-    let mut type_running: HashMap<&str, usize> = HashMap::new();
-    let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
-        let slot = type_running.entry(tag.as_str()).or_insert(0);
-        let idx  = *slot;
-        *slot += 1;
-        idx
-    }).collect();
-    // type_running now holds the total count for each tag — reuse it for type_totals.
-    let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
-        *type_running.get(tag.as_str()).unwrap_or(&0)
-    }).collect();
+    // Helper: cascade a list of children with a given stylesheet
+    fn cascade_children(
+        children: &mut [crate::types::HtmlBox],
+        stylesheet: &Stylesheet,
+        parent_style: &ComputedStyle,
+        root_font_px: f32,
+        ancestors: &mut Vec<AncestorInfo>,
+        vw: f32, vh: f32,
+        focused_box: *const crate::types::HtmlBox,
+        keyboard_focus: bool,
+        inherited_vars: &HashMap<String, String>,
+        candidates_buf: &mut Vec<usize>,
+        counters: &mut HashMap<String, Vec<i32>>,
+    ) {
+        let n_children = children.len();
+        if n_children == 0 { return; }
+        let child_tags: Vec<String> = children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+        let mut type_running: HashMap<&str, usize> = HashMap::new();
+        let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
+            let slot = type_running.entry(tag.as_str()).or_insert(0);
+            let idx  = *slot; *slot += 1; idx
+        }).collect();
+        let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
+            *type_running.get(tag.as_str()).unwrap_or(&0)
+        }).collect();
+        let n_elem_children = children.iter().filter(|c| c.tag != "#text").count();
+        let mut elem_pos = 0usize;
+        let elem_indices: Vec<usize> = children.iter().map(|c| {
+            if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+        }).collect();
+        for (i, child) in children.iter_mut().enumerate() {
+            let (ci, ns) = if child.tag == "#text" {
+                (i, n_children)
+            } else {
+                (elem_indices[i], n_elem_children)
+            };
+            apply_cascade_inner(
+                child, stylesheet, Some(parent_style), root_font_px,
+                ancestors, ci, ns,
+                type_counts[i], type_totals[i],
+                vw, vh, focused_box, keyboard_focus,
+                inherited_vars, candidates_buf, counters,
+            );
+        }
+    }
 
-    // CSS :nth-child / :first-child / :last-child count only element children,
-    // not text nodes (#text).  Pre-compute the element-only index for each child.
-    let n_elem_children = root.children.iter().filter(|c| c.tag != "#text").count();
-    let mut elem_pos = 0usize;
-    let elem_indices: Vec<usize> = root.children.iter().map(|c| {
-        if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
-    }).collect();
-
-    for (i, child) in root.children.iter_mut().enumerate() {
-        // For element nodes use their position among element siblings only.
-        // Text nodes won't match any element selector anyway, so their index is irrelevant.
-        let (ci, ns) = if child.tag == "#text" {
-            (i, n_children)
-        } else {
-            (elem_indices[i], n_elem_children)
-        };
-        apply_cascade_inner(
-            child, stylesheet, Some(&style), root_font_px,
-            ancestors, ci, ns,
-            type_counts[i], type_totals[i],
-            vw, vh, focused_box, keyboard_focus,
-            &local_vars,
-            candidates_buf,
-            counters,
+    // Shadow DOM: cascade shadow children with the shadow's scoped stylesheet,
+    // and also cascade light DOM children with the document stylesheet.
+    // CSS custom properties cross the shadow boundary via inherited_vars.
+    if root.shadow_root.is_some() {
+        // Take shadow root temporarily to satisfy borrow checker
+        let mut sr = root.shadow_root.take().unwrap();
+        sr.stylesheet.rebuild_index();
+        cascade_children(
+            &mut sr.children, &sr.stylesheet, &style, root_font_px,
+            ancestors, vw, vh, focused_box, keyboard_focus,
+            &local_vars, candidates_buf, counters,
+        );
+        root.shadow_root = Some(sr);
+        // Also cascade light DOM children (they need document styles for ::slotted)
+        cascade_children(
+            &mut root.children, stylesheet, &style, root_font_px,
+            ancestors, vw, vh, focused_box, keyboard_focus,
+            &local_vars, candidates_buf, counters,
+        );
+    } else {
+        cascade_children(
+            &mut root.children, stylesheet, &style, root_font_px,
+            ancestors, vw, vh, focused_box, keyboard_focus,
+            &local_vars, candidates_buf, counters,
         );
     }
 

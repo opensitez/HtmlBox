@@ -1250,6 +1250,7 @@ pub(crate) fn css_family_to_cosmic(raw: &str) -> Family<'_> {
     let first = extract_first_css_family(raw);
     match first {
         "serif"      => Family::Serif,
+        "sans-serif" => Family::SansSerif,
         "monospace"  => Family::Monospace,
         "cursive"    => Family::Cursive,
         "fantasy"    => Family::Fantasy,
@@ -1530,7 +1531,8 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
     if !node.text.is_empty() {
         out.push_str(&node.text);
     }
-    for child in &node.children {
+    let children = node.effective_children();
+    for child in children {
         // Skip out-of-flow children — they don't contribute to this box's flat text.
         // (collect_flat_text is called separately on each positioned box for its own content.)
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }

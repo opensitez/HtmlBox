@@ -13,6 +13,7 @@ pub mod test_dom_events;
 pub mod test_render;
 pub mod test_caret;
 pub mod test_focus;
+pub mod test_shadow_dom;
 pub mod test_scroll;
 pub mod test_container;
 pub mod test_parser_robustness;

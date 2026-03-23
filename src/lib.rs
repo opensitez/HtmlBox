@@ -51,7 +51,7 @@ pub mod accessibility;
 #[cfg(test)]
 pub mod tests;
 
-pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, LivePoliteness, Announcement,
+pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, ShadowRoot, ShadowMode, LivePoliteness, Announcement,
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState, MatchedRule,
                 FormEvent, FormEventKind, FormEventCallback,

@@ -887,6 +887,11 @@ impl LayoutEngine {
         doc.root.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
         doc.root.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
 
+        // Resolve shadow DOM slots before layout (only if any shadow roots exist)
+        if has_shadow_roots(&doc.root) {
+            resolve_all_slots(&mut doc.root);
+        }
+
         self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
         self.layout_box(&mut doc.root, content_w, 0.0, 0.0, root_font_px, root_font_px);
 
@@ -1105,6 +1110,18 @@ impl LayoutEngine {
             self.pos_cb.set(Rect::new(est_padding_x, est_padding_y, est_padding_w, self.viewport_h));
         }
 
+        // Shadow DOM: swap shadow children into node.children for layout so all
+        // existing layout code (inline, block, flex, grid) works unchanged.
+        let has_shadow = node.shadow_root.is_some();
+        let saved_light_children = if has_shadow {
+            let sr = node.shadow_root.as_mut().unwrap();
+            let shadow_children = std::mem::take(&mut sr.children);
+            let light = std::mem::replace(&mut node.children, shadow_children);
+            Some(light)
+        } else {
+            None
+        };
+
         let h = match node.style.display {
             Display::Flex | Display::InlineFlex => {
                 flex::layout_flex(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
@@ -1126,6 +1143,14 @@ impl LayoutEngine {
                 }
             }
         };
+
+        // Restore shadow/light children after layout
+        if let Some(light) = saved_light_children {
+            let shadow_children = std::mem::replace(&mut node.children, light);
+            if let Some(ref mut sr) = node.shadow_root {
+                sr.children = shadow_children;
+            }
+        }
 
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);
@@ -1153,8 +1178,27 @@ impl LayoutEngine {
 
 // ─── Helper: does a box have any block-level children? ────────────────────────
 
+/// Quick check if any node in the tree has a shadow root.
+fn has_shadow_roots(node: &HtmlBox) -> bool {
+    if node.shadow_root.is_some() { return true; }
+    node.children.iter().any(|c| has_shadow_roots(c))
+}
+
+/// Walk the tree and resolve `<slot>` elements in all shadow roots.
+fn resolve_all_slots(node: &mut HtmlBox) {
+    node.resolve_slots();
+    for child in &mut node.children {
+        resolve_all_slots(child);
+    }
+    if let Some(ref mut sr) = node.shadow_root {
+        for child in &mut sr.children {
+            resolve_all_slots(child);
+        }
+    }
+}
+
 pub fn has_block_children(node: &HtmlBox) -> bool {
-    node.children.iter().any(|c| {
+    node.effective_children().iter().any(|c| {
         if matches!(c.style.display, Display::None) { return false; }
         if matches!(c.style.display, Display::Contents) {
             return has_block_children(c);

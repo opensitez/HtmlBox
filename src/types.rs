@@ -123,7 +123,7 @@ impl CssLength {
     }
 
     pub fn is_auto(&self) -> bool { matches!(self, CssLength::Auto) }
-    pub fn is_none(&self) -> bool { matches!(self, CssLength::None | CssLength::Zero) }
+    pub fn is_none(&self) -> bool { matches!(self, CssLength::None) }
 }
 
 // ─── CSS Enums ───────────────────────────────────────────────────────────────
@@ -266,6 +266,7 @@ pub enum OverflowWrap {
     BreakWord,
     Anywhere,
 }
+
 
 impl Default for OverflowWrap {
     fn default() -> Self { Self::Normal }
@@ -1526,6 +1527,27 @@ pub struct HtmlBox {
     /// Each entry records the selector, declarations, and source of a rule
     /// that matched this element during the cascade.
     pub matched_rules: Vec<MatchedRule>,
+
+    /// Shadow DOM root. When present, layout/render use the shadow tree instead
+    /// of `children` (which become "light DOM" — slottable content).
+    pub shadow_root: Option<Box<ShadowRoot>>,
+}
+
+/// Shadow DOM root — holds a scoped tree and stylesheet.
+#[derive(Clone, Debug)]
+pub struct ShadowRoot {
+    /// The shadow tree nodes (laid out/painted instead of light DOM children).
+    pub children: Vec<HtmlBox>,
+    /// Scoped stylesheet — only applies inside this shadow tree.
+    pub stylesheet: crate::css::Stylesheet,
+    /// Open (inspectable) or closed (opaque).
+    pub mode: ShadowMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ShadowMode {
+    Open,
+    Closed,
 }
 
 /// Form interaction event — fired by the engine, handled by the host.
@@ -1635,7 +1657,38 @@ impl HtmlBox {
             data: HashMap::new(),
             cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
             matched_rules: Vec::new(),
+            shadow_root: None,
         }
+    }
+
+    /// Attach a shadow root to this element. Parses `html` as the shadow tree
+    /// and extracts `<style>` blocks into a scoped stylesheet.
+    pub fn attach_shadow(&mut self, mode: ShadowMode, html: &str) {
+        let doc = crate::html::parse_html(html);
+        let mut children = doc.root.children;
+        // Move <body> children up if the parser wrapped in <html><body>
+        if children.len() == 1 && children[0].tag == "body" {
+            children = std::mem::take(&mut children[0].children);
+        }
+        // Start with UA stylesheet so shadow tree gets default styles
+        let mut stylesheet = crate::css::ua_stylesheet();
+        // Extract <style> elements into the scoped stylesheet
+        let mut styles_css = String::new();
+        children.retain(|c| {
+            if c.tag == "style" {
+                styles_css.push_str(&c.text);
+                for ch in &c.children {
+                    if ch.tag == "#text" { styles_css.push_str(&ch.text); }
+                }
+                false
+            } else {
+                true
+            }
+        });
+        if !styles_css.is_empty() {
+            stylesheet.parse_and_add(&styles_css);
+        }
+        self.shadow_root = Some(Box::new(ShadowRoot { children, stylesheet, mode }));
     }
 
     pub fn get_attr(&self, name: &str) -> Option<&str> {
@@ -1650,6 +1703,34 @@ impl HtmlBox {
         matches!(self.tag.as_str(),
             "br" | "hr" | "img" | "input" | "meta" | "link" | "col" |
             "area" | "base" | "embed" | "param" | "source" | "track" | "wbr")
+    }
+
+    /// Returns the effective children for layout/render: shadow children if a
+    /// shadow root is present, otherwise the normal children.
+    pub fn effective_children(&self) -> &[HtmlBox] {
+        if let Some(ref sr) = self.shadow_root {
+            &sr.children
+        } else {
+            &self.children
+        }
+    }
+
+    /// Mutable version of `effective_children`.
+    pub fn effective_children_mut(&mut self) -> &mut Vec<HtmlBox> {
+        if let Some(ref mut sr) = self.shadow_root {
+            &mut sr.children
+        } else {
+            &mut self.children
+        }
+    }
+
+    /// Resolve `<slot>` elements in the shadow tree by projecting light DOM children.
+    /// Must be called before layout when a shadow root is present.
+    pub fn resolve_slots(&mut self) {
+        if self.shadow_root.is_none() { return; }
+        let light_children = self.children.clone();
+        let sr = self.shadow_root.as_mut().unwrap();
+        resolve_slots_inner(&mut sr.children, &light_children);
     }
 
     /// Collect all text content recursively.
@@ -3516,6 +3597,40 @@ pub fn apply_autofocus(doc: &mut Document) {
     }
     if let Some(ptr) = find_autofocus(&doc.root) {
         doc.focused_box = ptr;
+    }
+}
+
+/// Resolve `<slot>` elements in a shadow tree by projecting light DOM children into them.
+fn resolve_slots_inner(shadow_children: &mut Vec<HtmlBox>, light_children: &[HtmlBox]) {
+    for child in shadow_children.iter_mut() {
+        if child.tag == "slot" {
+            let slot_name = child.attributes.get("name").cloned().unwrap_or_default();
+            let mut projected: Vec<HtmlBox> = if slot_name.is_empty() {
+                // Default slot: all light children without a `slot` attribute
+                light_children.iter()
+                    .filter(|lc| !lc.attributes.contains_key("slot") && lc.tag != "#text"
+                        || (lc.tag == "#text" && !lc.text.trim().is_empty() && !lc.attributes.contains_key("slot")))
+                    .cloned()
+                    .collect()
+            } else {
+                // Named slot: light children with matching `slot` attribute
+                light_children.iter()
+                    .filter(|lc| lc.attributes.get("slot").map(|s| s == &slot_name).unwrap_or(false))
+                    .cloned()
+                    .collect()
+            };
+            if !projected.is_empty() {
+                child.children = projected;
+            }
+            // If no matches, keep slot's own children as fallback
+        } else {
+            // Recurse into shadow tree children to find nested slots
+            resolve_slots_inner(&mut child.children, light_children);
+            // Also recurse into shadow roots of nested shadow hosts
+            if let Some(ref mut sr) = child.shadow_root {
+                resolve_slots_inner(&mut sr.children, light_children);
+            }
+        }
     }
 }
 

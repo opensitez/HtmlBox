@@ -346,6 +346,39 @@ impl Renderer {
     /// Returns whether the Shift key is currently held (tracked via ModifiersChanged).
     pub fn is_shift_held(&self) -> bool { self.shift_held }
 
+    /// Returns the CSS cursor that should be shown for the currently hovered element.
+    /// The host should call this after `handle_window_event(CursorMoved)` and set the
+    /// window cursor accordingly.
+    pub fn cursor_icon(&self, doc: &crate::types::Document) -> CSSCursor {
+        let hovered = doc.hovered_box;
+        if hovered.is_null() { return CSSCursor::Default; }
+        let node = unsafe { &*hovered };
+        // Explicit CSS cursor property
+        if node.style.cursor != CSSCursor::Auto {
+            return node.style.cursor;
+        }
+        // Check if this node is a link or button → pointer
+        fn is_link_or_button(n: &crate::types::HtmlBox) -> bool {
+            match n.tag.as_str() {
+                "a" => n.attributes.contains_key("href"),
+                "button" | "summary" | "label" => true,
+                "input" => matches!(
+                    n.attributes.get("type").map(|s| s.as_str()),
+                    Some("submit") | Some("button") | Some("reset") | Some("image")
+                ),
+                _ => false,
+            }
+        }
+        if is_link_or_button(node) {
+            return CSSCursor::Pointer;
+        }
+        // Text input → text cursor
+        if crate::types::is_text_input(node) {
+            return CSSCursor::Text;
+        }
+        CSSCursor::Default
+    }
+
     pub fn register_component(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
         self.component_registry.register(tag, measure, paint);
     }
@@ -987,11 +1020,13 @@ impl Renderer {
         }
 
         // ── Children: non-positioned first, then positioned by z-index ───────
-        let has_positioned = node.children.iter().any(|c|
+        // Use effective_children() to render shadow tree when present
+        let eff = node.effective_children();
+        let has_positioned = eff.iter().any(|c|
             c.style.is_positioned() && !matches!(c.style.display, Display::None));
 
         if !has_positioned {
-            for child in &node.children {
+            for child in eff {
                 if !matches!(child.style.display, Display::None) {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
@@ -1002,7 +1037,7 @@ impl Renderer {
             }
         } else {
             // Non-positioned first
-            for child in &node.children {
+            for child in eff {
                 if !matches!(child.style.display, Display::None) && !child.style.is_positioned() {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
@@ -1012,7 +1047,7 @@ impl Renderer {
                 }
             }
             // Positioned sorted by z-index
-            let mut positioned: Vec<&HtmlBox> = node.children.iter()
+            let mut positioned: Vec<&HtmlBox> = eff.iter()
                 .filter(|c| c.style.is_positioned() && !matches!(c.style.display, Display::None))
                 .collect();
             positioned.sort_by_key(|c| c.style.z_index);
@@ -1071,7 +1106,7 @@ impl Renderer {
     /// bounded to the small subset of nodes with hover/active rules.
     fn subtree_contains(node: &HtmlBox, target: *const HtmlBox) -> bool {
         if std::ptr::eq(node as *const HtmlBox, target) { return true; }
-        for child in &node.children {
+        for child in node.effective_children() {
             if Self::subtree_contains(child, target) { return true; }
         }
         false
