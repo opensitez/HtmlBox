@@ -1274,8 +1274,8 @@ fn table_border_attr_propagates_to_cells() {
 fn table_cellspacing_zero_sets_border_spacing() {
     let doc = parse(r#"<table border="1" cellspacing="0"><tr><td>A</td></tr></table>"#);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    let sp = match table.style.border_spacing_h {
-        crate::types::CssLength::Px(v) => v,
+    let sp = match &table.style.border_spacing_h {
+        crate::types::CssLength::Px(v) => *v,
         crate::types::CssLength::Zero => 0.0,
         other => panic!("unexpected border_spacing_h: {:?}", other),
     };
@@ -1287,8 +1287,8 @@ fn table_cellspacing_zero_sets_border_spacing() {
 fn table_cellspacing_nonzero() {
     let doc = parse(r#"<table cellspacing="4"><tr><td>A</td></tr></table>"#);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    let sp = match table.style.border_spacing_h {
-        crate::types::CssLength::Px(v) => v,
+    let sp = match &table.style.border_spacing_h {
+        crate::types::CssLength::Px(v) => *v,
         crate::types::CssLength::Zero => 0.0,
         other => panic!("unexpected border_spacing_h: {:?}", other),
     };

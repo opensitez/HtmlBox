@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod api;
+pub mod events;
 
 use std::time::{Duration, Instant};
 use std::sync::{Arc, RwLock};

@@ -72,7 +72,7 @@ impl Default for Color {
 
 // ─── CSS Length ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CssLength {
     Px(f32),
     Em(f32),
@@ -84,6 +84,12 @@ pub enum CssLength {
     Vh(f32),
     /// `calc()` — stores [percent, px, em, rem, vw, vh] contributions.
     Calc([f32; 6]),
+    /// `min()` — resolves to the smallest value.
+    Min(Box<[CssLength]>),
+    /// `max()` — resolves to the largest value.
+    Max(Box<[CssLength]>),
+    /// `clamp(min, val, max)` — resolves to val clamped between min and max.
+    Clamp(Box<CssLength>, Box<CssLength>, Box<CssLength>),
     Auto,
     Zero,
     None,
@@ -117,6 +123,18 @@ impl CssLength {
             CssLength::Calc(c) =>
                 c[0] / 100.0 * containing_px + c[1] + c[2] * parent_font_px
                 + c[3] * root_font_px + c[4] / 100.0 * viewport_w + c[5] / 100.0 * viewport_h,
+            CssLength::Min(vals) => vals.iter()
+                .map(|v| v.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h))
+                .fold(f32::INFINITY, f32::min),
+            CssLength::Max(vals) => vals.iter()
+                .map(|v| v.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h))
+                .fold(f32::NEG_INFINITY, f32::max),
+            CssLength::Clamp(min, val, max) => {
+                let min_v = min.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
+                let val_v = val.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
+                let max_v = max.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
+                val_v.max(min_v).min(max_v)
+            }
             CssLength::Auto       => 0.0,
             CssLength::Zero       => 0.0,
             CssLength::None       => 0.0,
@@ -1320,21 +1338,21 @@ impl ComputedStyle {
     pub fn inherit_from(&mut self, parent: &ComputedStyle) {
         self.color           = parent.color;
         self.font_family             = parent.font_family.clone();
-        self.font_size               = parent.font_size;
+        self.font_size               = parent.font_size.clone();
         self.font_weight             = parent.font_weight;
         self.font_style              = parent.font_style;
         self.font_variation_settings = parent.font_variation_settings.clone();
         self.font_feature_settings   = parent.font_feature_settings.clone();
-        self.line_height             = parent.line_height;
-        self.letter_spacing  = parent.letter_spacing;
-        self.word_spacing    = parent.word_spacing;
+        self.line_height             = parent.line_height.clone();
+        self.letter_spacing  = parent.letter_spacing.clone();
+        self.word_spacing    = parent.word_spacing.clone();
         self.text_align      = parent.text_align;
         self.text_decoration           = parent.text_decoration;
         self.text_decoration_color     = parent.text_decoration_color;
         self.text_decoration_style     = parent.text_decoration_style;
-        self.text_decoration_thickness = parent.text_decoration_thickness;
-        self.text_underline_offset     = parent.text_underline_offset;
-        self.text_indent               = parent.text_indent;
+        self.text_decoration_thickness = parent.text_decoration_thickness.clone();
+        self.text_underline_offset     = parent.text_underline_offset.clone();
+        self.text_indent               = parent.text_indent.clone();
         self.white_space     = parent.white_space;
         self.text_transform  = parent.text_transform;
         self.word_break      = parent.word_break;
@@ -1956,6 +1974,8 @@ pub struct Document {
     pub linked_stylesheets: Vec<(String, String)>,
     pub editor:          Editor,
     pub events:          EventListeners,
+    /// NodeId-based event system with capture/bubble phases.
+    pub event_targets:   crate::dom::events::EventTargetMap,
     /// Viewport scroll position in logical pixels (managed by Renderer::render).
     pub scroll_x:        f32,
     pub scroll_y:        f32,
@@ -2015,6 +2035,8 @@ pub struct Document {
     pub needs_animation_frame: bool,
     /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
     pub hover_changed: bool,
+    /// Set by DOM API mutations to force a full cascade on next layout.
+    pub style_dirty: bool,
     /// Previous hover target — used to compute the diff for incremental cascade.
     pub prev_hovered_box: u32,
 
@@ -2051,6 +2073,7 @@ impl Document {
             linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
             events:          EventListeners::new(),
+            event_targets:   crate::dom::events::EventTargetMap::new(),
             scroll_x:        0.0,
             scroll_y:        0.0,
             scrollbar_drag:  None,
@@ -2077,6 +2100,7 @@ impl Document {
             animation_overrides:   HashMap::new(),
             needs_animation_frame: false,
             hover_changed:         false,
+            style_dirty:           false,
             prev_hovered_box:      0,
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
@@ -3980,6 +4004,7 @@ impl Clone for Document {
             linked_stylesheets: self.linked_stylesheets.clone(),
             editor:          self.editor.clone(),
             events:          self.events.clone(),
+            event_targets:   crate::dom::events::EventTargetMap::new(), // listeners not cloned
             scroll_x:        self.scroll_x,
             scroll_y:        self.scroll_y,
             scrollbar_drag:  self.scrollbar_drag.clone(),
@@ -4005,6 +4030,7 @@ impl Clone for Document {
             animation_overrides:   self.animation_overrides.clone(),
             needs_animation_frame: self.needs_animation_frame,
             hover_changed:         self.hover_changed,
+            style_dirty:           self.style_dirty,
             prev_hovered_box:      self.prev_hovered_box,
             pending_announcements:    self.pending_announcements.clone(),
             live_region_snapshots:    self.live_region_snapshots.clone(),

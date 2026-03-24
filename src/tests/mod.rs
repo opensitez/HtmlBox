@@ -22,5 +22,8 @@ pub mod test_hover;
 pub mod test_arena_bridge;
 pub mod test_dom_api;
 pub mod test_incremental_cascade;
+pub mod test_frame;
+pub mod test_event_dispatch;
+pub mod test_css_values;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;

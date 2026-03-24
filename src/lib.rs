@@ -44,6 +44,7 @@ pub mod layout;
 pub mod renderer;
 pub mod platform;
 pub mod dom;
+pub mod frame;
 pub mod markdown;
 #[cfg(feature = "accessibility")]
 pub mod accessibility;
@@ -61,6 +62,7 @@ pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, Shadow
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base};
 pub use layout::LayoutEngine;
+pub use frame::EngineFrame;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
 pub use renderer::{Renderer, draw_inspect_overlay};
 pub use dom::HtmlEventType;

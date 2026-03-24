@@ -1914,45 +1914,45 @@ fn propagate_to_text_descendants(children: &mut Vec<HtmlBox>, props: &[(&str, &s
 /// concrete value that already changed the inherited default.
 fn copy_property_from_parent(style: &mut ComputedStyle, parent: &ComputedStyle, prop: &str) {
     match prop {
-        "font-size"       => style.font_size       = parent.font_size,
+        "font-size"       => style.font_size       = parent.font_size.clone(),
         "font-weight"     => style.font_weight     = parent.font_weight,
         "font-family"     => style.font_family     = parent.font_family.clone(),
         "font-style"      => style.font_style      = parent.font_style,
         "color"           => style.color            = parent.color,
-        "line-height"     => style.line_height      = parent.line_height,
+        "line-height"     => style.line_height      = parent.line_height.clone(),
         "text-align"      => style.text_align       = parent.text_align,
         "text-decoration" => style.text_decoration  = parent.text_decoration,
-        "letter-spacing"  => style.letter_spacing   = parent.letter_spacing,
-        "word-spacing"    => style.word_spacing     = parent.word_spacing,
+        "letter-spacing"  => style.letter_spacing   = parent.letter_spacing.clone(),
+        "word-spacing"    => style.word_spacing     = parent.word_spacing.clone(),
         "white-space"     => style.white_space      = parent.white_space,
         "text-transform"  => style.text_transform   = parent.text_transform,
         "direction"       => style.direction        = parent.direction,
         "visibility"      => style.visibility       = parent.visibility,
         "cursor"          => style.cursor           = parent.cursor,
         "display"         => style.display          = parent.display,
-        "width"           => style.width            = parent.width,
-        "height"          => style.height           = parent.height,
-        "margin-top"      => style.margin_top       = parent.margin_top,
-        "margin-right"    => style.margin_right     = parent.margin_right,
-        "margin-bottom"   => style.margin_bottom    = parent.margin_bottom,
-        "margin-left"     => style.margin_left      = parent.margin_left,
-        "padding-top"     => style.padding_top      = parent.padding_top,
-        "padding-right"   => style.padding_right    = parent.padding_right,
-        "padding-bottom"  => style.padding_bottom   = parent.padding_bottom,
-        "padding-left"    => style.padding_left     = parent.padding_left,
-        "border-top-width"    => style.border_top_width    = parent.border_top_width,
-        "border-right-width"  => style.border_right_width  = parent.border_right_width,
-        "border-bottom-width" => style.border_bottom_width = parent.border_bottom_width,
-        "border-left-width"   => style.border_left_width   = parent.border_left_width,
+        "width"           => style.width            = parent.width.clone(),
+        "height"          => style.height           = parent.height.clone(),
+        "margin-top"      => style.margin_top       = parent.margin_top.clone(),
+        "margin-right"    => style.margin_right     = parent.margin_right.clone(),
+        "margin-bottom"   => style.margin_bottom    = parent.margin_bottom.clone(),
+        "margin-left"     => style.margin_left      = parent.margin_left.clone(),
+        "padding-top"     => style.padding_top      = parent.padding_top.clone(),
+        "padding-right"   => style.padding_right    = parent.padding_right.clone(),
+        "padding-bottom"  => style.padding_bottom   = parent.padding_bottom.clone(),
+        "padding-left"    => style.padding_left     = parent.padding_left.clone(),
+        "border-top-width"    => style.border_top_width    = parent.border_top_width.clone(),
+        "border-right-width"  => style.border_right_width  = parent.border_right_width.clone(),
+        "border-bottom-width" => style.border_bottom_width = parent.border_bottom_width.clone(),
+        "border-left-width"   => style.border_left_width   = parent.border_left_width.clone(),
         "border-top-color"    => style.border_top_color    = parent.border_top_color,
         "border-right-color"  => style.border_right_color  = parent.border_right_color,
         "border-bottom-color" => style.border_bottom_color = parent.border_bottom_color,
         "border-left-color"   => style.border_left_color   = parent.border_left_color,
         "border" => {
-            style.border_top_width    = parent.border_top_width;
-            style.border_right_width  = parent.border_right_width;
-            style.border_bottom_width = parent.border_bottom_width;
-            style.border_left_width   = parent.border_left_width;
+            style.border_top_width    = parent.border_top_width.clone();
+            style.border_right_width  = parent.border_right_width.clone();
+            style.border_bottom_width = parent.border_bottom_width.clone();
+            style.border_left_width   = parent.border_left_width.clone();
             style.border_top_color    = parent.border_top_color;
             style.border_right_color  = parent.border_right_color;
             style.border_bottom_color = parent.border_bottom_color;
@@ -1963,16 +1963,16 @@ fn copy_property_from_parent(style: &mut ComputedStyle, parent: &ComputedStyle, 
             style.border_left_style   = parent.border_left_style;
         }
         "margin" => {
-            style.margin_top    = parent.margin_top;
-            style.margin_right  = parent.margin_right;
-            style.margin_bottom = parent.margin_bottom;
-            style.margin_left   = parent.margin_left;
+            style.margin_top    = parent.margin_top.clone();
+            style.margin_right  = parent.margin_right.clone();
+            style.margin_bottom = parent.margin_bottom.clone();
+            style.margin_left   = parent.margin_left.clone();
         }
         "padding" => {
-            style.padding_top    = parent.padding_top;
-            style.padding_right  = parent.padding_right;
-            style.padding_bottom = parent.padding_bottom;
-            style.padding_left   = parent.padding_left;
+            style.padding_top    = parent.padding_top.clone();
+            style.padding_right  = parent.padding_right.clone();
+            style.padding_bottom = parent.padding_bottom.clone();
+            style.padding_left   = parent.padding_left.clone();
         }
         "background-color" => style.background_color = parent.background_color,
         "background"       => style.background_color = parent.background_color,
@@ -1982,7 +1982,7 @@ fn copy_property_from_parent(style: &mut ComputedStyle, parent: &ComputedStyle, 
         "overflow-y"       => style.overflow_y  = parent.overflow_y,
         "position"         => style.position    = parent.position,
         "float"            => style.float       = parent.float,
-        "text-indent"      => style.text_indent = parent.text_indent,
+        "text-indent"      => style.text_indent = parent.text_indent.clone(),
         "list-style-type"  => style.list_style_type = parent.list_style_type,
         "vertical-align"   => style.vertical_align  = parent.vertical_align,
         "text-overflow"    => style.text_overflow    = parent.text_overflow,
@@ -2471,9 +2471,9 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "order"       => { style.order       = v.parse().unwrap_or(0); }
         "gap"         => {
             let g = parse_length(v);
+            style.row_gap = g.clone();
+            style.column_gap = g.clone();
             style.gap = g;
-            style.row_gap = g;
-            style.column_gap = g;
         }
         "row-gap"    => { style.row_gap    = parse_length(v); }
         "column-gap" => { style.column_gap = parse_length(v); }
@@ -2650,7 +2650,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         "border-left"   => apply_border_side_shorthand(v, &mut style.border_left_width,   &mut style.border_left_style,   &mut style.border_left_color),
 
         // ── Per-corner border radius ────────────────────────────────────────
-        "border-top-left-radius"     => { style.border_top_left_radius     = parse_length(v); style.border_radius = style.border_top_left_radius; }
+        "border-top-left-radius"     => { style.border_top_left_radius     = parse_length(v); style.border_radius = style.border_top_left_radius.clone(); }
         "border-top-right-radius"    => { style.border_top_right_radius    = parse_length(v); }
         "border-bottom-left-radius"  => { style.border_bottom_left_radius  = parse_length(v); }
         "border-bottom-right-radius" => { style.border_bottom_right_radius = parse_length(v); }
@@ -2886,17 +2886,17 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Logical properties (block/inline) ───────────────────────────────
-        "margin-block"        => { let m = parse_length(v); style.margin_top = m; style.margin_bottom = m; }
+        "margin-block"        => { let m = parse_length(v); style.margin_top = m.clone(); style.margin_bottom = m; }
         "margin-block-start"  => { style.margin_top    = parse_length(v); }
         "margin-block-end"    => { style.margin_bottom = parse_length(v); }
-        "margin-inline"       => { let m = parse_length(v); style.margin_left = m; style.margin_right = m; }
+        "margin-inline"       => { let m = parse_length(v); style.margin_left = m.clone(); style.margin_right = m; }
         "margin-inline-start" => { style.margin_left   = parse_length(v); }
         "margin-inline-end"   => { style.margin_right  = parse_length(v); }
 
-        "padding-block"        => { let p = parse_length(v); style.padding_top = p; style.padding_bottom = p; }
+        "padding-block"        => { let p = parse_length(v); style.padding_top = p.clone(); style.padding_bottom = p; }
         "padding-block-start"  => { style.padding_top    = parse_length(v); }
         "padding-block-end"    => { style.padding_bottom = parse_length(v); }
-        "padding-inline"       => { let p = parse_length(v); style.padding_left = p; style.padding_right = p; }
+        "padding-inline"       => { let p = parse_length(v); style.padding_left = p.clone(); style.padding_right = p; }
         "padding-inline-start" => { style.padding_left  = parse_length(v); }
         "padding-inline-end"   => { style.padding_right = parse_length(v); }
 
@@ -3430,8 +3430,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 &mut style.bottom, &mut style.left,
                 parse_length);
         }
-        "inset-block"  => { let l = parse_length(v); style.top    = l; style.bottom = l; }
-        "inset-inline" => { let l = parse_length(v); style.left   = l; style.right  = l; }
+        "inset-block"  => { let l = parse_length(v); style.top    = l.clone(); style.bottom = l; }
+        "inset-inline" => { let l = parse_length(v); style.left   = l.clone(); style.right  = l; }
 
         // ── border-radius shorthand (per-corner) ─────────────────────────────
         "border-radius" => {
@@ -3446,11 +3446,11 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             let tr = parse_length(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
             let br = parse_length(parts.get(2).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
             let bl = parse_length(parts.get(3).copied().unwrap_or(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0"))));
+            style.border_radius              = tl.clone();
             style.border_top_left_radius     = tl;
             style.border_top_right_radius    = tr;
             style.border_bottom_right_radius = br;
             style.border_bottom_left_radius  = bl;
-            style.border_radius              = tl;
         }
 
         // ── Appearance ────────────────────────────────────────────────────────
@@ -3845,9 +3845,9 @@ fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
 ) {
     let parts: Vec<&str> = v.split_whitespace().collect();
     match parts.len() {
-        1 => { let x = parse(parts[0]); *top = x; *right = x; *bottom = x; *left = x; }
-        2 => { let tb = parse(parts[0]); let rl = parse(parts[1]); *top = tb; *bottom = tb; *right = rl; *left = rl; }
-        3 => { *top = parse(parts[0]); let rl = parse(parts[1]); *right = rl; *left = rl; *bottom = parse(parts[2]); }
+        1 => { let x = parse(parts[0]); *top = x.clone(); *right = x.clone(); *bottom = x.clone(); *left = x; }
+        2 => { let tb = parse(parts[0]); let rl = parse(parts[1]); *top = tb.clone(); *bottom = tb; *right = rl.clone(); *left = rl; }
+        3 => { *top = parse(parts[0]); let rl = parse(parts[1]); *right = rl.clone(); *left = rl; *bottom = parse(parts[2]); }
         4 => { *top = parse(parts[0]); *right = parse(parts[1]); *bottom = parse(parts[2]); *left = parse(parts[3]); }
         _ => {}
     }
@@ -3869,9 +3869,9 @@ fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
         } else {
             let w = parse_length(part);
             if !matches!(w, CssLength::Auto) {
-                style.border_top_width    = w;
-                style.border_right_width  = w;
-                style.border_bottom_width = w;
+                style.border_top_width    = w.clone();
+                style.border_right_width  = w.clone();
+                style.border_bottom_width = w.clone();
                 style.border_left_width   = w;
             }
         }
@@ -4188,29 +4188,32 @@ pub fn parse_length(v: &str) -> CssLength {
     if let Some(inner) = v.strip_prefix("calc(").and_then(|s| s.strip_suffix(')')) {
         return parse_calc(inner);
     }
-    // CSS min()/max()/clamp() — pick first argument as approximation
+    // CSS min()/max()/clamp() — proper AST with lazy resolution at layout time
     if let Some(inner) = v.strip_prefix("min(").and_then(|s| s.strip_suffix(')')) {
-        // min(a, b) → parse first arg (conservative for max-width)
-        if let Some(comma) = find_top_level_comma(inner) {
-            return parse_length(&inner[..comma]);
+        let args = split_top_level_commas(inner);
+        if args.len() >= 2 {
+            let vals: Vec<CssLength> = args.iter().map(|a| parse_length(a.trim())).collect();
+            return CssLength::Min(vals.into_boxed_slice());
         }
         return parse_length(inner);
     }
     if let Some(inner) = v.strip_prefix("max(").and_then(|s| s.strip_suffix(')')) {
-        // max(a, b) → parse first arg (conservative for min-width)
-        if let Some(comma) = find_top_level_comma(inner) {
-            return parse_length(&inner[..comma]);
+        let args = split_top_level_commas(inner);
+        if args.len() >= 2 {
+            let vals: Vec<CssLength> = args.iter().map(|a| parse_length(a.trim())).collect();
+            return CssLength::Max(vals.into_boxed_slice());
         }
         return parse_length(inner);
     }
     if let Some(inner) = v.strip_prefix("clamp(").and_then(|s| s.strip_suffix(')')) {
-        // clamp(min, preferred, max) → use preferred (second arg)
-        if let Some(c1) = find_top_level_comma(inner) {
-            let rest = &inner[c1+1..];
-            if let Some(c2) = find_top_level_comma(rest) {
-                return parse_length(rest[..c2].trim());
-            }
+        let args = split_top_level_commas(inner);
+        if args.len() == 3 {
+            let min = parse_length(args[0].trim());
+            let val = parse_length(args[1].trim());
+            let max = parse_length(args[2].trim());
+            return CssLength::Clamp(Box::new(min), Box::new(val), Box::new(max));
         }
+        // Fallback: treat as calc
         return parse_length(inner);
     }
     if v.ends_with("px") { return CssLength::Px(v[..v.len()-2].parse().unwrap_or(0.0)); }
@@ -4416,6 +4419,26 @@ fn find_top_level_comma(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Split a string at top-level commas (not inside nested parentheses).
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 pub fn parse_length_or_none(v: &str) -> CssLength {
@@ -5469,12 +5492,24 @@ fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {
 }
 
 /// Clear cascade_dirty and has_dirty_descendant flags after incremental cascade.
+/// Clear cascade_dirty flags after cascade. Preserves has_dirty_descendant
+/// for the layout pass (propagate_dirty uses it to skip clean subtrees).
 pub fn clear_cascade_dirty(node: &mut crate::types::HtmlBox) {
     if !node.cascade_dirty && !node.has_dirty_descendant { return; }
     node.cascade_dirty = false;
-    node.has_dirty_descendant = false;
+    // Note: has_dirty_descendant is intentionally NOT cleared here — layout needs it.
+    // It gets cleared after layout in clear_layout_dirty().
     for child in &mut node.children {
         clear_cascade_dirty(child);
+    }
+}
+
+/// Clear has_dirty_descendant flags after layout completes.
+pub fn clear_descendant_dirty(node: &mut crate::types::HtmlBox) {
+    if !node.has_dirty_descendant { return; }
+    node.has_dirty_descendant = false;
+    for child in &mut node.children {
+        clear_descendant_dirty(child);
     }
 }
 

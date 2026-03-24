@@ -190,7 +190,7 @@ pub fn layout_table(
         let raw = if raw == 0.0 && node.style.border_spacing_h.is_auto() { 2.0 } else { raw };
         if node.style.border_collapse { 0.0 } else { raw }
     };
-    let cellpad = node.style.cell_padding;
+    let cellpad = node.style.cell_padding.clone();
     let collapse = node.style.border_collapse;
 
     let content_w = match rbox.content_width {
@@ -411,10 +411,10 @@ pub fn layout_table(
                 if !cellpad.is_auto() {
                     let row = row_ref_mut(node, &row_refs[row_idx]);
                     let cell = &mut row.children[ci];
-                    if cell.style.padding_left.is_auto()   { cell.style.padding_left   = cellpad; }
-                    if cell.style.padding_right.is_auto()  { cell.style.padding_right  = cellpad; }
-                    if cell.style.padding_top.is_auto()    { cell.style.padding_top    = cellpad; }
-                    if cell.style.padding_bottom.is_auto() { cell.style.padding_bottom = cellpad; }
+                    if cell.style.padding_left.is_auto()   { cell.style.padding_left   = cellpad.clone(); }
+                    if cell.style.padding_right.is_auto()  { cell.style.padding_right  = cellpad.clone(); }
+                    if cell.style.padding_top.is_auto()    { cell.style.padding_top    = cellpad.clone(); }
+                    if cell.style.padding_bottom.is_auto() { cell.style.padding_bottom = cellpad.clone(); }
                 }
 
                 // Layout cell
@@ -743,16 +743,16 @@ fn resolve_collapsed_borders(
 
     // Table border vs. outer cells (CSS 2.1 §17.6.2.1)
     // Snapshot table border values before mutating cells
-    let tbl_top_w    = node.style.border_top_width;
+    let tbl_top_w    = node.style.border_top_width.clone();
     let tbl_top_s    = node.style.border_top_style;
     let tbl_top_c    = node.style.border_top_color;
-    let tbl_bot_w    = node.style.border_bottom_width;
+    let tbl_bot_w    = node.style.border_bottom_width.clone();
     let tbl_bot_s    = node.style.border_bottom_style;
     let tbl_bot_c    = node.style.border_bottom_color;
-    let tbl_left_w   = node.style.border_left_width;
+    let tbl_left_w   = node.style.border_left_width.clone();
     let tbl_left_s   = node.style.border_left_style;
     let tbl_left_c   = node.style.border_left_color;
-    let tbl_right_w  = node.style.border_right_width;
+    let tbl_right_w  = node.style.border_right_width.clone();
     let tbl_right_s  = node.style.border_right_style;
     let tbl_right_c  = node.style.border_right_color;
 
@@ -767,7 +767,7 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_top_width = tbl_top_w;
+                cell.style.border_top_width = tbl_top_w.clone();
                 cell.style.border_top_style = tbl_top_s;
                 cell.style.border_top_color = tbl_top_c;
             }
@@ -784,7 +784,7 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_bottom_width = tbl_bot_w;
+                cell.style.border_bottom_width = tbl_bot_w.clone();
                 cell.style.border_bottom_style = tbl_bot_s;
                 cell.style.border_bottom_color = tbl_bot_c;
             }
@@ -801,7 +801,7 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_left_width = tbl_left_w;
+                cell.style.border_left_width = tbl_left_w.clone();
                 cell.style.border_left_style = tbl_left_s;
                 cell.style.border_left_color = tbl_left_c;
             }
@@ -818,7 +818,7 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_right_width = tbl_right_w;
+                cell.style.border_right_width = tbl_right_w.clone();
                 cell.style.border_right_style = tbl_right_s;
                 cell.style.border_right_color = tbl_right_c;
             }

@@ -250,6 +250,7 @@ impl Document {
 
         if let Some(parent) = self.find_htmlbox_mut(parent_id) {
             parent.children.push(child_box);
+            parent.layout_dirty = true;
         }
     }
 
@@ -276,6 +277,7 @@ impl Document {
                 .position(|c| c.node_id == reference_id)
                 .unwrap_or(parent.children.len());
             parent.children.insert(idx, child_box);
+            parent.layout_dirty = true;
         }
     }
 
@@ -283,17 +285,26 @@ impl Document {
     /// and freed in the arena.
     pub fn dom_remove_child(&mut self, child_id: u32) {
         if child_id == 0 { return; }
+        // Get parent before removing
+        let parent_id = self.arena.get(NodeId(child_id)).parent.0;
         self.arena.remove_child(NodeId(child_id));
         self.arena.free(NodeId(child_id));
         self.detach_htmlbox(child_id);
+        // Mark parent dirty for layout
+        if parent_id != 0 {
+            if let Some(parent) = self.find_htmlbox_mut(parent_id) {
+                parent.layout_dirty = true;
+            }
+        }
     }
 
-    /// Set an attribute on an element. Sets STYLE dirty flag.
+    /// Set an attribute on an element. Sets STYLE dirty flag + layout dirty.
     pub fn dom_set_attribute(&mut self, id: u32, key: &str, value: &str) {
         if id == 0 { return; }
         self.arena.set_attribute(NodeId(id), key, value);
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.attributes.insert(key.to_string(), value.to_string());
+            node.layout_dirty = true;
         }
     }
 

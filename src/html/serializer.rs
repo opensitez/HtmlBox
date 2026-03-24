@@ -46,6 +46,17 @@ pub fn serialize_length(len: &CssLength) -> String {
             if parts.is_empty() { "0px".to_string() }
             else { format!("calc({})", parts.join(" + ")) }
         }
+        CssLength::Min(vals) => {
+            let inner: Vec<String> = vals.iter().map(|v| serialize_length(v)).collect();
+            format!("min({})", inner.join(", "))
+        }
+        CssLength::Max(vals) => {
+            let inner: Vec<String> = vals.iter().map(|v| serialize_length(v)).collect();
+            format!("max({})", inner.join(", "))
+        }
+        CssLength::Clamp(min, val, max) => {
+            format!("clamp({}, {}, {})", serialize_length(min), serialize_length(val), serialize_length(max))
+        }
     }
 }
 

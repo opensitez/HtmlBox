@@ -166,6 +166,33 @@ fn incremental_cascade_skips_clean_subtrees() {
     // Transition should be much faster than full cascade
     assert!(transition_time < full_time,
         "transition ({:?}) should be faster than full ({:?})", transition_time, full_time);
+
+    // Also measure layout time with dirty flags vs full layout
+    let mut engine = crate::layout::LayoutEngine::new();
+    engine.viewport_w = 800.0;
+    engine.viewport_h = 600.0;
+
+    // Full layout after full cascade
+    let mut doc_layout = parse_html(&html);
+    apply_cascade_vp_hover(&mut doc_layout.root, &doc_layout.stylesheet, None, 16.0, 800.0, 600.0, 0, false, &empty);
+    let t_layout_full = std::time::Instant::now();
+    engine.layout(&mut doc_layout, 800.0);
+    let layout_full = t_layout_full.elapsed();
+
+    // Now do an incremental hover and measure layout
+    let nav2 = doc_layout.get_element_by_id("nav2").unwrap();
+    let chain_nav2 = build_hover_chain(&doc_layout.root, nav2);
+    doc_layout.rebuild_node_map();
+    doc_layout.hover_changed = true;
+    doc_layout.hovered_box = nav2;
+    doc_layout.prev_hovered_box = nav0;
+    let t_layout_inc = std::time::Instant::now();
+    engine.layout(&mut doc_layout, 800.0);
+    let layout_inc = t_layout_inc.elapsed();
+
+    eprintln!("[layout] Full: {:?}, After hover: {:?}, Speedup: {:.1}x",
+        layout_full, layout_inc,
+        layout_full.as_nanos() as f64 / layout_inc.as_nanos().max(1) as f64);
 }
 
 #[test]

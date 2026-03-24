@@ -292,9 +292,12 @@ impl FloatContext {
 
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
+/// Skips subtrees where `has_dirty_descendant` is false and the node itself
+/// is not dirty, making this O(dirty_path) instead of O(all_nodes) after
+/// incremental cascade.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
     let mut child_dirty = false;
-    node.cached_intrinsic_w.set(f32::NAN); // reset intrinsic width cache
+    node.cached_intrinsic_w.set(f32::NAN);
     for child in &mut node.children {
         if propagate_dirty(child) { child_dirty = true; }
     }
@@ -803,8 +806,10 @@ impl LayoutEngine {
 
         let hover_changed = doc.hover_changed;
         doc.hover_changed = false;
+        let dom_style_dirty = doc.style_dirty;
+        doc.style_dirty = false;
 
-        let did_cascade = if needs_cascade {
+        let did_cascade = if needs_cascade || dom_style_dirty {
             // Full cascade needed (initial, viewport change, etc.)
             let hover_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             crate::css::apply_cascade_vp_hover(
@@ -924,6 +929,9 @@ impl LayoutEngine {
         doc.root.content_rect.h = h;
         doc.root.padding_rect.h = h;
         doc.root.border_rect.h  = h;
+
+        // Clear descendant dirty flags now that layout is complete
+        crate::css::clear_descendant_dirty(&mut doc.root);
     }
 
     pub fn layout_box(
@@ -1108,6 +1116,7 @@ impl LayoutEngine {
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
                     shift_rects(node, dx, dy);
                 }
+                node.layout_dirty = false;
                 return node.margin_rect.h;
             }
         }
@@ -1178,6 +1187,7 @@ impl LayoutEngine {
 
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);
+        node.layout_dirty = false;
         h
     }
 
