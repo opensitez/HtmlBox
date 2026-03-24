@@ -106,7 +106,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("calculator — rhtmledit").with_inner_size(winit::dpi::LogicalSize::new(360u32, 420u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
-        let doc = load_html_with_registry(HTML, self.width, 420.0, self.registry.clone());
+        let doc = load_html_with_registry(HTML, "", self.width, 420.0, self.registry.clone());
 
         // buttons
         doc.events.add(".btn", HtmlEventType::Click, Box::new(move |evt| {

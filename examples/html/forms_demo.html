@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+<head><style>
+* { box-sizing: border-box; }
+body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 0;
+    background: #0f172a;
+    color: #e2e8f0;
+}
+.app { max-width: 820px; margin: 0 auto; padding: 16px; }
+
+.header {
+    background: linear-gradient(135deg, #dc2626, #ea580c);
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    text-align: center;
+}
+.header h1 { margin: 0; font-size: 26px; color: white; }
+.header p { margin: 4px 0 0; color: rgba(255,255,255,0.8); font-size: 13px; }
+
+.grid { display: flex; gap: 12px; }
+.col { flex: 1; }
+
+.card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: #f97316;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.form-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.form-row label {
+    width: 80px;
+    font-size: 13px;
+    color: #94a3b8;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+input[type=text], input[type=tel], textarea {
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    width: 100%;
+}
+input[type=text]:focus, input[type=tel]:focus, textarea:focus {
+    border-color: #f97316;
+}
+select {
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    width: 200px;
+}
+
+.sizes {
+    display: flex;
+    gap: 8px;
+}
+.sizes label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #0f172a;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    width: auto;
+}
+.sizes .price { color: #f97316; font-weight: 600; margin-left: auto; }
+
+.toppings-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.topping {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    width: 48%;
+    cursor: pointer;
+}
+.topping .price { color: #94a3b8; margin-left: auto; font-size: 11px; }
+
+.summary {
+    background: #0f172a;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.8;
+}
+.summary .lbl { color: #94a3b8; display: inline-block; width: 80px; }
+.summary .val { color: #e2e8f0; }
+.total-line {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #334155;
+    font-size: 20px;
+    font-weight: 700;
+    color: #f97316;
+}
+
+.btn-row { display: flex; gap: 8px; margin-top: 12px; }
+input[type=submit] {
+    flex: 1;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+input[type=button] {
+    background: #334155;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.status {
+    text-align: center;
+    padding: 8px;
+    color: #94a3b8;
+    font-size: 13px;
+}
+</style></head>
+<body>
+<div class="app">
+
+<div class="header">
+    <h1>Pizza Builder</h1>
+    <p>Build your perfect pizza — rhtmledit forms demo</p>
+</div>
+
+<div class="grid">
+<div class="col">
+
+<div class="card">
+    <h2>Customer</h2>
+    <div class="form-row">
+        <label>Name:</label>
+        <input type="text" id="name" name="name" placeholder="Your name">
+    </div>
+    <div class="form-row">
+        <label>Phone:</label>
+        <input type="tel" id="phone" name="phone" placeholder="(555) 000-0000">
+    </div>
+</div>
+
+<div class="card">
+    <h2>Size</h2>
+    <div class="sizes">
+        <label><input type="radio" name="size" value="small"> Small <span class="price">$9.99</span></label>
+        <label><input type="radio" name="size" value="medium" checked> Medium <span class="price">$14.99</span></label>
+        <label><input type="radio" name="size" value="large"> Large <span class="price">$19.99</span></label>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Crust</h2>
+    <div class="form-row">
+        <label>Type:</label>
+        <select id="crust" name="crust">
+            <option>Classic</option>
+            <option selected>Thin</option>
+            <option>Stuffed</option>
+            <option>Gluten-Free</option>
+        </select>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Toppings</h2>
+    <div class="toppings-grid">
+        <label class="topping"><input type="checkbox" id="pep" data-label="Pepperoni" data-price="1.50"> Pepperoni <span class="price">+$1.50</span></label>
+        <label class="topping"><input type="checkbox" id="mush" data-label="Mushrooms" data-price="1.00"> Mushrooms <span class="price">+$1.00</span></label>
+        <label class="topping"><input type="checkbox" id="onion" data-label="Onions" data-price="0.75"> Onions <span class="price">+$0.75</span></label>
+        <label class="topping"><input type="checkbox" id="saus" data-label="Sausage" data-price="1.50"> Sausage <span class="price">+$1.50</span></label>
+        <label class="topping"><input type="checkbox" id="pepper" data-label="Bell Peppers" data-price="1.00"> Peppers <span class="price">+$1.00</span></label>
+        <label class="topping"><input type="checkbox" id="olive" data-label="Olives" data-price="0.75"> Olives <span class="price">+$0.75</span></label>
+        <label class="topping"><input type="checkbox" id="cheese" data-label="Extra Cheese" data-price="2.00"> Extra Cheese <span class="price">+$2.00</span></label>
+        <label class="topping"><input type="checkbox" id="jala" data-label="Jalapeños" data-price="1.00"> Jalapeños <span class="price">+$1.00</span></label>
+    </div>
+</div>
+
+</div>
+<div class="col">
+
+<div class="card">
+    <h2>Special Instructions</h2>
+    <textarea id="notes" name="notes" rows="3" placeholder="Any special requests..."></textarea>
+</div>
+
+<div class="card">
+    <h2>Order Summary</h2>
+    <div class="summary">
+        <div><span class="lbl">Name:</span> <span class="val" id="sum-name">—</span></div>
+        <div><span class="lbl">Size:</span> <span class="val" id="sum-size">medium ($14.99)</span></div>
+        <div><span class="lbl">Toppings:</span> <span class="val" id="sum-toppings">None</span></div>
+        <div class="total-line">Total: <span id="sum-total">$14.99</span></div>
+    </div>
+</div>
+
+<div class="btn-row">
+    <input type="submit" id="order-btn" value="Place Order — $14.99">
+    <input type="button" id="reset-btn" value="Reset">
+</div>
+
+<div class="status" id="status">Click items to build your order</div>
+<progress id="progress" value="0" max="1" style="width:100%;margin-top:6px"></progress>
+
+</div>
+</div>
+
+</div>
+</body>
+</html>

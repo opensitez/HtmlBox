@@ -4,3 +4,5 @@ target
 .claude
 .vscode
 .agents
+snapshot_cache
+
