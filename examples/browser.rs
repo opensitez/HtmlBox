@@ -379,7 +379,7 @@ impl BrowserApp {
                         let w = self.width;
                         let ch = self.content_h();
                         doc.stylesheet.rebuild_index();
-                        apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, w, ch, std::ptr::null(), false);
+                        apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, w, ch, 0, false);
                         eprintln!("[browser] Cascade: {:.0}ms", t_casc.elapsed().as_millis());
                     }
 
@@ -918,8 +918,8 @@ impl BrowserApp {
                     let ch = self.content_h();
                     if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                         let hb = doc.hovered_box;
-                        let tag = if hb.is_null() { "null".to_string() }
-                            else { unsafe { &*hb }.tag.clone() };
+                        let tag = if hb == 0 { "null".to_string() }
+                            else { let p = rhtmledit::types::find_by_node_id(&doc.root, hb); if p.is_null() { "null".to_string() } else { unsafe { &*p }.tag.clone() } };
                         eprintln!("[hover] changed → relayout, hovered={}", tag);
                         let mut eng = self.renderer.layout_engine();
                         eng.viewport_h = ch;
@@ -1180,10 +1180,11 @@ impl BrowserApp {
                 // Enter in a focused text input submits the form
                 if matches!(&event.logical_key, Key::Named(NamedKey::Enter)) {
                     if let Some(doc) = self.tabs[self.active].doc.as_mut() {
-                        if !doc.focused_box.is_null() {
-                            let focused = unsafe { &*doc.focused_box };
-                            if focused.tag == "input" {
-                                let t = focused.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+                        if doc.focused_box != 0 {
+                            let focused_ptr = rhtmledit::types::find_by_node_id(&doc.root, doc.focused_box);
+                            let focused = if focused_ptr.is_null() { None } else { Some(unsafe { &*focused_ptr }) };
+                            if focused.map(|f| f.tag.as_str()) == Some("input") {
+                                let t: &str = focused.unwrap().attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
                                 if matches!(t, "text" | "password" | "email" | "search") {
                                     // Find parent form and submit
                                     let action = rhtmledit::find_parent_form_action(&doc.root, doc.focused_box);

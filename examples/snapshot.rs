@@ -135,7 +135,7 @@ fn main() {
     if had_css {
         doc.stylesheet.resolve_variables_for_viewport(width, max_h);
         if !inspect.is_empty() { doc.stylesheet.inspect_mode = true; }
-        apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, max_h, std::ptr::null(), false);
+        apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, max_h, 0, false);
     }
 
     // ── Dump CSS variables ──────────────────────────────────────────────────
