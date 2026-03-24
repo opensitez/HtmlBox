@@ -694,7 +694,7 @@ fn is_non_visual(tag: &str) -> bool {
 
 // ─── Default display ────────────────────────────────────────────────────────
 
-fn default_display(tag: &str) -> &'static str {
+pub fn default_display(tag: &str) -> &'static str {
     match tag {
         "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
         | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "blockquote" | "hr"
@@ -1992,6 +1992,7 @@ fn parse_html_full(
         arena: parser.arena,
         next_node_id: parser.next_node_id,
         node_map: std::collections::HashMap::new(),
+        pending_nodes: std::collections::HashMap::new(),
         linked_stylesheets,
         editor: crate::dom::Editor::new(),
         events: crate::dom::EventListeners::new(),
@@ -2110,6 +2111,18 @@ fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut H
         let child_id = NodeId(child.node_id);
         arena.append_child(arena_id, child_id);
     }
+}
+
+/// Rebuild arena nodes for a subtree and append each child to `parent_arena_id`.
+/// Used by `dom_set_inner_html` to wire new children into the existing arena.
+pub fn rebuild_arena_recursive_pub(
+    arena: &mut crate::dom::arena::DomArena,
+    node: &mut HtmlBox,
+    parent_arena_id: crate::dom::arena::NodeId,
+) {
+    rebuild_arena_recursive(arena, node);
+    let child_id = crate::dom::arena::NodeId(node.node_id);
+    arena.append_child(parent_arena_id, child_id);
 }
 
 // ─── Serialization ───────────────────────────────────────────────────────────

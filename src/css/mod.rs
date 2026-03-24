@@ -173,7 +173,7 @@ impl CssSelector {
 /// Recursively match a selector (parts slice) against a subject element + its ancestor chain.
 /// Works right-to-left: the last segment matches the subject, preceding segments
 /// must match ancestors according to the combinator between them.
-fn matches_selector_with_ancestors(
+pub fn matches_selector_with_ancestors(
     parts: &[SelectorPart],
     tag: &str,
     attrs: &HashMap<String, String>,

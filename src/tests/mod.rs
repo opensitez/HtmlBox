@@ -20,5 +20,6 @@ pub mod test_parser_robustness;
 pub mod test_display_contents;
 pub mod test_hover;
 pub mod test_arena_bridge;
+pub mod test_dom_api;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;

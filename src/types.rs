@@ -1936,6 +1936,9 @@ pub struct Document {
     /// Bridge lookup: maps node_id → raw pointer into the HtmlBox tree.
     /// Rebuilt by `rebuild_node_map()` after any tree mutation (layout, cascade, etc.).
     pub node_map:        HashMap<u32, *const HtmlBox>,
+    /// Nodes created by dom_create_element/dom_create_text that haven't been
+    /// inserted into the HtmlBox tree yet. Consumed by dom_append_child/dom_insert_before.
+    pub pending_nodes:   HashMap<u32, HtmlBox>,
     /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
     /// Populated by the parser so the host can fetch and merge external CSS.
     /// External stylesheets from `<link rel="stylesheet">` tags: (href, media).
@@ -2033,6 +2036,7 @@ impl Document {
             arena:           DomArena::new(),
             next_node_id:    1,  // 0 = NodeId::NONE (reserved)
             node_map:        HashMap::new(),
+            pending_nodes:   HashMap::new(),
             base_url:        String::new(),
             linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
@@ -3961,6 +3965,7 @@ impl Clone for Document {
             arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
             next_node_id:    self.next_node_id,
             node_map:        HashMap::new(),   // rebuilt on demand
+            pending_nodes:   HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),
             editor:          self.editor.clone(),
             events:          self.events.clone(),
