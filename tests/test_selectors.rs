@@ -41,6 +41,7 @@ fn ancestor_info(
         sibling_count,
         type_child_index: child_index,
         type_sibling_count: sibling_count,
+        node_id:          b.node_id,
     }
 }
 

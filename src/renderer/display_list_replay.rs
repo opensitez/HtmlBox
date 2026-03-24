@@ -34,6 +34,7 @@ pub fn replay_with_text(
 struct Layer {
     pixmap: Pixmap,
     blend_mode: u8,
+    transform: Option<[f32; 6]>,  // CSS transform matrix, if this is a transform layer
 }
 
 fn replay_inner(
@@ -105,12 +106,13 @@ fn replay_inner(
                     ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
                     ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
                 };
-                if iw == 0 || ih == 0 { continue; }
+                if iw == 0 || ih == 0 || rect.w <= 0.0 || rect.h <= 0.0 { continue; }
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
                     let sx = rect.w / iw as f32;
                     let sy = rect.h / ih as f32;
                     let img_ts = ts.pre_translate(rect.x, rect.y).pre_scale(sx, sy);
-                    pixmap.draw_pixmap(0, 0,
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    target.draw_pixmap(0, 0,
                         img_pixmap,
                         &tiny_skia::PixmapPaint::default(),
                         img_ts,
@@ -124,8 +126,9 @@ fn replay_inner(
                              letter_spacing, small_caps, decoration } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
                     draw_text_cmd(
-                        pixmap, *fs, *sc, scale,
+                        target, *fs, *sc, scale,
                         *x, *y, text, font_family, *font_size, *font_weight,
                         *font_style, *font_stretch, *line_height,
                         &apply_opacity(color, alpha), decoration,
@@ -150,16 +153,33 @@ fn replay_inner(
             }
 
             PaintCmd::PushTransform { transform: m } => {
-                // Apply transform by modifying the global transform
-                // TODO: proper transform stack with layer compositing
-                // For now, transforms are handled per-command in build phase
+                // Render into a temp layer, composite with transform applied
+                if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
+                    // Store transform matrix for use when popping
+                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 255, transform: Some(*m) });
+                }
             }
-            PaintCmd::PopTransform => {}
+            PaintCmd::PopTransform => {
+                if let Some(layer) = layer_stack.pop() {
+                    if let Some(m) = layer.transform {
+                        // Composite layer with CSS transform applied
+                        let css_t = Transform::from_row(m[0], m[1], m[2], m[3], m[4] * scale, m[5] * scale);
+                        let combined = Transform::from_scale(scale, scale)
+                            .pre_concat(css_t)
+                            .pre_concat(Transform::from_scale(1.0 / scale, 1.0 / scale));
+                        pixmap.draw_pixmap(
+                            0, 0, layer.pixmap.as_ref(),
+                            &tiny_skia::PixmapPaint::default(),
+                            combined, None,
+                        );
+                    }
+                }
+            }
 
             PaintCmd::PushBlendMode { mode } => {
                 // Create a temporary layer for blend compositing
                 if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: *mode });
+                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: *mode, transform: None });
                 }
             }
             PaintCmd::PopBlendMode => {
@@ -191,6 +211,153 @@ fn replay_inner(
 
             PaintCmd::BeginStackingContext { .. } => {}
             PaintCmd::EndStackingContext => {}
+
+            PaintCmd::Gradient { rect, gradient_type, angle, stops, radii, opacity: grad_opacity, blend_mode: _ } => {
+                // TODO: full gradient replay (linear/radial with stops)
+                // For now, draw a simple fill with the first stop color as fallback
+                if let Some((color, _)) = stops.first() {
+                    let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                    let mut paint = Paint::default();
+                    paint.set_color(to_sk_color(&apply_opacity(color, a2 * grad_opacity)));
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
+                        target.fill_rect(r, &paint, ts, None);
+                    }
+                }
+            }
+
+            PaintCmd::Outline { rect, width, color, style: _, offset } => {
+                let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                let mut paint = Paint::default();
+                paint.set_color(to_sk_color(&apply_opacity(color, a2)));
+                paint.anti_alias = true;
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = *width;
+                if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 0.0) {
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                }
+            }
+
+            PaintCmd::HorizontalRule { x1, y1, x2 } => {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(128, 128, 128, 255);
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = 1.0;
+                let mut pb = tiny_skia::PathBuilder::new();
+                pb.move_to(*x1, *y1);
+                pb.line_to(*x2, *y1);
+                if let Some(path) = pb.finish() {
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                }
+            }
+
+            PaintCmd::ListMarker { marker_type, x, y, size, color, text, font_family, font_size, font_weight, font_style, line_height } => {
+                let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                let c = apply_opacity(color, a2);
+                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                match marker_type {
+                    0 => {
+                        // disc
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&c));
+                        if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
+                            target.fill_rect(r, &paint, ts, None);
+                        }
+                    }
+                    1 => {
+                        // circle (filled as fallback)
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&c));
+                        if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
+                            target.fill_rect(r, &paint, ts, None);
+                        }
+                    }
+                    2 => {
+                        // square
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&c));
+                        let half = size / 2.0;
+                        if let Some(r) = SkRect::from_xywh(x - half, y - half, *size, *size) {
+                            target.fill_rect(r, &paint, ts, None);
+                        }
+                    }
+                    3 => {
+                        // text marker
+                        if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                            draw_text_cmd(
+                                target, *fs, *sc, scale,
+                                *x, *y, text, font_family, *font_size, *font_weight,
+                                *font_style, 100.0, *line_height,
+                                &c, &super::display_list::TextDecoration::default(),
+                                0.0, false,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor } => {
+                // TODO: full form element replay — for now draw a border and value text
+                let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                // Draw border
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(169, 169, 169, 200);
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = 1.0;
+                if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 2.0) {
+                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                }
+                // Draw value text
+                let display_text = if value.is_empty() { placeholder } else { value };
+                if !display_text.is_empty() {
+                    if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                        let c = apply_opacity(color, a2);
+                        draw_text_cmd(
+                            target, *fs, *sc, scale,
+                            rect.x + 2.0, rect.y, display_text, font_family, *font_size, *font_weight,
+                            0, 100.0, *font_size * 1.2,
+                            &c, &super::display_list::TextDecoration::default(),
+                            0.0, false,
+                        );
+                    }
+                }
+            }
+
+            PaintCmd::TextShadow { x, y, text, font_family, font_size, font_weight, font_style, font_stretch, line_height, color, blur } => {
+                // Draw text shadow (simplified — no blur convolution)
+                if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                    let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                    let c = apply_opacity(color, a2);
+                    draw_text_cmd(
+                        pixmap, *fs, *sc, scale,
+                        *x, *y, text, font_family, *font_size, *font_weight,
+                        *font_style, *font_stretch, *line_height,
+                        &c, &super::display_list::TextDecoration::default(),
+                        0.0, false,
+                    );
+                }
+            }
+
+            PaintCmd::BackgroundImage { container, data, size_mode: _, draw_w, draw_h, pos_x, pos_y, repeat_x, repeat_y, radii } => {
+                // Draw background image
+                let (rgba, iw, ih) = match data {
+                    ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
+                    ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
+                };
+                if iw == 0 || ih == 0 || *draw_w <= 0.0 || *draw_h <= 0.0 { continue; }
+                if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
+                    let sx_img = draw_w / iw as f32;
+                    let sy_img = draw_h / ih as f32;
+                    let img_ts = ts.pre_translate(*pos_x, *pos_y).pre_scale(sx_img, sy_img);
+                    pixmap.draw_pixmap(0, 0, img_pixmap,
+                        &tiny_skia::PixmapPaint::default(), img_ts, None);
+                    // TODO: repeat_x/repeat_y tiling
+                }
+            }
         }
     }
 }

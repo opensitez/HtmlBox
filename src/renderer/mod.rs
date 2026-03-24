@@ -455,39 +455,22 @@ impl Renderer {
     /// that box's flat text.  Mirrors C++ `Render(... caretPos, caretVisible, hasFocus)`.
     /// Render one frame.
     /// Hover/active state is updated automatically by `handle_window_event`
-    /// Render the document to a pixmap.
+    /// Render the document to a pixmap via the display list pipeline.
     pub fn render(
         &mut self,
         doc:    &mut Document,
         pixmap: &mut Pixmap,
         scale:  f32,
     ) {
-        let (sel_start, sel_end) = doc.editor.sel_args();
-        let caret_info = doc.editor.caret_info();
-        let caret_visible = doc.editor.caret_visible;
-        let sel_box_id: u32 = caret_info
-            .map(|(ptr, _)| if ptr.is_null() { 0 } else { unsafe { &*ptr }.node_id })
-            .unwrap_or(0);
         self.scale = scale;
         let zoom = self.zoom.clamp(0.1, 8.0);
-        let canvas_color = doc.root.children.iter()
-            .find(|c| c.tag == "body")
-            .map(|body| body.style.background_color)
-            .filter(|c| c.a > 0)
-            .or_else(|| {
-                let c = doc.root.style.background_color;
-                if c.a > 0 { Some(c) } else { None }
-            })
-            .map(|c| c.to_tiny_skia())
-            .unwrap_or(tiny_skia::Color::WHITE);
-        pixmap.fill(canvas_color);
-        let w = pixmap.width()  as f32 / self.scale;
-        let h = pixmap.height() as f32 / self.scale;
-        let view_h = h / zoom;
-        self.viewport_h = view_h;
+        let w = pixmap.width()  as f32 / scale;
+        let h = pixmap.height() as f32 / scale;
         let view_w = w / zoom;
         let view_h = h / zoom;
-        let clip = Rect::new(0.0, 0.0, view_w, view_h);
+        self.viewport_h = view_h;
+
+        // Clamp scroll
         let doc_h = {
             let root_h = doc.root.margin_rect.h;
             doc.root.children.iter()
@@ -498,76 +481,61 @@ impl Renderer {
         let doc_w = doc.root.margin_rect.w;
         doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
         doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));
-        let scroll_x = doc.scroll_x;
-        let scroll_y = doc.scroll_y;
-        self.scale = scale * zoom;
-        let hovered_id    = doc.hovered_box;
-        let active_id     = doc.active_box;
-        let visited_hrefs = &doc.visited_urls;
-        self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
-        self.focused_id = doc.focused_box;
-        self.dropdown_hover_idx = doc.dropdown_hover_idx;
-        self.caret_epoch = doc.caret_blink_epoch;
-        self.deferred_z.clear();
-        self.render_box(
-            &doc.root, pixmap, scroll_x, scroll_y, &clip, None,
-            sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
+
+        // Canvas background
+        let canvas_color = doc.root.children.iter()
+            .find(|c| c.tag == "body")
+            .map(|body| body.style.background_color)
+            .filter(|c| c.a > 0)
+            .or_else(|| { let c = doc.root.style.background_color; if c.a > 0 { Some(c) } else { None } })
+            .map(|c| c.to_tiny_skia())
+            .unwrap_or(tiny_skia::Color::WHITE);
+        pixmap.fill(canvas_color);
+
+        // Build display list with exact layout positions
+        let list = display_list_builder::build_display_list_full(
+            &doc.root, view_w, view_h,
+            doc.scroll_x, doc.scroll_y,
+            doc.hovered_box, doc.active_box,
+            &doc.visited_urls,
         );
-        if !self.deferred_z.is_empty() {
-            self.deferred_z.sort_by_key(|d| d.z);
-            let deferred = std::mem::take(&mut self.deferred_z);
-            for d in &deferred {
-                let ptr = crate::types::find_by_node_id(&doc.root, d.node_id);
-                if ptr.is_null() { continue; }
-                let node = unsafe { &*ptr };
-                self.render_box(
-                    node, pixmap, d.sx, d.sy, &d.clip, None,
-                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
-                );
-            }
-            if self.deferred_z.is_empty() {
-                self.deferred_z = deferred;
-                self.deferred_z.clear();
-            }
-        }
-        {
-            let mut fixed_ids: Vec<u32> = Vec::new();
-            collect_fixed(&doc.root, &mut fixed_ids);
-            for fid in fixed_ids {
-                let ptr = crate::types::find_by_node_id(&doc.root, fid);
-                if ptr.is_null() { continue; }
-                let node = unsafe { &*ptr };
-                self.render_box(
-                    node, pixmap, 0.0, 0.0, &clip, None,
-                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
-                );
-            }
-        }
+
+        // Replay display list to pixmap with text rendering
+        display_list_replay::replay_with_text(
+            &list, pixmap, scale * zoom,
+            &mut self.font_system, &mut self.swash_cache,
+        );
+
+        // ── UI overlays (not part of display list) ───────────────────────────
+
+        // Select dropdown
         if doc.open_select != 0 {
             let sel_ptr = crate::types::find_by_node_id(&doc.root, doc.open_select);
             if !sel_ptr.is_null() {
-                let sel = unsafe { &*sel_ptr };
-                self.draw_select_dropdown(sel, pixmap, scroll_x, scroll_y);
+                self.scale = scale * zoom;
+                self.draw_select_dropdown(unsafe { &*sel_ptr }, pixmap, doc.scroll_x, doc.scroll_y);
             }
         }
-        if caret_visible {
-            if let Some((caret_box_ptr, caret_local)) = caret_info {
-                let in_editable = crate::dom::is_in_contenteditable(&doc.root, caret_box_ptr);
-                if in_editable {
-                    self.draw_caret(&doc.root, pixmap, scroll_x, scroll_y, caret_box_ptr, caret_local);
+
+        // Caret
+        if doc.editor.caret_visible {
+            if let Some((caret_box_ptr, caret_local)) = doc.editor.caret_info() {
+                if crate::dom::is_in_contenteditable(&doc.root, caret_box_ptr) {
+                    self.scale = scale * zoom;
+                    self.draw_caret(&doc.root, pixmap, doc.scroll_x, doc.scroll_y, caret_box_ptr, caret_local);
                 }
             }
         }
+
+        // Scrollbar
         self.scale = scale;
         if doc_h > view_h {
-            let thumb_col = doc.root.style.scrollbar_thumb_color
-                .unwrap_or(Color::rgba(128, 128, 128, 160));
-            let track_col = doc.root.style.scrollbar_track_color
-                .unwrap_or(Color::rgba(128, 128, 128, 40));
+            let thumb_col = doc.root.style.scrollbar_thumb_color.unwrap_or(Color::rgba(128, 128, 128, 160));
+            let track_col = doc.root.style.scrollbar_track_color.unwrap_or(Color::rgba(128, 128, 128, 40));
             let track_h = h;
             let thumb_h = (track_h * view_h / doc_h).max(20.0);
-            let max_s   = doc_h - view_h;
-            let thumb_y = if max_s > 0.0 { scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
+            let max_s = doc_h - view_h;
+            let thumb_y = if max_s > 0.0 { doc.scroll_y * (track_h - thumb_h) / max_s } else { 0.0 };
             let track_x = w - SCROLLBAR_WIDTH;
             let ts = Transform::from_scale(self.scale, self.scale);
             let mut paint = Paint::default();
@@ -576,8 +544,7 @@ impl Renderer {
                 pixmap.fill_rect(r, &paint, ts, None);
             }
             paint.set_color(thumb_col.to_tiny_skia());
-            if let Some(path) = rounded_rect_path(track_x + 1.0, thumb_y + 1.0,
-                    SCROLLBAR_WIDTH - 2.0, thumb_h - 2.0, 3.0) {
+            if let Some(path) = rounded_rect_path(track_x + 1.0, thumb_y + 1.0, SCROLLBAR_WIDTH - 2.0, thumb_h - 2.0, 3.0) {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }

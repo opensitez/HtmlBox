@@ -88,6 +88,94 @@ pub enum PaintCmd {
         radii: [f32; 4],
     },
 
+    /// Draw a linear or radial gradient.
+    Gradient {
+        rect: Rect,
+        gradient_type: u8,  // 1=linear, 2=radial
+        angle: f32,
+        stops: Vec<(Color, f32)>,  // (color, position 0..1)
+        radii: [f32; 4],
+        opacity: f32,
+        blend_mode: u8,
+    },
+
+    /// Draw an outline (CSS outline property).
+    Outline {
+        rect: Rect,
+        width: f32,
+        color: Color,
+        style: u8,  // same encoding as border styles
+        offset: f32,
+    },
+
+    /// Draw a horizontal line (for <hr>).
+    HorizontalRule {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+    },
+
+    /// List marker (bullet or number).
+    ListMarker {
+        marker_type: u8,   // 0=disc, 1=circle, 2=square, 3=text
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        text: String,       // for numbered markers
+        font_family: String,
+        font_size: f32,
+        font_weight: u16,
+        font_style: u8,
+        line_height: f32,
+    },
+
+    /// Form element placeholder — the replay function handles rendering.
+    FormElement {
+        tag: String,
+        input_type: String,
+        rect: Rect,
+        node_id: u32,
+        attributes: Vec<(String, String)>,
+        font_size: f32,
+        font_weight: u16,
+        font_family: String,
+        color: Color,
+        checked: bool,
+        value: String,
+        placeholder: String,
+        input_cursor: usize,
+    },
+
+    /// Draw a text shadow (separate from main text for layering).
+    TextShadow {
+        x: f32,
+        y: f32,
+        text: String,
+        font_family: String,
+        font_size: f32,
+        font_weight: u16,
+        font_style: u8,
+        font_stretch: f32,
+        line_height: f32,
+        color: Color,
+        blur: f32,
+    },
+
+    /// Background image with positioning/sizing metadata.
+    BackgroundImage {
+        container: Rect,        // padding rect
+        data: ImageRef,
+        size_mode: u8,          // 0=auto, 1=cover, 2=contain, 3=explicit
+        draw_w: f32,
+        draw_h: f32,
+        pos_x: f32,
+        pos_y: f32,
+        repeat_x: bool,
+        repeat_y: bool,
+        radii: [f32; 4],
+    },
+
     /// Marker: start of a stacking context.
     BeginStackingContext { node_id: u32, z_index: i32 },
 

@@ -1043,7 +1043,7 @@ fn md_h5_h6_different_sizes() {
     assert!(matches!(h5.style.font_size, CssLength::Em(_)), "h5 not Em");
     assert!(matches!(h6.style.font_size, CssLength::Em(_)), "h6 not Em");
     // h5 (0.83em) must be larger than h6 (0.67em).
-    if let (CssLength::Em(v5), CssLength::Em(v6)) = (h5.style.font_size, h6.style.font_size) {
+    if let (CssLength::Em(v5), CssLength::Em(v6)) = (&h5.style.font_size, &h6.style.font_size) {
         assert!(v5 > v6, "h5 ({}) should be larger than h6 ({})", v5, v6);
     }
 }

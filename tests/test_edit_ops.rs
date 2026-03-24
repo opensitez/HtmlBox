@@ -426,8 +426,8 @@ fn increase_indent_adds_margin_left() {
         "style attribute should contain margin-left; got: {:?}", style_attr
     );
     // Computed style should reflect 40px
-    match p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((v - 40.0).abs() < 0.01),
+    match &p.style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("expected Px(40), got {:?}", other),
     }
 }
@@ -443,8 +443,8 @@ fn increase_indent_accumulates() {
     doc.editor.increase_indent(&mut doc.root, 40.0);
 
     let p = query_selector(&doc.root, "p").unwrap();
-    match p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((v - 80.0).abs() < 0.01),
+    match &p.style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => assert!((*v - 80.0).abs() < 0.01),
         other => panic!("expected Px(80), got {:?}", other),
     }
 }
@@ -459,8 +459,8 @@ fn decrease_indent_reduces_margin_left() {
     doc.editor.decrease_indent(&mut doc.root, 40.0);
 
     let p = query_selector(&doc.root, "p").unwrap();
-    match p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((v - 40.0).abs() < 0.01),
+    match &p.style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("expected Px(40), got {:?}", other),
     }
 }
@@ -475,8 +475,8 @@ fn decrease_indent_does_not_go_below_zero() {
     doc.editor.decrease_indent(&mut doc.root, 40.0);
 
     let p = query_selector(&doc.root, "p").unwrap();
-    match p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!(v >= 0.0, "margin-left must not go negative"),
+    match &p.style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => assert!(*v >= 0.0, "margin-left must not go negative"),
         rhtmledit::types::CssLength::Zero  => {} // ok
         other => panic!("unexpected {:?}", other),
     }
@@ -495,8 +495,8 @@ fn indent_survives_recascade() {
     doc.recascade();
 
     let p = query_selector(&doc.root, "p").unwrap();
-    match p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((v - 40.0).abs() < 0.01),
+    match &p.style.margin_left {
+        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("indent should survive recascade; got {:?}", other),
     }
 }

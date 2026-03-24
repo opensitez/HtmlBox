@@ -241,8 +241,8 @@ fn decrease_indent_does_not_go_below_zero() {
     }
     doc.editor.decrease_indent(&mut doc.root, 40.0);
     let p = query_selector(&doc.root, "p").unwrap();
-    match p.style.margin_left {
-        CssLength::Px(v) => assert!(v >= 0.0, "margin-left must not go negative"),
+    match &p.style.margin_left {
+        CssLength::Px(v) => assert!(*v >= 0.0, "margin-left must not go negative"),
         CssLength::Zero  => {} // ok
         CssLength::Auto  => {} // ok — unchanged
         other => panic!("unexpected margin_left: {:?}", other),

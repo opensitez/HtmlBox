@@ -309,9 +309,9 @@ fn ce_indent_survives_recascade() {
 
     doc.recascade();
 
-    match query_selector(&doc.root, "p").unwrap().style.margin_left {
+    match &query_selector(&doc.root, "p").unwrap().style.margin_left {
         rhtmledit::types::CssLength::Px(v) =>
-            assert!((v - margin_before).abs() < 0.01,
+            assert!((*v - margin_before).abs() < 0.01,
                 "margin-left must survive recascade; before={} after={}", margin_before, v),
         other => panic!("indent must survive recascade; got {:?}", other),
     }
