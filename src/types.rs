@@ -1531,6 +1531,10 @@ pub struct HtmlBox {
     /// Shadow DOM root. When present, layout/render use the shadow tree instead
     /// of `children` (which become "light DOM" — slottable content).
     pub shadow_root: Option<Box<ShadowRoot>>,
+
+    /// True when hover_style has been swapped into the active `style` slot.
+    /// Used by the fast hover-swap path to avoid full re-cascade on hover changes.
+    pub hover_applied: bool,
 }
 
 /// Shadow DOM root — holds a scoped tree and stylesheet.
@@ -1658,6 +1662,7 @@ impl HtmlBox {
             cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
             matched_rules: Vec::new(),
             shadow_root: None,
+            hover_applied: false,
         }
     }
 

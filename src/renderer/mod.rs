@@ -950,7 +950,32 @@ impl Renderer {
         let child_sx = eff_sx + node.scroll_left;
         let child_sy = eff_sy + node.scroll_top;
 
-        // ── ::before pseudo-element ───────────────────────────────────────────
+        // ── Negative z-index children (paint behind text) ────────────────────
+        // CSS stacking: positioned children with z-index < 0 paint before the
+        // element's own inline content. Commonly used for ::before decorative
+        // backgrounds (e.g. nav bar blue bar behind text).
+        {
+            let eff_neg = node.effective_children();
+            for child in eff_neg {
+                if child.style.is_positioned()
+                    && child.style.z_index < 0
+                    && !matches!(child.style.display, Display::None)
+                {
+                    let (c, m) = if overflow_clips {
+                        (&child_clip, child_mask)
+                    } else {
+                        (clip, eff_mask)
+                    };
+                    self.render_box(
+                        child, pixmap, child_sx, child_sy,
+                        c, m,
+                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    );
+                }
+            }
+        }
+
+        // ── ::before pseudo-element (inline text content) ───────────────────
         if !node.style.before_content.is_empty() && !node.line_cache.is_empty() {
             let first = &node.line_cache[0];
             let tx = first.x - eff_sx;
@@ -1072,7 +1097,16 @@ impl Renderer {
                 }
             }
         } else {
-            // Non-positioned first
+            // CSS stacking order:
+            // Negative z-index children already painted before text (above).
+            // Here we paint: non-positioned children, then z-index >= 0 positioned.
+            let mut positioned: Vec<&HtmlBox> = eff.iter()
+                .filter(|c| c.style.is_positioned() && c.style.z_index >= 0
+                    && !matches!(c.style.display, Display::None))
+                .collect();
+            positioned.sort_by_key(|c| c.style.z_index);
+
+            // Non-positioned children (normal flow)
             for child in eff {
                 if !matches!(child.style.display, Display::None) && !child.style.is_positioned() {
                     self.render_box(
@@ -1082,54 +1116,15 @@ impl Renderer {
                     );
                 }
             }
-            // Positioned sorted by z-index
-            let mut positioned: Vec<&HtmlBox> = eff.iter()
-                .filter(|c| c.style.is_positioned() && !matches!(c.style.display, Display::None))
-                .collect();
-            positioned.sort_by_key(|c| c.style.z_index);
-            for child in positioned {
-                match child.style.position {
-                    Position::Fixed => {
-                        // Fixed elements are drawn in a separate overlay pass
-                        // after all normal content, so they're never covered.
-                        // Skip here.
-                    }
-                    Position::Absolute if child.style.z_index > 0 => {
-                        // High z-index absolute elements (dropdown menus, popups)
-                        // are deferred to an overlay pass so they paint above later
-                        // DOM siblings (e.g. images below a nav bar).
-                        let c = if overflow_clips { child_clip } else { *clip };
-                        self.deferred_z.push(DeferredZNode {
-                            ptr: child as *const HtmlBox,
-                            sx:  child_sx,
-                            sy:  child_sy,
-                            clip: c,
-                            z:   child.style.z_index,
-                        });
-                    }
-                    Position::Absolute => {
-                        // Absolute with z-index <= 0: render in normal order.
-                        let (c, m) = if overflow_clips {
-                            (&child_clip, child_mask)
-                        } else {
-                            (clip, eff_mask)
-                        };
-                        self.render_box(
-                            child, pixmap, child_sx, child_sy,
-                            c, m,
-                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
-                        );
-                    }
-                    _ => {
-                        // Relative / sticky: stays in flow visually, MUST be clipped by
-                        // parent overflow just like a normal in-flow child.
-                        self.render_box(
-                            child, pixmap, child_sx, child_sy,
-                            &child_clip, child_mask,
-                            sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
-                        );
-                    }
-                }
+
+            // Positioned elements with z-index >= 0 (in front)
+            for child in &positioned {
+                self.render_positioned_child(
+                    child, pixmap, child_sx, child_sy,
+                    &child_clip, child_mask, clip, eff_mask,
+                    overflow_clips,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                );
             }
         }
 
@@ -1140,6 +1135,65 @@ impl Renderer {
         // Apply pixel-level filter ops (blur, brightness, etc.) to the element region.
         if !node.style.css_filter.ops.is_empty() {
             apply_css_filters(pixmap, &node.style.css_filter, px, py, pw, ph, radius, self.scale);
+        }
+    }
+
+    /// Render a single positioned child, handling fixed/absolute/relative positioning
+    /// and z-index deferral for overlay rendering.
+    #[allow(clippy::too_many_arguments)]
+    fn render_positioned_child(
+        &mut self,
+        child: &HtmlBox,
+        pixmap: &mut Pixmap,
+        child_sx: f32, child_sy: f32,
+        child_clip: &Rect, child_mask: Option<&Mask>,
+        clip: &Rect, eff_mask: Option<&Mask>,
+        overflow_clips: bool,
+        sel_start: Option<usize>, sel_end: Option<usize>,
+        sel_box_ptr: *const HtmlBox,
+        hovered_ptr: *const HtmlBox,
+        active_ptr: *const HtmlBox,
+        visited_hrefs: &std::collections::HashSet<String>,
+    ) {
+        match child.style.position {
+            Position::Fixed => {
+                // Fixed elements are drawn in a separate overlay pass.
+            }
+            Position::Absolute if child.style.z_index > 0 => {
+                // High z-index absolute elements (dropdown menus, popups)
+                // are deferred to an overlay pass so they paint above later
+                // DOM siblings (e.g. images below a nav bar).
+                let c = if overflow_clips { *child_clip } else { *clip };
+                self.deferred_z.push(DeferredZNode {
+                    ptr: child as *const HtmlBox,
+                    sx:  child_sx,
+                    sy:  child_sy,
+                    clip: c,
+                    z:   child.style.z_index,
+                });
+            }
+            Position::Absolute => {
+                // Absolute with z-index <= 0: render in normal order.
+                let (c, m) = if overflow_clips {
+                    (child_clip, child_mask)
+                } else {
+                    (clip, eff_mask)
+                };
+                self.render_box(
+                    child, pixmap, child_sx, child_sy,
+                    c, m,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                );
+            }
+            _ => {
+                // Relative / sticky: stays in flow visually, MUST be clipped by
+                // parent overflow just like a normal in-flow child.
+                self.render_box(
+                    child, pixmap, child_sx, child_sy,
+                    child_clip, child_mask,
+                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                );
+            }
         }
     }
 

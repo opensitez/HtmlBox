@@ -297,6 +297,11 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
             continue;
         }
+        // Skip elements with 0 height and overflow:hidden — they're collapsed (e.g. hidden dropdowns)
+        if child.border_rect.h <= 0.0
+            && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
+        // Skip ::before/::after pseudo-elements for hit testing — they're decorative
+        if child.tag == "::before" || child.tag == "::after" { continue; }
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }

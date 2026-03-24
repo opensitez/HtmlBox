@@ -420,6 +420,14 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     }
 }
 
+/// Reset `hover_applied` flags on all nodes after a full cascade rebuild.
+fn reset_hover_applied(node: &mut crate::types::HtmlBox) {
+    node.hover_applied = false;
+    for child in &mut node.children {
+        reset_hover_applied(child);
+    }
+}
+
 // ─── Layout Engine ────────────────────────────────────────────────────────────
 
 pub struct LayoutEngine {
@@ -1217,6 +1225,15 @@ pub fn has_block_children(node: &HtmlBox) -> bool {
 
 pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
                          containing_rect: Rect, parent_font_px: f32, root_font_px: f32) {
+    layout_positioned_static(engine, node, containing_rect, parent_font_px, root_font_px, None);
+}
+
+/// Layout an absolutely/fixed positioned element, with optional static position.
+/// `static_y` is the y offset (relative to containing block) where the element would
+/// appear in normal flow — used when `top` and `bottom` are both `auto`.
+pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
+                         containing_rect: Rect, parent_font_px: f32, root_font_px: f32,
+                         static_y: Option<f32>) {
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
     // By default the containing block is the passed containing_rect. For `fixed`
     // positioned elements the containing block is the viewport (0,0, viewport_w, viewport_h).
@@ -1329,10 +1346,12 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
         containing_y + res_t + rbox.margin_top
     } else if !bot_auto {
         (containing_y + containing_h) - res_b - node.border_rect.h - rbox.margin_bottom
+    } else if let Some(abs_sy) = static_y {
+        // Static position: absolute document-space y where the element would
+        // appear in normal flow. Already accounts for parent offsets.
+        abs_sy + rbox.margin_top
     } else {
-        // Static position: place at the containing block's content start.
-        // layout_box ran at (0,0) so border_rect.y is meaningless here;
-        // use containing_y as the static position approximation.
+        // Fallback: containing block content start.
         containing_y + rbox.margin_top
     };
 

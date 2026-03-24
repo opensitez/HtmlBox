@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide,
                     shift_rects, layout_positioned};
@@ -398,11 +399,11 @@ pub fn layout_block_with_fc(
     let eff_children = collect_grid_children(node);
 
     // ─── Collect out-of-flow children ─────────────────────────────────────────
-    let mut abs_children: Vec<Vec<usize>> = Vec::new();
-    for path in &eff_children {
+    let mut abs_children: Vec<(Vec<usize>, usize)> = Vec::new(); // (path, dom_index)
+    for (idx, path) in eff_children.iter().enumerate() {
         let child = grid_child_ref(node, path);
         if matches!(child.style.position, Position::Absolute | Position::Fixed) {
-            abs_children.push(path.clone());
+            abs_children.push((path.clone(), idx));
         }
     }
 
@@ -434,7 +435,7 @@ pub fn layout_block_with_fc(
         } else {
             engine.pos_cb.get()
         };
-        for path in &abs_children {
+        for (path, _) in &abs_children {
             let child = grid_child_mut(node, path);
             layout_positioned(engine, child, containing_rect, font_px, root_font_px);
         }
@@ -457,7 +458,10 @@ pub fn layout_block_with_fc(
     let mut inline_x = 0.0f32;
     let mut inline_line_h = 0.0f32;
 
-    for path in eff_children.iter() {
+    // Track static y positions for absolute children (indexed by eff_children position)
+    let mut abs_static_y: HashMap<usize, f32> = HashMap::new();
+
+    for (eff_idx, path) in eff_children.iter().enumerate() {
         let ch = grid_child_ref(node, path);
         let child_display  = ch.style.display;
         let child_float    = ch.style.float;
@@ -465,7 +469,12 @@ pub fn layout_block_with_fc(
         let child_position = ch.style.position;
 
         if matches!(child_display, Display::None) { continue; }
-        if matches!(child_position, Position::Absolute | Position::Fixed) { continue; }
+        if matches!(child_position, Position::Absolute | Position::Fixed) {
+            // Record absolute document-space y as the static position for this abs child.
+            // content_y is already in document space; child_y is relative to content_y.
+            abs_static_y.insert(eff_idx, content_y + child_y);
+            continue;
+        }
 
         // Handle clear
         match child_clear {
@@ -774,16 +783,21 @@ pub fn layout_block_with_fc(
     } else {
         engine.pos_cb.get()
     };
-    for path in &abs_children {
-        layout_positioned(engine, grid_child_mut(node, path), containing_rect, font_px, root_font_px);
-        let child = grid_child_mut(node, path);
-        let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
-                    && child.style.top.is_auto()   && child.style.bottom.is_auto();
-        if all_auto && matches!(child.style.position, Position::Absolute) {
-            let dx = containing_rect.x - child.border_rect.x;
-            let dy = containing_rect.y - child.border_rect.y;
-            if dx != 0.0 || dy != 0.0 {
-                crate::layout::shift_rects(child, dx, dy);
+    for (path, dom_idx) in &abs_children {
+        let sy = abs_static_y.get(dom_idx).copied();
+        crate::layout::layout_positioned_static(engine, grid_child_mut(node, path), containing_rect, font_px, root_font_px, sy);
+        // Only force-shift to containing block origin when we have NO static position info.
+        // When static_y is available, layout_positioned_static already placed it correctly.
+        if sy.is_none() {
+            let child = grid_child_mut(node, path);
+            let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
+                        && child.style.top.is_auto()   && child.style.bottom.is_auto();
+            if all_auto && matches!(child.style.position, Position::Absolute) {
+                let dx = containing_rect.x - child.border_rect.x;
+                let dy = containing_rect.y - child.border_rect.y;
+                if dx != 0.0 || dy != 0.0 {
+                    crate::layout::shift_rects(child, dx, dy);
+                }
             }
         }
     }

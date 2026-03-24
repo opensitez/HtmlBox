@@ -5407,6 +5407,122 @@ pub fn build_hover_chain(root: &crate::types::HtmlBox, target: *const crate::typ
     path.into_iter().collect()
 }
 
+/// Fast hover style swap — avoids full re-cascade on hover-only changes.
+///
+/// Walks the tree and swaps `style` ↔ `hover_style` for elements whose hover
+/// state has changed.  Also creates/removes positioned `::before`/`::after`
+/// pseudo-element children as needed.
+///
+/// Returns `true` if any style was changed (caller should re-layout).
+pub fn swap_hover_state(
+    root: &mut crate::types::HtmlBox,
+    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+) -> bool {
+    swap_hover_inner(root, hover_chain, false)
+}
+
+fn swap_hover_inner(
+    node: &mut crate::types::HtmlBox,
+    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+    ancestor_in_chain: bool,
+) -> bool {
+    // Skip synthetic pseudo-element children — their style is set by their parent
+    if node.tag == "::before" || node.tag == "::after" { return false; }
+
+    let self_in_chain = hover_chain.contains(&(node as *const crate::types::HtmlBox));
+    let in_hover = ancestor_in_chain || self_in_chain;
+    let mut changed = false;
+
+    // Swap style ↔ hover_style when the hover state differs from the current applied state
+    if node.style.hover_style.is_some() {
+        let should_hover = in_hover;
+        if should_hover != node.hover_applied {
+            // Swap: style becomes the other variant, hover_style stores the current
+            let mut other = node.style.hover_style.take().unwrap();
+            // Preserve hover_style/active_style/visited_style from the base side
+            let hs_backup = node.style.hover_style.take(); // already None after take above
+            let as_backup = node.style.active_style.take();
+            let vs_backup = node.style.visited_style.take();
+            // Preserve before/after pseudo styles from the incoming variant
+            // (the other style may have different before_style/before_content)
+            let cur_before_style = node.style.before_style.take();
+            let cur_before_content = std::mem::take(&mut node.style.before_content);
+            let cur_after_style = node.style.after_style.take();
+            let cur_after_content = std::mem::take(&mut node.style.after_content);
+
+            let cur_style = std::mem::replace(&mut node.style, *other);
+            // Store the old style as the new hover_style (for swapping back)
+            let mut stored = Box::new(cur_style);
+            stored.hover_style = None;
+            stored.active_style = None;
+            stored.visited_style = None;
+            // Preserve the old before/after in the stored style
+            stored.before_style = cur_before_style;
+            stored.before_content = cur_before_content;
+            stored.after_style = cur_after_style;
+            stored.after_content = cur_after_content;
+
+            node.style.hover_style = Some(stored);
+            node.style.active_style = as_backup;
+            node.style.visited_style = vs_backup;
+            node.hover_applied = should_hover;
+            changed = true;
+
+            // Handle ::before/::after pseudo-element creation/removal
+            let is_grid_or_flex = matches!(node.style.display,
+                crate::types::Display::Grid | crate::types::Display::InlineGrid
+                | crate::types::Display::Flex | crate::types::Display::InlineFlex);
+            let before_is_positioned = node.style.before_style.as_ref().map_or(false, |ps|
+                matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
+            if (is_grid_or_flex && !node.style.before_content.is_empty())
+                || (before_is_positioned && node.style.before_style.is_some())
+            {
+                let existing = node.children.iter().position(|c| c.tag == "::before");
+                let mut pseudo_box = crate::types::HtmlBox::new("::before");
+                pseudo_box.text = node.style.before_content.clone();
+                if let Some(ref ps) = node.style.before_style {
+                    pseudo_box.style = *ps.clone();
+                }
+                if let Some(idx) = existing {
+                    node.children[idx] = pseudo_box;
+                } else {
+                    node.children.insert(0, pseudo_box);
+                }
+                node.style.before_content = String::new();
+            } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::before") {
+                node.children.remove(idx);
+            }
+
+            let after_is_positioned = node.style.after_style.as_ref().map_or(false, |ps|
+                matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
+            if (is_grid_or_flex && !node.style.after_content.is_empty())
+                || (after_is_positioned && node.style.after_style.is_some())
+            {
+                let existing = node.children.iter().position(|c| c.tag == "::after");
+                let mut pseudo_box = crate::types::HtmlBox::new("::after");
+                pseudo_box.text = node.style.after_content.clone();
+                if let Some(ref ps) = node.style.after_style {
+                    pseudo_box.style = *ps.clone();
+                }
+                if let Some(idx) = existing {
+                    node.children[idx] = pseudo_box;
+                } else {
+                    node.children.push(pseudo_box);
+                }
+                node.style.after_content = String::new();
+            } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::after") {
+                node.children.remove(idx);
+            }
+        }
+    }
+
+    for child in &mut node.children {
+        changed |= swap_hover_inner(child, hover_chain, in_hover);
+    }
+
+    changed
+}
+
 #[allow(clippy::too_many_arguments)]
 /// Maximum DOM depth before we stop recursing to avoid stack overflow.
 /// 400 levels is more than any well-formed page needs (most pages are < 50 deep).
@@ -5996,7 +6112,16 @@ fn apply_cascade_inner(
     // (they become grid/flex items). Insert synthetic children.
     let is_grid_or_flex = matches!(root.style.display,
         Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
-    if is_grid_or_flex && !root.style.before_content.is_empty() {
+    // Create ::before child element when the pseudo-element needs to be a real box:
+    // - Grid/flex containers always create child boxes for pseudo-elements (needs content)
+    // - Positioned pseudo-elements (position:absolute/fixed) need real boxes even with
+    //   empty content (used for decorative backgrounds like USPS nav blue bar)
+    // - Block-level pseudo-elements need real boxes
+    let before_is_positioned = root.style.before_style.as_ref().map_or(false, |ps|
+        matches!(ps.position, Position::Absolute | Position::Fixed));
+    if (is_grid_or_flex && !root.style.before_content.is_empty())
+        || (before_is_positioned && root.style.before_style.is_some())
+    {
         // Check if a ::before child already exists (from a prior cascade pass)
         let existing = root.children.iter().position(|c| c.tag == "::before");
         let mut pseudo_box = {
@@ -6008,8 +6133,9 @@ fn apply_cascade_inner(
         if let Some(ref ps) = root.style.before_style {
             pseudo_box.style = *ps.clone();
         }
-        // Set display to block if not explicitly set (grid/flex items are blockified)
-        if matches!(pseudo_box.style.display, Display::Inline) {
+        // Blockify inline pseudo-elements in grid/flex containers (not positioned ones)
+        if is_grid_or_flex && !pseudo_box.style.is_positioned()
+            && matches!(pseudo_box.style.display, Display::Inline) {
             pseudo_box.style.display = Display::Block;
         }
         if let Some(idx) = existing {
@@ -6019,8 +6145,17 @@ fn apply_cascade_inner(
         }
         // Clear before_content so it doesn't also render inline
         root.style.before_content = String::new();
+    } else {
+        // Remove stale ::before child from a prior cascade pass (e.g. hover-out)
+        if let Some(idx) = root.children.iter().position(|c| c.tag == "::before") {
+            root.children.remove(idx);
+        }
     }
-    if is_grid_or_flex && !root.style.after_content.is_empty() {
+    let after_is_positioned = root.style.after_style.as_ref().map_or(false, |ps|
+        matches!(ps.position, Position::Absolute | Position::Fixed));
+    if (is_grid_or_flex && !root.style.after_content.is_empty())
+        || (after_is_positioned && root.style.after_style.is_some())
+    {
         // Check if an ::after child already exists (from a prior cascade pass)
         let existing = root.children.iter().position(|c| c.tag == "::after");
         let mut pseudo_box = {
@@ -6032,7 +6167,8 @@ fn apply_cascade_inner(
         if let Some(ref ps) = root.style.after_style {
             pseudo_box.style = *ps.clone();
         }
-        if matches!(pseudo_box.style.display, Display::Inline) {
+        if is_grid_or_flex && !pseudo_box.style.is_positioned()
+            && matches!(pseudo_box.style.display, Display::Inline) {
             pseudo_box.style.display = Display::Block;
         }
         if let Some(idx) = existing {
@@ -6041,6 +6177,11 @@ fn apply_cascade_inner(
             root.children.push(pseudo_box);
         }
         root.style.after_content = String::new();
+    } else {
+        // Remove stale ::after child from a prior cascade pass (e.g. hover-out)
+        if let Some(idx) = root.children.iter().position(|c| c.tag == "::after") {
+            root.children.remove(idx);
+        }
     }
 
     // Push this element's info so children can see it as an ancestor.
