@@ -2020,6 +2020,7 @@ fn parse_html_full(
         animation_overrides:   std::collections::HashMap::new(),
         needs_animation_frame: false,
         hover_changed:         false,
+        prev_hovered_box:      0,
         cascade_styles:        std::collections::HashMap::new(),
         pending_announcements:    Vec::new(),
         live_region_snapshots:    std::collections::HashMap::new(),

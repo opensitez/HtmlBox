@@ -683,6 +683,9 @@ pub struct Stylesheet {
     /// When true, the cascade stores matched CSS rules on each HtmlBox
     /// for inspector display. Off by default to avoid memory overhead.
     pub inspect_mode: bool,
+    /// True if any rule has :hover on a non-subject selector part (descendant hover rules).
+    /// When true, descendants of hover-changed nodes must also be re-cascaded.
+    pub has_hover_descendant_rules: bool,
     /// Raw (comment-stripped) CSS sources, kept for re-extracting variables with viewport.
     pub raw_sources:  Vec<String>,
 }
@@ -776,6 +779,26 @@ impl Stylesheet {
             }
         }
         self.idx_dirty = false;
+
+        // Detect if any rule has :hover on a non-subject part (descendant hover selectors).
+        // e.g., ".parent:hover .child" — :hover is on .parent (ancestor), not .child (subject).
+        self.has_hover_descendant_rules = false;
+        'rules: for rule in &self.rules {
+            if !rule.is_hover { continue; }
+            for sel in &rule.selectors {
+                // Find the last combinator — everything before it is ancestor context
+                let last_comb = sel.parts.iter().rposition(|p| matches!(p, SelectorPart::Combinator(_)));
+                if let Some(pos) = last_comb {
+                    // Check if :hover appears in the ancestor part (before the combinator)
+                    for part in &sel.parts[..pos] {
+                        if matches!(part, SelectorPart::PseudoClass(ref pc) if pc == "hover") {
+                            self.has_hover_descendant_rules = true;
+                            break 'rules;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Get candidate rule indices for an element with given tag, id, and classes.
@@ -5399,6 +5422,162 @@ pub fn apply_cascade_vp_hover(
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
     apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain);
+}
+
+// ─── Incremental Hover Cascade ──────────────────────────────────────────────
+
+/// Mark nodes affected by a hover change using O(1) node_map lookups.
+/// Sets `cascade_dirty` on nodes whose hover state toggled (symmetric difference),
+/// and `has_dirty_descendant` on their ancestors (the hover chain path).
+pub fn mark_hover_dirty(
+    old_chain: &std::collections::HashSet<u32>,
+    new_chain: &std::collections::HashSet<u32>,
+    node_map: &HashMap<u32, *const crate::types::HtmlBox>,
+    has_hover_descendant_rules: bool,
+) {
+    // Nodes whose hover state actually changed (in one chain but not both)
+    let toggled: std::collections::HashSet<u32> = old_chain.symmetric_difference(new_chain).copied().collect();
+    // All nodes on the path (for has_dirty_descendant traversal)
+    let path: std::collections::HashSet<u32> = old_chain.union(new_chain).copied().collect();
+
+    // Mark toggled nodes as cascade_dirty
+    for &nid in &toggled {
+        if let Some(&ptr) = node_map.get(&nid) {
+            let node = unsafe { &mut *(ptr as *mut crate::types::HtmlBox) };
+            node.cascade_dirty = true;
+            // If descendant hover rules exist, mark children dirty too
+            if has_hover_descendant_rules {
+                mark_children_cascade_dirty(node);
+            }
+        }
+    }
+
+    // Mark path nodes (ancestors) as has_dirty_descendant
+    for &nid in &path {
+        if let Some(&ptr) = node_map.get(&nid) {
+            let node = unsafe { &mut *(ptr as *mut crate::types::HtmlBox) };
+            node.has_dirty_descendant = true;
+        }
+    }
+}
+
+fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {
+    for child in &mut node.children {
+        child.cascade_dirty = true;
+        mark_children_cascade_dirty(child);
+    }
+}
+
+/// Clear cascade_dirty and has_dirty_descendant flags after incremental cascade.
+pub fn clear_cascade_dirty(node: &mut crate::types::HtmlBox) {
+    if !node.cascade_dirty && !node.has_dirty_descendant { return; }
+    node.cascade_dirty = false;
+    node.has_dirty_descendant = false;
+    for child in &mut node.children {
+        clear_cascade_dirty(child);
+    }
+}
+
+/// Incremental hover cascade: single tree walk that skips clean subtrees.
+/// Only re-cascades nodes with `cascade_dirty` flag set. Nodes with only
+/// `has_dirty_descendant` are traversed but not re-cascaded.
+/// Call `mark_hover_dirty()` before and `clear_cascade_dirty()` after.
+pub fn apply_cascade_incremental(
+    root: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    parent_style: Option<&ComputedStyle>,
+    root_font_px: f32,
+    vw: f32,
+    vh: f32,
+    focused_box: u32,
+    keyboard_focus: bool,
+    hover_chain: &std::collections::HashSet<u32>,
+) {
+    let mut ancestors: Vec<AncestorInfo> = Vec::new();
+    let mut candidates_buf: Vec<usize> = Vec::new();
+    let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
+    apply_cascade_incremental_walk(
+        root, stylesheet, parent_style, root_font_px,
+        &mut ancestors, 0, 1, 0, 1,
+        vw, vh, focused_box, keyboard_focus,
+        &stylesheet.variables, &mut candidates_buf, &mut counters,
+        hover_chain,
+    );
+}
+
+fn apply_cascade_incremental_walk(
+    node: &mut crate::types::HtmlBox,
+    stylesheet: &Stylesheet,
+    parent_style: Option<&ComputedStyle>,
+    root_font_px: f32,
+    ancestors: &mut Vec<AncestorInfo>,
+    child_index: usize,
+    sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+    vw: f32,
+    vh: f32,
+    focused_box: u32,
+    keyboard_focus: bool,
+    inherited_vars: &HashMap<String, String>,
+    candidates_buf: &mut Vec<usize>,
+    counters: &mut HashMap<String, Vec<i32>>,
+    hover_chain: &std::collections::HashSet<u32>,
+) {
+    // SKIP: neither this node nor any descendant needs work
+    if !node.cascade_dirty && !node.has_dirty_descendant {
+        return;
+    }
+
+    if node.cascade_dirty {
+        // Full re-cascade of this node (delegates to the existing cascade logic)
+        // apply_cascade_inner handles this node AND recurses into all children,
+        // which is correct because when a parent's hover state changes,
+        // children may inherit different values or match descendant selectors differently.
+        apply_cascade_inner(
+            node, stylesheet, parent_style, root_font_px,
+            ancestors, child_index, sibling_count, type_child_index, type_sibling_count,
+            vw, vh, focused_box, keyboard_focus,
+            inherited_vars, candidates_buf, counters, hover_chain,
+        );
+        return;
+    }
+
+    // has_dirty_descendant only — don't re-cascade this node, just recurse into children
+    let anc = AncestorInfo {
+        tag: node.tag.clone(),
+        attributes: node.attributes.clone(),
+        child_index,
+        sibling_count,
+        type_child_index,
+        type_sibling_count,
+        node_id: node.node_id,
+    };
+    ancestors.push(anc);
+
+    let parent_s = node.style.clone();
+    let child_count = node.children.len();
+    for i in 0..child_count {
+        let child_tag = node.children[i].tag.clone();
+        let mut t_idx = 0usize;
+        let mut t_count = 0usize;
+        for (j, sib) in node.children.iter().enumerate() {
+            if sib.tag == child_tag {
+                if j == i { t_idx = t_count; }
+                t_count += 1;
+            }
+        }
+        let child = &mut node.children[i];
+        apply_cascade_incremental_walk(
+            child, stylesheet, Some(&parent_s), root_font_px,
+            ancestors, i, child_count, t_idx, t_count,
+            vw, vh, focused_box, keyboard_focus,
+            inherited_vars, candidates_buf, counters,
+            hover_chain,
+        );
+    }
+
+    ancestors.pop();
 }
 
 /// Build the set of element pointers from root to the hovered element (hover chain).

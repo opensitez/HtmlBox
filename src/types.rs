@@ -1537,6 +1537,12 @@ pub struct HtmlBox {
     /// True when hover_style has been swapped into the active `style` slot.
     /// Used by the fast hover-swap path to avoid full re-cascade on hover changes.
     pub hover_applied: bool,
+
+    /// Set by `mark_hover_dirty()` before incremental cascade.
+    /// True means this node's :hover match changed — must re-cascade.
+    pub cascade_dirty: bool,
+    /// True means a descendant has `cascade_dirty` — must traverse children.
+    pub has_dirty_descendant: bool,
 }
 
 /// Shadow DOM root — holds a scoped tree and stylesheet.
@@ -1666,6 +1672,8 @@ impl HtmlBox {
             matched_rules: Vec::new(),
             shadow_root: None,
             hover_applied: false,
+            cascade_dirty: false,
+            has_dirty_descendant: false,
         }
     }
 
@@ -2007,6 +2015,8 @@ pub struct Document {
     pub needs_animation_frame: bool,
     /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
     pub hover_changed: bool,
+    /// Previous hover target — used to compute the diff for incremental cascade.
+    pub prev_hovered_box: u32,
 
     // ── aria-live region machinery ─────────────────────────────────────────────
     /// Announcements queued since the last call to `take_announcements()`.
@@ -2067,6 +2077,7 @@ impl Document {
             animation_overrides:   HashMap::new(),
             needs_animation_frame: false,
             hover_changed:         false,
+            prev_hovered_box:      0,
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
             live_regions_initialized: false,
@@ -3994,6 +4005,7 @@ impl Clone for Document {
             animation_overrides:   self.animation_overrides.clone(),
             needs_animation_frame: self.needs_animation_frame,
             hover_changed:         self.hover_changed,
+            prev_hovered_box:      self.prev_hovered_box,
             pending_announcements:    self.pending_announcements.clone(),
             live_region_snapshots:    self.live_region_snapshots.clone(),
             live_regions_initialized: self.live_regions_initialized,

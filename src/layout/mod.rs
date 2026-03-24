@@ -804,21 +804,35 @@ impl LayoutEngine {
         let hover_changed = doc.hover_changed;
         doc.hover_changed = false;
 
-        let did_cascade = if needs_cascade || hover_changed {
-            // Build hover chain only when we're about to cascade
+        let did_cascade = if needs_cascade {
+            // Full cascade needed (initial, viewport change, etc.)
             let hover_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             crate::css::apply_cascade_vp_hover(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
                 self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
                 &hover_chain,
             );
+            // Clear any leftover dirty flags after full cascade
+            crate::css::clear_cascade_dirty(&mut doc.root);
             self.last_cascade_vw = viewport_width;
-            // Suppress the next hover change to prevent feedback loops:
-            // hover-triggered layout changes can cause the hit-test to find a
-            // different element at the same mouse position, oscillating the dropdown.
-            if hover_changed && !needs_cascade {
-                doc.hover_suppress_count = 1;
-            }
+            doc.prev_hovered_box = doc.hovered_box;
+            true
+        } else if hover_changed {
+            // Incremental hover cascade — only re-cascade elements affected by
+            // the hover change (old chain + new chain), skip everything else.
+            let old_chain = crate::css::build_hover_chain(&doc.root, doc.prev_hovered_box);
+            let new_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
+            // Mark dirty flags on nodes affected by hover change
+            crate::css::mark_hover_dirty(&old_chain, &new_chain, &doc.node_map, false);
+
+            crate::css::apply_cascade_incremental(
+                &mut doc.root, &doc.stylesheet, None, root_font_px,
+                self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
+                &new_chain,
+            );
+            crate::css::clear_cascade_dirty(&mut doc.root);
+            doc.hover_suppress_count = 1;
+            doc.prev_hovered_box = doc.hovered_box;
             true
         } else {
             false
