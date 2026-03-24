@@ -5,6 +5,7 @@ pub mod flex;
 pub mod grid;
 pub mod table;
 pub mod hit_test;
+pub mod layout_box;
 
 use std::cell::Cell;
 use crate::types::*;

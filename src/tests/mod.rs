@@ -26,5 +26,8 @@ pub mod test_frame;
 pub mod test_event_dispatch;
 pub mod test_css_values;
 pub mod test_property_id;
+pub mod test_dhtml;
+pub mod test_display_list;
+pub mod test_layout_split;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;

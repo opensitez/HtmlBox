@@ -1335,46 +1335,12 @@ impl Default for ComputedStyle {
 
 impl ComputedStyle {
     /// Inherit inheritable properties from a parent style.
+    /// Copy inherited properties from parent using the property table.
     pub fn inherit_from(&mut self, parent: &ComputedStyle) {
-        self.color           = parent.color;
-        self.font_family             = parent.font_family.clone();
-        self.font_size               = parent.font_size.clone();
-        self.font_weight             = parent.font_weight;
-        self.font_style              = parent.font_style;
-        self.font_variation_settings = parent.font_variation_settings.clone();
-        self.font_feature_settings   = parent.font_feature_settings.clone();
-        self.line_height             = parent.line_height.clone();
-        self.letter_spacing  = parent.letter_spacing.clone();
-        self.word_spacing    = parent.word_spacing.clone();
-        self.text_align      = parent.text_align;
-        self.text_decoration           = parent.text_decoration;
-        self.text_decoration_color     = parent.text_decoration_color;
-        self.text_decoration_style     = parent.text_decoration_style;
-        self.text_decoration_thickness = parent.text_decoration_thickness.clone();
-        self.text_underline_offset     = parent.text_underline_offset.clone();
-        self.text_indent               = parent.text_indent.clone();
-        self.white_space     = parent.white_space;
-        self.text_transform  = parent.text_transform;
-        self.word_break      = parent.word_break;
-        self.overflow_wrap   = parent.overflow_wrap;
-        self.direction       = parent.direction;
-        self.list_style_type     = parent.list_style_type;
-        self.list_style_position = parent.list_style_position;
-        // list_index is set by the HTML parser (ol counter), not inherited via cascade.
-        self.visibility      = parent.visibility;
-        self.direction       = parent.direction;
-        self.unicode_bidi    = parent.unicode_bidi;
-        self.writing_mode    = parent.writing_mode;
-        self.tab_size        = parent.tab_size;
-        self.hyphens         = parent.hyphens;
-        self.quotes          = parent.quotes.clone();
-        self.cursor          = parent.cursor;
-        self.pointer_events  = parent.pointer_events;
-        self.small_caps      = parent.small_caps;
-        self.user_select     = parent.user_select;
-        self.font_stretch    = parent.font_stretch;
-        self.href            = parent.href.clone();
-        self.text_shadow     = parent.text_shadow.clone();
+        for &id in crate::css::property_defs::INHERITED_IDS {
+            let def = crate::css::property_defs::get(id);
+            (def.copy)(self, parent);
+        }
     }
 
     pub fn is_block_level(&self) -> bool {
@@ -1962,6 +1928,8 @@ pub struct Document {
     /// Bridge lookup: maps node_id → raw pointer into the HtmlBox tree.
     /// Rebuilt by `rebuild_node_map()` after any tree mutation (layout, cascade, etc.).
     pub node_map:        HashMap<u32, *const HtmlBox>,
+    /// Separated layout data indexed by node_id (bridge: duplicates HtmlBox geometry).
+    pub layout_store:    crate::layout::layout_box::LayoutStore,
     /// Nodes created by dom_create_element/dom_create_text that haven't been
     /// inserted into the HtmlBox tree yet. Consumed by dom_append_child/dom_insert_before.
     pub pending_nodes:   HashMap<u32, HtmlBox>,
@@ -2068,6 +2036,7 @@ impl Document {
             arena:           DomArena::new(),
             next_node_id:    1,  // 0 = NodeId::NONE (reserved)
             node_map:        HashMap::new(),
+            layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             base_url:        String::new(),
             linked_stylesheets: Vec::new(),
@@ -4000,6 +3969,7 @@ impl Clone for Document {
             arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
             next_node_id:    self.next_node_id,
             node_map:        HashMap::new(),   // rebuilt on demand
+            layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),
             editor:          self.editor.clone(),

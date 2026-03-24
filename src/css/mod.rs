@@ -1,4 +1,5 @@
 pub mod properties;
+pub mod property_defs;
 
 use std::collections::{HashMap, HashSet};
 use crate::types::*;
@@ -1144,7 +1145,7 @@ fn tokenize_anim(s: &str) -> Vec<String> {
     tokens
 }
 
-fn parse_time_ms(s: &str) -> Option<f32> {
+pub fn parse_time_ms(s: &str) -> Option<f32> {
     if let Some(ms)  = s.strip_suffix("ms") { ms.trim().parse::<f32>().ok() }
     else if let Some(sec) = s.strip_suffix('s') { sec.trim().parse::<f32>().ok().map(|v| v * 1000.0) }
     else { None }
@@ -2055,7 +2056,6 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
 }
 
 pub fn apply_property_by_id(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
-    use properties::PropertyId;
     let v = value.trim();
     // `inherit` means "use the parent's computed value". For inherited properties,
     // `inherit_from` already copied the parent value before rules are applied, so
@@ -2064,1498 +2064,11 @@ pub fn apply_property_by_id(style: &mut ComputedStyle, id: properties::PropertyI
     if v == "inherit" { return; }
     // `initial` / `revert` / `unset` — treat as reset to default (skip for now, close enough).
     if matches!(v, "initial" | "revert" | "unset" | "revert-layer") { return; }
-    match id {
-        PropertyId::Display => {
-            style.display = match v {
-                "none"               => Display::None,
-                "block"              => Display::Block,
-                "inline"             => Display::Inline,
-                "inline-block"       => Display::InlineBlock,
-                "flex"               => Display::Flex,
-                "inline-flex"        => Display::InlineFlex,
-                "grid"               => Display::Grid,
-                "inline-grid"        => Display::InlineGrid,
-                "table"              => Display::Table,
-                "table-row"          => Display::TableRow,
-                "table-cell"         => Display::TableCell,
-                "table-caption"      => Display::TableCaption,
-                "table-column"       => Display::TableColumn,
-                "table-column-group" => Display::TableColumnGroup,
-                "table-header-group" => Display::TableHeaderGroup,
-                "table-footer-group" => Display::TableFooterGroup,
-                "table-row-group"    => Display::TableRowGroup,
-                "list-item"          => Display::ListItem,
-                "flow-root"          => Display::FlowRoot,
-                "contents"           => Display::Contents,
-                "ruby"               => Display::Ruby,
-                "ruby-text"          => Display::RubyText,
-                _                    => Display::Inline,
-            };
-        }
-        PropertyId::Position => {
-            style.position = match v {
-                "static"   => Position::Static,
-                "relative" => Position::Relative,
-                "absolute" => Position::Absolute,
-                "fixed"    => Position::Fixed,
-                "sticky"   => Position::Sticky,
-                _          => Position::Static,
-            };
-        }
-        PropertyId::Float => {
-            style.float = match v {
-                "left"  => Float::Left,
-                "right" => Float::Right,
-                _       => Float::None,
-            };
-            // CSS 2.1 §9.7: floated elements are blockified
-            if style.float != Float::None {
-                style.display = match style.display {
-                    Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
-                        => Display::Block,
-                    other => other,
-                };
-            }
-        }
-        PropertyId::Clear => {
-            style.clear = match v {
-                "left"  => Clear::Left,
-                "right" => Clear::Right,
-                "both"  => Clear::Both,
-                _       => Clear::None,
-            };
-        }
-        PropertyId::ZIndex   => { style.z_index = v.parse().unwrap_or(0); }
-        PropertyId::Overflow  => {
-            let ov = parse_overflow(v);
-            style.overflow_x = ov;
-            style.overflow_y = ov;
-        }
-        PropertyId::OverflowX => { style.overflow_x = parse_overflow(v); }
-        PropertyId::OverflowY => { style.overflow_y = parse_overflow(v); }
-
-        PropertyId::Width      => { style.width      = parse_length(v); }
-        PropertyId::Height     => { style.height     = parse_length(v); }
-        PropertyId::MinWidth  => { style.min_width  = parse_length(v); }
-        PropertyId::MaxWidth  => { style.max_width  = parse_length_or_none(v); }
-        PropertyId::MinHeight => { style.min_height = parse_length(v); }
-        PropertyId::MaxHeight => { style.max_height = parse_length_or_none(v); }
-
-        PropertyId::Margin        => apply_shorthand_4(v, &mut style.margin_top, &mut style.margin_right, &mut style.margin_bottom, &mut style.margin_left, parse_length),
-        PropertyId::MarginTop    => { style.margin_top    = parse_length(v); }
-        PropertyId::MarginRight  => { style.margin_right  = parse_length(v); }
-        PropertyId::MarginBottom => { style.margin_bottom = parse_length(v); }
-        PropertyId::MarginLeft   => { style.margin_left   = parse_length(v); }
-
-        PropertyId::Padding        => apply_shorthand_4(v, &mut style.padding_top, &mut style.padding_right, &mut style.padding_bottom, &mut style.padding_left, parse_length),
-        PropertyId::PaddingTop    => { style.padding_top    = parse_length(v); }
-        PropertyId::PaddingRight  => { style.padding_right  = parse_length(v); }
-        PropertyId::PaddingBottom => { style.padding_bottom = parse_length(v); }
-        PropertyId::PaddingLeft   => { style.padding_left   = parse_length(v); }
-
-        PropertyId::Border        => apply_border_shorthand(style, v),
-        PropertyId::BorderWidth  => apply_shorthand_4(v, &mut style.border_top_width, &mut style.border_right_width, &mut style.border_bottom_width, &mut style.border_left_width, parse_length),
-        PropertyId::BorderTopWidth    => { style.border_top_width    = parse_length(v); }
-        PropertyId::BorderRightWidth  => { style.border_right_width  = parse_length(v); }
-        PropertyId::BorderBottomWidth => { style.border_bottom_width = parse_length(v); }
-        PropertyId::BorderLeftWidth   => { style.border_left_width   = parse_length(v); }
-
-        PropertyId::BorderStyle        => {
-            let bs = parse_border_style(v);
-            style.border_top_style    = bs;
-            style.border_right_style  = bs;
-            style.border_bottom_style = bs;
-            style.border_left_style   = bs;
-        }
-        PropertyId::BorderTopStyle    => { style.border_top_style    = parse_border_style(v); }
-        PropertyId::BorderRightStyle  => { style.border_right_style  = parse_border_style(v); }
-        PropertyId::BorderBottomStyle => { style.border_bottom_style = parse_border_style(v); }
-        PropertyId::BorderLeftStyle   => { style.border_left_style   = parse_border_style(v); }
-
-        PropertyId::BorderColor        => {
-            let bc = parse_color(v).unwrap_or(Color::BLACK);
-            style.border_top_color    = bc;
-            style.border_right_color  = bc;
-            style.border_bottom_color = bc;
-            style.border_left_color   = bc;
-        }
-        PropertyId::BorderTopColor    => { if let Some(c) = parse_color(v) { style.border_top_color    = c; } }
-        PropertyId::BorderRightColor  => { if let Some(c) = parse_color(v) { style.border_right_color  = c; } }
-        PropertyId::BorderBottomColor => { if let Some(c) = parse_color(v) { style.border_bottom_color = c; } }
-        PropertyId::BorderLeftColor   => { if let Some(c) = parse_color(v) { style.border_left_color   = c; } }
-        PropertyId::Top    => { style.top    = parse_length(v); }
-        PropertyId::Right  => { style.right  = parse_length(v); }
-        PropertyId::Bottom => { style.bottom = parse_length(v); }
-        PropertyId::Left   => { style.left   = parse_length(v); }
-
-        PropertyId::Color            => { if let Some(c) = parse_color(v) { style.color = c; } }
-        PropertyId::BackgroundColor => { if let Some(c) = parse_color(v) { style.background_color = c; } }
-        PropertyId::Background       => {
-            // Handle gradient functions first (they contain spaces and commas)
-            if v.contains("gradient") {
-                apply_gradient(style, v);
-                return;
-            }
-            // Extract url() first (before splitting by whitespace, which may break URLs)
-            if let Some(url) = extract_url(v) {
-                style.background_image_url = url;
-            }
-            // Parse background shorthand: color, image url(), position [/ size], repeat
-            // Strip url(...) from value before splitting to avoid partial token issues
-            let v_no_url = if let Some(start) = v.find("url(") {
-                let depth_start = start;
-                let mut depth = 0;
-                let mut end = v.len();
-                for (i, ch) in v[depth_start..].char_indices() {
-                    if ch == '(' { depth += 1; }
-                    if ch == ')' { depth -= 1; if depth == 0 { end = depth_start + i + 1; break; } }
-                }
-                format!("{} {}", &v[..depth_start], &v[end..])
-            } else {
-                v.to_string()
-            };
-            let v_rest = v_no_url.trim();
-            // Split on "/" to separate position from size
-            let (pos_part, size_part) = if let Some(slash) = v_rest.find(" / ") {
-                (&v_rest[..slash], Some(&v_rest[slash+3..]))
-            } else {
-                (v_rest, None)
-            };
-            // Process position/size part first
-            if let Some(size_str) = size_part {
-                // size_str may have tokens after size (e.g. "cover no-repeat")
-                let size_tok: &str = size_str.split_whitespace().next().unwrap_or("auto");
-                match size_tok {
-                    "cover"   => style.background_size = BackgroundSize::Cover,
-                    "contain" => style.background_size = BackgroundSize::Contain,
-                    _         => {
-                        style.background_size = BackgroundSize::Explicit;
-                        style.background_size_w = parse_length(size_tok);
-                        style.background_size_h = CssLength::Auto;
-                    }
-                }
-                // Any remaining tokens in size_part (like repeat keywords)
-                for tok in size_str.split_whitespace().skip(1) {
-                    match tok {
-                        "no-repeat" => style.background_repeat = BackgroundRepeat::NoRepeat,
-                        "repeat-x"  => style.background_repeat = BackgroundRepeat::RepeatX,
-                        "repeat-y"  => style.background_repeat = BackgroundRepeat::RepeatY,
-                        "repeat"    => style.background_repeat = BackgroundRepeat::Repeat,
-                        _ => {}
-                    }
-                }
-            }
-            // Parse position part tokens (and remaining repeat/color/url)
-            let mut pos_tokens: Vec<&str> = Vec::new();
-            for token in pos_part.split_whitespace() {
-                match token {
-                    "none"       => { style.background_image_url.clear(); }
-                    "no-repeat"  => { style.background_repeat = BackgroundRepeat::NoRepeat; }
-                    "repeat-x"   => { style.background_repeat = BackgroundRepeat::RepeatX; }
-                    "repeat-y"   => { style.background_repeat = BackgroundRepeat::RepeatY; }
-                    "repeat"     => { style.background_repeat = BackgroundRepeat::Repeat; }
-                    "left" | "center" | "right" | "top" | "bottom" => {
-                        pos_tokens.push(token);
-                    }
-                    _ => {
-                        if let Some(c) = parse_color(token) {
-                            style.background_color = c;
-                        } else if token.ends_with('%') || token.ends_with("px") || token.ends_with("em") {
-                            pos_tokens.push(token);
-                        }
-                    }
-                }
-            }
-            // Assign position tokens
-            if !pos_tokens.is_empty() {
-                // Separate x/y: left/right/center-h go to x, top/bottom/center-v go to y
-                let mut x_set = false;
-                let mut y_set = false;
-                for tok in &pos_tokens {
-                    match *tok {
-                        "left"   => { style.background_position_x = CssLength::Percent(0.0);   x_set = true; }
-                        "right"  => { style.background_position_x = CssLength::Percent(100.0); x_set = true; }
-                        "top"    => { style.background_position_y = CssLength::Percent(0.0);   y_set = true; }
-                        "bottom" => { style.background_position_y = CssLength::Percent(100.0); y_set = true; }
-                        "center" => {
-                            if !x_set { style.background_position_x = CssLength::Percent(50.0); x_set = true; }
-                            else if !y_set { style.background_position_y = CssLength::Percent(50.0); y_set = true; }
-                        }
-                        other => {
-                            let l = parse_length(other);
-                            if !x_set { style.background_position_x = l; x_set = true; }
-                            else if !y_set { style.background_position_y = l; }
-                        }
-                    }
-                }
-                // If only one positional token was given, default the other to center
-                if x_set && !y_set { style.background_position_y = CssLength::Percent(50.0); }
-            }
-        }
-
-        PropertyId::FontFamily => {
-            // Normalize the raw value: resolve system-font keywords in each family name.
-            // The full comma-separated string is preserved so the renderer can iterate
-            // through the fallback chain.
-            let normalized = split_font_families(v)
-                .into_iter()
-                .map(|name| {
-                    resolve_system_font_keyword(&name)
-                        .map(|s| s.to_string())
-                        .unwrap_or(name)
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            style.font_family = normalized;
-        }
-        PropertyId::FontSize   => { style.font_size   = parse_font_size(v); }
-        PropertyId::FontWeight => {
-            style.font_weight = match v {
-                "normal"  => FontWeight::Normal,
-                "bold"    => FontWeight::Bold,
-                "bolder"  => FontWeight::Value(700),
-                "lighter" => FontWeight::Value(300),
-                _         => v.parse::<u16>().map(FontWeight::Value).unwrap_or(FontWeight::Normal),
-            };
-        }
-        PropertyId::FontStyle => {
-            style.font_style = match v {
-                "italic"  => FontStyle::Italic,
-                "oblique" => FontStyle::Oblique,
-                _         => FontStyle::Normal,
-            };
-        }
-        PropertyId::Font => apply_font_shorthand(style, v),
-        PropertyId::FontVariationSettings => {
-            style.font_variation_settings = parse_variation_settings(v);
-            // Promote 'wght' axis to font-weight if no explicit font-weight was set.
-            for (tag, val) in &style.font_variation_settings {
-                if tag == "wght" {
-                    style.font_weight = FontWeight::Value(*val as u16);
-                }
-            }
-        }
-        PropertyId::FontFeatureSettings => {
-            style.font_feature_settings = parse_feature_settings(v);
-            // Promote 'smcp' feature to small_caps flag.
-            for (tag, val) in &style.font_feature_settings {
-                if tag == "smcp" { style.small_caps = *val != 0; }
-            }
-        }
-
-        PropertyId::LineHeight    => { style.line_height    = parse_line_height(v); }
-        PropertyId::LetterSpacing => { style.letter_spacing = parse_length(v); }
-        PropertyId::WordSpacing   => { style.word_spacing   = parse_length(v); }
-        PropertyId::TextAlign     => {
-            style.text_align = match v {
-                "right"   => TextAlign::Right,
-                "center"  => TextAlign::Center,
-                "justify" => TextAlign::Justify,
-                "end"     => TextAlign::End,
-                "start"   => TextAlign::Start,
-                _         => TextAlign::Left,
-            };
-        }
-        PropertyId::VerticalAlign => {
-            style.vertical_align = match v {
-                "top"         => VerticalAlign::Top,
-                "middle"      => VerticalAlign::Middle,
-                "bottom"      => VerticalAlign::Bottom,
-                "text-top"    => VerticalAlign::TextTop,
-                "text-bottom" => VerticalAlign::TextBottom,
-                "sub"         => VerticalAlign::Sub,
-                "super"       => VerticalAlign::Super,
-                _             => VerticalAlign::Baseline,
-            };
-        }
-        PropertyId::TextDecoration => {
-            // Shorthand: <line> || <style> || <color> in any order.
-            // e.g. "underline solid #ef4444" or "underline wavy #ec4899"
-            style.text_decoration.underline     = v.contains("underline");
-            style.text_decoration.overline      = v.contains("overline");
-            style.text_decoration.strikethrough = v.contains("line-through");
-            // Parse style keyword
-            style.text_decoration_style = if v.contains("double") {
-                TextDecorationStyle::Double
-            } else if v.contains("dotted") {
-                TextDecorationStyle::Dotted
-            } else if v.contains("dashed") {
-                TextDecorationStyle::Dashed
-            } else if v.contains("wavy") {
-                TextDecorationStyle::Wavy
-            } else {
-                TextDecorationStyle::Solid
-            };
-            // Parse color: any token that parses as a color
-            for token in v.split_whitespace() {
-                if let Some(c) = parse_color(token) {
-                    style.text_decoration_color = Some(c);
-                    break;
-                }
-            }
-        }
-        PropertyId::TextIndent    => { style.text_indent   = parse_length(v); }
-        PropertyId::WhiteSpace    => {
-            style.white_space = match v {
-                "nowrap"   => WhiteSpace::Nowrap,
-                "pre"      => WhiteSpace::Pre,
-                "pre-wrap" => WhiteSpace::PreWrap,
-                "pre-line" => WhiteSpace::PreLine,
-                _          => WhiteSpace::Normal,
-            };
-        }
-        PropertyId::TextTransform => {
-            style.text_transform = match v {
-                "uppercase"  => TextTransform::Uppercase,
-                "lowercase"  => TextTransform::Lowercase,
-                "capitalize" => TextTransform::Capitalize,
-                _            => TextTransform::None,
-            };
-        }
-        PropertyId::WordBreak => {
-            style.word_break = match v {
-                "break-all"  => WordBreak::BreakAll,
-                "keep-all"   => WordBreak::KeepAll,
-                "break-word" => WordBreak::BreakWord,
-                _            => WordBreak::Normal,
-            };
-        }
-        PropertyId::OverflowWrap | PropertyId::WordWrap => {
-            style.overflow_wrap = match v {
-                "break-word" => OverflowWrap::BreakWord,
-                "anywhere"   => OverflowWrap::Anywhere,
-                _            => OverflowWrap::Normal,
-            };
-        }
-        PropertyId::Direction => {
-            style.direction = match v {
-                "rtl" => Direction::RTL,
-                _     => Direction::LTR,
-            };
-        }
-        PropertyId::Cursor => {
-            // CSS cursor can have fallbacks like "url(...), pointer" — use last keyword
-            let keyword = v.split(',').last().unwrap_or(v).trim();
-            style.cursor = match keyword {
-                "pointer"     => CSSCursor::Pointer,
-                "text"        => CSSCursor::Text,
-                "default"     => CSSCursor::Default,
-                "move"        => CSSCursor::Move,
-                "not-allowed" => CSSCursor::NotAllowed,
-                "grab"        => CSSCursor::Grab,
-                "grabbing"    => CSSCursor::Grabbing,
-                "col-resize"  => CSSCursor::ColResize,
-                "row-resize"  => CSSCursor::RowResize,
-                "crosshair"   => CSSCursor::Crosshair,
-                "help"        => CSSCursor::Help,
-                "wait"        => CSSCursor::Wait,
-                "progress"    => CSSCursor::Wait,  // approximate
-                "none"        => CSSCursor::None,
-                "n-resize"    => CSSCursor::NResize,
-                "e-resize"    => CSSCursor::EResize,
-                "s-resize"    => CSSCursor::SResize,
-                "w-resize"    => CSSCursor::WResize,
-                _             => CSSCursor::Auto,
-            };
-        }
-
-        PropertyId::ListStyleType => {
-            style.list_style_type = match v {
-                "none"         => ListStyleType::None,
-                "disc"         => ListStyleType::Disc,
-                "circle"       => ListStyleType::Circle,
-                "square"       => ListStyleType::Square,
-                "decimal"      => ListStyleType::Decimal,
-                "lower-alpha"  => ListStyleType::LowerAlpha,
-                "upper-alpha"  => ListStyleType::UpperAlpha,
-                "lower-roman"  => ListStyleType::LowerRoman,
-                "upper-roman"  => ListStyleType::UpperRoman,
-                _              => ListStyleType::None,
-            };
-        }
-        PropertyId::ListStylePosition => {
-            style.list_style_position = if v == "inside" {
-                ListStylePosition::Inside
-            } else {
-                ListStylePosition::Outside
-            };
-        }
-
-        // Flexbox
-        PropertyId::FlexDirection => {
-            style.flex_direction = match v {
-                "row-reverse"    => FlexDirection::RowReverse,
-                "column"         => FlexDirection::Column,
-                "column-reverse" => FlexDirection::ColumnReverse,
-                _                => FlexDirection::Row,
-            };
-        }
-        PropertyId::FlexWrap => {
-            style.flex_wrap = match v {
-                "wrap"         => FlexWrap::Wrap,
-                "wrap-reverse" => FlexWrap::WrapReverse,
-                _              => FlexWrap::Nowrap,
-            };
-        }
-        PropertyId::JustifyContent => {
-            style.justify_content = match v {
-                "flex-end" | "end"   => JustifyContent::FlexEnd,
-                "center"             => JustifyContent::Center,
-                "space-between"      => JustifyContent::SpaceBetween,
-                "space-around"       => JustifyContent::SpaceAround,
-                "space-evenly"       => JustifyContent::SpaceEvenly,
-                _                    => JustifyContent::FlexStart,
-            };
-        }
-        PropertyId::AlignItems => {
-            style.align_items = match v {
-                "flex-start" | "start" | "self-start" => AlignItems::FlexStart,
-                "flex-end"   | "end"   | "self-end"   => AlignItems::FlexEnd,
-                "center"     => AlignItems::Center,
-                "baseline"   => AlignItems::Baseline,
-                _            => AlignItems::Stretch,
-            };
-        }
-        PropertyId::AlignSelf => {
-            style.align_self = match v {
-                "flex-start" | "start" | "self-start" => AlignSelf::FlexStart,
-                "flex-end"   | "end"   | "self-end"   => AlignSelf::FlexEnd,
-                "center"     => AlignSelf::Center,
-                "baseline"   => AlignSelf::Baseline,
-                "stretch"    => AlignSelf::Stretch,
-                _            => AlignSelf::Auto,
-            };
-        }
-        PropertyId::FlexGrow   => { style.flex_grow   = v.parse().unwrap_or(0.0); }
-        PropertyId::FlexShrink => { style.flex_shrink = v.parse().unwrap_or(1.0); }
-        PropertyId::FlexBasis  => { style.flex_basis  = parse_length(v); }
-        PropertyId::Order       => { style.order       = v.parse().unwrap_or(0); }
-        PropertyId::Gap         => {
-            let g = parse_length(v);
-            style.row_gap = g.clone();
-            style.column_gap = g.clone();
-            style.gap = g;
-        }
-        PropertyId::RowGap    => { style.row_gap    = parse_length(v); }
-        PropertyId::ColumnGap => { style.column_gap = parse_length(v); }
-
-        PropertyId::BoxSizing => {
-            style.box_sizing = match v {
-                "border-box" => BoxSizing::BorderBox,
-                _            => BoxSizing::ContentBox,
-            };
-        }
-        PropertyId::AlignContent => {
-            style.align_content = match v {
-                "flex-start"   => AlignContent::FlexStart,
-                "flex-end"     => AlignContent::FlexEnd,
-                "center"       => AlignContent::Center,
-                "space-between"=> AlignContent::SpaceBetween,
-                "space-around" => AlignContent::SpaceAround,
-                "space-evenly" => AlignContent::SpaceEvenly,
-                _              => AlignContent::Stretch,
-            };
-        }
-        PropertyId::GridAutoFlow => {
-            style.grid_auto_flow = match v {
-                "column"        => GridAutoFlow::Column,
-                "row dense"     => GridAutoFlow::RowDense,
-                "column dense"  => GridAutoFlow::ColumnDense,
-                _               => GridAutoFlow::Row,
-            };
-        }
-        PropertyId::GridTemplateColumns => {
-            let mut names = std::collections::HashMap::new();
-            let tracks = parse_track_list_with_names(v, &mut style.auto_repeat_columns, &mut names);
-            if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
-                style.subgrid_columns = true;
-                style.grid_template_columns = Vec::new();
-            } else {
-                style.subgrid_columns = false;
-                style.grid_template_columns = tracks;
-            }
-            style.grid_col_line_names = names;
-        }
-        PropertyId::GridTemplateRows => {
-            let mut dummy = Vec::new();
-            let mut names = std::collections::HashMap::new();
-            let tracks = parse_track_list_with_names(v, &mut dummy, &mut names);
-            if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
-                style.subgrid_rows = true;
-                style.grid_template_rows = Vec::new();
-            } else {
-                style.subgrid_rows = false;
-                style.grid_template_rows = tracks;
-            }
-            style.grid_row_line_names = names;
-        }
-        PropertyId::GridAutoColumns => {
-            style.grid_auto_columns = parse_single_track(v);
-        }
-        PropertyId::GridAutoRows => {
-            style.grid_auto_rows = parse_single_track(v);
-        }
-        PropertyId::GridTemplateAreas => {
-            style.grid_template_areas = parse_grid_template_areas(v);
-        }
-        PropertyId::GridColumn => {
-            if let Some(slash) = v.find('/') {
-                let (sv, sn) = parse_grid_line_named(v[..slash].trim());
-                let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
-                style.grid_column_start = sv;
-                style.grid_column_end   = ev;
-                style.grid_column_start_name = sn;
-                style.grid_column_end_name   = en;
-            } else {
-                let (val, name) = parse_grid_line_named(v);
-                style.grid_column_start = val;
-                style.grid_column_end   = 0;
-                if !name.is_empty() {
-                    // "grid-column: <name>" → <name>-start / <name>-end
-                    style.grid_column_start_name = format!("{}-start", name);
-                    style.grid_column_end_name   = format!("{}-end", name);
-                } else {
-                    style.grid_column_start_name = String::new();
-                    style.grid_column_end_name   = String::new();
-                }
-            }
-        }
-        PropertyId::GridRow => {
-            if let Some(slash) = v.find('/') {
-                let (sv, sn) = parse_grid_line_named(v[..slash].trim());
-                let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
-                style.grid_row_start = sv;
-                style.grid_row_end   = ev;
-                style.grid_row_start_name = sn;
-                style.grid_row_end_name   = en;
-            } else {
-                let (val, name) = parse_grid_line_named(v);
-                style.grid_row_start = val;
-                style.grid_row_end   = 0;
-                if !name.is_empty() {
-                    style.grid_row_start_name = format!("{}-start", name);
-                    style.grid_row_end_name   = format!("{}-end", name);
-                } else {
-                    style.grid_row_start_name = String::new();
-                    style.grid_row_end_name   = String::new();
-                }
-            }
-        }
-        PropertyId::GridColumnStart => {
-            let (val, name) = parse_grid_line_named(v);
-            style.grid_column_start = val;
-            style.grid_column_start_name = name;
-        }
-        PropertyId::GridColumnEnd => {
-            let (val, name) = parse_grid_line_named(v);
-            style.grid_column_end = val;
-            style.grid_column_end_name = name;
-        }
-        PropertyId::GridRowStart => {
-            let (val, name) = parse_grid_line_named(v);
-            style.grid_row_start = val;
-            style.grid_row_start_name = name;
-        }
-        PropertyId::GridRowEnd => {
-            let (val, name) = parse_grid_line_named(v);
-            style.grid_row_end = val;
-            style.grid_row_end_name = name;
-        }
-        PropertyId::GridArea => {
-            // "1 / 2 / 3 / 4" → row-start / col-start / row-end / col-end
-            let parts: Vec<&str> = v.splitn(4, '/').collect();
-            if parts.len() == 4 {
-                let rs = parse_grid_line(parts[0].trim());
-                let cs = parse_grid_line(parts[1].trim());
-                let re = parse_grid_line(parts[2].trim());
-                let ce = parse_grid_line(parts[3].trim());
-                if rs != 0 || cs != 0 || re != 0 || ce != 0 {
-                    style.grid_row_start    = rs;
-                    style.grid_column_start = cs;
-                    style.grid_row_end      = re;
-                    style.grid_column_end   = ce;
-                } else {
-                    style.grid_area = v.to_string();
-                }
-            } else {
-                style.grid_area = v.to_string();
-            }
-        }
-        PropertyId::JustifyItems => {
-            style.justify_items = match v {
-                "flex-start" | "start" => AlignItems::FlexStart,
-                "flex-end"   | "end"   => AlignItems::FlexEnd,
-                "center"               => AlignItems::Center,
-                "baseline"             => AlignItems::Baseline,
-                _                      => AlignItems::Stretch,
-            };
-        }
-        PropertyId::JustifySelf => {
-            style.justify_self = match v {
-                "flex-start" | "start" => AlignSelf::FlexStart,
-                "flex-end"   | "end"   => AlignSelf::FlexEnd,
-                "center"               => AlignSelf::Center,
-                "baseline"             => AlignSelf::Baseline,
-                "stretch"              => AlignSelf::Stretch,
-                _                      => AlignSelf::Auto,
-            };
-        }
-
-        PropertyId::Opacity     => { let op: f32 = v.parse().unwrap_or(1.0); style.opacity = op.max(0.0).min(1.0); }
-        PropertyId::Visibility  => { style.visibility = v != "hidden" && v != "collapse"; }
-
-        // ── Per-side border shorthands ──────────────────────────────────────
-        PropertyId::BorderTop    => apply_border_side_shorthand(v, &mut style.border_top_width,    &mut style.border_top_style,    &mut style.border_top_color),
-        PropertyId::BorderRight  => apply_border_side_shorthand(v, &mut style.border_right_width,  &mut style.border_right_style,  &mut style.border_right_color),
-        PropertyId::BorderBottom => apply_border_side_shorthand(v, &mut style.border_bottom_width, &mut style.border_bottom_style, &mut style.border_bottom_color),
-        PropertyId::BorderLeft   => apply_border_side_shorthand(v, &mut style.border_left_width,   &mut style.border_left_style,   &mut style.border_left_color),
-
-        // ── Per-corner border radius ────────────────────────────────────────
-        PropertyId::BorderTopLeftRadius     => { style.border_top_left_radius     = parse_length(v); style.border_radius = style.border_top_left_radius.clone(); }
-        PropertyId::BorderTopRightRadius    => { style.border_top_right_radius    = parse_length(v); }
-        PropertyId::BorderBottomLeftRadius  => { style.border_bottom_left_radius  = parse_length(v); }
-        PropertyId::BorderBottomRightRadius => { style.border_bottom_right_radius = parse_length(v); }
-
-        // ── Table ───────────────────────────────────────────────────────────
-        PropertyId::BorderCollapse  => { style.border_collapse = v == "collapse"; }
-        PropertyId::BorderSpacing   => {
-            let parts: Vec<&str> = v.split_whitespace().collect();
-            style.border_spacing_h = parse_length(parts.first().copied().unwrap_or("0"));
-            style.border_spacing_v = parse_length(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
-        }
-        PropertyId::CaptionSide   => { style.caption_side       = if v == "bottom" { CaptionSide::Bottom } else { CaptionSide::Top }; }
-        PropertyId::EmptyCells    => { style.empty_cells_hide   = v == "hide"; }
-        PropertyId::TableLayout   => { style.table_layout_fixed = v == "fixed"; }
-        // cellpadding / cellspacing are HTML attributes handled in apply_property wrapper
-
-
-        // ── Background ──────────────────────────────────────────────────────
-        PropertyId::BackgroundImage => {
-            if v.contains("gradient") {
-                apply_gradient(style, v);
-            } else if v == "none" {
-                style.background_image_url.clear();
-            } else if let Some(url) = extract_url(v) {
-                style.background_image_url = url;
-            }
-        }
-        PropertyId::BackgroundSize => {
-            match v {
-                "cover"   => { style.background_size = BackgroundSize::Cover; }
-                "contain" => { style.background_size = BackgroundSize::Contain; }
-                "auto"    => { style.background_size = BackgroundSize::Auto; }
-                _ => {
-                    style.background_size = BackgroundSize::Explicit;
-                    let parts: Vec<&str> = v.split_whitespace().collect();
-                    style.background_size_w = parse_length(parts.first().copied().unwrap_or("auto"));
-                    style.background_size_h = if parts.len() >= 2 { parse_length(parts[1]) } else { CssLength::Auto };
-                }
-            }
-        }
-        PropertyId::BackgroundPosition => {
-            let parts: Vec<&str> = v.split_whitespace().collect();
-            let x_str = parts.first().copied().unwrap_or("0%");
-            style.background_position_x = match x_str {
-                "left"   => CssLength::Percent(0.0),
-                "center" => CssLength::Percent(50.0),
-                "right"  => CssLength::Percent(100.0),
-                _        => parse_length(x_str),
-            };
-            let y_str = parts.get(1).copied().unwrap_or("center");
-            style.background_position_y = match y_str {
-                "top"    => CssLength::Percent(0.0),
-                "center" => CssLength::Percent(50.0),
-                "bottom" => CssLength::Percent(100.0),
-                _        => parse_length(y_str),
-            };
-        }
-        PropertyId::BackgroundRepeat => {
-            style.background_repeat = match v {
-                "repeat"    => BackgroundRepeat::Repeat,
-                "repeat-x"  => BackgroundRepeat::RepeatX,
-                "repeat-y"  => BackgroundRepeat::RepeatY,
-                "no-repeat" => BackgroundRepeat::NoRepeat,
-                _           => BackgroundRepeat::Repeat,
-            };
-        }
-
-        // ── Outline ─────────────────────────────────────────────────────────
-        PropertyId::Outline => {
-            if v == "none" {
-                style.outline_style = BorderStyle::None;
-                style.outline_width = 0.0;
-            } else {
-                for tok in v.split_whitespace() {
-                    match tok {
-                        "solid"  => { style.outline_style = BorderStyle::Solid; }
-                        "dashed" => { style.outline_style = BorderStyle::Dashed; }
-                        "dotted" => { style.outline_style = BorderStyle::Dotted; }
-                        "double" => { style.outline_style = BorderStyle::Double; }
-                        "inset"  => { style.outline_style = BorderStyle::Inset; }
-                        "outset" => { style.outline_style = BorderStyle::Outset; }
-                        "groove" => { style.outline_style = BorderStyle::Groove; }
-                        "ridge"  => { style.outline_style = BorderStyle::Ridge; }
-                        "none"   => { style.outline_style = BorderStyle::None; }
-                        _ => {
-                            if let CssLength::Px(w) = parse_length(tok) {
-                                style.outline_width = w;
-                            } else if let Some(c) = parse_color(tok) {
-                                style.outline_color = c;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        PropertyId::OutlineStyle  => { style.outline_style  = parse_border_style(v); }
-        PropertyId::OutlineColor  => { if let Some(c) = parse_color(v) { style.outline_color = c; } }
-        PropertyId::OutlineWidth  => { if let CssLength::Px(w) = parse_length(v) { style.outline_width = w; } }
-        PropertyId::OutlineOffset => { if let CssLength::Px(w) = parse_length(v) { style.outline_offset = w; } }
-
-        // ── Text & content ──────────────────────────────────────────────────
-        PropertyId::TextOverflow    => { style.text_overflow = if v == "ellipsis" { TextOverflow::Ellipsis } else { TextOverflow::Clip }; }
-        PropertyId::TextShadow      => {
-            if v == "none" {
-                style.text_shadow = None;
-            } else {
-                let ts = parse_shadow_value(v);
-                style.text_shadow = Some(TextShadow { offset_x: ts.0, offset_y: ts.1, blur: ts.2, color: ts.3 });
-            }
-        }
-        PropertyId::FontVariant     => { style.small_caps = v == "small-caps"; }
-        PropertyId::TabSize         => { style.tab_size = v.parse().unwrap_or(8); }
-        PropertyId::Hyphens          => {
-            style.hyphens = match v {
-                "none"   => Hyphens::None,
-                "manual" => Hyphens::Manual,
-                "auto"   => Hyphens::Auto,
-                _        => Hyphens::Manual,
-            };
-        }
-        PropertyId::Widows  => { if let Ok(n) = v.parse() { style.widows  = n; } }
-        PropertyId::Orphans => { if let Ok(n) = v.parse() { style.orphans = n; } }
-
-        // ── Unicode-bidi & writing ───────────────────────────────────────────
-        PropertyId::UnicodeBidi => {
-            style.unicode_bidi = match v {
-                "normal"           => UnicodeBidi::Normal,
-                "embed"            => UnicodeBidi::Embed,
-                "bidi-override"    => UnicodeBidi::Override,
-                "isolate"          => UnicodeBidi::Isolate,
-                "isolate-override" => UnicodeBidi::IsolateOverride,
-                "plaintext"        => UnicodeBidi::Plaintext,
-                _                  => UnicodeBidi::Normal,
-            };
-        }
-        PropertyId::WritingMode => {
-            style.writing_mode = match v {
-                "vertical-rl" => WritingMode::VerticalRL,
-                "vertical-lr" => WritingMode::VerticalLR,
-                _             => WritingMode::HorizontalTB,
-            };
-        }
-
-        // ── Object fit ──────────────────────────────────────────────────────
-        PropertyId::ObjectFit => {
-            style.object_fit = match v {
-                "contain"    => ObjectFit::Contain,
-                "cover"      => ObjectFit::Cover,
-                "none"       => ObjectFit::None,
-                "scale-down" => ObjectFit::ScaleDown,
-                _            => ObjectFit::Fill,
-            };
-        }
-
-        // ── List style ──────────────────────────────────────────────────────
-        PropertyId::ListStyle => {
-            if v.contains("none")          { style.list_style_type = ListStyleType::None; }
-            else if v.contains("disc")     { style.list_style_type = ListStyleType::Disc; }
-            else if v.contains("circle")   { style.list_style_type = ListStyleType::Circle; }
-            else if v.contains("square")   { style.list_style_type = ListStyleType::Square; }
-            else if v.contains("decimal")  { style.list_style_type = ListStyleType::Decimal; }
-        }
-        PropertyId::ListStyleImage => {
-            if v == "none" {
-                style.list_style_image = String::new();
-            } else if let Some(url) = extract_url(v) {
-                style.list_style_image = url;
-            }
-        }
-
-        // ── Flex shorthands ──────────────────────────────────────────────────
-        PropertyId::Flex => {
-            match v {
-                "none" => { style.flex_grow = 0.0; style.flex_shrink = 0.0; style.flex_basis = CssLength::Auto; }
-                "auto" => { style.flex_grow = 1.0; style.flex_shrink = 1.0; style.flex_basis = CssLength::Auto; }
-                _ => {
-                    let toks: Vec<&str> = v.split_whitespace().collect();
-                    if toks.len() == 1 {
-                        // Single value: if it looks like a <number>, it's flex-grow.
-                        // If it looks like a <length-percentage>, it's flex-basis.
-                        let t = toks[0];
-                        if t.ends_with('%') || t.ends_with("px") || t.ends_with("em")
-                            || t.ends_with("rem") || t.ends_with("vw") || t.ends_with("vh")
-                        {
-                            // flex: <length-percentage> → flex-grow:1 flex-shrink:1 flex-basis:<value>
-                            style.flex_grow = 1.0;
-                            style.flex_shrink = 1.0;
-                            style.flex_basis = parse_length(t);
-                        } else {
-                            // flex: <number> → flex-grow:<number> flex-shrink:1 flex-basis:0
-                            style.flex_grow = t.parse().unwrap_or(0.0);
-                            style.flex_shrink = 1.0;
-                            style.flex_basis = CssLength::Px(0.0);
-                        }
-                    } else {
-                        if let Some(t0) = toks.first() { style.flex_grow = t0.parse().unwrap_or(0.0); }
-                        if let Some(t1) = toks.get(1)  { style.flex_shrink = t1.parse().unwrap_or(1.0); }
-                        else                            { style.flex_shrink = 1.0; style.flex_basis = CssLength::Px(0.0); }
-                        if let Some(t2) = toks.get(2)  { style.flex_basis = parse_length(t2); }
-                    }
-                }
-            }
-        }
-        PropertyId::FlexFlow => {
-            for tok in v.split_whitespace() {
-                match tok {
-                    "row"            => { style.flex_direction = FlexDirection::Row; }
-                    "row-reverse"    => { style.flex_direction = FlexDirection::RowReverse; }
-                    "column"         => { style.flex_direction = FlexDirection::Column; }
-                    "column-reverse" => { style.flex_direction = FlexDirection::ColumnReverse; }
-                    "nowrap"         => { style.flex_wrap = FlexWrap::Nowrap; }
-                    "wrap"           => { style.flex_wrap = FlexWrap::Wrap; }
-                    "wrap-reverse"   => { style.flex_wrap = FlexWrap::WrapReverse; }
-                    _ => {}
-                }
-            }
-        }
-
-        // ── Grid shorthands ──────────────────────────────────────────────────
-        PropertyId::GridTemplate => {
-            if v == "none" {
-                style.grid_template_rows.clear(); style.grid_template_columns.clear();
-                style.subgrid_columns = false; style.subgrid_rows = false;
-            } else if let Some(slash) = v.find('/') {
-                let rows_part = v[..slash].trim();
-                let cols_part = v[slash+1..].trim();
-                apply_property_by_id(style, PropertyId::GridTemplateRows, rows_part);
-                apply_property_by_id(style, PropertyId::GridTemplateColumns, cols_part);
-            }
-        }
-
-        // ── Logical properties (block/inline) ───────────────────────────────
-        PropertyId::MarginBlock        => { let m = parse_length(v); style.margin_top = m.clone(); style.margin_bottom = m; }
-        PropertyId::MarginBlockStart  => { style.margin_top    = parse_length(v); }
-        PropertyId::MarginBlockEnd    => { style.margin_bottom = parse_length(v); }
-        PropertyId::MarginInline       => { let m = parse_length(v); style.margin_left = m.clone(); style.margin_right = m; }
-        PropertyId::MarginInlineStart => { style.margin_left   = parse_length(v); }
-        PropertyId::MarginInlineEnd   => { style.margin_right  = parse_length(v); }
-
-        PropertyId::PaddingBlock        => { let p = parse_length(v); style.padding_top = p.clone(); style.padding_bottom = p; }
-        PropertyId::PaddingBlockStart  => { style.padding_top    = parse_length(v); }
-        PropertyId::PaddingBlockEnd    => { style.padding_bottom = parse_length(v); }
-        PropertyId::PaddingInline       => { let p = parse_length(v); style.padding_left = p.clone(); style.padding_right = p; }
-        PropertyId::PaddingInlineStart => { style.padding_left  = parse_length(v); }
-        PropertyId::PaddingInlineEnd   => { style.padding_right = parse_length(v); }
-
-        PropertyId::InsetBlockStart  => { style.top    = parse_length(v); }
-        PropertyId::InsetBlockEnd    => { style.bottom = parse_length(v); }
-        PropertyId::InsetInlineStart => {
-            if style.direction == Direction::RTL { style.right = parse_length(v); }
-            else                                 { style.left  = parse_length(v); }
-        }
-        PropertyId::InsetInlineEnd => {
-            if style.direction == Direction::RTL { style.left  = parse_length(v); }
-            else                                 { style.right = parse_length(v); }
-        }
-
-        // ── Place shorthands ─────────────────────────────────────────────────
-        PropertyId::PlaceSelf => {
-            let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property_by_id(style, PropertyId::AlignSelf,   parts.first().copied().unwrap_or(v));
-            apply_property_by_id(style, PropertyId::JustifySelf, parts.get(1).copied().unwrap_or(v));
-        }
-        PropertyId::PlaceItems => {
-            let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property_by_id(style, PropertyId::AlignItems,   parts.first().copied().unwrap_or(v));
-            apply_property_by_id(style, PropertyId::JustifyItems, parts.get(1).copied().unwrap_or(v));
-        }
-        PropertyId::PlaceContent => {
-            let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property_by_id(style, PropertyId::AlignContent,   parts.first().copied().unwrap_or(v));
-            apply_property_by_id(style, PropertyId::JustifyContent, parts.get(1).copied().unwrap_or(v));
-        }
-
-        // ── Break ────────────────────────────────────────────────────────────
-        PropertyId::BreakBefore | PropertyId::PageBreakBefore => {
-            style.break_before = match v {
-                "always" | "page" => BreakValue::Always,
-                "avoid"           => BreakValue::Avoid,
-                "left"            => BreakValue::Left,
-                "right"           => BreakValue::Right,
-                _                 => BreakValue::Auto,
-            };
-        }
-        PropertyId::BreakAfter | PropertyId::PageBreakAfter => {
-            style.break_after = match v {
-                "always" | "page" => BreakValue::Always,
-                "avoid"           => BreakValue::Avoid,
-                "left"            => BreakValue::Left,
-                "right"           => BreakValue::Right,
-                _                 => BreakValue::Auto,
-            };
-        }
-        PropertyId::BreakInside | PropertyId::PageBreakInside => {
-            style.break_inside = if v == "avoid" { BreakInside::Avoid } else { BreakInside::Auto };
-        }
-
-        // ── Box shadow ───────────────────────────────────────────────────────
-        PropertyId::BoxShadow => {
-            if v == "none" {
-                style.box_shadow = None;
-            } else {
-                let (ox, oy, blur, color) = parse_shadow_value(v);
-                // parse spread: 4th numeric token
-                let toks: Vec<&str> = v.split_whitespace().collect();
-                let nums: Vec<f32> = toks.iter()
-                    .filter_map(|t| { let c = t.trim_start_matches('-').chars().next()?; if c.is_ascii_digit() || c == '.' { t.trim_end_matches("px").parse().ok() } else { None } })
-                    .collect();
-                let spread = nums.get(3).copied().unwrap_or(0.0);
-                let inset = v.contains("inset");
-                style.box_shadow = Some(BoxShadow { offset_x: ox, offset_y: oy, blur, spread, color, inset });
-            }
-        }
-
-        // ── Pointer events ────────────────────────────────────────────────────
-        PropertyId::PointerEvents => {
-            style.pointer_events = match v {
-                "none"           => PointerEvents::None,
-                "visiblePainted" => PointerEvents::VisiblePainted,
-                "visibleFill"    => PointerEvents::VisibleFill,
-                "visibleStroke"  => PointerEvents::VisibleStroke,
-                "visible"        => PointerEvents::Visible,
-                "painted"        => PointerEvents::Painted,
-                "fill"           => PointerEvents::Fill,
-                "stroke"         => PointerEvents::Stroke,
-                "all"            => PointerEvents::All,
-                _                => PointerEvents::Auto,
-            };
-        }
-
-        // ── Scrollbar & caret ─────────────────────────────────────────────────
-        PropertyId::ScrollbarColor => {
-            if v != "auto" {
-                // find space not inside parens: "thumb track"
-                let sp = find_split_space(v);
-                if let Some(idx) = sp {
-                    let thumb = v[..idx].trim();
-                    let track = v[idx+1..].trim();
-                    style.scrollbar_thumb_color = parse_color(thumb);
-                    style.scrollbar_track_color = parse_color(track);
-                }
-            }
-        }
-        PropertyId::CaretColor => {
-            style.caret_color = if v == "auto" { None } else { parse_color(v) };
-        }
-
-        // ── Quotes ────────────────────────────────────────────────────────────
-        PropertyId::Quotes => {
-            style.quotes.clear();
-            if v != "none" && v != "auto" {
-                let bytes = v.as_bytes();
-                let mut i = 0;
-                while i < bytes.len() {
-                    if bytes[i] == b'"' || bytes[i] == b'\'' {
-                        let q = bytes[i]; i += 1;
-                        let start = i;
-                        while i < bytes.len() && bytes[i] != q { i += 1; }
-                        style.quotes.push(v[start..i].to_string());
-                        if i < bytes.len() { i += 1; }
-                    } else { i += 1; }
-                }
-            }
-        }
-
-        // ── Container queries ─────────────────────────────────────────────────
-        PropertyId::ContainerType => {
-            style.container_type = match v {
-                "size"        => ContainerType::Size,
-                "inline-size" => ContainerType::InlineSize,
-                _             => ContainerType::Normal,
-            };
-        }
-        PropertyId::ContainerName => { style.container_name = v.to_string(); }
-        PropertyId::Container => {
-            if let Some(slash) = v.find('/') {
-                style.container_name = v[..slash].trim().to_string();
-                apply_property_by_id(style, PropertyId::ContainerType, v[slash+1..].trim());
-            } else {
-                match v {
-                    "size" | "inline-size" => apply_property_by_id(style, PropertyId::ContainerType, v),
-                    _ => style.container_name = v.to_string(),
-                }
-            }
-        }
-
-        // ── Legacy clip: rect(top, right, bottom, left) ──────────────────────
-        PropertyId::Clip => {
-            if v == "auto" || v == "none" {
-                style.clip_rect = None;
-            } else if let Some(inner) = v.strip_prefix("rect(").and_then(|s| s.strip_suffix(')')) {
-                // rect(top, right, bottom, left) or rect(top right bottom left)
-                let parts: Vec<&str> = if inner.contains(',') {
-                    inner.split(',').map(|s| s.trim()).collect()
-                } else {
-                    inner.split_whitespace().collect()
-                };
-                if parts.len() == 4 {
-                    let parse_val = |s: &str| -> f32 {
-                        let s = s.trim();
-                        if s == "auto" { return f32::MAX; }
-                        if let Some(px) = s.strip_suffix("px") { return px.trim().parse().unwrap_or(0.0); }
-                        s.parse().unwrap_or(0.0)
-                    };
-                    style.clip_rect = Some([
-                        parse_val(parts[0]),
-                        parse_val(parts[1]),
-                        parse_val(parts[2]),
-                        parse_val(parts[3]),
-                    ]);
-                }
-            }
-        }
-
-        // ── Clip path ─────────────────────────────────────────────────────────
-        PropertyId::ClipPath => {
-            if v == "none" {
-                style.clip_path = ClipPath::default();
-            } else if v.starts_with("inset(") {
-                let inner = v[6..v.len().saturating_sub(1)].trim();
-                style.clip_path = ClipPath::default();
-                style.clip_path.kind = ClipPathKind::Inset;
-                let pts: Vec<&str> = inner.split_whitespace().collect();
-                style.clip_path.inset_top    = parse_length(pts.first().copied().unwrap_or("0"));
-                style.clip_path.inset_right  = parse_length(pts.get(1).copied().unwrap_or(pts.first().copied().unwrap_or("0")));
-                style.clip_path.inset_bottom = parse_length(pts.get(2).copied().unwrap_or(pts.first().copied().unwrap_or("0")));
-                style.clip_path.inset_left   = parse_length(pts.get(3).copied().unwrap_or(pts.get(1).copied().unwrap_or(pts.first().copied().unwrap_or("0"))));
-            } else if v.starts_with("circle(") {
-                let inner = v[7..v.len().saturating_sub(1)].trim();
-                style.clip_path = ClipPath::default();
-                style.clip_path.kind = ClipPathKind::Circle;
-                if let Some(at) = inner.find(" at ") {
-                    style.clip_path.circle_radius = parse_length(&inner[..at]);
-                    let center: Vec<&str> = inner[at+4..].split_whitespace().collect();
-                    style.clip_path.center_x = parse_length(center.first().copied().unwrap_or("50%"));
-                    style.clip_path.center_y = parse_length(center.get(1).copied().unwrap_or(center.first().copied().unwrap_or("50%")));
-                } else {
-                    style.clip_path.circle_radius = parse_length(inner);
-                    style.clip_path.center_x = CssLength::Percent(50.0);
-                    style.clip_path.center_y = CssLength::Percent(50.0);
-                }
-            } else if v.starts_with("ellipse(") {
-                let inner = v[8..v.len().saturating_sub(1)].trim();
-                style.clip_path = ClipPath::default();
-                style.clip_path.kind = ClipPathKind::Ellipse;
-                let (radii, center) = if let Some(at) = inner.find(" at ") {
-                    (&inner[..at], Some(&inner[at+4..]))
-                } else { (inner, None) };
-                let rv: Vec<&str> = radii.split_whitespace().collect();
-                style.clip_path.ellipse_rx = parse_length(rv.first().copied().unwrap_or("50%"));
-                style.clip_path.ellipse_ry = parse_length(rv.get(1).copied().unwrap_or(rv.first().copied().unwrap_or("50%")));
-                if let Some(c) = center {
-                    let cv: Vec<&str> = c.split_whitespace().collect();
-                    style.clip_path.center_x = parse_length(cv.first().copied().unwrap_or("50%"));
-                    style.clip_path.center_y = parse_length(cv.get(1).copied().unwrap_or(cv.first().copied().unwrap_or("50%")));
-                } else {
-                    style.clip_path.center_x = CssLength::Percent(50.0);
-                    style.clip_path.center_y = CssLength::Percent(50.0);
-                }
-            } else if v.starts_with("polygon(") {
-                let inner = v[8..v.len().saturating_sub(1)].trim();
-                style.clip_path = ClipPath::default();
-                style.clip_path.kind = ClipPathKind::Polygon;
-                for pair in inner.split(',') {
-                    let pts: Vec<&str> = pair.trim().split_whitespace().collect();
-                    if pts.len() >= 2 {
-                        style.clip_path.points.push((parse_length(pts[0]), parse_length(pts[1])));
-                    }
-                }
-            }
-        }
-
-        // ── Object position ──────────────────────────────────────────────────
-        PropertyId::ObjectPosition => {
-            let parts: Vec<&str> = v.split_whitespace().collect();
-            style.object_position_x = match parts.first().copied().unwrap_or("50%") {
-                "left"   => CssLength::Percent(0.0),
-                "center" => CssLength::Percent(50.0),
-                "right"  => CssLength::Percent(100.0),
-                s        => parse_length(s),
-            };
-            style.object_position_y = match parts.get(1).copied().unwrap_or("50%") {
-                "top"    => CssLength::Percent(0.0),
-                "center" => CssLength::Percent(50.0),
-                "bottom" => CssLength::Percent(100.0),
-                s        => parse_length(s),
-            };
-        }
-
-        // ── Aspect ratio ──────────────────────────────────────────────────────
-        PropertyId::AspectRatio => {
-            if v == "auto" {
-                style.aspect_ratio = None;
-            } else if let Some(slash) = v.find('/') {
-                let w: f32 = v[..slash].trim().parse().unwrap_or(1.0);
-                let h: f32 = v[slash+1..].trim().parse().unwrap_or(1.0);
-                if h > 0.0 { style.aspect_ratio = Some(w / h); }
-            } else if let Ok(n) = v.trim().parse::<f32>() {
-                if n > 0.0 { style.aspect_ratio = Some(n); }
-            }
-        }
-
-        // ── Text decoration sub-properties ───────────────────────────────────
-        PropertyId::TextDecorationLine => {
-            style.text_decoration.underline     = v.contains("underline");
-            style.text_decoration.overline      = v.contains("overline");
-            style.text_decoration.strikethrough = v.contains("line-through");
-        }
-        PropertyId::TextDecorationColor => {
-            style.text_decoration_color = parse_color(v);
-        }
-        PropertyId::TextDecorationStyle => {
-            style.text_decoration_style = match v {
-                "double" => TextDecorationStyle::Double,
-                "dotted" => TextDecorationStyle::Dotted,
-                "dashed" => TextDecorationStyle::Dashed,
-                "wavy"   => TextDecorationStyle::Wavy,
-                _        => TextDecorationStyle::Solid,
-            };
-        }
-        PropertyId::TextDecorationThickness => {
-            style.text_decoration_thickness = parse_length(v);
-        }
-        PropertyId::TextUnderlineOffset => {
-            style.text_underline_offset = parse_length(v);
-        }
-
-        // ── User interaction ──────────────────────────────────────────────────
-        PropertyId::UserSelect => {
-            style.user_select = match v {
-                "none"    => UserSelect::None,
-                "text"    => UserSelect::Text,
-                "all"     => UserSelect::All,
-                "contain" => UserSelect::Contain,
-                _         => UserSelect::Auto,
-            };
-        }
-        PropertyId::Resize => {
-            style.resize = match v {
-                "both"       => Resize::Both,
-                "horizontal" => Resize::Horizontal,
-                "vertical"   => Resize::Vertical,
-                _            => Resize::None,
-            };
-        }
-
-        // ── Background extras ─────────────────────────────────────────────────
-        PropertyId::BackgroundClip => {
-            style.background_clip = match v {
-                "padding-box" => BackgroundClip::PaddingBox,
-                "content-box" => BackgroundClip::ContentBox,
-                "text"        => BackgroundClip::Text,
-                _             => BackgroundClip::BorderBox,
-            };
-        }
-        PropertyId::BackgroundOrigin => {
-            style.background_origin = match v {
-                "border-box"  => BackgroundClip::BorderBox,
-                "content-box" => BackgroundClip::ContentBox,
-                _             => BackgroundClip::PaddingBox,
-            };
-        }
-        PropertyId::BackgroundAttachment => {
-            style.background_attachment = match v {
-                "fixed" => BackgroundAttachment::Fixed,
-                "local" => BackgroundAttachment::Local,
-                _       => BackgroundAttachment::Scroll,
-            };
-        }
-
-        // ── Multi-column ─────────────────────────────────────────────────────
-        PropertyId::ColumnCount => {
-            style.column_count = if v == "auto" { None } else { v.parse().ok() };
-        }
-        PropertyId::ColumnWidth => {
-            style.column_width = parse_length(v);
-        }
-        PropertyId::Columns => {
-            // "auto auto" | "2" | "200px" | "2 200px"
-            for tok in v.split_whitespace() {
-                if let Ok(n) = tok.parse::<i32>() {
-                    style.column_count = Some(n);
-                } else {
-                    style.column_width = parse_length(tok);
-                }
-            }
-        }
-        PropertyId::ColumnRule => {
-            apply_border_side_shorthand(v,
-                &mut style.column_rule_width,
-                &mut style.column_rule_style,
-                &mut style.column_rule_color);
-        }
-        PropertyId::ColumnRuleWidth => { style.column_rule_width = parse_length(v); }
-        PropertyId::ColumnRuleStyle => { style.column_rule_style = parse_border_style(v); }
-        PropertyId::ColumnRuleColor => { if let Some(c) = parse_color(v) { style.column_rule_color = c; } }
-        PropertyId::ColumnFill => { style.column_fill = v == "balance"; }
-        PropertyId::ColumnSpan => { style.column_span_all = v == "all"; }
-
-        // ── Transform / filter ────────────────────────────────────────────────
-        PropertyId::Transform => {
-            style.transform = v.to_string();
-            style.css_transform = parse_css_transform(v);
-        }
-        PropertyId::TransformOrigin => {
-            let (ox, oy) = parse_transform_origin(v);
-            style.transform_origin_x = ox;
-            style.transform_origin_y = oy;
-        }
-        PropertyId::TransformStyle | PropertyId::PerspectiveOrigin | PropertyId::Perspective | PropertyId::BackfaceVisibility => {
-            // Accepted but not implemented
-        }
-        PropertyId::Filter          => {
-            style.filter = v.to_string();
-            style.css_filter = parse_css_filter(v);
-        }
-        PropertyId::BackdropFilter => { style.backdrop_filter = v.to_string(); }
-
-        // ── Transition / animation ────────────────────────────────────────────
-        PropertyId::Transition => {
-            style.transitions = parse_transition_shorthand(v);
-        }
-        PropertyId::TransitionProperty | PropertyId::TransitionDuration | PropertyId::TransitionTimingFunction | PropertyId::TransitionDelay => {
-            // Sub-properties: rebuild the transitions list by patching index 0.
-            if style.transitions.is_empty() {
-                style.transitions.push(ParsedTransition {
-                    property: String::new(), duration_ms: 0.0,
-                    delay_ms: 0.0, timing_fn: EasingFn::Ease,
-                });
-            }
-            for tr in &mut style.transitions {
-                match id {
-                    PropertyId::TransitionProperty        => tr.property    = v.to_string(),
-                    PropertyId::TransitionDuration         => tr.duration_ms = parse_time_ms(v).unwrap_or(0.0),
-                    PropertyId::TransitionTimingFunction   => tr.timing_fn   = parse_easing(v),
-                    PropertyId::TransitionDelay            => tr.delay_ms    = parse_time_ms(v).unwrap_or(0.0),
-                    _ => {}
-                }
-            }
-        }
-        PropertyId::Animation => {
-            style.animations = parse_animation_shorthand(v);
-        }
-        PropertyId::AnimationName | PropertyId::AnimationDuration | PropertyId::AnimationTimingFunction
-        | PropertyId::AnimationDelay | PropertyId::AnimationIterationCount | PropertyId::AnimationDirection
-        | PropertyId::AnimationFillMode | PropertyId::AnimationPlayState => {
-            if style.animations.is_empty() {
-                style.animations.push(ParsedAnimation {
-                    name: String::new(), duration_ms: 0.0, delay_ms: 0.0,
-                    timing_fn: EasingFn::Ease, iteration_count: 1.0,
-                    direction: AnimDirection::Normal, fill_mode: FillMode::None,
-                    play_state_paused: false,
-                });
-            }
-            for anim in &mut style.animations {
-                match id {
-                    PropertyId::AnimationName            => anim.name              = v.to_string(),
-                    PropertyId::AnimationDuration        => anim.duration_ms       = parse_time_ms(v).unwrap_or(0.0),
-                    PropertyId::AnimationTimingFunction  => anim.timing_fn         = parse_easing(v),
-                    PropertyId::AnimationDelay           => anim.delay_ms          = parse_time_ms(v).unwrap_or(0.0),
-                    PropertyId::AnimationIterationCount  => anim.iteration_count   = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) },
-                    PropertyId::AnimationDirection       => anim.direction         = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal },
-                    PropertyId::AnimationFillMode        => anim.fill_mode         = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None },
-                    PropertyId::AnimationPlayState       => anim.play_state_paused = v == "paused",
-                    _ => {}
-                }
-            }
-        }
-        PropertyId::WillChange => {
-            style.will_change = v.to_string();
-            style.will_change_transform = v.contains("transform");
-        }
-
-        // ── Misc ──────────────────────────────────────────────────────────────
-        PropertyId::ScrollBehavior => {
-            style.scroll_behavior = if v == "smooth" { ScrollBehavior::Smooth } else { ScrollBehavior::Auto };
-        }
-        PropertyId::OverscrollBehavior => {
-            let val = parse_overscroll(v.split_whitespace().next().unwrap_or("auto"));
-            style.overscroll_behavior_x = val;
-            style.overscroll_behavior_y = val;
-        }
-        PropertyId::OverscrollBehaviorX => {
-            style.overscroll_behavior_x = parse_overscroll(v);
-        }
-        PropertyId::OverscrollBehaviorY => {
-            style.overscroll_behavior_y = parse_overscroll(v);
-        }
-        PropertyId::Isolation => {
-            style.isolation = v == "isolate";
-        }
-        PropertyId::MixBlendMode => {
-            style.mix_blend_mode = match v {
-                "multiply"    => MixBlendMode::Multiply,
-                "screen"      => MixBlendMode::Screen,
-                "overlay"     => MixBlendMode::Overlay,
-                "darken"      => MixBlendMode::Darken,
-                "lighten"     => MixBlendMode::Lighten,
-                "color-dodge" => MixBlendMode::ColorDodge,
-                "color-burn"  => MixBlendMode::ColorBurn,
-                "hard-light"  => MixBlendMode::HardLight,
-                "soft-light"  => MixBlendMode::SoftLight,
-                "difference"  => MixBlendMode::Difference,
-                "exclusion"   => MixBlendMode::Exclusion,
-                "hue"         => MixBlendMode::Hue,
-                "saturation"  => MixBlendMode::Saturation,
-                "color"       => MixBlendMode::Color,
-                "luminosity"  => MixBlendMode::Luminosity,
-                _             => MixBlendMode::Normal,
-            };
-        }
-
-        // ── Counter ───────────────────────────────────────────────────────────
-        PropertyId::CounterReset => {
-            style.counter_reset = parse_counter_list(v);
-        }
-        PropertyId::CounterIncrement => {
-            style.counter_increment = parse_counter_list(v);
-        }
-        PropertyId::CounterSet => {
-            // Same syntax as counter-reset
-            style.counter_reset = parse_counter_list(v);
-        }
-
-        // ── Font extras ───────────────────────────────────────────────────────
-        PropertyId::FontStretch => {
-            style.font_stretch = match v {
-                "ultra-condensed"  => 50.0,
-                "extra-condensed"  => 62.5,
-                "condensed"        => 75.0,
-                "semi-condensed"   => 87.5,
-                "normal"           => 100.0,
-                "semi-expanded"    => 112.5,
-                "expanded"         => 125.0,
-                "extra-expanded"   => 150.0,
-                "ultra-expanded"   => 200.0,
-                s if s.ends_with('%') => s[..s.len()-1].parse().unwrap_or(100.0),
-                _                  => 100.0,
-            };
-        }
-
-        // ── Inset shorthand ───────────────────────────────────────────────────
-        PropertyId::Inset => {
-            apply_shorthand_4(v,
-                &mut style.top, &mut style.right,
-                &mut style.bottom, &mut style.left,
-                parse_length);
-        }
-        PropertyId::InsetBlock  => { let l = parse_length(v); style.top    = l.clone(); style.bottom = l; }
-        PropertyId::InsetInline => { let l = parse_length(v); style.left   = l.clone(); style.right  = l; }
-
-        // ── border-radius shorthand (per-corner) ─────────────────────────────
-        PropertyId::BorderRadius => {
-            // Support "Xpx / Ypx" (elliptical corners) and up to 4 values
-            let radii = if let Some(slash) = v.find('/') {
-                v[..slash].trim()
-            } else {
-                v
-            };
-            let parts: Vec<&str> = radii.split_whitespace().collect();
-            let tl = parse_length(parts.first().copied().unwrap_or("0"));
-            let tr = parse_length(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
-            let br = parse_length(parts.get(2).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
-            let bl = parse_length(parts.get(3).copied().unwrap_or(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0"))));
-            style.border_radius              = tl.clone();
-            style.border_top_left_radius     = tl;
-            style.border_top_right_radius    = tr;
-            style.border_bottom_right_radius = br;
-            style.border_bottom_left_radius  = bl;
-        }
-
-        // ── Appearance ────────────────────────────────────────────────────────
-        PropertyId::Appearance => {
-            // Accepted, not implemented
-        }
-
-        // ── Color-scheme / accent-color ───────────────────────────────────────
-        PropertyId::ColorScheme | PropertyId::ForcedColorAdjust | PropertyId::ColorInterpolation => {}
-        PropertyId::AccentColor => {
-            // Store as background fallback for form controls
-            if let Some(c) = parse_color(v) { style.background_color = c; }
-        }
-
-        // ── Image rendering ───────────────────────────────────────────────────
-        PropertyId::ImageRendering | PropertyId::ImageOrientation => {}
-
-        // ── Containment ───────────────────────────────────────────────────────
-        PropertyId::Contain => {
-            let is_strict  = v == "strict";
-            let is_content = v == "content";
-            style.contain_layout = v.contains("layout") || is_strict || is_content;
-            style.contain_paint  = v.contains("paint")  || is_strict || is_content;
-            style.contain_size   = v.contains("size")   || is_strict;
-        }
-        PropertyId::ContentVisibility => {}
-
-        // ── Scroll snap ───────────────────────────────────────────────────────
-        PropertyId::ScrollSnapType => {
-            // CSS: `scroll-snap-type: <axis> [mandatory|proximity]`
-            let mut words = v.split_whitespace();
-            let axis = match words.next().unwrap_or("none") {
-                "x"      => ScrollSnapAxis::X,
-                "y"      => ScrollSnapAxis::Y,
-                "both"   => ScrollSnapAxis::Both,
-                "block"  => ScrollSnapAxis::Block,
-                "inline" => ScrollSnapAxis::Inline,
-                _        => ScrollSnapAxis::None,
-            };
-            let mandatory = match words.next().unwrap_or("proximity") {
-                "mandatory" => true,
-                _           => false,
-            };
-            style.scroll_snap_type = ScrollSnapType { axis, mandatory };
-        }
-        PropertyId::ScrollSnapAlign => {
-            style.scroll_snap_align = match v.split_whitespace().next().unwrap_or("none") {
-                "start"  => ScrollSnapAlign::Start,
-                "end"    => ScrollSnapAlign::End,
-                "center" => ScrollSnapAlign::Center,
-                _        => ScrollSnapAlign::None,
-            };
-        }
-        PropertyId::ScrollSnapStop | PropertyId::ScrollMargin | PropertyId::ScrollMarginTop
-        | PropertyId::ScrollMarginRight | PropertyId::ScrollMarginBottom | PropertyId::ScrollMarginLeft => {}
-        PropertyId::ScrollPadding => {
-            apply_shorthand_4(v,
-                &mut style.scroll_padding_top, &mut style.scroll_padding_right,
-                &mut style.scroll_padding_bottom, &mut style.scroll_padding_left,
-                parse_length);
-        }
-        PropertyId::ScrollPaddingTop    => { style.scroll_padding_top    = parse_length(v); }
-        PropertyId::ScrollPaddingRight  => { style.scroll_padding_right  = parse_length(v); }
-        PropertyId::ScrollPaddingBottom => { style.scroll_padding_bottom = parse_length(v); }
-        PropertyId::ScrollPaddingLeft   => { style.scroll_padding_left   = parse_length(v); }
-
-        // ── Touch / interaction ───────────────────────────────────────────────
-        PropertyId::TouchAction => {}
-
-        _ => {}
-    }
+    (property_defs::get(id).apply)(style, v);
 }
 
 /// Parse a CSS `transform` value string into a `CssTransform`.
-fn parse_css_transform(v: &str) -> crate::types::CssTransform {
+pub fn parse_css_transform(v: &str) -> crate::types::CssTransform {
     use crate::types::{CssTransform, TransformOp};
     let mut ops = Vec::new();
     let v = v.trim();
@@ -3610,7 +2123,7 @@ fn parse_css_transform(v: &str) -> crate::types::CssTransform {
 }
 
 /// Parse a CSS `transform-origin` value into (x, y) fractions (0.0..1.0).
-fn parse_transform_origin(v: &str) -> (f32, f32) {
+pub fn parse_transform_origin(v: &str) -> (f32, f32) {
     let parts: Vec<&str> = v.split_whitespace().collect();
     let parse_one = |s: &str| -> f32 {
         match s {
@@ -3628,7 +2141,7 @@ fn parse_transform_origin(v: &str) -> (f32, f32) {
 }
 
 /// Parse a CSS `filter` value string into `CssFilters`.
-fn parse_css_filter(v: &str) -> crate::types::CssFilters {
+pub fn parse_css_filter(v: &str) -> crate::types::CssFilters {
     use crate::types::{CssFilters, FilterOp};
     let mut ops = Vec::new();
     if v.trim() == "none" { return CssFilters::default(); }
@@ -3846,7 +2359,7 @@ fn resolve_counters_in_content(content: &str, counters: &HashMap<String, Vec<i32
 }
 
 /// Parse CSS counter list: "name1 3 name2 name3 -1" → [(name1,3),(name2,1),(name3,-1)]
-fn parse_counter_list(v: &str) -> Vec<(String, i32)> {
+pub fn parse_counter_list(v: &str) -> Vec<(String, i32)> {
     if v == "none" { return Vec::new(); }
     let mut result = Vec::new();
     let toks: Vec<&str> = v.split_whitespace().collect();
@@ -3862,7 +2375,7 @@ fn parse_counter_list(v: &str) -> Vec<(String, i32)> {
     result
 }
 
-fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
+pub fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
     v: &str,
     top: &mut CssLength, right: &mut CssLength,
     bottom: &mut CssLength, left: &mut CssLength,
@@ -3878,7 +2391,7 @@ fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
     }
 }
 
-fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
+pub fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
     // border: <width> <style> <color>
     for part in v.split_whitespace() {
         if let Some(bs) = try_parse_border_style(part) {
@@ -3903,7 +2416,7 @@ fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
     }
 }
 
-fn apply_border_side_shorthand(
+pub fn apply_border_side_shorthand(
     v:     &str,
     width: &mut CssLength,
     style: &mut BorderStyle,
@@ -3923,7 +2436,7 @@ fn apply_border_side_shorthand(
     }
 }
 
-fn extract_url(v: &str) -> Option<String> {
+pub fn extract_url(v: &str) -> Option<String> {
     let lower = v.to_lowercase();
     let start = lower.find("url(")?;
     let inner = v[start + 4..].trim();
@@ -3984,7 +2497,7 @@ pub fn resolve_css_urls(css: &str, css_base_url: &str) -> String {
 
 /// Parse a CSS shadow value: `offset_x offset_y [blur] [color]`
 /// Returns (offset_x, offset_y, blur_radius, color).
-fn parse_shadow_value(v: &str) -> (f32, f32, f32, Color) {
+pub fn parse_shadow_value(v: &str) -> (f32, f32, f32, Color) {
     let mut nums: Vec<f32> = Vec::new();
     let mut color = Color { r: 0, g: 0, b: 0, a: 255 };
     // Use paren-aware splitting so rgba(r, g, b, a) stays as one token
@@ -4029,7 +2542,7 @@ fn split_paren_aware(s: &str) -> Vec<String> {
 }
 
 /// Find the byte index of a space that is not nested inside parentheses.
-fn find_split_space(v: &str) -> Option<usize> {
+pub fn find_split_space(v: &str) -> Option<usize> {
     let mut depth = 0usize;
     for (i, c) in v.char_indices() {
         match c {
@@ -4042,7 +2555,7 @@ fn find_split_space(v: &str) -> Option<usize> {
     None
 }
 
-fn apply_gradient(style: &mut ComputedStyle, v: &str) {
+pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
     let lower = v.to_lowercase();
     if lower.contains("linear-gradient") {
         style.gradient_type = GradientType::Linear;
@@ -4121,7 +2634,7 @@ fn is_font_size_token(tok: &str) -> bool {
     || tok.ends_with('%') || tok.ends_with("pt") || tok.ends_with("vw") || tok.ends_with("vh")
 }
 
-fn apply_font_shorthand(style: &mut ComputedStyle, v: &str) {
+pub fn apply_font_shorthand(style: &mut ComputedStyle, v: &str) {
     // CSS font shorthand: [style] [variant] [weight] [stretch] size[/line-height] family-list
     // System font keywords (single-token):
     if matches!(v, "caption"|"icon"|"menu"|"message-box"|"small-caption"|"status-bar") {
@@ -4470,7 +2983,7 @@ pub fn parse_length_or_none(v: &str) -> CssLength {
     if v == "none" { CssLength::None } else { parse_length(v) }
 }
 
-fn parse_font_size(v: &str) -> CssLength {
+pub fn parse_font_size(v: &str) -> CssLength {
     match v {
         "xx-small" => CssLength::Px(9.0),
         "x-small"  => CssLength::Px(10.0),
@@ -4485,14 +2998,14 @@ fn parse_font_size(v: &str) -> CssLength {
     }
 }
 
-fn parse_line_height(v: &str) -> CssLength {
+pub fn parse_line_height(v: &str) -> CssLength {
     if v == "normal" { return CssLength::Em(1.2); }
     // Unitless number: treat as em
     if let Ok(n) = v.parse::<f32>() { return CssLength::Em(n); }
     parse_length(v)
 }
 
-fn parse_overflow(v: &str) -> Overflow {
+pub fn parse_overflow(v: &str) -> Overflow {
     match v {
         "hidden" => Overflow::Hidden,
         "scroll" => Overflow::Scroll,
@@ -4501,7 +3014,7 @@ fn parse_overflow(v: &str) -> Overflow {
     }
 }
 
-fn parse_overscroll(v: &str) -> OverscrollBehavior {
+pub fn parse_overscroll(v: &str) -> OverscrollBehavior {
     match v.trim() {
         "none"    => OverscrollBehavior::None,
         "contain" => OverscrollBehavior::Contain,
@@ -4509,7 +3022,7 @@ fn parse_overscroll(v: &str) -> OverscrollBehavior {
     }
 }
 
-fn parse_border_style(v: &str) -> BorderStyle {
+pub fn parse_border_style(v: &str) -> BorderStyle {
     try_parse_border_style(v).unwrap_or(BorderStyle::None)
 }
 
@@ -6081,15 +4594,17 @@ fn apply_cascade_inner(
         hover_matched.sort_by_key(|(sp, _)| *sp);
         let mut hs = style.clone();
         for &(_, ri) in &hover_matched {
-            for (prop, val) in &stylesheet.rules[ri].declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut hs, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut hs, id, &resolved);
             }
         }
         for &(_, ri) in &hover_matched {
-            for (prop, val) in &stylesheet.rules[ri].important_declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut hs, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut hs, id, &resolved);
             }
         }
         // Prevent infinite nesting: state styles don't carry their own state overrides.
@@ -6101,15 +4616,17 @@ fn apply_cascade_inner(
         active_matched.sort_by_key(|(sp, _)| *sp);
         let mut as_ = style.clone();
         for &(_, ri) in &active_matched {
-            for (prop, val) in &stylesheet.rules[ri].declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut as_, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut as_, id, &resolved);
             }
         }
         for &(_, ri) in &active_matched {
-            for (prop, val) in &stylesheet.rules[ri].important_declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut as_, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut as_, id, &resolved);
             }
         }
         as_.hover_style = None; as_.active_style = None; as_.visited_style = None;
@@ -6120,15 +4637,17 @@ fn apply_cascade_inner(
         visited_matched.sort_by_key(|(sp, _)| *sp);
         let mut vs = style.clone();
         for &(_, ri) in &visited_matched {
-            for (prop, val) in &stylesheet.rules[ri].declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut vs, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut vs, id, &resolved);
             }
         }
         for &(_, ri) in &visited_matched {
-            for (prop, val) in &stylesheet.rules[ri].important_declarations {
+            for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
                 let resolved = resolve_var_references(val, &local_vars);
-                apply_property(&mut vs, prop, &resolved);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property_by_id(&mut vs, id, &resolved);
             }
         }
         vs.hover_style = None; vs.active_style = None; vs.visited_style = None;
@@ -6175,15 +4694,10 @@ fn apply_cascade_inner(
 
     // Apply !important stylesheet declarations — these override inline styles
     for &(_, ri) in &matched {
-        for (prop, val) in &stylesheet.rules[ri].important_declarations {
-            if prop.starts_with("--") { continue; }
+        for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
             let resolved = resolve_var_references(val, &local_vars);
             if resolved.trim().is_empty() && val.contains("var(") { continue; }
-            if resolved.trim() == "inherit" {
-                if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
-            } else {
-                apply_property(&mut style, prop, &resolved);
-            }
+            apply_property_by_id(&mut style, id, &resolved);
         }
     }
 

@@ -1,3 +1,7 @@
+pub mod display_list;
+pub mod display_list_builder;
+pub mod display_list_replay;
+
 use tiny_skia::{
     FillRule, LineCap, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform,
 };
@@ -633,6 +637,41 @@ impl Renderer {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
+    }
+
+    /// Render via display list: build a display list from the box tree, then
+    /// replay it to the pixmap. This is the new rendering path — currently
+    /// handles backgrounds, borders, and images. Text falls through to TODO.
+    pub fn render_display_list(
+        &mut self,
+        doc: &mut Document,
+        pixmap: &mut Pixmap,
+        scale: f32,
+    ) {
+        let zoom = self.zoom.clamp(0.1, 8.0);
+        let w = pixmap.width() as f32 / scale;
+        let h = pixmap.height() as f32 / scale;
+
+        // Canvas background
+        let canvas_color = doc.root.children.iter()
+            .find(|c| c.tag == "body")
+            .map(|body| body.style.background_color)
+            .filter(|c| c.a > 0)
+            .or_else(|| {
+                let c = doc.root.style.background_color;
+                if c.a > 0 { Some(c) } else { None }
+            })
+            .map(|c| c.to_tiny_skia())
+            .unwrap_or(tiny_skia::Color::WHITE);
+        pixmap.fill(canvas_color);
+
+        // Build display list
+        let list = display_list_builder::build_display_list(
+            &doc.root, w / zoom, h / zoom,
+        );
+
+        // Replay to pixmap
+        display_list_replay::replay(&list, pixmap, scale * zoom);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

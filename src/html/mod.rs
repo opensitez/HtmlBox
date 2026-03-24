@@ -1992,6 +1992,7 @@ fn parse_html_full(
         arena: parser.arena,
         next_node_id: parser.next_node_id,
         node_map: std::collections::HashMap::new(),
+        layout_store: crate::layout::layout_box::LayoutStore::new(),
         pending_nodes: std::collections::HashMap::new(),
         linked_stylesheets,
         editor: crate::dom::Editor::new(),

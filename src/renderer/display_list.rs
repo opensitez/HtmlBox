@@ -1,0 +1,183 @@
+//! Display list — recorded paint commands for cached rendering.
+//!
+//! Instead of painting directly to a pixmap, the renderer builds a display list
+//! of paint commands. The list can be cached per stacking context and only
+//! rebuilt when dirty. Replaying a cached list is much faster than re-traversing
+//! the box tree and re-computing geometry.
+//!
+//! This is an intermediate representation between the layout tree and the final
+//! rasterized output. It enables:
+//! - Cached stacking contexts (only repaint what changed)
+//! - Hit testing by walking the list in reverse
+//! - Debug/inspector visualization
+//! - Future: GPU acceleration, layer compositing
+
+use crate::types::{Rect, Color};
+
+/// A single paint command in the display list.
+#[derive(Clone, Debug)]
+pub enum PaintCmd {
+    /// Fill a rectangle with a solid color.
+    FillRect { rect: Rect, color: Color, radius: [f32; 4] },
+
+    /// Draw a border on a rectangle.
+    Border {
+        rect: Rect,
+        widths: [f32; 4],  // top, right, bottom, left
+        colors: [Color; 4],
+        styles: [u8; 4],   // 0=none, 1=solid, 2=dashed, 3=dotted, 4=double, etc.
+        radii: [f32; 4],   // top-left, top-right, bottom-right, bottom-left
+    },
+
+    /// Draw a text run at a position.
+    Text {
+        x: f32,
+        y: f32,
+        text: String,
+        font_family: String,
+        font_size: f32,
+        font_weight: u16,
+        font_style: u8,   // 0=normal, 1=italic, 2=oblique
+        color: Color,
+        decoration: TextDecoration,
+    },
+
+    /// Draw an image (RGBA data) at a position.
+    Image {
+        rect: Rect,
+        data: ImageRef,
+    },
+
+    /// Push a clip rectangle — all subsequent commands are clipped to this rect.
+    PushClip { rect: Rect, radius: [f32; 4] },
+
+    /// Pop the current clip.
+    PopClip,
+
+    /// Push a CSS transform.
+    PushTransform { transform: [f32; 6] }, // 2D affine: [a, b, c, d, e, f]
+
+    /// Pop the current transform.
+    PopTransform,
+
+    /// Push opacity — all subsequent commands are rendered with this alpha.
+    PushOpacity { alpha: f32 },
+
+    /// Pop opacity.
+    PopOpacity,
+
+    /// Draw a box shadow.
+    BoxShadow {
+        rect: Rect,
+        color: Color,
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        spread: f32,
+        inset: bool,
+        radii: [f32; 4],
+    },
+
+    /// Marker: start of a stacking context.
+    BeginStackingContext { node_id: u32, z_index: i32 },
+
+    /// Marker: end of a stacking context.
+    EndStackingContext,
+}
+
+/// Text decoration info for a text run.
+#[derive(Clone, Debug, Default)]
+pub struct TextDecoration {
+    pub underline: bool,
+    pub overline: bool,
+    pub strikethrough: bool,
+    pub color: Color,
+    pub style: u8,     // 0=solid, 1=double, 2=dotted, 3=dashed, 4=wavy
+    pub thickness: f32,
+}
+
+/// Reference to image data — avoids cloning large pixel buffers.
+#[derive(Clone, Debug)]
+pub enum ImageRef {
+    /// Inline RGBA data (for small images or when we need ownership).
+    Owned(Vec<u8>, u32, u32),  // (rgba_data, width, height)
+    /// Shared reference via Arc (for large images).
+    Shared(std::sync::Arc<Vec<u8>>, u32, u32),
+}
+
+/// A display list — ordered sequence of paint commands.
+#[derive(Clone, Debug, Default)]
+pub struct DisplayList {
+    pub commands: Vec<PaintCmd>,
+}
+
+impl DisplayList {
+    pub fn new() -> Self {
+        Self { commands: Vec::new() }
+    }
+
+    pub fn push(&mut self, cmd: PaintCmd) {
+        self.commands.push(cmd);
+    }
+
+    pub fn clear(&mut self) {
+        self.commands.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Hit test: find the deepest node_id at a point by walking the display
+    /// list in reverse (last painted = topmost visual).
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<u32> {
+        let mut clip_stack: Vec<Rect> = Vec::new();
+        let mut stacking_ids: Vec<u32> = Vec::new();
+
+        // Walk forward to build clip context, then check each rect
+        for cmd in self.commands.iter().rev() {
+            match cmd {
+                PaintCmd::EndStackingContext => {
+                    // Entering a stacking context (reverse order)
+                }
+                PaintCmd::BeginStackingContext { node_id, .. } => {
+                    stacking_ids.push(*node_id);
+                }
+                PaintCmd::FillRect { rect, .. } => {
+                    if rect.contains(x, y) {
+                        // Return the most recent stacking context node_id
+                        if let Some(&id) = stacking_ids.last() {
+                            if id != 0 { return Some(id); }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+/// A cached stacking context — contains a display list and dirty flag.
+#[derive(Clone, Debug)]
+pub struct StackingContextCache {
+    pub node_id: u32,
+    pub z_index: i32,
+    pub list: DisplayList,
+    pub dirty: bool,
+}
+
+impl StackingContextCache {
+    pub fn new(node_id: u32, z_index: i32) -> Self {
+        Self {
+            node_id,
+            z_index,
+            list: DisplayList::new(),
+            dirty: true,
+        }
+    }
+}
