@@ -101,6 +101,8 @@ pub fn layout_flex(
         /// Saved CSS width/height before flex mutation (restored after positioning)
         saved_width:  CssLength,
         saved_height: CssLength,
+        /// True when min-height:auto in column flex — content height is the minimum
+        auto_min_cross: bool,
     }
 
     let mut items: Vec<FlexItem> = Vec::new();
@@ -126,7 +128,13 @@ pub fn layout_flex(
         };
 
         // Resolve flex-basis → basis_main (content-box size)
-        let basis_main: f32 = if !child.style.flex_basis.is_auto() {
+        // CSS §9.2.3: A percentage flex-basis resolves against the flex container's
+        // inner main size. If that size is indefinite (auto), the percentage is
+        // treated as 'auto' (content-based sizing).
+        let basis_is_percent_auto = !is_row
+            && matches!(child.style.flex_basis, CssLength::Percent(_))
+            && rbox.content_height.is_none();
+        let basis_main: f32 = if !child.style.flex_basis.is_auto() && !basis_is_percent_auto {
             let raw = child.style.flex_basis.resolve_vp(child_font, if is_row { content_w } else { rbox.content_height.unwrap_or(0.0) }, root_font_px, engine.viewport_w, engine.viewport_h);
             if child.style.box_sizing == BoxSizing::BorderBox {
                 if is_row {
@@ -196,7 +204,14 @@ pub fn layout_flex(
             if !child.style.min_height.is_auto() {
                 let v = child.style.min_height.resolve_vp(child_font, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
                 (v - bb_main).max(0.0)
-            } else { 0.0 }
+            } else if child.style.overflow_y != Overflow::Visible {
+                // overflow: hidden/scroll/auto → automatic minimum is 0
+                0.0
+            } else {
+                // CSS Flexbox §4.5: min-height:auto on flex items in a column
+                // flex = content-based minimum size. Resolved after layout_box.
+                0.0 // flag set via auto_min_cross
+            }
         };
         let max_main: f32 = if is_row {
             if !child.style.max_width.is_none() && !child.style.max_width.is_auto() {
@@ -211,6 +226,11 @@ pub fn layout_flex(
         };
         let hyp = basis_main.max(min_main).min(max_main);
 
+        // Flag: column flex item with min-height:auto needs content-based minimum
+        let auto_min = !is_row
+            && child.style.min_height.is_auto()
+            && child.style.overflow_y == Overflow::Visible;
+
         items.push(FlexItem {
             path: path.clone(),
             order: child.style.order,
@@ -224,6 +244,7 @@ pub fn layout_flex(
             cross_pos:  0.0,
             saved_width:  child.style.width.clone(),
             saved_height: child.style.height.clone(),
+            auto_min_cross: auto_min,
         });
     }
 
@@ -371,6 +392,15 @@ pub fn layout_flex(
         };
 
         engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+
+        // CSS Flexbox §4.5: resolve deferred min-height:auto for column flex items.
+        // If the item's content height exceeds its allocated main_used, expand it.
+        if item.auto_min_cross {
+            let content_h = child.margin_rect.h - item.outer_extra;
+            if content_h > item.main_used {
+                item.main_used = content_h;
+            }
+        }
 
         item.cross_size = if is_row { child.margin_rect.h } else { child.margin_rect.w };
     }

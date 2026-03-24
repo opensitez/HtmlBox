@@ -93,7 +93,7 @@ pub fn load_html_with_registry(
     use std::sync::{mpsc, atomic::{AtomicUsize, Ordering}, Arc};
 
     // Channel for CSS results — fetches start during parsing via the hook.
-    let (css_tx, css_rx) = mpsc::channel::<(usize, String, String)>();
+    let (css_tx, css_rx) = mpsc::channel::<(usize, String, String, String)>(); // idx, url, css, media
     let css_tx2  = css_tx.clone();
     let css_idx  = Arc::new(AtomicUsize::new(0));
     let css_idx2 = css_idx.clone();
@@ -106,6 +106,7 @@ pub fn load_html_with_registry(
         {
             if let Some(href) = attrs.get("href") {
                 let abs    = resolve_css_url(&base_owned, href);
+                let media  = attrs.get("media").cloned().unwrap_or_default();
                 eprintln!("  CSS fetch: {abs}");
                 let sender = css_tx2.clone();
                 let idx    = css_idx2.fetch_add(1, Ordering::SeqCst);
@@ -113,7 +114,7 @@ pub fn load_html_with_registry(
                     let t = std::time::Instant::now();
                     let text = fetch_text(&abs).unwrap_or_default();
                     eprintln!("  CSS done:  {} ({:.0}ms, {} bytes)", abs, t.elapsed().as_millis(), text.len());
-                    let _ = sender.send((idx, abs, text));
+                    let _ = sender.send((idx, abs, text, media));
                 });
             }
         }
@@ -124,7 +125,7 @@ pub fn load_html_with_registry(
     // Collect fetched stylesheets — wait up to 2s (CSS already started during parsing).
     let t1 = std::time::Instant::now();
     let expected_count = css_idx.load(std::sync::atomic::Ordering::SeqCst);
-    let mut css_results: Vec<(usize, String, String)> = Vec::new();
+    let mut css_results: Vec<(usize, String, String, String)> = Vec::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while css_results.len() < expected_count {
         match css_rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
@@ -133,10 +134,10 @@ pub fn load_html_with_registry(
         }
     }
     eprintln!("CSS wait: {:.0}ms ({}/{} sheets)", t1.elapsed().as_millis(), css_results.len(), expected_count);
-    css_results.sort_by_key(|(idx, _, _)| *idx);
-    for (_, css_url, sheet) in &css_results {
+    css_results.sort_by_key(|(idx, _, _, _)| *idx);
+    for (_, css_url, sheet, media) in &css_results {
         if !sheet.is_empty() {
-            doc.stylesheet.parse_and_add_with_base(sheet, css_url);
+            doc.stylesheet.parse_and_add_with_base_media(sheet, css_url, media);
         }
     }
 

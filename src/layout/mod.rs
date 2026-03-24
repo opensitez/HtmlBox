@@ -420,14 +420,6 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     }
 }
 
-/// Reset `hover_applied` flags on all nodes after a full cascade rebuild.
-fn reset_hover_applied(node: &mut crate::types::HtmlBox) {
-    node.hover_applied = false;
-    for child in &mut node.children {
-        reset_hover_applied(child);
-    }
-}
-
 // ─── Layout Engine ────────────────────────────────────────────────────────────
 
 pub struct LayoutEngine {
@@ -821,6 +813,12 @@ impl LayoutEngine {
                 &hover_chain,
             );
             self.last_cascade_vw = viewport_width;
+            // Suppress the next hover change to prevent feedback loops:
+            // hover-triggered layout changes can cause the hit-test to find a
+            // different element at the same mouse position, oscillating the dropdown.
+            if hover_changed && !needs_cascade {
+                doc.hover_suppress_count = 1;
+            }
             true
         } else {
             false

@@ -290,6 +290,33 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
     // block children (e.g. buttons) receive hits even when the parent has
     // inline text nodes. See fallback handling below.
 
+    // Pass 0: positioned children with z-index > 0 (highest z-index first).
+    // These paint on top of everything else and should receive hits first.
+    // This handles CSS dropdowns (z-index:99999) that overlap sibling content.
+    {
+        let mut zi_children: Vec<(i32, usize)> = Vec::new();
+        for (i, child) in node.children.iter().enumerate() {
+            if child.style.is_positioned() && child.style.z_index > 0 {
+                zi_children.push((child.style.z_index, i));
+            }
+        }
+        if !zi_children.is_empty() {
+            // Highest z-index first
+            zi_children.sort_by(|a, b| b.0.cmp(&a.0));
+            for &(_, idx) in &zi_children {
+                let child = &node.children[idx];
+                if child.tag == "::before" || child.tag == "::after" { continue; }
+                if child.border_rect.h <= 0.0
+                    && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
+                let b = &child.border_rect;
+                if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
+                    if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
+                    return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
+                }
+            }
+        }
+    }
+
     // Pass 1: deepest child whose borderRect (absolute) contains the point
     for child in node.children.iter().rev() {
         // display:contents elements are transparent — recurse into their children directly

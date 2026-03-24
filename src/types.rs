@@ -1925,7 +1925,11 @@ pub struct Document {
     pub base_url:        String,
     /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
     /// Populated by the parser so the host can fetch and merge external CSS.
-    pub linked_stylesheets: Vec<String>,
+    /// External stylesheets from `<link rel="stylesheet">` tags: (href, media).
+    /// The `media` string (e.g. "print", "screen", "") is preserved so that
+    /// print-only sheets can be skipped for screen rendering but kept for future
+    /// print support.
+    pub linked_stylesheets: Vec<(String, String)>,
     pub editor:          Editor,
     pub events:          EventListeners,
     /// Viewport scroll position in logical pixels (managed by Renderer::render).
@@ -1935,6 +1939,10 @@ pub struct Document {
     pub scrollbar_drag:  Option<ScrollbarDrag>,
     /// Currently hovered element (raw pointer, null if none).
     pub hovered_box:     *const HtmlBox,
+    /// Suppresses the next hover change after a hover-triggered relayout.
+    /// Prevents feedback loops: hover opens dropdown → layout changes →
+    /// re-hit-test finds different element → dropdown closes → repeat.
+    pub hover_suppress_count: u8,
     /// Currently active (pressed) element (raw pointer, null if none).
     pub active_box:      *const HtmlBox,
     /// Currently focused element (raw pointer, null if none).
@@ -2017,6 +2025,7 @@ impl Document {
             scroll_y:        0.0,
             scrollbar_drag:  None,
             hovered_box:       std::ptr::null(),
+            hover_suppress_count: 0,
             active_box:        std::ptr::null(),
             focused_box:       std::ptr::null(),
             mousedown_target:  std::ptr::null(),
@@ -2113,7 +2122,14 @@ impl Document {
         let mut redraw = false;
         match etype {
             HtmlEventType::MouseMove => {
-                if self.hovered_box != hit_ptr {
+                // After a hover-triggered relayout (e.g. dropdown opens), the
+                // layout changes and re-hit-testing at the same mouse position may
+                // find a different element, causing a feedback loop
+                // (open → re-hit → close → re-hit → open …).
+                // Suppress one hover change after each hover-triggered relayout.
+                if self.hover_suppress_count > 0 {
+                    self.hover_suppress_count -= 1;
+                } else if self.hovered_box != hit_ptr {
                     self.hovered_box = hit_ptr;
                     self.hover_changed = true;
                     redraw = true;
@@ -3852,6 +3868,7 @@ impl Clone for Document {
             scroll_y:        self.scroll_y,
             scrollbar_drag:  self.scrollbar_drag.clone(),
             hovered_box:     self.hovered_box,
+            hover_suppress_count: self.hover_suppress_count,
             active_box:      self.active_box,
             focused_box:     self.focused_box,
             mousedown_target: self.mousedown_target,

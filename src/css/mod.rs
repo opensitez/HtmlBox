@@ -701,6 +701,24 @@ impl Stylesheet {
         self.parse_and_add(&resolved);
     }
 
+    /// Parse a CSS string from an external `<link>` with a `media` attribute.
+    /// When `link_media` is non-empty (e.g. "print"), all parsed rules inherit
+    /// that media condition so they're only applied in the matching context.
+    pub fn parse_and_add_with_base_media(&mut self, css: &str, css_base_url: &str, link_media: &str) {
+        if link_media.is_empty() || link_media.eq_ignore_ascii_case("all") || link_media.eq_ignore_ascii_case("screen") {
+            self.parse_and_add_with_base(css, css_base_url);
+        } else {
+            let before = self.rules.len();
+            self.parse_and_add_with_base(css, css_base_url);
+            // Tag all newly added rules with the link's media condition
+            for rule in &mut self.rules[before..] {
+                if rule.media_condition.is_empty() {
+                    rule.media_condition = link_media.to_string();
+                }
+            }
+        }
+    }
+
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
     pub fn parse_and_add(&mut self, css: &str) {
         // Strip comments once, share the cleaned string across all extractors.

@@ -926,7 +926,7 @@ struct HtmlParser {
     stylesheet:         Stylesheet,
     title:              String,
     base_url:           String,
-    linked_stylesheets: Vec<String>,
+    linked_stylesheets: Vec<(String, String)>,  // (href, media)
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
     on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
@@ -1687,11 +1687,17 @@ fn parse_head_content(parser: &mut HtmlParser) {
                         parser.title = text.trim().to_string();
                     }
                     "link" => {
-                        parser.fire_hook(&tag, &attrs);
                         let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+                        let media = attrs.get("media").map(|s| s.as_str()).unwrap_or("");
+                        let is_print_only = media.eq_ignore_ascii_case("print");
+                        // Don't fire hook for print-only stylesheets — they
+                        // shouldn't be fetched/applied in screen rendering.
+                        if !(rel == "stylesheet" && is_print_only) {
+                            parser.fire_hook(&tag, &attrs);
+                        }
                         let href = attrs.get("href").cloned().unwrap_or_default();
                         if rel == "stylesheet" && !href.is_empty() {
-                            parser.linked_stylesheets.push(href);
+                            parser.linked_stylesheets.push((href, media.to_string()));
                         }
                     }
                     _ => {
@@ -1964,6 +1970,7 @@ fn parse_html_full(
         scroll_y: 0.0,
         scrollbar_drag: None,
         hovered_box:       std::ptr::null(),
+        hover_suppress_count: 0,
         active_box:        std::ptr::null(),
         focused_box:       std::ptr::null(),
         mousedown_target:  std::ptr::null(),
@@ -1999,7 +2006,9 @@ fn parse_html_full(
     //
     // Fetch local-only linked stylesheets (file:// paths).
     // Remote stylesheets are handled by lib.rs in parallel.
-    for href in &doc.linked_stylesheets.clone() {
+    for (href, media) in &doc.linked_stylesheets.clone() {
+        // Skip print-only stylesheets for screen rendering
+        if media.eq_ignore_ascii_case("print") { continue; }
         let url = resolve_url(href, base_url);
         if !url.starts_with("http://") && !url.starts_with("https://") && !url.is_empty() {
             if let Ok(css_text) = std::fs::read_to_string(&url) {
