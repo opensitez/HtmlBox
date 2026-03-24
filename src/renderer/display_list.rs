@@ -37,9 +37,13 @@ pub enum PaintCmd {
         font_family: String,
         font_size: f32,
         font_weight: u16,
-        font_style: u8,   // 0=normal, 1=italic, 2=oblique
+        font_style: u8,     // 0=normal, 1=italic, 2=oblique
+        font_stretch: f32,  // percentage (100.0 = normal)
+        line_height: f32,
         color: Color,
         decoration: TextDecoration,
+        letter_spacing: f32,
+        small_caps: bool,
     },
 
     /// Draw an image (RGBA data) at a position.
@@ -65,6 +69,12 @@ pub enum PaintCmd {
 
     /// Pop opacity.
     PopOpacity,
+
+    /// Push a blend mode layer — subsequent content is composited with this mode.
+    PushBlendMode { mode: u8 }, // 0=normal, 1=multiply, 2=screen, 3=overlay, etc.
+
+    /// Pop blend mode.
+    PopBlendMode,
 
     /// Draw a box shadow.
     BoxShadow {

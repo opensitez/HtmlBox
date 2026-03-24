@@ -455,7 +455,7 @@ impl Renderer {
     /// that box's flat text.  Mirrors C++ `Render(... caretPos, caretVisible, hasFocus)`.
     /// Render one frame.
     /// Hover/active state is updated automatically by `handle_window_event`
-    /// on `CursorMoved` and `MouseInput` events — no extra work needed here.
+    /// Render the document to a pixmap.
     pub fn render(
         &mut self,
         doc:    &mut Document,
@@ -465,14 +465,11 @@ impl Renderer {
         let (sel_start, sel_end) = doc.editor.sel_args();
         let caret_info = doc.editor.caret_info();
         let caret_visible = doc.editor.caret_visible;
-        let _has_focus = doc.editor.has_focus;
         let sel_box_id: u32 = caret_info
             .map(|(ptr, _)| if ptr.is_null() { 0 } else { unsafe { &*ptr }.node_id })
             .unwrap_or(0);
         self.scale = scale;
         let zoom = self.zoom.clamp(0.1, 8.0);
-        // CSS canvas background: use the body element's background if set,
-        // otherwise fall back to the root (html) element's background, then white.
         let canvas_color = doc.root.children.iter()
             .find(|c| c.tag == "body")
             .map(|body| body.style.background_color)
@@ -484,24 +481,13 @@ impl Renderer {
             .map(|c| c.to_tiny_skia())
             .unwrap_or(tiny_skia::Color::WHITE);
         pixmap.fill(canvas_color);
-        // Logical viewport dimensions (physical pixels / DPI scale).
         let w = pixmap.width()  as f32 / self.scale;
         let h = pixmap.height() as f32 / self.scale;
-        // Keep viewport_h in sync with the actual window height so that vh units
-        // and flex-stretch heights are correct on the next layout call.
-        let view_h = h / self.zoom.clamp(0.1, 8.0);
+        let view_h = h / zoom;
         self.viewport_h = view_h;
-        // Visible portion of the document (in layout/logical coordinates).
-        // At zoom=1 this equals the full viewport; at zoom=2 it's half as large.
         let view_w = w / zoom;
         let view_h = h / zoom;
-        // Culling clip uses the visible document area, not the full viewport.
         let clip = Rect::new(0.0, 0.0, view_w, view_h);
-
-        // Clamp scroll so the document never scrolls past its own end; write back.
-        // When <html>'s bottom margin collapses with <body>'s (via CSS margin-collapse),
-        // doc.root.margin_rect.h can be shorter than body's actual content bottom by the
-        // amount of the collapsed margin.  Use the body's padding-box bottom if it is larger.
         let doc_h = {
             let root_h = doc.root.margin_rect.h;
             doc.root.children.iter()
@@ -514,63 +500,36 @@ impl Renderer {
         doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));
         let scroll_x = doc.scroll_x;
         let scroll_y = doc.scroll_y;
-
-        // Bake zoom into self.scale for all content drawing this frame.
-        // draw_text_run shapes text at font_px * self.scale physical pixels, so
-        // including zoom here gives sharper glyph rasterization at higher zoom levels.
-        // Restored to DPI-only scale after content is drawn (before scrollbar).
         self.scale = scale * zoom;
-
         let hovered_id    = doc.hovered_box;
         let active_id     = doc.active_box;
         let visited_hrefs = &doc.visited_urls;
-        // Collect element IDs that have active transitions so render_box can
-        // use node.style (already has interpolated overrides) instead of hover_style.
         self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
         self.focused_id = doc.focused_box;
         self.dropdown_hover_idx = doc.dropdown_hover_idx;
         self.caret_epoch = doc.caret_blink_epoch;
         self.deferred_z.clear();
         self.render_box(
-            &doc.root, pixmap,
-            scroll_x, scroll_y,
-            &clip,
-            /* parent_mask */ None,
-            sel_start, sel_end,
-            sel_box_id,
-            hovered_id,
-            active_id,
-            visited_hrefs,
+            &doc.root, pixmap, scroll_x, scroll_y, &clip, None,
+            sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
         );
-
-        // ── High z-index overlay (dropdown menus, popups) ────────────────────
-        // Positioned-absolute elements with z-index > 0 were deferred during the
-        // tree walk so they paint above later DOM content (e.g. images below a nav).
         if !self.deferred_z.is_empty() {
             self.deferred_z.sort_by_key(|d| d.z);
-            // Take the list to avoid borrow issues (render_box may push more entries)
             let deferred = std::mem::take(&mut self.deferred_z);
             for d in &deferred {
                 let ptr = crate::types::find_by_node_id(&doc.root, d.node_id);
                 if ptr.is_null() { continue; }
                 let node = unsafe { &*ptr };
                 self.render_box(
-                    node, pixmap, d.sx, d.sy,
-                    &d.clip, None,
+                    node, pixmap, d.sx, d.sy, &d.clip, None,
                     sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
-            // Restore any newly deferred elements from the overlay pass
             if self.deferred_z.is_empty() {
                 self.deferred_z = deferred;
                 self.deferred_z.clear();
             }
         }
-
-        // ── Fixed elements overlay ────────────────────────────────────────────
-        // Fixed elements must be drawn AFTER all normal content so they aren't
-        // covered by later siblings/descendants with backgrounds.
-        // Collect all fixed elements from the tree, then draw them on top.
         {
             let mut fixed_ids: Vec<u32> = Vec::new();
             collect_fixed(&doc.root, &mut fixed_ids);
@@ -579,14 +538,11 @@ impl Renderer {
                 if ptr.is_null() { continue; }
                 let node = unsafe { &*ptr };
                 self.render_box(
-                    node, pixmap, 0.0, 0.0,
-                    &clip, None,
+                    node, pixmap, 0.0, 0.0, &clip, None,
                     sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
         }
-
-        // ── Select dropdown popup ────────────────────────────────────────────
         if doc.open_select != 0 {
             let sel_ptr = crate::types::find_by_node_id(&doc.root, doc.open_select);
             if !sel_ptr.is_null() {
@@ -594,27 +550,15 @@ impl Renderer {
                 self.draw_select_dropdown(sel, pixmap, scroll_x, scroll_y);
             }
         }
-
-        // ── Caret ─────────────────────────────────────────────────────────────
-        // Only draw the caret when the caret box lives inside a contenteditable
-        // element — never in read-only document content.
         if caret_visible {
             if let Some((caret_box_ptr, caret_local)) = caret_info {
                 let in_editable = crate::dom::is_in_contenteditable(&doc.root, caret_box_ptr);
                 if in_editable {
-                    self.draw_caret(
-                        &doc.root, pixmap,
-                        scroll_x, scroll_y,
-                        caret_box_ptr, caret_local,
-                    );
+                    self.draw_caret(&doc.root, pixmap, scroll_x, scroll_y, caret_box_ptr, caret_local);
                 }
             }
         }
-
-        // Restore DPI-only scale: the scrollbar is viewport UI, not document content.
         self.scale = scale;
-
-        // ── Viewport scrollbar (auto — visible whenever content overflows) ────
         if doc_h > view_h {
             let thumb_col = doc.root.style.scrollbar_thumb_color
                 .unwrap_or(Color::rgba(128, 128, 128, 160));
@@ -637,41 +581,6 @@ impl Renderer {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
-    }
-
-    /// Render via display list: build a display list from the box tree, then
-    /// replay it to the pixmap. This is the new rendering path — currently
-    /// handles backgrounds, borders, and images. Text falls through to TODO.
-    pub fn render_display_list(
-        &mut self,
-        doc: &mut Document,
-        pixmap: &mut Pixmap,
-        scale: f32,
-    ) {
-        let zoom = self.zoom.clamp(0.1, 8.0);
-        let w = pixmap.width() as f32 / scale;
-        let h = pixmap.height() as f32 / scale;
-
-        // Canvas background
-        let canvas_color = doc.root.children.iter()
-            .find(|c| c.tag == "body")
-            .map(|body| body.style.background_color)
-            .filter(|c| c.a > 0)
-            .or_else(|| {
-                let c = doc.root.style.background_color;
-                if c.a > 0 { Some(c) } else { None }
-            })
-            .map(|c| c.to_tiny_skia())
-            .unwrap_or(tiny_skia::Color::WHITE);
-        pixmap.fill(canvas_color);
-
-        // Build display list
-        let list = display_list_builder::build_display_list(
-            &doc.root, w / zoom, h / zoom,
-        );
-
-        // Replay to pixmap
-        display_list_replay::replay(&list, pixmap, scale * zoom);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
