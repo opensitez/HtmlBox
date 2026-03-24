@@ -147,7 +147,7 @@ pub fn load_html_with_registry(
     doc.stylesheet.resolve_variables_for_viewport(viewport_width, viewport_height);
     doc.stylesheet.rebuild_index();
     eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
-    css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, std::ptr::null(), false);
+    css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, 0, false);
     eprintln!("  Cascade: {:.0}ms", t2.elapsed().as_millis());
 
     // Resolve <picture> elements with real viewport dimensions before image fetching

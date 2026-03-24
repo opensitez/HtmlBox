@@ -927,6 +927,10 @@ struct HtmlParser {
     title:              String,
     base_url:           String,
     linked_stylesheets: Vec<(String, String)>,  // (href, media)
+    /// Monotonically increasing counter for assigning stable node_ids.
+    next_node_id:       u32,
+    /// Arena-based DOM being built in parallel with the HtmlBox tree.
+    arena:              crate::dom::arena::DomArena,
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
     on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
@@ -946,9 +950,28 @@ impl HtmlParser {
             title: String::new(),
             base_url: String::new(),
             linked_stylesheets: Vec::new(),
+            next_node_id: 1, // 0 = NodeId::NONE (reserved)
+            arena: crate::dom::arena::DomArena::new(),
             on_open_tag: None,
             on_script: None,
         }
+    }
+
+    /// Create an HtmlBox with a fresh sequential node_id.
+    /// Also creates the corresponding node in the arena.
+    #[inline]
+    fn new_box(&mut self, tag: &str) -> HtmlBox {
+        let mut b = HtmlBox::new(tag);
+        let arena_id = if tag == "#text" {
+            self.arena.create_text("")
+        } else {
+            self.arena.create_element(tag)
+        };
+        // The arena assigns NodeId sequentially starting from 1, matching our counter.
+        b.node_id = arena_id.0;
+        // Keep next_node_id in sync (for non-parser code that may need to allocate)
+        self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
+        b
     }
 
     /// Fire the host hook (if any) for an open tag.
@@ -982,7 +1005,7 @@ impl HtmlParser {
         let mut stack: Vec<Frame> = Vec::new();
         stack.push(Frame {
             parent_tag: parent_tag.to_string(),
-            node:       HtmlBox::new("__root__"),
+            node:       HtmlBox::new("__root__"),  // temporary container, no arena node needed
             ol_counter: *ol_counter,
         });
 
@@ -1042,7 +1065,7 @@ impl HtmlParser {
                         || text_val == " "
                         || text_val == "\n";
                     if keep {
-                        let mut text_node = HtmlBox::new("#text");
+                        let mut text_node = self.new_box("#text");
                         text_node.text = text_val;
                         stack.last_mut().unwrap().node.children.push(text_node);
                     }
@@ -1104,7 +1127,7 @@ impl HtmlParser {
                         let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
                         let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
 
-                        let mut node = HtmlBox::new("svg");
+                        let mut node = self.new_box("svg");
                         node.attributes = attrs;
                         apply_property(&mut node.style, "display", "inline-block");
                         node.svg_markup = Some(svg_markup);
@@ -1143,7 +1166,7 @@ impl HtmlParser {
                         // (will be extracted into shadow stylesheet by post_process_node)
                         let cur_parent = stack.last().map(|f| f.parent_tag.as_str()).unwrap_or(parent_tag);
                         if cur_parent == "template" {
-                            let mut style_node = HtmlBox::new("style");
+                            let mut style_node = self.new_box("style");
                             style_node.text = css;
                             stack.last_mut().unwrap().node.children.push(style_node);
                         } else {
@@ -1159,7 +1182,7 @@ impl HtmlParser {
                     }
 
                     // Build the node
-                    let mut node = HtmlBox::new(tag.clone());
+                    let mut node = self.new_box(&tag);
                     node.attributes = attrs;
                     apply_property(&mut node.style, "display", default_display(&tag));
                     apply_presentational_attrs(&mut node);
@@ -1471,7 +1494,7 @@ impl HtmlParser {
             return;
         }
 
-        let mut node = HtmlBox::new(tag.clone());
+        let mut node = self.new_box(&tag);
         node.attributes = attrs;
         apply_property(&mut node.style, "display", default_display(&tag));
         apply_presentational_attrs(&mut node);
@@ -1736,7 +1759,7 @@ fn parse_html_children(
                 parser.pos += 1;
                 let collapsed = collapse_whitespace(&t);
                 if !collapsed.trim().is_empty() {
-                    let mut node = HtmlBox::new("#text");
+                    let mut node = parser.new_box("#text");
                     node.text = collapsed;
                     body_children.push(node);
                 }
@@ -1868,10 +1891,10 @@ fn parse_html_full(
     parser.on_script = on_script;
 
     // Always create html > body structure
-    let mut html_box = HtmlBox::new("html");
+    let mut html_box = parser.new_box("html");
     apply_property(&mut html_box.style, "display", "block");
 
-    let mut body_box = HtmlBox::new("body");
+    let mut body_box = parser.new_box("body");
     apply_property(&mut body_box.style, "display", "block");
 
     let mut body_children: Vec<HtmlBox> = Vec::new();
@@ -1885,7 +1908,7 @@ fn parse_html_full(
                 parser.pos += 1;
                 let collapsed = collapse_whitespace(&t);
                 if !collapsed.trim().is_empty() {
-                    let mut node = HtmlBox::new("#text");
+                    let mut node = parser.new_box("#text");
                     node.text = collapsed;
                     body_children.push(node);
                 }
@@ -1940,6 +1963,9 @@ fn parse_html_full(
     body_box.children = body_children;
     html_box.children = vec![body_box];
 
+    // Wire arena parent-child relationships to mirror the HtmlBox tree.
+    wire_arena_children(&mut parser.arena, &html_box);
+
     // Build combined stylesheet (UA + author)
     let mut stylesheet = ua_stylesheet();
     // Author rules must always win over UA rules regardless of selector specificity.
@@ -1963,27 +1989,30 @@ fn parse_html_full(
         stylesheet,
         title,
         base_url: base_url.to_string(),
+        arena: parser.arena,
+        next_node_id: parser.next_node_id,
+        node_map: std::collections::HashMap::new(),
         linked_stylesheets,
         editor: crate::dom::Editor::new(),
         events: crate::dom::EventListeners::new(),
         scroll_x: 0.0,
         scroll_y: 0.0,
         scrollbar_drag: None,
-        hovered_box:       std::ptr::null(),
+        hovered_box:       0,
         hover_suppress_count: 0,
-        active_box:        std::ptr::null(),
-        focused_box:       std::ptr::null(),
-        mousedown_target:  std::ptr::null(),
-        last_click_target: std::ptr::null(),
+        active_box:        0,
+        focused_box:       0,
+        mousedown_target:  0,
+        last_click_target: 0,
         last_click_time:   None,
-        drag_source:       std::ptr::null(),
+        drag_source:       0,
         drag_start_doc_pt: (0.0, 0.0),
         drag_active:       false,
         visited_urls:      std::collections::HashSet::new(),
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,
-        caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
+        caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
         active_animations:     Vec::new(),
         transition_states:     std::collections::HashMap::new(),
         prev_styles:           std::collections::HashMap::new(),
@@ -2027,6 +2056,60 @@ fn parse_html_full(
     number_lists(&mut doc.root);
 
     doc
+}
+
+// ─── Arena wiring ────────────────────────────────────────────────────────────
+
+/// Walk the HtmlBox tree and wire arena parent-child links to mirror it.
+/// Called once after parsing is complete and the full HtmlBox tree is built.
+fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &HtmlBox) {
+    use crate::dom::arena::NodeId;
+    let root_id = NodeId(root.node_id);
+    if root_id.is_none() || !arena.is_alive(root_id) { return; }
+    for child in &root.children {
+        let child_id = NodeId(child.node_id);
+        if child_id.is_none() || !arena.is_alive(child_id) { continue; }
+        // Set text content on arena text nodes
+        if child.tag == "#text" {
+            arena.get_mut(child_id).text = child.text.clone();
+        }
+        // Copy attributes to arena node
+        for (k, v) in &child.attributes {
+            arena.get_mut(child_id).attributes.insert(k.clone(), v.clone());
+        }
+        arena.append_child(root_id, child_id);
+        wire_arena_children(arena, child);
+    }
+}
+
+/// Rebuild arena from an existing HtmlBox tree (e.g. after clone or DOM mutation).
+/// Creates fresh arena nodes for every HtmlBox and wires parent-child links.
+pub fn rebuild_arena_from_tree(arena: &mut crate::dom::arena::DomArena, root: &mut HtmlBox) {
+    *arena = crate::dom::arena::DomArena::new();
+    rebuild_arena_recursive(arena, root);
+}
+
+fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut HtmlBox) {
+    use crate::dom::arena::NodeId;
+    // Create arena node
+    let arena_id = if node.tag == "#text" {
+        let id = arena.create_text(&node.text);
+        id
+    } else {
+        let id = arena.create_element(&node.tag);
+        for (k, v) in &node.attributes {
+            arena.get_mut(id).attributes.insert(k.clone(), v.clone());
+        }
+        id
+    };
+    node.node_id = arena_id.0;
+
+    // Recurse children
+    for child in &mut node.children {
+        rebuild_arena_recursive(arena, child);
+        let child_id = NodeId(child.node_id);
+        arena.append_child(arena_id, child_id);
+    }
 }
 
 // ─── Serialization ───────────────────────────────────────────────────────────

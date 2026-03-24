@@ -2,6 +2,8 @@
 //!
 //! This module ports the C++ `wxHtmlEditWidget` DOM/events/editing API to Rust.
 
+pub mod arena;
+
 use std::time::{Duration, Instant};
 use std::sync::{Arc, RwLock};
 use crate::types::{HtmlBox, Document, Color, Display, FontWeight, FontStyle, CssLength, Position};

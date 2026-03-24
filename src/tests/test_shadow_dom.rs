@@ -5,7 +5,7 @@ use crate::layout::LayoutEngine;
 
 fn layout_html(html: &str, width: f32) -> Document {
     let mut doc = parse_html(html);
-    apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, 900.0, std::ptr::null(), false);
+    apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, 900.0, 0, false);
     let mut eng = LayoutEngine::new();
     eng.viewport_h = 900.0;
     eng.layout(&mut doc, width);

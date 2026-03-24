@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::dom::arena::DomArena;
 
 // ─── Geometry ────────────────────────────────────────────────────────────────
 
@@ -1446,6 +1447,7 @@ pub struct LayoutLine {
 #[derive(Clone, Debug)]
 pub struct HtmlBox {
     pub tag:        String,
+    pub node_id:    u32,                // Stable identity — index into Document.arena
     pub style:      ComputedStyle,
     pub attributes: HashMap<String, String>,
     pub text:       String,             // Own text content
@@ -1565,11 +1567,11 @@ pub struct FormEvent {
     pub name: String,
     /// Event kind
     pub kind: FormEventKind,
-    /// Pointer to the element (for direct manipulation)
-    pub element: *const HtmlBox,
+    /// Stable node_id of the element.
+    pub element: u32,
 }
 
-unsafe impl Send for FormEvent {}
+// FormEvent is now Send-safe (uses node_id instead of raw pointers)
 
 #[derive(Debug, Clone)]
 pub enum FormEventKind {
@@ -1609,6 +1611,7 @@ impl HtmlBox {
     pub fn new(tag: impl Into<String>) -> Self {
         Self {
             tag: tag.into(),
+            node_id: 0,
             style: ComputedStyle::default(),
             attributes: HashMap::new(),
             text: String::new(),
@@ -1923,6 +1926,16 @@ pub struct Document {
     pub stylesheet:      Stylesheet,
     pub title:           String,
     pub base_url:        String,
+
+    // ── Arena-based DOM (bridge period: mirrors HtmlBox tree) ────────────────
+    /// Arena-based DOM tree with stable NodeId identity.
+    /// During the bridge period, this mirrors the HtmlBox tree structure.
+    pub arena:           DomArena,
+    /// Next node_id to assign (monotonically increasing counter).
+    pub next_node_id:    u32,
+    /// Bridge lookup: maps node_id → raw pointer into the HtmlBox tree.
+    /// Rebuilt by `rebuild_node_map()` after any tree mutation (layout, cascade, etc.).
+    pub node_map:        HashMap<u32, *const HtmlBox>,
     /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
     /// Populated by the parser so the host can fetch and merge external CSS.
     /// External stylesheets from `<link rel="stylesheet">` tags: (href, media).
@@ -1937,23 +1950,23 @@ pub struct Document {
     pub scroll_y:        f32,
     /// Active scrollbar drag state (None when not dragging).
     pub scrollbar_drag:  Option<ScrollbarDrag>,
-    /// Currently hovered element (raw pointer, null if none).
-    pub hovered_box:     *const HtmlBox,
+    /// Currently hovered element (node_id, 0 if none).
+    pub hovered_box:     u32,
     /// Suppresses the next hover change after a hover-triggered relayout.
     /// Prevents feedback loops: hover opens dropdown → layout changes →
     /// re-hit-test finds different element → dropdown closes → repeat.
     pub hover_suppress_count: u8,
-    /// Currently active (pressed) element (raw pointer, null if none).
-    pub active_box:      *const HtmlBox,
-    /// Currently focused element (raw pointer, null if none).
-    pub focused_box:     *const HtmlBox,
+    /// Currently active (pressed) element (node_id, 0 if none).
+    pub active_box:      u32,
+    /// Currently focused element (node_id, 0 if none).
+    pub focused_box:     u32,
     /// Element hit on last MouseDown — used to fire Click on MouseUp if same target.
-    pub mousedown_target: *const HtmlBox,
+    pub mousedown_target: u32,
     /// Last click target + time for DblClick detection.
-    pub last_click_target: *const HtmlBox,
+    pub last_click_target: u32,
     pub last_click_time:   Option<std::time::Instant>,
     /// Drag state machine.
-    pub drag_source:       *const HtmlBox,
+    pub drag_source:       u32,
     pub drag_start_doc_pt: (f32, f32),
     pub drag_active:       bool,
     /// Set of link hrefs the user has clicked (for :visited pseudo-class).
@@ -1965,8 +1978,8 @@ pub struct Document {
     pub keyboard_focus:  bool,
     /// Caret blink epoch — reset on each keystroke so caret stays visible while typing.
     pub caret_blink_epoch: std::time::Instant,
-    /// Currently open select dropdown (pointer to select element, null if none open).
-    pub open_select: *const HtmlBox,
+    /// Currently open select dropdown (node_id, 0 if none open).
+    pub open_select: u32,
     /// Hovered option index in open dropdown (-1 = none).
     pub dropdown_hover_idx: i32,
     /// Form event callback — set by the host to handle form interactions.
@@ -2017,6 +2030,9 @@ impl Document {
             root:            HtmlBox::new("html"),
             stylesheet:      Stylesheet::default(),
             title:           String::new(),
+            arena:           DomArena::new(),
+            next_node_id:    1,  // 0 = NodeId::NONE (reserved)
+            node_map:        HashMap::new(),
             base_url:        String::new(),
             linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
@@ -2024,21 +2040,21 @@ impl Document {
             scroll_x:        0.0,
             scroll_y:        0.0,
             scrollbar_drag:  None,
-            hovered_box:       std::ptr::null(),
+            hovered_box:       0,
             hover_suppress_count: 0,
-            active_box:        std::ptr::null(),
-            focused_box:       std::ptr::null(),
-            mousedown_target:  std::ptr::null(),
-            last_click_target: std::ptr::null(),
+            active_box:        0,
+            focused_box:       0,
+            mousedown_target:  0,
+            last_click_target: 0,
             last_click_time:   None,
-            drag_source:       std::ptr::null(),
+            drag_source:       0,
             drag_start_doc_pt: (0.0, 0.0),
             drag_active:       false,
             visited_urls:      std::collections::HashSet::new(),
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
-            caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
             on_form_event:     None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
@@ -2075,6 +2091,46 @@ impl Document {
         loaded_any
     }
 
+    // ── Node map (bridge: node_id → HtmlBox pointer) ─────────────────────────
+
+    /// Rebuild the node_map by walking the HtmlBox tree.
+    /// Call this after any operation that may move HtmlBox nodes in memory
+    /// (layout, cascade, tree mutations).
+    pub fn rebuild_node_map(&mut self) {
+        self.node_map.clear();
+        Self::collect_node_map(&self.root, &mut self.node_map);
+    }
+
+    fn collect_node_map(node: &HtmlBox, map: &mut HashMap<u32, *const HtmlBox>) {
+        if node.node_id != 0 {
+            map.insert(node.node_id, node as *const HtmlBox);
+        }
+        for child in &node.children {
+            Self::collect_node_map(child, map);
+        }
+    }
+
+    /// Look up an HtmlBox by its stable node_id.
+    /// Returns None if the node_map is stale or the id is not found.
+    pub fn get_box_by_id(&self, node_id: u32) -> Option<&HtmlBox> {
+        if node_id == 0 { return None; }
+        self.node_map.get(&node_id).map(|&ptr| unsafe { &*ptr })
+    }
+
+    /// Look up a mutable HtmlBox by its stable node_id.
+    /// SAFETY: caller must ensure no other references to the same node exist.
+    pub fn get_box_by_id_mut(&mut self, node_id: u32) -> Option<&mut HtmlBox> {
+        if node_id == 0 { return None; }
+        self.node_map.get(&node_id).map(|&ptr| unsafe { &mut *(ptr as *mut HtmlBox) })
+    }
+
+    /// Allocate the next node_id (for dynamically created nodes outside the parser).
+    pub fn alloc_node_id(&mut self) -> u32 {
+        let id = self.next_node_id;
+        self.next_node_id += 1;
+        id
+    }
+
     /// Re-apply the CSS cascade to the entire document tree.
     /// Call this after mutating class attributes (e.g. toggling dark mode) so
     /// that `ComputedStyle` on every box is updated before the next layout pass.
@@ -2082,25 +2138,24 @@ impl Document {
     pub fn recascade(&mut self) {
         // Invalidate hover/active pointers — raw pointers may alias differently
         // after HtmlBox trees are rebuilt or re-allocated during parsing.
-        self.hovered_box = std::ptr::null();
-        self.active_box  = std::ptr::null();
+        self.hovered_box = 0;
+        self.active_box  = 0;
         self.stylesheet.rebuild_index();
-        let focused = self.focused_box;
         crate::css::apply_cascade_vp(
             &mut self.root, &self.stylesheet, None, 16.0,
-            self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
+            self.viewport_w, self.viewport_h, self.focused_box, self.keyboard_focus,
         );
     }
 
-    /// Re-apply cascade with an explicit focused element pointer.
-    pub fn recascade_with_focus(&mut self, focused: *const HtmlBox) {
+    /// Re-apply cascade with an explicit focused element node_id.
+    pub fn recascade_with_focus(&mut self, focused: u32) {
         self.focused_box = focused;
-        self.hovered_box = std::ptr::null();
-        self.active_box  = std::ptr::null();
+        self.hovered_box = 0;
+        self.active_box  = 0;
         self.stylesheet.rebuild_index();
         crate::css::apply_cascade_vp(
             &mut self.root, &self.stylesheet, None, 16.0,
-            self.viewport_w, self.viewport_h, focused, self.keyboard_focus,
+            self.viewport_w, self.viewport_h, self.focused_box, self.keyboard_focus,
         );
     }
 
@@ -2117,6 +2172,20 @@ impl Document {
         let hit_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button)
             .map(|h| h.box_ptr)
             .unwrap_or(std::ptr::null());
+        // Extract node_id from hit box. If the hit box has node_id=0 (e.g. a text node
+        // created by post_process_node or a ::before pseudo), walk up to find the
+        // nearest parent with a valid node_id.
+        let hit_node_id: u32 = if hit_ptr.is_null() {
+            0
+        } else {
+            let hit = unsafe { &*hit_ptr };
+            if hit.node_id != 0 {
+                hit.node_id
+            } else {
+                // Find parent with valid node_id by walking the tree
+                find_parent_node_id(&self.root, hit_ptr)
+            }
+        };
         evt.target = hit_ptr;
 
         let mut redraw = false;
@@ -2129,14 +2198,15 @@ impl Document {
                 // Suppress one hover change after each hover-triggered relayout.
                 if self.hover_suppress_count > 0 {
                     self.hover_suppress_count -= 1;
-                } else if self.hovered_box != hit_ptr {
-                    self.hovered_box = hit_ptr;
+                } else if self.hovered_box != hit_node_id {
+                    self.hovered_box = hit_node_id;
                     self.hover_changed = true;
                     redraw = true;
                 }
                 // Track hover over open dropdown
-                if !self.open_select.is_null() {
-                    let sel = unsafe { &*self.open_select };
+                if self.open_select != 0 {
+                    let sel = self.get_box_by_id(self.open_select).unwrap();
+                    let sel: &HtmlBox = unsafe { &*(sel as *const HtmlBox) };
                     let dropdown_y = sel.border_rect.y + sel.border_rect.h;
                     let font_px = sel.style.font_size_px(16.0, 16.0);
                     let item_h = font_px * 1.8;
@@ -2167,33 +2237,34 @@ impl Document {
                     }
                 }
                 // Drag: if mouse button held and moved past threshold, fire DragStart/Drag.
-                if !self.drag_source.is_null() {
+                if self.drag_source != 0 {
                     let dx = doc_pt.0 - self.drag_start_doc_pt.0;
                     let dy = doc_pt.1 - self.drag_start_doc_pt.1;
+                    let drag_ptr = find_by_node_id(&self.root, self.drag_source);
                     if !self.drag_active && (dx * dx + dy * dy) > 25.0 {
                         // DragStart
                         self.drag_active = true;
                         let mut e = HtmlEvent::new(HtmlEventType::DragStart);
-                        e.target = self.drag_source; e.doc_pos = self.drag_start_doc_pt;
+                        e.target = drag_ptr; e.doc_pos = self.drag_start_doc_pt;
                         e.client_pos = (self.drag_start_doc_pt.0, self.drag_start_doc_pt.1 - self.scroll_y);
                         if self.events.dispatch(&self.root, e) { redraw = true; }
                     }
                     if self.drag_active {
                         let mut e = HtmlEvent::new(HtmlEventType::Drag);
-                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
+                        e.target = drag_ptr; e.doc_pos = doc_pt; e.client_pos = client_pos;
                         if self.events.dispatch(&self.root, e) { redraw = true; }
                     }
                 }
             }
             HtmlEventType::MouseDown | HtmlEventType::PointerDown => {
-                if self.active_box != hit_ptr {
-                    self.active_box = hit_ptr;
+                if self.active_box != hit_node_id {
+                    self.active_box = hit_node_id;
                     redraw = true;
                 }
                 if etype == HtmlEventType::MouseDown {
-                    self.mousedown_target  = hit_ptr;
+                    self.mousedown_target  = hit_node_id;
                     // Arm drag state machine.
-                    self.drag_source       = hit_ptr;
+                    self.drag_source       = hit_node_id;
                     self.drag_start_doc_pt = doc_pt;
                     self.drag_active       = false;
                 }
@@ -2202,36 +2273,40 @@ impl Document {
                 // Clicking a non-focusable element blurs the current focus.
                 if etype == HtmlEventType::MouseDown {
                     // Walk up from hit target to find the nearest focusable ancestor
-                    let focus_target = if !hit_ptr.is_null() {
+                    let focus_target_id = if !hit_ptr.is_null() {
                         let hit = unsafe { &*hit_ptr };
                         if is_focusable_node(hit) {
-                            hit_ptr
+                            hit_node_id
                         } else {
                             // Find focusable parent (e.g. #text inside <button> or <input>)
-                            find_form_parent(&self.root, hit_ptr)
+                            find_form_parent_id(&self.root, hit_node_id)
                         }
-                    } else { std::ptr::null() };
-                    let click_focusable = !focus_target.is_null()
-                        && is_focusable_node(unsafe { &*focus_target });
-                    let new_focus = if click_focusable { focus_target } else { std::ptr::null() };
+                    } else { 0u32 };
+                    let click_focusable = focus_target_id != 0 && {
+                        let fp = find_by_node_id(&self.root, focus_target_id);
+                        !fp.is_null() && is_focusable_node(unsafe { &*fp })
+                    };
+                    let new_focus = if click_focusable { focus_target_id } else { 0u32 };
                     if self.focused_box != new_focus {
                         let old_focus = self.focused_box;
+                        let old_focus_ptr = find_by_node_id(&self.root, old_focus);
+                        let new_focus_ptr = find_by_node_id(&self.root, new_focus);
                         self.keyboard_focus = false;
                         self.focused_box = new_focus;
-                        if !old_focus.is_null() {
+                        if old_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Blur);
-                            e.target = old_focus; e.related_target = new_focus;
+                            e.target = old_focus_ptr; e.related_target = new_focus_ptr;
                             self.events.dispatch(&self.root, e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
-                            e.target = old_focus; e.related_target = new_focus;
+                            e.target = old_focus_ptr; e.related_target = new_focus_ptr;
                             self.events.dispatch(&self.root, e);
                         }
-                        if !new_focus.is_null() {
+                        if new_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Focus);
-                            e.target = new_focus; e.related_target = old_focus;
+                            e.target = new_focus_ptr; e.related_target = old_focus_ptr;
                             self.events.dispatch(&self.root, e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
-                            e.target = new_focus; e.related_target = old_focus;
+                            e.target = new_focus_ptr; e.related_target = old_focus_ptr;
                             self.events.dispatch(&self.root, e);
                         }
                         // Always recascade when focus changes so :focus/:focus-visible update.
@@ -2245,37 +2320,39 @@ impl Document {
                 }
             }
             HtmlEventType::MouseUp | HtmlEventType::PointerUp => {
-                if !self.active_box.is_null() {
-                    self.active_box = std::ptr::null();
+                if self.active_box != 0 {
+                    self.active_box = 0;
                     redraw = true;
                 }
                 if etype == HtmlEventType::MouseUp {
                     // DragEnd if drag was active; save flag before resetting.
                     let was_dragging = self.drag_active;
                     if was_dragging {
+                        let drag_ptr = find_by_node_id(&self.root, self.drag_source);
                         let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
-                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
+                        e.target = drag_ptr; e.doc_pos = doc_pt; e.client_pos = client_pos;
                         if self.events.dispatch(&self.root, e) { redraw = true; }
                     }
-                    self.drag_source = std::ptr::null();
+                    self.drag_source = 0;
                     self.drag_active = false;
 
                     // Click only if no drag occurred and released on same element as pressed.
-                    if !hit_ptr.is_null() && hit_ptr == self.mousedown_target && !was_dragging {
+                    if hit_node_id != 0 && hit_node_id == self.mousedown_target && !was_dragging {
                         let mut click = HtmlEvent::new(HtmlEventType::Click);
                         click.target = hit_ptr; click.doc_pos = doc_pt; click.client_pos = client_pos;
                         click.button = button;
                         if self.events.dispatch(&self.root, click) { redraw = true; }
 
                         // Form element interactions
-                        if !hit_ptr.is_null() && button == 0 {
-                            if let Some(form_redraw) = handle_form_click(&mut self.root, hit_ptr, &mut self.on_form_event) {
+                        if hit_node_id != 0 && button == 0 {
+                            if let Some(form_redraw) = handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event) {
                                 if form_redraw { redraw = true; }
                             }
                             // Handle select dropdown
-                            if !self.open_select.is_null() {
+                            if self.open_select != 0 {
                                 // Collect options from DOM children
-                                let sel = unsafe { &*self.open_select };
+                                let sel = self.get_box_by_id(self.open_select).unwrap();
+                                let sel: &HtmlBox = unsafe { &*(sel as *const HtmlBox) };
                                 let font_px = sel.style.font_size_px(16.0, 16.0);
                                 let item_h = font_px * 1.8;
                                 let group_h = font_px * 1.5;
@@ -2343,15 +2420,15 @@ impl Document {
                                     }
 
                                     if let Some(opt_idx) = clicked_opt {
-                                        let sel_ptr = self.open_select;
-                                        fn find_m<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-                                            if std::ptr::eq(n, t) { return Some(n); }
+                                        let sel_id = self.open_select;
+                                        fn find_m<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                                            if n.node_id == t { return Some(n); }
                                             for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
                                             None
                                         }
                                         let new_text = opt_texts.get(opt_idx).cloned().unwrap_or_default();
                                         let new_value = opt_values.get(opt_idx).cloned().unwrap_or_default();
-                                        if let Some(sel_mut) = find_m(&mut self.root, sel_ptr) {
+                                        if let Some(sel_mut) = find_m(&mut self.root, sel_id) {
                                             sel_mut.data.insert("_selected_idx".into(), opt_idx.to_string());
                                             // Update display text node
                                             if let Some(tn) = sel_mut.children.iter_mut().rev().find(|c| c.tag == "#text") {
@@ -2364,23 +2441,23 @@ impl Document {
                                                     id: sel_mut.attributes.get("id").cloned().unwrap_or_default(),
                                                     name: sel_mut.attributes.get("name").cloned().unwrap_or_default(),
                                                     kind: FormEventKind::Change(new_value),
-                                                    element: sel_ptr,
+                                                    element: sel_id,
                                                 });
                                             }
                                         }
                                     }
-                                    self.open_select = std::ptr::null();
+                                    self.open_select = 0;
                                     redraw = true;
                                 } else {
-                                    self.open_select = std::ptr::null();
+                                    self.open_select = 0;
                                     redraw = true;
                                 }
                             } else {
                                 // Check if clicking a select to open it
-                                let effective = find_form_parent(&self.root, hit_ptr);
-                                let eff_node = unsafe { &*effective };
-                                if eff_node.tag == "select" {
-                                    self.open_select = effective;
+                                let effective_id = find_form_parent_id(&self.root, hit_node_id);
+                                let eff_ptr = find_by_node_id(&self.root, effective_id);
+                                if !eff_ptr.is_null() && unsafe { &*eff_ptr }.tag == "select" {
+                                    self.open_select = effective_id;
                                     redraw = true;
                                 }
                             }
@@ -2388,7 +2465,7 @@ impl Document {
 
                         // DblClick: same target within 400 ms.
                         let now = std::time::Instant::now();
-                        let is_dbl = self.last_click_target == hit_ptr
+                        let is_dbl = self.last_click_target == hit_node_id
                             && self.last_click_time
                                 .map(|t| t.elapsed().as_millis() < 400)
                                 .unwrap_or(false);
@@ -2398,14 +2475,14 @@ impl Document {
                             dbl.button = button;
                             if self.events.dispatch(&self.root, dbl) { redraw = true; }
                             // Reset so triple-click doesn't re-trigger.
-                            self.last_click_target = std::ptr::null();
+                            self.last_click_target = 0;
                             self.last_click_time   = None;
                         } else {
-                            self.last_click_target = hit_ptr;
+                            self.last_click_target = hit_node_id;
                             self.last_click_time   = Some(now);
                         }
                     }
-                    self.mousedown_target = std::ptr::null();
+                    self.mousedown_target = 0;
                     // Track visited links.
                     if button == 0 {
                         if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
@@ -2447,8 +2524,10 @@ impl Document {
         let new_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, 0)
             .map(|h| h.box_ptr)
             .unwrap_or(std::ptr::null());
-        let old_ptr = self.hovered_box;
-        if new_ptr == old_ptr { return false; }
+        let new_id: u32 = if new_ptr.is_null() { 0 } else { unsafe { &*new_ptr }.node_id };
+        let old_id = self.hovered_box;
+        if new_id == old_id { return false; }
+        let old_ptr = find_by_node_id(&self.root, old_id);
 
         let mut redraw = false;
         macro_rules! ev {
@@ -2460,13 +2539,13 @@ impl Document {
                 else       { self.events.dispatch_direct(&self.root, e) }
             }};
         }
-        if !old_ptr.is_null() {
+        if old_id != 0 {
             if ev!(HtmlEventType::MouseOut,    old_ptr, new_ptr, true)  { redraw = true; }
             if ev!(HtmlEventType::MouseLeave,  old_ptr, new_ptr, false) { redraw = true; }
             ev!(HtmlEventType::PointerOut,   old_ptr, new_ptr, true);
             ev!(HtmlEventType::PointerLeave, old_ptr, new_ptr, false);
         }
-        if !new_ptr.is_null() {
+        if new_id != 0 {
             if ev!(HtmlEventType::MouseOver,   new_ptr, old_ptr, true)  { redraw = true; }
             if ev!(HtmlEventType::MouseEnter,  new_ptr, old_ptr, false) { redraw = true; }
             ev!(HtmlEventType::PointerOver,  new_ptr, old_ptr, true);
@@ -2501,19 +2580,20 @@ impl Document {
 
         if !evt.default_prevented {
             // Check if a form input is focused — route keys there first
-            let form_handled = if !self.focused_box.is_null()
+            let form_handled = if self.focused_box != 0
                 && etype == crate::dom::HtmlEventType::KeyDown
             {
-                let focused = unsafe { &*self.focused_box };
+                let focused_ptr = find_by_node_id(&self.root, self.focused_box);
+                let focused = if focused_ptr.is_null() { &self.root } else { unsafe { &*focused_ptr } };
                 // Select: arrow up/down changes selected option
                 if focused.tag == "select" && (key_code == 38 || key_code == 40) {
-                    let ptr = self.focused_box;
-                    fn find_m<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-                        if std::ptr::eq(n, t) { return Some(n); }
+                    let fid = self.focused_box;
+                    fn find_m<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                        if n.node_id == t { return Some(n); }
                         for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
                         None
                     }
-                    if let Some(sel) = find_m(&mut self.root, ptr) {
+                    if let Some(sel) = find_m(&mut self.root, fid) {
                         let cur: usize = sel.data.get("_selected_idx").and_then(|s| s.parse().ok()).unwrap_or(0);
                         let opt_count = sel.children.iter().filter(|c| c.tag == "option").count()
                             + sel.children.iter().filter(|c| c.tag == "optgroup")
@@ -2560,13 +2640,13 @@ impl Document {
                     && focused.attributes.get("type").map(|s| s.as_str()) == Some("number")
                     && (key_code == 38 || key_code == 40)
                 {
-                    let ptr = self.focused_box;
-                    fn find_n<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-                        if std::ptr::eq(n, t) { return Some(n); }
+                    let fid = self.focused_box;
+                    fn find_n<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                        if n.node_id == t { return Some(n); }
                         for c in &mut n.children { if let Some(r) = find_n(c, t) { return Some(r); } }
                         None
                     }
-                    if let Some(input) = find_n(&mut self.root, ptr) {
+                    if let Some(input) = find_n(&mut self.root, fid) {
                         let val: f64 = input.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or(0.0);
                         let step: f64 = input.attributes.get("step").and_then(|s| s.parse().ok()).unwrap_or(1.0);
                         let min: Option<f64> = input.attributes.get("min").and_then(|s| s.parse().ok());
@@ -2588,15 +2668,15 @@ impl Document {
                 }
                 else if is_text_input(focused) {
                     // Find the focused node mutably and process the key
-                    let ptr = self.focused_box;
-                    fn find_input<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-                        if std::ptr::eq(n, t) { return Some(n); }
+                    let fid = self.focused_box;
+                    fn find_input<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                        if n.node_id == t { return Some(n); }
                         for c in &mut n.children {
                             if let Some(r) = find_input(c, t) { return Some(r); }
                         }
                         None
                     }
-                    if let Some(input) = find_input(&mut self.root, ptr) {
+                    if let Some(input) = find_input(&mut self.root, fid) {
                         let changed = process_form_input_key(input, key_code, ch, ctrl, shift);
                         // Reset caret blink so it stays visible while typing
                         self.caret_blink_epoch = std::time::Instant::now();
@@ -2608,7 +2688,7 @@ impl Document {
                                     id: input.attributes.get("id").cloned().unwrap_or_default(),
                                     name: input.attributes.get("name").cloned().unwrap_or_default(),
                                     kind: FormEventKind::Input(input_value(input)),
-                                    element: ptr,
+                                    element: fid,
                                 });
                             }
                         }
@@ -2780,7 +2860,7 @@ impl Document {
         let mut current: Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
         fn collect(
             node: &HtmlBox,
-            hovered: *const HtmlBox,
+            hovered: u32,
             cascade_ran: bool,
             cascade_styles: &HashMap<usize, HashMap<String, String>>,
             out: &mut Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)>,
@@ -2798,7 +2878,7 @@ impl Document {
                 };
                 let mut vals = base.clone();
                 // When hovered, overlay hover_style to get the "target" state.
-                if !hovered.is_null() && subtree_contains_ptr(node, hovered) {
+                if hovered != 0 && subtree_contains_id(node, hovered) {
                     if let Some(hs) = &node.style.hover_style {
                         let hover_vals = extract_transitionable_style(hs);
                         for (k, v) in hover_vals { vals.insert(k, v); }
@@ -3120,11 +3200,11 @@ impl Document {
         // Build the tab order: elements with explicit tabindex > 0 come first
         // (sorted ascending), then native-focusable and tabindex=0 in document order.
         // Elements with tabindex=-1 are excluded (focusable by script, not keyboard).
-        let mut positive: Vec<(*const HtmlBox, i32)> = Vec::new();
-        let mut normal:   Vec<*const HtmlBox>         = Vec::new();
+        let mut positive: Vec<(u32, i32)> = Vec::new();
+        let mut normal:   Vec<u32>       = Vec::new();
         collect_focusable_ordered(&self.root, &mut positive, &mut normal);
         positive.sort_by_key(|&(_, idx)| idx);
-        let mut focusable: Vec<*const HtmlBox> =
+        let focusable: Vec<u32> =
             positive.into_iter().map(|(p, _)| p).chain(normal).collect();
         if focusable.is_empty() { return false; }
 
@@ -3146,25 +3226,27 @@ impl Document {
 
         self.keyboard_focus = true;
         self.focused_box = new_focus;
-        if !old_focus.is_null() {
+        let old_focus_ptr = find_by_node_id(&self.root, old_focus);
+        let new_focus_ptr = find_by_node_id(&self.root, new_focus);
+        if old_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Blur);
-            e.target = old_focus; e.related_target = new_focus;
+            e.target = old_focus_ptr; e.related_target = new_focus_ptr;
             self.events.dispatch(&self.root, e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
-            e.target = old_focus; e.related_target = new_focus;
+            e.target = old_focus_ptr; e.related_target = new_focus_ptr;
             self.events.dispatch(&self.root, e);
         }
-        if !new_focus.is_null() {
+        if new_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Focus);
-            e.target = new_focus; e.related_target = old_focus;
+            e.target = new_focus_ptr; e.related_target = old_focus_ptr;
             self.events.dispatch(&self.root, e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
-            e.target = new_focus; e.related_target = old_focus;
+            e.target = new_focus_ptr; e.related_target = old_focus_ptr;
             self.events.dispatch(&self.root, e);
         }
         self.stylesheet.rebuild_index();
-        self.hovered_box = std::ptr::null();
-        self.active_box  = std::ptr::null();
+        self.hovered_box = 0;
+        self.active_box  = 0;
         crate::css::apply_cascade_vp(
             &mut self.root, &self.stylesheet, None, 16.0,
             self.viewport_w, self.viewport_h, self.focused_box, true,
@@ -3178,12 +3260,20 @@ impl Document {
 /// the *tab* order by `collect_focusable_ordered`.
 /// Handle a click on a form element: toggle checkbox, select radio, fire form events.
 /// Returns Some(true) if a redraw is needed, Some(false) if handled but no redraw, None if not a form element.
-pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &mut Option<FormEventCallback>) -> Option<bool> {
-    // Find the target node mutably in the tree
-    fn find_mut<'a>(node: &'a mut HtmlBox, target: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-        if std::ptr::eq(node, target) { return Some(node); }
+pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<FormEventCallback>) -> Option<bool> {
+    // Find a node by node_id in the tree (immutable)
+    fn find_ref<'a>(node: &'a HtmlBox, t: u32) -> Option<&'a HtmlBox> {
+        if node.node_id == t { return Some(node); }
+        for child in &node.children {
+            if let Some(found) = find_ref(child, t) { return Some(found); }
+        }
+        None
+    }
+    // Find a node by node_id in the tree (mutable)
+    fn find_mut<'a>(node: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+        if node.node_id == t { return Some(node); }
         for child in &mut node.children {
-            if let Some(found) = find_mut(child, target) { return Some(found); }
+            if let Some(found) = find_mut(child, t) { return Some(found); }
         }
         None
     }
@@ -3191,19 +3281,19 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
     // If the target is a #text node, find the parent form element instead.
     // This handles clicks on text inside <select>, <button>, etc.
     let effective_target = {
-        let node = unsafe { &*target };
+        let node = find_ref(root, target)?;
         if node.tag == "#text" {
             // Walk the tree to find the parent of this text node
-            fn find_parent(node: &HtmlBox, child: *const HtmlBox) -> Option<*const HtmlBox> {
+            fn find_parent_id(node: &HtmlBox, child_id: u32) -> Option<u32> {
                 for c in &node.children {
-                    if std::ptr::eq(c, unsafe { &*child }) {
-                        return Some(node as *const HtmlBox);
+                    if c.node_id == child_id {
+                        return Some(node.node_id);
                     }
-                    if let Some(p) = find_parent(c, child) { return Some(p); }
+                    if let Some(p) = find_parent_id(c, child_id) { return Some(p); }
                 }
                 None
             }
-            find_parent(root, target).unwrap_or(target)
+            find_parent_id(root, target).unwrap_or(target)
         } else {
             target
         }
@@ -3211,16 +3301,16 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
     let target = effective_target;
 
     // Disabled elements don't respond to clicks
-    if unsafe { &*target }.attributes.contains_key("disabled") { return None; }
+    let target_node = find_ref(root, target)?;
+    if target_node.attributes.contains_key("disabled") { return None; }
 
     // Read target info before mutation
     let (tag, input_type, name, id, value) = {
-        let node = unsafe { &*target };
-        let tag = node.tag.clone();
-        let input_type = node.attributes.get("type").cloned().unwrap_or_default();
-        let name = node.attributes.get("name").cloned().unwrap_or_default();
-        let id = node.attributes.get("id").cloned().unwrap_or_default();
-        let value = node.attributes.get("value").cloned().unwrap_or_default();
+        let tag = target_node.tag.clone();
+        let input_type = target_node.attributes.get("type").cloned().unwrap_or_default();
+        let name = target_node.attributes.get("name").cloned().unwrap_or_default();
+        let id = target_node.attributes.get("id").cloned().unwrap_or_default();
+        let value = target_node.attributes.get("value").cloned().unwrap_or_default();
         (tag, input_type, name, id, value)
     };
 
@@ -3248,16 +3338,16 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
                 "radio" => {
                     // Uncheck other radios with the same name, check this one
                     if !name.is_empty() {
-                        fn uncheck_radios(node: &mut HtmlBox, name: &str, except: *const HtmlBox) {
+                        fn uncheck_radios(node: &mut HtmlBox, name: &str, except_id: u32) {
                             if node.tag == "input"
                                 && node.attributes.get("type").map(|s| s.as_str()) == Some("radio")
                                 && node.attributes.get("name").map(|s| s.as_str()) == Some(name)
-                                && !std::ptr::eq(node, unsafe { &*except })
+                                && node.node_id != except_id
                             {
                                 node.attributes.remove("checked");
                             }
                             for child in &mut node.children {
-                                uncheck_radios(child, name, except);
+                                uncheck_radios(child, name, except_id);
                             }
                         }
                         uncheck_radios(root, &name, target);
@@ -3276,23 +3366,23 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
                 "submit" | "button" | "reset" => {
                     // Reset button: reset the parent form
                     if input_type == "reset" {
-                        let form_action = find_parent_form_action(root, target);
+                        let _form_action = find_parent_form_action(root, target);
                         // Find and reset the parent form
-                        fn find_form_for_reset(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+                        fn find_form_for_reset(node: &HtmlBox, target_id: u32) -> Option<u32> {
                             if node.tag == "form" {
-                                fn contains(n: &HtmlBox, t: *const HtmlBox) -> bool {
-                                    if std::ptr::eq(n, t) { return true; }
+                                fn contains(n: &HtmlBox, t: u32) -> bool {
+                                    if n.node_id == t { return true; }
                                     n.children.iter().any(|c| contains(c, t))
                                 }
-                                if contains(node, target) { return Some(node as *const HtmlBox); }
+                                if contains(node, target_id) { return Some(node.node_id); }
                             }
                             for child in &node.children {
-                                if let Some(f) = find_form_for_reset(child, target) { return Some(f); }
+                                if let Some(f) = find_form_for_reset(child, target_id) { return Some(f); }
                             }
                             None
                         }
-                        if let Some(form_ptr) = find_form_for_reset(root, target) {
-                            reset_form(root, form_ptr);
+                        if let Some(form_id) = find_form_for_reset(root, target) {
+                            reset_form(root, form_id);
                         }
                     }
                     if let Some(cb) = callback {
@@ -3316,10 +3406,11 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
             }
         }
         "button" => {
-            let btn_type = unsafe { &*target }.attributes.get("type")
-                .cloned().unwrap_or_else(|| "submit".to_string());
+            let target_node2 = find_ref(root, target);
+            let btn_type = target_node2.and_then(|n| n.attributes.get("type").cloned())
+                .unwrap_or_else(|| "submit".to_string());
             if let Some(cb) = callback {
-                let text = unsafe { &*target }.text.clone();
+                let text = target_node2.map(|n| n.text.clone()).unwrap_or_default();
                 cb(&FormEvent {
                     tag: tag.clone(), id: id.clone(), name: name.clone(),
                     kind: FormEventKind::Click(if value.is_empty() { text } else { value.clone() }),
@@ -3337,19 +3428,19 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
             }
             // Reset buttons reset the form
             if btn_type == "reset" {
-                fn find_form_ptr(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+                fn find_form_id(node: &HtmlBox, target_id: u32) -> Option<u32> {
                     if node.tag == "form" {
-                        fn has(n: &HtmlBox, t: *const HtmlBox) -> bool {
-                            if std::ptr::eq(n, t) { return true; }
+                        fn has(n: &HtmlBox, t: u32) -> bool {
+                            if n.node_id == t { return true; }
                             n.children.iter().any(|c| has(c, t))
                         }
-                        if has(node, target) { return Some(node as *const HtmlBox); }
+                        if has(node, target_id) { return Some(node.node_id); }
                     }
-                    for c in &node.children { if let Some(f) = find_form_ptr(c, target) { return Some(f); } }
+                    for c in &node.children { if let Some(f) = find_form_id(c, target_id) { return Some(f); } }
                     None
                 }
-                if let Some(fp) = find_form_ptr(root, target) {
-                    reset_form(root, fp);
+                if let Some(fid) = find_form_id(root, target) {
+                    reset_form(root, fid);
                 }
             }
             Some(btn_type == "reset") // redraw if reset
@@ -3363,53 +3454,59 @@ pub fn handle_form_click(root: &mut HtmlBox, target: *const HtmlBox, callback: &
 }
 
 /// Find the form element parent of a target (walks up from #text to select/input/button).
-fn find_form_parent(root: &HtmlBox, target: *const HtmlBox) -> *const HtmlBox {
-    let node = unsafe { &*target };
-    if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button") {
-        return target;
+fn find_form_parent_id(root: &HtmlBox, target_id: u32) -> u32 {
+    fn find_ref<'a>(node: &'a HtmlBox, t: u32) -> Option<&'a HtmlBox> {
+        if node.node_id == t { return Some(node); }
+        for child in &node.children { if let Some(f) = find_ref(child, t) { return Some(f); } }
+        None
+    }
+    if let Some(node) = find_ref(root, target_id) {
+        if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button") {
+            return target_id;
+        }
     }
     // Walk tree to find parent
-    fn walk(node: &HtmlBox, target: *const HtmlBox) -> Option<*const HtmlBox> {
+    fn walk(node: &HtmlBox, target_id: u32) -> Option<u32> {
         for child in &node.children {
-            if std::ptr::eq(child, unsafe { &*target }) {
+            if child.node_id == target_id {
                 if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button" | "label") {
-                    return Some(node as *const HtmlBox);
+                    return Some(node.node_id);
                 }
             }
-            if let Some(p) = walk(child, target) { return Some(p); }
+            if let Some(p) = walk(child, target_id) { return Some(p); }
         }
         None
     }
-    walk(root, target).unwrap_or(target)
+    walk(root, target_id).unwrap_or(target_id)
 }
 
 /// Find the action URL of the nearest ancestor <form> element.
-pub fn find_parent_form_action(root: &HtmlBox, target: *const HtmlBox) -> String {
-    fn walk(node: &HtmlBox, target: *const HtmlBox) -> Option<String> {
+pub fn find_parent_form_action(root: &HtmlBox, target_id: u32) -> String {
+    fn walk(node: &HtmlBox, target_id: u32) -> Option<String> {
         for child in &node.children {
-            if std::ptr::eq(child as *const HtmlBox, target) {
+            if child.node_id == target_id {
                 if node.tag == "form" {
                     return Some(node.attributes.get("action").cloned().unwrap_or_default());
                 }
                 return None; // found target but parent isn't form — caller keeps looking
             }
-            if let Some(action) = walk(child, target) {
+            if let Some(action) = walk(child, target_id) {
                 return Some(action);
             }
             // Check if child contains target and this node is a form
             if node.tag == "form" {
-                fn contains(node: &HtmlBox, target: *const HtmlBox) -> bool {
-                    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
-                    node.children.iter().any(|c| contains(c, target))
+                fn contains(node: &HtmlBox, target_id: u32) -> bool {
+                    if node.node_id == target_id { return true; }
+                    node.children.iter().any(|c| contains(c, target_id))
                 }
-                if contains(child, target) {
+                if contains(child, target_id) {
                     return Some(node.attributes.get("action").cloned().unwrap_or_default());
                 }
             }
         }
         None
     }
-    walk(root, target).unwrap_or_default()
+    walk(root, target_id).unwrap_or_default()
 }
 
 /// Collect form data from all named, enabled fields inside a <form> element.
@@ -3511,13 +3608,13 @@ fn collect_form_data_inner(node: &HtmlBox, data: &mut std::collections::HashMap<
 /// Text inputs reset to their original value attribute (from defaultValue).
 /// Checkboxes/radios reset to their initial checked state.
 /// Selects reset to the initially selected option.
-pub fn reset_form(root: &mut HtmlBox, form_ptr: *const HtmlBox) {
-    fn find_mut<'a>(n: &'a mut HtmlBox, t: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-        if std::ptr::eq(n, t) { return Some(n); }
+pub fn reset_form(root: &mut HtmlBox, form_id: u32) {
+    fn find_mut<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+        if n.node_id == t { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, t) { return Some(r); } }
         None
     }
-    if let Some(form) = find_mut(root, form_ptr) {
+    if let Some(form) = find_mut(root, form_id) {
         reset_form_inner(form);
     }
 }
@@ -3607,17 +3704,17 @@ pub fn build_form_submit_url(action: &str, method: &str, data: &std::collections
 
 /// Apply autofocus: find the first element with the `autofocus` attribute and focus it.
 pub fn apply_autofocus(doc: &mut Document) {
-    fn find_autofocus(node: &HtmlBox) -> Option<*const HtmlBox> {
+    fn find_autofocus(node: &HtmlBox) -> Option<u32> {
         if node.attributes.contains_key("autofocus") && is_focusable_node(node) {
-            return Some(node as *const HtmlBox);
+            return Some(node.node_id);
         }
         for child in &node.children {
-            if let Some(ptr) = find_autofocus(child) { return Some(ptr); }
+            if let Some(id) = find_autofocus(child) { return Some(id); }
         }
         None
     }
-    if let Some(ptr) = find_autofocus(&doc.root) {
-        doc.focused_box = ptr;
+    if let Some(id) = find_autofocus(&doc.root) {
+        doc.focused_box = id;
     }
 }
 
@@ -3824,8 +3921,8 @@ pub fn is_focusable_node(node: &HtmlBox) -> bool {
 /// Elements with `tabindex=-1` are excluded (programmatically focusable only).
 fn collect_focusable_ordered(
     node: &HtmlBox,
-    positive: &mut Vec<(*const HtmlBox, i32)>,
-    normal:   &mut Vec<*const HtmlBox>,
+    positive: &mut Vec<(u32, i32)>,
+    normal:   &mut Vec<u32>,
 ) {
     if matches!(node.style.display, Display::None) { return; }
     if !node.style.visibility { return; }
@@ -3842,10 +3939,10 @@ fn collect_focusable_ordered(
             .unwrap_or(false);
 
     match tabindex {
-        Some(n) if n > 0  => positive.push((node as *const HtmlBox, n)),
-        Some(0)           => normal.push(node as *const HtmlBox),
+        Some(n) if n > 0  => positive.push((node.node_id, n)),
+        Some(0)           => normal.push(node.node_id),
         Some(_)           => {} // tabindex < 0: excluded from tab order
-        None if native    => normal.push(node as *const HtmlBox),
+        None if native    => normal.push(node.node_id),
         None              => {}
     }
 
@@ -3861,6 +3958,9 @@ impl Clone for Document {
             stylesheet:      self.stylesheet.clone(),
             title:           self.title.clone(),
             base_url:        self.base_url.clone(),
+            arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
+            next_node_id:    self.next_node_id,
+            node_map:        HashMap::new(),   // rebuilt on demand
             linked_stylesheets: self.linked_stylesheets.clone(),
             editor:          self.editor.clone(),
             events:          self.events.clone(),
@@ -3881,7 +3981,7 @@ impl Clone for Document {
             viewport_w:      self.viewport_w,
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
-            caret_blink_epoch: std::time::Instant::now(), open_select: std::ptr::null(), dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
             active_animations:     self.active_animations.clone(),
             transition_states:     self.transition_states.clone(),
             prev_styles:           self.prev_styles.clone(),
@@ -4217,12 +4317,51 @@ fn scrollbar_hit_test(
 
 /// Extract the CSS properties that can participate in transitions from a style.
 /// Values are serialised to `rgba(…)` or `Npx` strings for comparison/interpolation.
-pub(crate) fn subtree_contains_ptr(node: &HtmlBox, target: *const HtmlBox) -> bool {
-    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
+/// Walk the tree to find a node by its stable node_id; returns a raw pointer
+/// (null if not found or id==0).  Used as a bridge while HtmlEvent still
+/// carries `*const HtmlBox`.
+pub fn find_by_node_id(root: &HtmlBox, id: u32) -> *const HtmlBox {
+    if id == 0 { return std::ptr::null(); }
+    fn walk(node: &HtmlBox, id: u32) -> *const HtmlBox {
+        if node.node_id == id { return node as *const HtmlBox; }
+        for child in &node.children {
+            let p = walk(child, id);
+            if !p.is_null() { return p; }
+        }
+        std::ptr::null()
+    }
+    walk(root, id)
+}
+
+/// Find the node_id of the nearest ancestor of `target_ptr` that has a valid node_id.
+/// Used when hit-test returns a node with node_id=0 (e.g. pseudo-elements, post-process nodes).
+pub fn find_parent_node_id(root: &HtmlBox, target_ptr: *const HtmlBox) -> u32 {
+    fn walk(node: &HtmlBox, target: *const HtmlBox) -> Option<u32> {
+        for child in &node.children {
+            if std::ptr::eq(child as *const HtmlBox, target) {
+                // This child is the target — return this parent's node_id if valid
+                return if node.node_id != 0 { Some(node.node_id) } else { None };
+            }
+            if let Some(id) = walk(child, target) { return Some(id); }
+        }
+        None
+    }
+    walk(root, target_ptr).unwrap_or(0)
+}
+
+pub(crate) fn subtree_contains_id(node: &HtmlBox, target_id: u32) -> bool {
+    if node.node_id == target_id { return true; }
     for child in &node.children {
-        if subtree_contains_ptr(child, target) { return true; }
+        if subtree_contains_id(child, target_id) { return true; }
     }
     false
+}
+
+/// Legacy wrapper — still used by callers that pass raw pointers.
+pub(crate) fn subtree_contains_ptr(node: &HtmlBox, target: *const HtmlBox) -> bool {
+    if target.is_null() { return false; }
+    let target_id = unsafe { &*target }.node_id;
+    subtree_contains_id(node, target_id)
 }
 
 pub(crate) fn extract_transitionable(node: &HtmlBox) -> HashMap<String, String> {

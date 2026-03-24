@@ -43,14 +43,14 @@ pub struct AncestorInfo {
     pub sibling_count:      usize,   // total children of parent
     pub type_child_index:   usize,   // 0-based among same-tag siblings
     pub type_sibling_count: usize,   // count of same-tag siblings
-    pub ptr:                *const crate::types::HtmlBox,  // raw pointer for hover chain check
+    pub node_id:            u32,  // stable node id for hover chain check
 }
 
 /// Extra context passed down through selector matching.
 #[derive(Clone, Copy, Debug)]
 pub struct MatchContext<'a> {
-    /// Raw pointer to the focused element (null = none).
-    pub focused_box:        *const crate::types::HtmlBox,
+    /// Node ID of the focused element (0 = none).
+    pub focused_box:        u32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
     pub keyboard_focus:     bool,
     /// 0-based position among same-tag siblings.
@@ -59,11 +59,11 @@ pub struct MatchContext<'a> {
     pub type_sibling_count: usize,
     /// Raw pointer to the HtmlBox being matched (for :has()).
     pub html_box:           Option<&'a crate::types::HtmlBox>,
-    /// Set of element pointers on the hover chain (hovered element + all ancestors).
+    /// Set of node IDs on the hover chain (hovered element + all ancestors).
     /// When non-empty, :hover pseudo-class matches elements in this set.
-    pub hover_chain:        &'a std::collections::HashSet<*const crate::types::HtmlBox>,
-    /// Raw pointer of the element currently being matched (for :hover on ancestors).
-    pub element_ptr:        *const crate::types::HtmlBox,
+    pub hover_chain:        &'a std::collections::HashSet<u32>,
+    /// Node ID of the element currently being matched (for :hover on ancestors).
+    pub element_id:         u32,
 }
 
 impl CssSelector {
@@ -112,13 +112,13 @@ impl CssSelector {
     pub fn matches_box(&self, b: &HtmlBox) -> bool {
         let empty_hover = std::collections::HashSet::new();
         let ctx = MatchContext {
-            focused_box: std::ptr::null(),
+            focused_box: 0,
             keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
             hover_chain: &empty_hover,
-            element_ptr: b as *const HtmlBox,
+            element_id: b.node_id,
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[], &ctx)
     }
@@ -133,13 +133,13 @@ impl CssSelector {
     ) -> bool {
         let empty_hover = std::collections::HashSet::new();
         let ctx = MatchContext {
-            focused_box: std::ptr::null(),
+            focused_box: 0,
             keyboard_focus: false,
             type_child_index: 0,
             type_sibling_count: 1,
             html_box: Some(b),
             hover_chain: &empty_hover,
-            element_ptr: b as *const HtmlBox,
+            element_id: b.node_id,
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, &ctx)
     }
@@ -216,7 +216,7 @@ fn matches_selector_with_ancestors(
                             type_sibling_count: anc.type_sibling_count,
                             html_box: None,
                             hover_chain: ctx.hover_chain,
-                            element_ptr: anc.ptr,
+                            element_id: anc.node_id,
                         };
                         if matches_selector_with_ancestors(
                             left_parts,
@@ -241,7 +241,7 @@ fn matches_selector_with_ancestors(
                             type_sibling_count: parent.type_sibling_count,
                             html_box: None,
                             hover_chain: ctx.hover_chain,
-                            element_ptr: parent.ptr,
+                            element_id: parent.node_id,
                         };
                         matches_selector_with_ancestors(
                             left_parts,
@@ -324,9 +324,9 @@ fn matches_part_with_context(
                 "empty"        => false, // can't tell from style alone
                 // Focus
                 "focus" => {
-                    if !ctx.focused_box.is_null() {
+                    if ctx.focused_box != 0 {
                         if let Some(b) = ctx.html_box {
-                            std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box)
+                            b.node_id != 0 && b.node_id == ctx.focused_box
                         } else { false }
                     } else { false }
                 }
@@ -334,19 +334,19 @@ fn matches_part_with_context(
                 // element is a text-entry control (input, textarea, contenteditable) —
                 // matching browser behaviour where the caret always needs a visible ring.
                 "focus-visible" => {
-                    if ctx.focused_box.is_null() { return false; }
+                    if ctx.focused_box == 0 { return false; }
                     if let Some(b) = ctx.html_box {
-                        if !std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box) {
+                        if b.node_id == 0 || b.node_id != ctx.focused_box {
                             return false;
                         }
                         ctx.keyboard_focus || is_text_entry(b)
                     } else { false }
                 }
                 "focus-within" => {
-                    if !ctx.focused_box.is_null() {
+                    if ctx.focused_box != 0 {
                         if let Some(b) = ctx.html_box {
                             // Is this box itself focused, or does it contain the focused element?
-                            std::ptr::eq(b as *const crate::types::HtmlBox, ctx.focused_box)
+                            (b.node_id != 0 && b.node_id == ctx.focused_box)
                                 || is_or_contains_focused(b, ctx.focused_box)
                         } else { false }
                     } else { false }
@@ -365,8 +365,8 @@ fn matches_part_with_context(
                 "hover" => {
                     // :hover matches when the element being matched is in the
                     // hover chain (the hovered element + all its ancestors).
-                    if !ctx.hover_chain.is_empty() && !ctx.element_ptr.is_null() {
-                        ctx.hover_chain.contains(&ctx.element_ptr)
+                    if !ctx.hover_chain.is_empty() && ctx.element_id != 0 {
+                        ctx.hover_chain.contains(&ctx.element_id)
                     } else {
                         false
                     }
@@ -418,9 +418,9 @@ fn is_text_entry(b: &crate::types::HtmlBox) -> bool {
 }
 
 /// Check if `b` or any of its descendants is the focused element.
-fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: *const crate::types::HtmlBox) -> bool {
+fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: u32) -> bool {
     for child in &b.children {
-        if std::ptr::eq(child as *const crate::types::HtmlBox, focused) {
+        if child.node_id != 0 && child.node_id == focused {
             return true;
         }
         if is_or_contains_focused(child, focused) {
@@ -434,7 +434,7 @@ fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: *const crate::type
 fn has_descendant_matching(
     node: &crate::types::HtmlBox,
     sel: &CssSelector,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
 ) -> bool {
     let empty_hover = std::collections::HashSet::new();
     for child in &node.children {
@@ -445,7 +445,7 @@ fn has_descendant_matching(
             type_sibling_count: 1,
             html_box: Some(child),
             hover_chain: &empty_hover,
-            element_ptr: child as *const HtmlBox,
+            element_id: child.node_id,
         };
         if matches_selector_with_ancestors(&sel.parts, &child.tag, &child.attributes, 0, 1, &[], &ctx) {
             return true;
@@ -5203,7 +5203,7 @@ pub fn apply_container_cascade_tree(
     root_font_px: f32,
     vw: f32,
     vh: f32,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
     keyboard_focus: bool,
 ) -> bool {
     // Create owned Vecs once at the top level; the recursive inner function
@@ -5229,7 +5229,7 @@ fn apply_container_cascade_inner(
     root_font_px: f32,
     vw: f32,
     vh: f32,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
     keyboard_focus: bool,
 ) -> bool {
     use crate::types::ContainerType;
@@ -5246,7 +5246,7 @@ fn apply_container_cascade_inner(
             type_sibling_count,
             html_box: Some(node),
             hover_chain: &empty_hover,
-            element_ptr: node as *const crate::types::HtmlBox,
+            element_id: node.node_id,
         };
         let mut cont_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
         for rule in &stylesheet.rules {
@@ -5317,7 +5317,7 @@ fn apply_container_cascade_inner(
         sibling_count,
         type_child_index,
         type_sibling_count,
-        ptr:              node as *const crate::types::HtmlBox,
+        node_id:          node.node_id,
     });
 
     // O(n) type counting (was O(n²) with per-child filter passes).
@@ -5357,7 +5357,7 @@ fn apply_container_cascade_inner(
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
 pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
-    apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, std::ptr::null(), false);
+    apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, 0, false);
 }
 
 /// Apply a stylesheet with viewport size and focused element for media queries and :focus selectors.
@@ -5373,7 +5373,7 @@ pub fn apply_cascade_vp(
     root_font_px: f32,
     vw: f32,
     vh: f32,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
     keyboard_focus: bool,
 ) {
     let empty_hover = std::collections::HashSet::new();
@@ -5388,9 +5388,9 @@ pub fn apply_cascade_vp_hover(
     root_font_px: f32,
     vw: f32,
     vh: f32,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
     keyboard_focus: bool,
-    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+    hover_chain: &std::collections::HashSet<u32>,
 ) {
     // A single Vec is reused for the entire tree traversal (push/pop per node)
     // instead of cloning the ancestor list at every level — O(depth) allocations
@@ -5403,11 +5403,11 @@ pub fn apply_cascade_vp_hover(
 
 /// Build the set of element pointers from root to the hovered element (hover chain).
 /// Returns empty set if target is null or not found in the tree.
-pub fn build_hover_chain(root: &crate::types::HtmlBox, target: *const crate::types::HtmlBox) -> std::collections::HashSet<*const crate::types::HtmlBox> {
-    if target.is_null() { return std::collections::HashSet::new(); }
-    fn walk(node: &crate::types::HtmlBox, target: *const crate::types::HtmlBox, path: &mut Vec<*const crate::types::HtmlBox>) -> bool {
-        path.push(node as *const crate::types::HtmlBox);
-        if std::ptr::eq(node as *const crate::types::HtmlBox, target) { return true; }
+pub fn build_hover_chain(root: &crate::types::HtmlBox, target: u32) -> std::collections::HashSet<u32> {
+    if target == 0 { return std::collections::HashSet::new(); }
+    fn walk(node: &crate::types::HtmlBox, target: u32, path: &mut Vec<u32>) -> bool {
+        path.push(node.node_id);
+        if node.node_id != 0 && node.node_id == target { return true; }
         for child in &node.children {
             if walk(child, target, path) { return true; }
         }
@@ -5434,20 +5434,20 @@ pub fn build_hover_chain(root: &crate::types::HtmlBox, target: *const crate::typ
 /// Returns `true` if any style was changed (caller should re-layout).
 pub fn swap_hover_state(
     root: &mut crate::types::HtmlBox,
-    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+    hover_chain: &std::collections::HashSet<u32>,
 ) -> bool {
     swap_hover_inner(root, hover_chain, false)
 }
 
 fn swap_hover_inner(
     node: &mut crate::types::HtmlBox,
-    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+    hover_chain: &std::collections::HashSet<u32>,
     ancestor_in_chain: bool,
 ) -> bool {
     // Skip synthetic pseudo-element children — their style is set by their parent
     if node.tag == "::before" || node.tag == "::after" { return false; }
 
-    let self_in_chain = hover_chain.contains(&(node as *const crate::types::HtmlBox));
+    let self_in_chain = node.node_id != 0 && hover_chain.contains(&node.node_id);
     let in_hover = ancestor_in_chain || self_in_chain;
     let mut changed = false;
 
@@ -5560,12 +5560,12 @@ fn apply_cascade_inner(
     type_sibling_count: usize,
     vw: f32,
     vh: f32,
-    focused_box: *const crate::types::HtmlBox,
+    focused_box: u32,
     keyboard_focus: bool,
     inherited_vars: &HashMap<String, String>,
     candidates_buf: &mut Vec<usize>,
     counters: &mut HashMap<String, Vec<i32>>,
-    hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+    hover_chain: &std::collections::HashSet<u32>,
 ) {
     // Guard against stack overflow on deeply nested DOMs.
     if ancestors.len() >= MAX_CASCADE_DEPTH {
@@ -5694,7 +5694,7 @@ fn apply_cascade_inner(
         type_sibling_count,
         html_box: Some(root),
         hover_chain,
-        element_ptr: root as *const crate::types::HtmlBox,
+        element_id: root.node_id,
     };
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
@@ -6211,7 +6211,7 @@ fn apply_cascade_inner(
         sibling_count,
         type_child_index,
         type_sibling_count,
-        ptr:                root as *const crate::types::HtmlBox,
+        node_id:            root.node_id,
     });
 
     // Helper: cascade a list of children with a given stylesheet
@@ -6222,12 +6222,12 @@ fn apply_cascade_inner(
         root_font_px: f32,
         ancestors: &mut Vec<AncestorInfo>,
         vw: f32, vh: f32,
-        focused_box: *const crate::types::HtmlBox,
+        focused_box: u32,
         keyboard_focus: bool,
         inherited_vars: &HashMap<String, String>,
         candidates_buf: &mut Vec<usize>,
         counters: &mut HashMap<String, Vec<i32>>,
-        hover_chain: &std::collections::HashSet<*const crate::types::HtmlBox>,
+        hover_chain: &std::collections::HashSet<u32>,
     ) {
         let n_children = children.len();
         if n_children == 0 { return; }

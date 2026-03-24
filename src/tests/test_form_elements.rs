@@ -5,7 +5,7 @@ use crate::layout::LayoutEngine;
 
 fn layout_html(html: &str, width: f32) -> Document {
     let mut doc = parse_html(html);
-    apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, 900.0, std::ptr::null(), false);
+    apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, 900.0, 0, false);
     let mut eng = LayoutEngine::new();
     eng.viewport_h = 900.0;
     eng.layout(&mut doc, width);
@@ -27,6 +27,12 @@ fn find_by_tag<'a>(node: &'a HtmlBox, tag: &str) -> Option<&'a HtmlBox> {
 fn find_all_by_tag<'a>(node: &'a HtmlBox, tag: &str, out: &mut Vec<&'a HtmlBox>) {
     if node.tag == tag { out.push(node); }
     for child in &node.children { find_all_by_tag(child, tag, out); }
+}
+
+fn find_by_node_id<'a>(node: &'a HtmlBox, nid: u32) -> Option<&'a HtmlBox> {
+    if node.node_id == nid { return Some(node); }
+    for child in &node.children { if let Some(n) = find_by_node_id(child, nid) { return Some(n); } }
+    None
 }
 
 // ── Text Input Tests ─────────────────────────────────────────────────────────
@@ -964,8 +970,8 @@ fn disabled_checkbox_no_toggle() {
     let cb = find_by_id(&doc.root, "c").unwrap();
     assert!(!cb.attributes.contains_key("checked"), "should start unchecked");
     // Simulate click via handle_form_click
-    let ptr = cb as *const HtmlBox;
-    crate::types::handle_form_click(&mut doc.root, ptr, &mut None);
+    let cb_node_id = cb.node_id;
+    crate::types::handle_form_click(&mut doc.root, cb_node_id, &mut None);
     let cb = find_by_id(&doc.root, "c").unwrap();
     assert!(!cb.attributes.contains_key("checked"), "disabled checkbox should not toggle");
 }
@@ -1088,9 +1094,7 @@ fn click_and_type_integration() {
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, input_center, 0);
 
     // Check focus was set
-    assert!(!doc.focused_box.is_null(), "clicking input should set focused_box");
-    let focused = unsafe { &*doc.focused_box };
-    assert_eq!(focused.tag, "input", "focused element should be the input, got {}", focused.tag);
+    assert!(doc.focused_box != 0, "clicking input should set focused_box");
 
     // Simulate typing 'abc'
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'a' as u32, Some('a'), false, false, false, false);
@@ -1110,7 +1114,7 @@ fn click_and_type_password() {
     let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    assert!(!doc.focused_box.is_null(), "password input should focus");
+    assert!(doc.focused_box != 0, "password input should focus");
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
     let input = find_by_id(&doc.root, "p").unwrap();
     assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("x"));
@@ -1206,7 +1210,7 @@ fn click_sets_focus(html: &str, tag: &str) -> bool {
                   elem.border_rect.y + elem.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    !doc.focused_box.is_null()
+    doc.focused_box != 0
 }
 
 #[test]
@@ -1274,7 +1278,7 @@ fn hidden_input_not_focusable_by_click() {
     // Hidden inputs can't be clicked since they have display:none
     let mut doc = layout_html(r#"<input type="hidden" name="t">"#, 400.0);
     // No border_rect to click — just verify focus stays null
-    assert!(doc.focused_box.is_null());
+    assert!(doc.focused_box == 0);
 }
 
 // ── Tab navigation cycles through all focusable elements ────────────────────
@@ -1291,24 +1295,24 @@ fn tab_cycles_through_form_elements() {
 
     // Tab should cycle: a → b → c → d → e → a
     doc.focus_next();
-    assert!(!doc.focused_box.is_null());
-    let tag1 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert!(doc.focused_box != 0);
+    let tag1 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(tag1, "a", "first Tab should focus 'a', got '{}'", tag1);
 
     doc.focus_next();
-    let tag2 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let tag2 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(tag2, "b");
 
     doc.focus_next();
-    let tag3 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let tag3 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(tag3, "c");
 
     doc.focus_next();
-    let tag4 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let tag4 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(tag4, "d");
 
     doc.focus_next();
-    let tag5 = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let tag5 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(tag5, "e");
 }
 
@@ -1324,11 +1328,11 @@ fn shift_tab_goes_backwards() {
     doc.focus_next(); // a
     doc.focus_next(); // b
     doc.focus_next(); // c
-    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(id, "c");
 
     doc.focus_prev(); // back to b
-    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(id, "b");
 }
 
@@ -1501,8 +1505,8 @@ fn reset_clears_text_inputs() {
     let input = find_by_id(&doc.root, "t").unwrap();
     assert!(input_value(input).contains('x'), "should have typed");
     // Reset
-    let form_ptr = find_by_id(&doc.root, "f").unwrap() as *const HtmlBox;
-    crate::types::reset_form(&mut doc.root, form_ptr);
+    let form_node_id = find_by_id(&doc.root, "f").unwrap().node_id;
+    crate::types::reset_form(&mut doc.root, form_node_id);
     let input = find_by_id(&doc.root, "t").unwrap();
     assert_eq!(input_value(input), "original", "reset should restore original value");
 }
@@ -1642,8 +1646,8 @@ fn number_input_respects_min() {
 fn autofocus_sets_focus_on_load() {
     let mut doc = layout_html(r#"<input type="text" id="a"><input type="text" id="b" autofocus>"#, 400.0);
     crate::types::apply_autofocus(&mut doc);
-    assert!(!doc.focused_box.is_null(), "autofocus should set focused_box");
-    let focused_id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert!(doc.focused_box != 0, "autofocus should set focused_box");
+    let focused_id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(focused_id, "b", "should focus element with autofocus attribute");
 }
 
@@ -1676,8 +1680,8 @@ fn placeholder_text_has_default_gray_color() {
 fn tab_to_checkbox_sets_focus() {
     let mut doc = layout_html(r#"<input type="checkbox" id="c"><input type="text" id="t">"#, 400.0);
     doc.focus_next(); // should focus checkbox first
-    assert!(!doc.focused_box.is_null());
-    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    assert!(doc.focused_box != 0);
+    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(id, "c", "Tab should focus checkbox");
 }
 
@@ -1691,7 +1695,7 @@ fn tabindex_positive_comes_first() {
         <input type="text" id="c">
     "#, 400.0);
     doc.focus_next();
-    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(id, "b", "tabindex=1 should be focused first, got {}", id);
 }
 
@@ -1704,7 +1708,7 @@ fn tabindex_negative_skipped() {
     "#, 400.0);
     doc.focus_next(); // a
     doc.focus_next(); // should skip "skip" and go to c
-    let id = unsafe { &*doc.focused_box }.attributes.get("id").cloned().unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
     assert_eq!(id, "c", "tabindex=-1 should be skipped, got {}", id);
 }
 

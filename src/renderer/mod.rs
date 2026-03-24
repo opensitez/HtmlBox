@@ -43,8 +43,8 @@ pub struct Renderer {
     /// or animation overrides. When set, the renderer uses node.style (already has
     /// the interpolated values applied) rather than hover_style for these elements.
     transitioning_ids: std::collections::HashSet<usize>,
-    /// Focused element pointer — set during render() for form element caret drawing.
-    focused_ptr: *const HtmlBox,
+    /// Focused element node_id — set during render() for form element caret drawing.
+    focused_id: u32,
     /// Hovered dropdown option index (-1 = none).
     dropdown_hover_idx: i32,
     /// Vertical offset for content area (e.g. browser chrome height).
@@ -58,7 +58,7 @@ pub struct Renderer {
 
 /// A positioned element deferred for overlay rendering (z-index stacking).
 struct DeferredZNode {
-    ptr:   *const HtmlBox,
+    node_id: u32,
     sx:    f32,
     sy:    f32,
     clip:  Rect,
@@ -83,7 +83,7 @@ impl Renderer {
             cursor_physical: (0.0, 0.0),
             viewport_h: 700.0,
             transitioning_ids: std::collections::HashSet::new(),
-            focused_ptr: std::ptr::null(),
+            focused_id: 0,
             dropdown_hover_idx: -1,
             content_offset_y: 0.0,
             caret_epoch: std::time::Instant::now(),
@@ -363,9 +363,11 @@ impl Renderer {
     /// The host should call this after `handle_window_event(CursorMoved)` and set the
     /// window cursor accordingly.
     pub fn cursor_icon(&self, doc: &crate::types::Document) -> CSSCursor {
-        let hovered = doc.hovered_box;
-        if hovered.is_null() { return CSSCursor::Default; }
-        let node = unsafe { &*hovered };
+        let hovered_id = doc.hovered_box;
+        if hovered_id == 0 { return CSSCursor::Default; }
+        let ptr = crate::types::find_by_node_id(&doc.root, hovered_id);
+        if ptr.is_null() { return CSSCursor::Default; }
+        let node = unsafe { &*ptr };
         // Explicit CSS cursor property
         if node.style.cursor != CSSCursor::Auto {
             return node.style.cursor;
@@ -460,9 +462,9 @@ impl Renderer {
         let caret_info = doc.editor.caret_info();
         let caret_visible = doc.editor.caret_visible;
         let _has_focus = doc.editor.has_focus;
-        let sel_box_ptr: *const HtmlBox = caret_info
-            .map(|(ptr, _)| ptr)
-            .unwrap_or(std::ptr::null());
+        let sel_box_id: u32 = caret_info
+            .map(|(ptr, _)| if ptr.is_null() { 0 } else { unsafe { &*ptr }.node_id })
+            .unwrap_or(0);
         self.scale = scale;
         let zoom = self.zoom.clamp(0.1, 8.0);
         // CSS canvas background: use the body element's background if set,
@@ -515,13 +517,13 @@ impl Renderer {
         // Restored to DPI-only scale after content is drawn (before scrollbar).
         self.scale = scale * zoom;
 
-        let hovered_ptr   = doc.hovered_box;
-        let active_ptr    = doc.active_box;
+        let hovered_id    = doc.hovered_box;
+        let active_id     = doc.active_box;
         let visited_hrefs = &doc.visited_urls;
         // Collect element IDs that have active transitions so render_box can
         // use node.style (already has interpolated overrides) instead of hover_style.
         self.transitioning_ids = doc.animation_overrides.keys().cloned().collect();
-        self.focused_ptr = doc.focused_box;
+        self.focused_id = doc.focused_box;
         self.dropdown_hover_idx = doc.dropdown_hover_idx;
         self.caret_epoch = doc.caret_blink_epoch;
         self.deferred_z.clear();
@@ -531,9 +533,9 @@ impl Renderer {
             &clip,
             /* parent_mask */ None,
             sel_start, sel_end,
-            sel_box_ptr,
-            hovered_ptr,
-            active_ptr,
+            sel_box_id,
+            hovered_id,
+            active_id,
             visited_hrefs,
         );
 
@@ -545,11 +547,13 @@ impl Renderer {
             // Take the list to avoid borrow issues (render_box may push more entries)
             let deferred = std::mem::take(&mut self.deferred_z);
             for d in &deferred {
-                let node = unsafe { &*d.ptr };
+                let ptr = crate::types::find_by_node_id(&doc.root, d.node_id);
+                if ptr.is_null() { continue; }
+                let node = unsafe { &*ptr };
                 self.render_box(
                     node, pixmap, d.sx, d.sy,
                     &d.clip, None,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
             // Restore any newly deferred elements from the overlay pass
@@ -564,22 +568,27 @@ impl Renderer {
         // covered by later siblings/descendants with backgrounds.
         // Collect all fixed elements from the tree, then draw them on top.
         {
-            let mut fixed_nodes: Vec<*const HtmlBox> = Vec::new();
-            collect_fixed(&doc.root, &mut fixed_nodes);
-            for ptr in fixed_nodes {
+            let mut fixed_ids: Vec<u32> = Vec::new();
+            collect_fixed(&doc.root, &mut fixed_ids);
+            for fid in fixed_ids {
+                let ptr = crate::types::find_by_node_id(&doc.root, fid);
+                if ptr.is_null() { continue; }
                 let node = unsafe { &*ptr };
                 self.render_box(
                     node, pixmap, 0.0, 0.0,
                     &clip, None,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
         }
 
         // ── Select dropdown popup ────────────────────────────────────────────
-        if !doc.open_select.is_null() {
-            let sel = unsafe { &*doc.open_select };
-            self.draw_select_dropdown(sel, pixmap, scroll_x, scroll_y);
+        if doc.open_select != 0 {
+            let sel_ptr = crate::types::find_by_node_id(&doc.root, doc.open_select);
+            if !sel_ptr.is_null() {
+                let sel = unsafe { &*sel_ptr };
+                self.draw_select_dropdown(sel, pixmap, scroll_x, scroll_y);
+            }
         }
 
         // ── Caret ─────────────────────────────────────────────────────────────
@@ -640,9 +649,9 @@ impl Renderer {
         parent_mask:   Option<&Mask>,
         sel_start:     Option<usize>,
         sel_end:       Option<usize>,
-        sel_box_ptr:   *const HtmlBox,
-        hovered_ptr:   *const HtmlBox,
-        active_ptr:    *const HtmlBox,
+        sel_box_id:    u32,
+        hovered_id:    u32,
+        active_id:     u32,
         visited_hrefs: &std::collections::HashSet<String>,
     ) {
         if matches!(node.style.display, Display::None) { return; }
@@ -692,15 +701,15 @@ impl Renderer {
         // it OR any of its descendants, so we check the whole subtree.
         // If a transition is running, node.style already has the interpolated values
         // applied via animation_overrides — skip hover_style so the transition shows.
-        let node_id = node as *const HtmlBox as usize;
-        let has_transition = self.transitioning_ids.contains(&node_id);
+        let elem_usize_id = node as *const HtmlBox as usize;
+        let has_transition = self.transitioning_ids.contains(&elem_usize_id);
         let is_hovered = !has_transition
-            && !hovered_ptr.is_null()
+            && hovered_id != 0
             && node.style.hover_style.is_some()
-            && Self::subtree_contains(node, hovered_ptr);
-        let is_active = !active_ptr.is_null()
+            && Self::subtree_contains(node, hovered_id);
+        let is_active = active_id != 0
             && node.style.active_style.is_some()
-            && Self::subtree_contains(node, active_ptr);
+            && Self::subtree_contains(node, active_id);
         let is_visited = node.style.visited_style.is_some()
             && !node.style.href.is_empty()
             && visited_hrefs.contains(&node.style.href);
@@ -969,7 +978,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         c, m,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                     );
                 }
             }
@@ -1007,7 +1016,7 @@ impl Renderer {
                 if let Some(mut temp) = Pixmap::new(pixmap.width(), pixmap.height()) {
                     self.draw_inline_content(
                         node, eff_style, &flat, &mut temp, child_sx, child_sy,
-                        sel_start, sel_end, sel_box_ptr,
+                        sel_start, sel_end, sel_box_id,
                         None, // mask applied at composite time
                         is_hovered, is_active,
                     );
@@ -1028,7 +1037,7 @@ impl Renderer {
             } else {
                 self.draw_inline_content(
                     node, eff_style, &flat, pixmap, child_sx, child_sy,
-                    sel_start, sel_end, sel_box_ptr,
+                    sel_start, sel_end, sel_box_id,
                     child_mask,
                     is_hovered, is_active,
                 );
@@ -1092,7 +1101,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                     );
                 }
             }
@@ -1112,7 +1121,7 @@ impl Renderer {
                     self.render_box(
                         child, pixmap, child_sx, child_sy,
                         &child_clip, child_mask,
-                        sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                        sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                     );
                 }
             }
@@ -1123,7 +1132,7 @@ impl Renderer {
                     child, pixmap, child_sx, child_sy,
                     &child_clip, child_mask, clip, eff_mask,
                     overflow_clips,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
         }
@@ -1150,9 +1159,9 @@ impl Renderer {
         clip: &Rect, eff_mask: Option<&Mask>,
         overflow_clips: bool,
         sel_start: Option<usize>, sel_end: Option<usize>,
-        sel_box_ptr: *const HtmlBox,
-        hovered_ptr: *const HtmlBox,
-        active_ptr: *const HtmlBox,
+        sel_box_id: u32,
+        hovered_id: u32,
+        active_id: u32,
         visited_hrefs: &std::collections::HashSet<String>,
     ) {
         match child.style.position {
@@ -1165,7 +1174,7 @@ impl Renderer {
                 // DOM siblings (e.g. images below a nav bar).
                 let c = if overflow_clips { *child_clip } else { *clip };
                 self.deferred_z.push(DeferredZNode {
-                    ptr: child as *const HtmlBox,
+                    node_id: child.node_id,
                     sx:  child_sx,
                     sy:  child_sy,
                     clip: c,
@@ -1182,7 +1191,7 @@ impl Renderer {
                 self.render_box(
                     child, pixmap, child_sx, child_sy,
                     c, m,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
             _ => {
@@ -1191,7 +1200,7 @@ impl Renderer {
                 self.render_box(
                     child, pixmap, child_sx, child_sy,
                     child_clip, child_mask,
-                    sel_start, sel_end, sel_box_ptr, hovered_ptr, active_ptr, visited_hrefs,
+                    sel_start, sel_end, sel_box_id, hovered_id, active_id, visited_hrefs,
                 );
             }
         }
@@ -1204,10 +1213,11 @@ impl Renderer {
     /// the cursor is over any child — matching CSS cascade semantics.
     /// Only called for nodes that actually have a state style, so the cost is
     /// bounded to the small subset of nodes with hover/active rules.
-    fn subtree_contains(node: &HtmlBox, target: *const HtmlBox) -> bool {
-        if std::ptr::eq(node as *const HtmlBox, target) { return true; }
+    fn subtree_contains(node: &HtmlBox, target_id: u32) -> bool {
+        if target_id == 0 { return false; }
+        if node.node_id == target_id { return true; }
         for child in node.effective_children() {
-            if Self::subtree_contains(child, target) { return true; }
+            if Self::subtree_contains(child, target_id) { return true; }
         }
         false
     }
@@ -1526,7 +1536,7 @@ impl Renderer {
         sy:         f32,
         sel_start:  Option<usize>,
         sel_end:    Option<usize>,
-        sel_box_ptr: *const HtmlBox,
+        sel_box_id: u32,
         mask:       Option<&Mask>,
         is_hovered: bool,
         is_active:  bool,
@@ -1542,8 +1552,8 @@ impl Renderer {
             ((fallback_color.a as f32) * opacity) as u8,
         );
 
-        let is_sel_box = !sel_box_ptr.is_null()
-            && std::ptr::eq(node as *const HtmlBox, sel_box_ptr);
+        let is_sel_box = sel_box_id != 0
+            && node.node_id != 0 && node.node_id == sel_box_id;
         let (sel_min, sel_max) = if is_sel_box {
             match (sel_start, sel_end) {
                 (Some(s), Some(e)) => (s.min(e), s.max(e)),
@@ -2354,7 +2364,7 @@ impl Renderer {
         let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
 
         // Focus ring
-        let is_focused = !self.focused_ptr.is_null() && std::ptr::eq(node, unsafe { &*self.focused_ptr });
+        let is_focused = self.focused_id != 0 && node.node_id != 0 && node.node_id == self.focused_id;
         if is_focused {
             self.stroke_rect(pixmap, pr.x - sx - 1.0, pr.y - sy - 1.0, pr.w + 2.0, pr.h + 2.0,
                 [66, 133, 244, 255], 2.0, mask);
@@ -2572,7 +2582,7 @@ impl Renderer {
         let ts = Transform::from_scale(self.scale, self.scale);
 
         // Focus ring
-        let is_focused = !self.focused_ptr.is_null() && std::ptr::eq(node, unsafe { &*self.focused_ptr });
+        let is_focused = self.focused_id != 0 && node.node_id != 0 && node.node_id == self.focused_id;
         if is_focused {
             self.stroke_rect(pixmap, x - 1.0, y - 1.0, w + 2.0, h + 2.0,
                 [66, 133, 244, 255], 2.0, mask);
@@ -4301,9 +4311,9 @@ fn parse_hex_color(s: &str) -> (u8, u8, u8) {
 }
 
 /// Recursively collect all `position: fixed` nodes in the tree.
-fn collect_fixed(node: &HtmlBox, out: &mut Vec<*const HtmlBox>) {
+fn collect_fixed(node: &HtmlBox, out: &mut Vec<u32>) {
     if node.style.position == Position::Fixed && !matches!(node.style.display, Display::None) {
-        out.push(node as *const HtmlBox);
+        out.push(node.node_id);
         return; // don't recurse into fixed element's children (they'll be drawn as part of it)
     }
     for child in &node.children {

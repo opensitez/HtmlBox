@@ -18,10 +18,10 @@ fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
 
 /// Simulate hovering over element with given id: set hovered_box, mark changed, re-layout.
 fn recascade_with_hover(doc: &mut Document, hovered_id: &str) {
-    let hovered_ptr = find_by_id(&doc.root, hovered_id)
-        .map(|n| n as *const HtmlBox)
-        .unwrap_or(std::ptr::null());
-    doc.hovered_box = hovered_ptr;
+    let hovered_id_val = find_by_id(&doc.root, hovered_id)
+        .map(|n| n.node_id)
+        .unwrap_or(0);
+    doc.hovered_box = hovered_id_val;
     doc.hover_changed = true;
     let mut eng = LayoutEngine::new();
     eng.viewport_h = 900.0;
