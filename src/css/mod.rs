@@ -1,3 +1,5 @@
+pub mod properties;
+
 use std::collections::{HashMap, HashSet};
 use crate::types::*;
 
@@ -515,6 +517,12 @@ pub struct CssRule {
     pub selectors:           Vec<CssSelector>,
     pub declarations:        HashMap<String, String>,
     pub important_declarations: HashMap<String, String>,
+    /// Pre-resolved declarations: (PropertyId, value_string).
+    /// Populated during `compile_declarations()`. Used by the cascade for
+    /// fast enum dispatch instead of string matching.
+    pub compiled_decls:      Vec<(properties::PropertyId, String)>,
+    /// Pre-resolved important declarations.
+    pub compiled_important:  Vec<(properties::PropertyId, String)>,
     pub specificity:         u32,     // max of all selectors
     pub media_condition:     String,  // non-empty if inside @media
     pub container_condition: String,  // non-empty if inside @container
@@ -530,6 +538,8 @@ impl Default for CssRule {
             selectors:           Vec::new(),
             declarations:        HashMap::new(),
             important_declarations: HashMap::new(),
+            compiled_decls:      Vec::new(),
+            compiled_important:  Vec::new(),
             specificity:         0,
             media_condition:     String::new(),
             container_condition: String::new(),
@@ -537,6 +547,25 @@ impl Default for CssRule {
             original_selector:   String::new(),
             is_hover:            false,
             pseudo_element:      PseudoElement::None,
+        }
+    }
+}
+
+impl CssRule {
+    /// Pre-compile declarations from HashMap<String,String> into Vec<(PropertyId, String)>.
+    /// Called during rebuild_index(). Shorthands are expanded into longhands.
+    pub fn compile_declarations(&mut self) {
+        self.compiled_decls.clear();
+        for (prop, val) in &self.declarations {
+            let id = properties::resolve(prop);
+            if id == properties::PropertyId::Unknown { continue; }
+            self.compiled_decls.push((id, val.clone()));
+        }
+        self.compiled_important.clear();
+        for (prop, val) in &self.important_declarations {
+            let id = properties::resolve(prop);
+            if id == properties::PropertyId::Unknown { continue; }
+            self.compiled_important.push((id, val.clone()));
         }
     }
 }
@@ -779,6 +808,11 @@ impl Stylesheet {
             }
         }
         self.idx_dirty = false;
+
+        // Pre-compile declarations (string → PropertyId) for fast cascade dispatch
+        for rule in &mut self.rules {
+            rule.compile_declarations();
+        }
 
         // Detect if any rule has :hover on a non-subject part (descendant hover selectors).
         // e.g., ".parent:hover .child" — :hover is on .parent (ancestor), not .child (subject).
@@ -1995,6 +2029,33 @@ fn copy_property_from_parent(style: &mut ComputedStyle, parent: &ComputedStyle, 
 }
 
 pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
+    // HTML attributes that aren't real CSS properties — handle before resolving
+    match prop {
+        "cellpadding" => {
+            let v = value.trim();
+            style.cell_padding = parse_length(v);
+            return;
+        }
+        "cellspacing" => {
+            let v = value.trim();
+            style.border_spacing_h = parse_length(v);
+            style.border_spacing_v = parse_length(v);
+            return;
+        }
+        _ => {}
+    }
+    // CSS custom properties (--*) are not resolved by PropertyId
+    let v = value.trim();
+    if prop.starts_with("--") {
+        style.custom_props.insert(prop.to_string(), v.to_string());
+        return;
+    }
+    let id = properties::resolve(prop);
+    apply_property_by_id(style, id, value);
+}
+
+pub fn apply_property_by_id(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
+    use properties::PropertyId;
     let v = value.trim();
     // `inherit` means "use the parent's computed value". For inherited properties,
     // `inherit_from` already copied the parent value before rules are applied, so
@@ -2003,8 +2064,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
     if v == "inherit" { return; }
     // `initial` / `revert` / `unset` — treat as reset to default (skip for now, close enough).
     if matches!(v, "initial" | "revert" | "unset" | "revert-layer") { return; }
-    match prop {
-        "display" => {
+    match id {
+        PropertyId::Display => {
             style.display = match v {
                 "none"               => Display::None,
                 "block"              => Display::Block,
@@ -2031,7 +2092,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                    => Display::Inline,
             };
         }
-        "position" => {
+        PropertyId::Position => {
             style.position = match v {
                 "static"   => Position::Static,
                 "relative" => Position::Relative,
@@ -2041,7 +2102,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _          => Position::Static,
             };
         }
-        "float" => {
+        PropertyId::Float => {
             style.float = match v {
                 "left"  => Float::Left,
                 "right" => Float::Right,
@@ -2056,7 +2117,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 };
             }
         }
-        "clear" => {
+        PropertyId::Clear => {
             style.clear = match v {
                 "left"  => Clear::Left,
                 "right" => Clear::Right,
@@ -2064,72 +2125,72 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _       => Clear::None,
             };
         }
-        "z-index"   => { style.z_index = v.parse().unwrap_or(0); }
-        "overflow"  => {
+        PropertyId::ZIndex   => { style.z_index = v.parse().unwrap_or(0); }
+        PropertyId::Overflow  => {
             let ov = parse_overflow(v);
             style.overflow_x = ov;
             style.overflow_y = ov;
         }
-        "overflow-x" => { style.overflow_x = parse_overflow(v); }
-        "overflow-y" => { style.overflow_y = parse_overflow(v); }
+        PropertyId::OverflowX => { style.overflow_x = parse_overflow(v); }
+        PropertyId::OverflowY => { style.overflow_y = parse_overflow(v); }
 
-        "width"      => { style.width      = parse_length(v); }
-        "height"     => { style.height     = parse_length(v); }
-        "min-width"  => { style.min_width  = parse_length(v); }
-        "max-width"  => { style.max_width  = parse_length_or_none(v); }
-        "min-height" => { style.min_height = parse_length(v); }
-        "max-height" => { style.max_height = parse_length_or_none(v); }
+        PropertyId::Width      => { style.width      = parse_length(v); }
+        PropertyId::Height     => { style.height     = parse_length(v); }
+        PropertyId::MinWidth  => { style.min_width  = parse_length(v); }
+        PropertyId::MaxWidth  => { style.max_width  = parse_length_or_none(v); }
+        PropertyId::MinHeight => { style.min_height = parse_length(v); }
+        PropertyId::MaxHeight => { style.max_height = parse_length_or_none(v); }
 
-        "margin"        => apply_shorthand_4(v, &mut style.margin_top, &mut style.margin_right, &mut style.margin_bottom, &mut style.margin_left, parse_length),
-        "margin-top"    => { style.margin_top    = parse_length(v); }
-        "margin-right"  => { style.margin_right  = parse_length(v); }
-        "margin-bottom" => { style.margin_bottom = parse_length(v); }
-        "margin-left"   => { style.margin_left   = parse_length(v); }
+        PropertyId::Margin        => apply_shorthand_4(v, &mut style.margin_top, &mut style.margin_right, &mut style.margin_bottom, &mut style.margin_left, parse_length),
+        PropertyId::MarginTop    => { style.margin_top    = parse_length(v); }
+        PropertyId::MarginRight  => { style.margin_right  = parse_length(v); }
+        PropertyId::MarginBottom => { style.margin_bottom = parse_length(v); }
+        PropertyId::MarginLeft   => { style.margin_left   = parse_length(v); }
 
-        "padding"        => apply_shorthand_4(v, &mut style.padding_top, &mut style.padding_right, &mut style.padding_bottom, &mut style.padding_left, parse_length),
-        "padding-top"    => { style.padding_top    = parse_length(v); }
-        "padding-right"  => { style.padding_right  = parse_length(v); }
-        "padding-bottom" => { style.padding_bottom = parse_length(v); }
-        "padding-left"   => { style.padding_left   = parse_length(v); }
+        PropertyId::Padding        => apply_shorthand_4(v, &mut style.padding_top, &mut style.padding_right, &mut style.padding_bottom, &mut style.padding_left, parse_length),
+        PropertyId::PaddingTop    => { style.padding_top    = parse_length(v); }
+        PropertyId::PaddingRight  => { style.padding_right  = parse_length(v); }
+        PropertyId::PaddingBottom => { style.padding_bottom = parse_length(v); }
+        PropertyId::PaddingLeft   => { style.padding_left   = parse_length(v); }
 
-        "border"        => apply_border_shorthand(style, v),
-        "border-width"  => apply_shorthand_4(v, &mut style.border_top_width, &mut style.border_right_width, &mut style.border_bottom_width, &mut style.border_left_width, parse_length),
-        "border-top-width"    => { style.border_top_width    = parse_length(v); }
-        "border-right-width"  => { style.border_right_width  = parse_length(v); }
-        "border-bottom-width" => { style.border_bottom_width = parse_length(v); }
-        "border-left-width"   => { style.border_left_width   = parse_length(v); }
+        PropertyId::Border        => apply_border_shorthand(style, v),
+        PropertyId::BorderWidth  => apply_shorthand_4(v, &mut style.border_top_width, &mut style.border_right_width, &mut style.border_bottom_width, &mut style.border_left_width, parse_length),
+        PropertyId::BorderTopWidth    => { style.border_top_width    = parse_length(v); }
+        PropertyId::BorderRightWidth  => { style.border_right_width  = parse_length(v); }
+        PropertyId::BorderBottomWidth => { style.border_bottom_width = parse_length(v); }
+        PropertyId::BorderLeftWidth   => { style.border_left_width   = parse_length(v); }
 
-        "border-style"        => {
+        PropertyId::BorderStyle        => {
             let bs = parse_border_style(v);
             style.border_top_style    = bs;
             style.border_right_style  = bs;
             style.border_bottom_style = bs;
             style.border_left_style   = bs;
         }
-        "border-top-style"    => { style.border_top_style    = parse_border_style(v); }
-        "border-right-style"  => { style.border_right_style  = parse_border_style(v); }
-        "border-bottom-style" => { style.border_bottom_style = parse_border_style(v); }
-        "border-left-style"   => { style.border_left_style   = parse_border_style(v); }
+        PropertyId::BorderTopStyle    => { style.border_top_style    = parse_border_style(v); }
+        PropertyId::BorderRightStyle  => { style.border_right_style  = parse_border_style(v); }
+        PropertyId::BorderBottomStyle => { style.border_bottom_style = parse_border_style(v); }
+        PropertyId::BorderLeftStyle   => { style.border_left_style   = parse_border_style(v); }
 
-        "border-color"        => {
+        PropertyId::BorderColor        => {
             let bc = parse_color(v).unwrap_or(Color::BLACK);
             style.border_top_color    = bc;
             style.border_right_color  = bc;
             style.border_bottom_color = bc;
             style.border_left_color   = bc;
         }
-        "border-top-color"    => { if let Some(c) = parse_color(v) { style.border_top_color    = c; } }
-        "border-right-color"  => { if let Some(c) = parse_color(v) { style.border_right_color  = c; } }
-        "border-bottom-color" => { if let Some(c) = parse_color(v) { style.border_bottom_color = c; } }
-        "border-left-color"   => { if let Some(c) = parse_color(v) { style.border_left_color   = c; } }
-        "top"    => { style.top    = parse_length(v); }
-        "right"  => { style.right  = parse_length(v); }
-        "bottom" => { style.bottom = parse_length(v); }
-        "left"   => { style.left   = parse_length(v); }
+        PropertyId::BorderTopColor    => { if let Some(c) = parse_color(v) { style.border_top_color    = c; } }
+        PropertyId::BorderRightColor  => { if let Some(c) = parse_color(v) { style.border_right_color  = c; } }
+        PropertyId::BorderBottomColor => { if let Some(c) = parse_color(v) { style.border_bottom_color = c; } }
+        PropertyId::BorderLeftColor   => { if let Some(c) = parse_color(v) { style.border_left_color   = c; } }
+        PropertyId::Top    => { style.top    = parse_length(v); }
+        PropertyId::Right  => { style.right  = parse_length(v); }
+        PropertyId::Bottom => { style.bottom = parse_length(v); }
+        PropertyId::Left   => { style.left   = parse_length(v); }
 
-        "color"            => { if let Some(c) = parse_color(v) { style.color = c; } }
-        "background-color" => { if let Some(c) = parse_color(v) { style.background_color = c; } }
-        "background"       => {
+        PropertyId::Color            => { if let Some(c) = parse_color(v) { style.color = c; } }
+        PropertyId::BackgroundColor => { if let Some(c) = parse_color(v) { style.background_color = c; } }
+        PropertyId::Background       => {
             // Handle gradient functions first (they contain spaces and commas)
             if v.contains("gradient") {
                 apply_gradient(style, v);
@@ -2232,7 +2293,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
 
-        "font-family" => {
+        PropertyId::FontFamily => {
             // Normalize the raw value: resolve system-font keywords in each family name.
             // The full comma-separated string is preserved so the renderer can iterate
             // through the fallback chain.
@@ -2247,8 +2308,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 .join(", ");
             style.font_family = normalized;
         }
-        "font-size"   => { style.font_size   = parse_font_size(v); }
-        "font-weight" => {
+        PropertyId::FontSize   => { style.font_size   = parse_font_size(v); }
+        PropertyId::FontWeight => {
             style.font_weight = match v {
                 "normal"  => FontWeight::Normal,
                 "bold"    => FontWeight::Bold,
@@ -2257,15 +2318,15 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _         => v.parse::<u16>().map(FontWeight::Value).unwrap_or(FontWeight::Normal),
             };
         }
-        "font-style" => {
+        PropertyId::FontStyle => {
             style.font_style = match v {
                 "italic"  => FontStyle::Italic,
                 "oblique" => FontStyle::Oblique,
                 _         => FontStyle::Normal,
             };
         }
-        "font" => apply_font_shorthand(style, v),
-        "font-variation-settings" => {
+        PropertyId::Font => apply_font_shorthand(style, v),
+        PropertyId::FontVariationSettings => {
             style.font_variation_settings = parse_variation_settings(v);
             // Promote 'wght' axis to font-weight if no explicit font-weight was set.
             for (tag, val) in &style.font_variation_settings {
@@ -2274,7 +2335,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "font-feature-settings" => {
+        PropertyId::FontFeatureSettings => {
             style.font_feature_settings = parse_feature_settings(v);
             // Promote 'smcp' feature to small_caps flag.
             for (tag, val) in &style.font_feature_settings {
@@ -2282,10 +2343,10 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
 
-        "line-height"    => { style.line_height    = parse_line_height(v); }
-        "letter-spacing" => { style.letter_spacing = parse_length(v); }
-        "word-spacing"   => { style.word_spacing   = parse_length(v); }
-        "text-align"     => {
+        PropertyId::LineHeight    => { style.line_height    = parse_line_height(v); }
+        PropertyId::LetterSpacing => { style.letter_spacing = parse_length(v); }
+        PropertyId::WordSpacing   => { style.word_spacing   = parse_length(v); }
+        PropertyId::TextAlign     => {
             style.text_align = match v {
                 "right"   => TextAlign::Right,
                 "center"  => TextAlign::Center,
@@ -2295,7 +2356,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _         => TextAlign::Left,
             };
         }
-        "vertical-align" => {
+        PropertyId::VerticalAlign => {
             style.vertical_align = match v {
                 "top"         => VerticalAlign::Top,
                 "middle"      => VerticalAlign::Middle,
@@ -2307,7 +2368,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _             => VerticalAlign::Baseline,
             };
         }
-        "text-decoration" => {
+        PropertyId::TextDecoration => {
             // Shorthand: <line> || <style> || <color> in any order.
             // e.g. "underline solid #ef4444" or "underline wavy #ec4899"
             style.text_decoration.underline     = v.contains("underline");
@@ -2333,8 +2394,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "text-indent"    => { style.text_indent   = parse_length(v); }
-        "white-space"    => {
+        PropertyId::TextIndent    => { style.text_indent   = parse_length(v); }
+        PropertyId::WhiteSpace    => {
             style.white_space = match v {
                 "nowrap"   => WhiteSpace::Nowrap,
                 "pre"      => WhiteSpace::Pre,
@@ -2343,7 +2404,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _          => WhiteSpace::Normal,
             };
         }
-        "text-transform" => {
+        PropertyId::TextTransform => {
             style.text_transform = match v {
                 "uppercase"  => TextTransform::Uppercase,
                 "lowercase"  => TextTransform::Lowercase,
@@ -2351,7 +2412,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _            => TextTransform::None,
             };
         }
-        "word-break" => {
+        PropertyId::WordBreak => {
             style.word_break = match v {
                 "break-all"  => WordBreak::BreakAll,
                 "keep-all"   => WordBreak::KeepAll,
@@ -2359,20 +2420,20 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _            => WordBreak::Normal,
             };
         }
-        "overflow-wrap" | "word-wrap" => {
+        PropertyId::OverflowWrap | PropertyId::WordWrap => {
             style.overflow_wrap = match v {
                 "break-word" => OverflowWrap::BreakWord,
                 "anywhere"   => OverflowWrap::Anywhere,
                 _            => OverflowWrap::Normal,
             };
         }
-        "direction" => {
+        PropertyId::Direction => {
             style.direction = match v {
                 "rtl" => Direction::RTL,
                 _     => Direction::LTR,
             };
         }
-        "cursor" => {
+        PropertyId::Cursor => {
             // CSS cursor can have fallbacks like "url(...), pointer" — use last keyword
             let keyword = v.split(',').last().unwrap_or(v).trim();
             style.cursor = match keyword {
@@ -2398,7 +2459,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
 
-        "list-style-type" => {
+        PropertyId::ListStyleType => {
             style.list_style_type = match v {
                 "none"         => ListStyleType::None,
                 "disc"         => ListStyleType::Disc,
@@ -2412,7 +2473,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _              => ListStyleType::None,
             };
         }
-        "list-style-position" => {
+        PropertyId::ListStylePosition => {
             style.list_style_position = if v == "inside" {
                 ListStylePosition::Inside
             } else {
@@ -2421,7 +2482,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // Flexbox
-        "flex-direction" => {
+        PropertyId::FlexDirection => {
             style.flex_direction = match v {
                 "row-reverse"    => FlexDirection::RowReverse,
                 "column"         => FlexDirection::Column,
@@ -2429,14 +2490,14 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                => FlexDirection::Row,
             };
         }
-        "flex-wrap" => {
+        PropertyId::FlexWrap => {
             style.flex_wrap = match v {
                 "wrap"         => FlexWrap::Wrap,
                 "wrap-reverse" => FlexWrap::WrapReverse,
                 _              => FlexWrap::Nowrap,
             };
         }
-        "justify-content" => {
+        PropertyId::JustifyContent => {
             style.justify_content = match v {
                 "flex-end" | "end"   => JustifyContent::FlexEnd,
                 "center"             => JustifyContent::Center,
@@ -2446,7 +2507,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                    => JustifyContent::FlexStart,
             };
         }
-        "align-items" => {
+        PropertyId::AlignItems => {
             style.align_items = match v {
                 "flex-start" | "start" | "self-start" => AlignItems::FlexStart,
                 "flex-end"   | "end"   | "self-end"   => AlignItems::FlexEnd,
@@ -2455,7 +2516,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _            => AlignItems::Stretch,
             };
         }
-        "align-self" => {
+        PropertyId::AlignSelf => {
             style.align_self = match v {
                 "flex-start" | "start" | "self-start" => AlignSelf::FlexStart,
                 "flex-end"   | "end"   | "self-end"   => AlignSelf::FlexEnd,
@@ -2465,26 +2526,26 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _            => AlignSelf::Auto,
             };
         }
-        "flex-grow"   => { style.flex_grow   = v.parse().unwrap_or(0.0); }
-        "flex-shrink" => { style.flex_shrink = v.parse().unwrap_or(1.0); }
-        "flex-basis"  => { style.flex_basis  = parse_length(v); }
-        "order"       => { style.order       = v.parse().unwrap_or(0); }
-        "gap"         => {
+        PropertyId::FlexGrow   => { style.flex_grow   = v.parse().unwrap_or(0.0); }
+        PropertyId::FlexShrink => { style.flex_shrink = v.parse().unwrap_or(1.0); }
+        PropertyId::FlexBasis  => { style.flex_basis  = parse_length(v); }
+        PropertyId::Order       => { style.order       = v.parse().unwrap_or(0); }
+        PropertyId::Gap         => {
             let g = parse_length(v);
             style.row_gap = g.clone();
             style.column_gap = g.clone();
             style.gap = g;
         }
-        "row-gap"    => { style.row_gap    = parse_length(v); }
-        "column-gap" => { style.column_gap = parse_length(v); }
+        PropertyId::RowGap    => { style.row_gap    = parse_length(v); }
+        PropertyId::ColumnGap => { style.column_gap = parse_length(v); }
 
-        "box-sizing" => {
+        PropertyId::BoxSizing => {
             style.box_sizing = match v {
                 "border-box" => BoxSizing::BorderBox,
                 _            => BoxSizing::ContentBox,
             };
         }
-        "align-content" => {
+        PropertyId::AlignContent => {
             style.align_content = match v {
                 "flex-start"   => AlignContent::FlexStart,
                 "flex-end"     => AlignContent::FlexEnd,
@@ -2495,7 +2556,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _              => AlignContent::Stretch,
             };
         }
-        "grid-auto-flow" => {
+        PropertyId::GridAutoFlow => {
             style.grid_auto_flow = match v {
                 "column"        => GridAutoFlow::Column,
                 "row dense"     => GridAutoFlow::RowDense,
@@ -2503,7 +2564,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _               => GridAutoFlow::Row,
             };
         }
-        "grid-template-columns" => {
+        PropertyId::GridTemplateColumns => {
             let mut names = std::collections::HashMap::new();
             let tracks = parse_track_list_with_names(v, &mut style.auto_repeat_columns, &mut names);
             if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
@@ -2515,7 +2576,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
             style.grid_col_line_names = names;
         }
-        "grid-template-rows" => {
+        PropertyId::GridTemplateRows => {
             let mut dummy = Vec::new();
             let mut names = std::collections::HashMap::new();
             let tracks = parse_track_list_with_names(v, &mut dummy, &mut names);
@@ -2528,16 +2589,16 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
             style.grid_row_line_names = names;
         }
-        "grid-auto-columns" => {
+        PropertyId::GridAutoColumns => {
             style.grid_auto_columns = parse_single_track(v);
         }
-        "grid-auto-rows" => {
+        PropertyId::GridAutoRows => {
             style.grid_auto_rows = parse_single_track(v);
         }
-        "grid-template-areas" => {
+        PropertyId::GridTemplateAreas => {
             style.grid_template_areas = parse_grid_template_areas(v);
         }
-        "grid-column" => {
+        PropertyId::GridColumn => {
             if let Some(slash) = v.find('/') {
                 let (sv, sn) = parse_grid_line_named(v[..slash].trim());
                 let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
@@ -2559,7 +2620,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "grid-row" => {
+        PropertyId::GridRow => {
             if let Some(slash) = v.find('/') {
                 let (sv, sn) = parse_grid_line_named(v[..slash].trim());
                 let (ev, en) = parse_grid_line_named(v[slash+1..].trim());
@@ -2580,27 +2641,27 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "grid-column-start" => {
+        PropertyId::GridColumnStart => {
             let (val, name) = parse_grid_line_named(v);
             style.grid_column_start = val;
             style.grid_column_start_name = name;
         }
-        "grid-column-end" => {
+        PropertyId::GridColumnEnd => {
             let (val, name) = parse_grid_line_named(v);
             style.grid_column_end = val;
             style.grid_column_end_name = name;
         }
-        "grid-row-start" => {
+        PropertyId::GridRowStart => {
             let (val, name) = parse_grid_line_named(v);
             style.grid_row_start = val;
             style.grid_row_start_name = name;
         }
-        "grid-row-end" => {
+        PropertyId::GridRowEnd => {
             let (val, name) = parse_grid_line_named(v);
             style.grid_row_end = val;
             style.grid_row_end_name = name;
         }
-        "grid-area" => {
+        PropertyId::GridArea => {
             // "1 / 2 / 3 / 4" → row-start / col-start / row-end / col-end
             let parts: Vec<&str> = v.splitn(4, '/').collect();
             if parts.len() == 4 {
@@ -2620,7 +2681,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 style.grid_area = v.to_string();
             }
         }
-        "justify-items" => {
+        PropertyId::JustifyItems => {
             style.justify_items = match v {
                 "flex-start" | "start" => AlignItems::FlexStart,
                 "flex-end"   | "end"   => AlignItems::FlexEnd,
@@ -2629,7 +2690,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                      => AlignItems::Stretch,
             };
         }
-        "justify-self" => {
+        PropertyId::JustifySelf => {
             style.justify_self = match v {
                 "flex-start" | "start" => AlignSelf::FlexStart,
                 "flex-end"   | "end"   => AlignSelf::FlexEnd,
@@ -2640,39 +2701,36 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
         }
 
-        "opacity"     => { let op: f32 = v.parse().unwrap_or(1.0); style.opacity = op.max(0.0).min(1.0); }
-        "visibility"  => { style.visibility = v != "hidden" && v != "collapse"; }
+        PropertyId::Opacity     => { let op: f32 = v.parse().unwrap_or(1.0); style.opacity = op.max(0.0).min(1.0); }
+        PropertyId::Visibility  => { style.visibility = v != "hidden" && v != "collapse"; }
 
         // ── Per-side border shorthands ──────────────────────────────────────
-        "border-top"    => apply_border_side_shorthand(v, &mut style.border_top_width,    &mut style.border_top_style,    &mut style.border_top_color),
-        "border-right"  => apply_border_side_shorthand(v, &mut style.border_right_width,  &mut style.border_right_style,  &mut style.border_right_color),
-        "border-bottom" => apply_border_side_shorthand(v, &mut style.border_bottom_width, &mut style.border_bottom_style, &mut style.border_bottom_color),
-        "border-left"   => apply_border_side_shorthand(v, &mut style.border_left_width,   &mut style.border_left_style,   &mut style.border_left_color),
+        PropertyId::BorderTop    => apply_border_side_shorthand(v, &mut style.border_top_width,    &mut style.border_top_style,    &mut style.border_top_color),
+        PropertyId::BorderRight  => apply_border_side_shorthand(v, &mut style.border_right_width,  &mut style.border_right_style,  &mut style.border_right_color),
+        PropertyId::BorderBottom => apply_border_side_shorthand(v, &mut style.border_bottom_width, &mut style.border_bottom_style, &mut style.border_bottom_color),
+        PropertyId::BorderLeft   => apply_border_side_shorthand(v, &mut style.border_left_width,   &mut style.border_left_style,   &mut style.border_left_color),
 
         // ── Per-corner border radius ────────────────────────────────────────
-        "border-top-left-radius"     => { style.border_top_left_radius     = parse_length(v); style.border_radius = style.border_top_left_radius.clone(); }
-        "border-top-right-radius"    => { style.border_top_right_radius    = parse_length(v); }
-        "border-bottom-left-radius"  => { style.border_bottom_left_radius  = parse_length(v); }
-        "border-bottom-right-radius" => { style.border_bottom_right_radius = parse_length(v); }
+        PropertyId::BorderTopLeftRadius     => { style.border_top_left_radius     = parse_length(v); style.border_radius = style.border_top_left_radius.clone(); }
+        PropertyId::BorderTopRightRadius    => { style.border_top_right_radius    = parse_length(v); }
+        PropertyId::BorderBottomLeftRadius  => { style.border_bottom_left_radius  = parse_length(v); }
+        PropertyId::BorderBottomRightRadius => { style.border_bottom_right_radius = parse_length(v); }
 
         // ── Table ───────────────────────────────────────────────────────────
-        "border-collapse"  => { style.border_collapse = v == "collapse"; }
-        "border-spacing"   => {
+        PropertyId::BorderCollapse  => { style.border_collapse = v == "collapse"; }
+        PropertyId::BorderSpacing   => {
             let parts: Vec<&str> = v.split_whitespace().collect();
             style.border_spacing_h = parse_length(parts.first().copied().unwrap_or("0"));
             style.border_spacing_v = parse_length(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("0")));
         }
-        "caption-side"   => { style.caption_side       = if v == "bottom" { CaptionSide::Bottom } else { CaptionSide::Top }; }
-        "empty-cells"    => { style.empty_cells_hide   = v == "hide"; }
-        "table-layout"   => { style.table_layout_fixed = v == "fixed"; }
-        "cellpadding"    => {
-            style.cell_padding = parse_length(v);
-        }
-        "cellspacing"    => { style.border_spacing_h = parse_length(v); style.border_spacing_v = parse_length(v); }
+        PropertyId::CaptionSide   => { style.caption_side       = if v == "bottom" { CaptionSide::Bottom } else { CaptionSide::Top }; }
+        PropertyId::EmptyCells    => { style.empty_cells_hide   = v == "hide"; }
+        PropertyId::TableLayout   => { style.table_layout_fixed = v == "fixed"; }
+        // cellpadding / cellspacing are HTML attributes handled in apply_property wrapper
 
 
         // ── Background ──────────────────────────────────────────────────────
-        "background-image" => {
+        PropertyId::BackgroundImage => {
             if v.contains("gradient") {
                 apply_gradient(style, v);
             } else if v == "none" {
@@ -2681,7 +2739,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 style.background_image_url = url;
             }
         }
-        "background-size" => {
+        PropertyId::BackgroundSize => {
             match v {
                 "cover"   => { style.background_size = BackgroundSize::Cover; }
                 "contain" => { style.background_size = BackgroundSize::Contain; }
@@ -2694,7 +2752,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "background-position" => {
+        PropertyId::BackgroundPosition => {
             let parts: Vec<&str> = v.split_whitespace().collect();
             let x_str = parts.first().copied().unwrap_or("0%");
             style.background_position_x = match x_str {
@@ -2711,7 +2769,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _        => parse_length(y_str),
             };
         }
-        "background-repeat" => {
+        PropertyId::BackgroundRepeat => {
             style.background_repeat = match v {
                 "repeat"    => BackgroundRepeat::Repeat,
                 "repeat-x"  => BackgroundRepeat::RepeatX,
@@ -2722,7 +2780,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Outline ─────────────────────────────────────────────────────────
-        "outline" => {
+        PropertyId::Outline => {
             if v == "none" {
                 style.outline_style = BorderStyle::None;
                 style.outline_width = 0.0;
@@ -2749,14 +2807,14 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "outline-style"  => { style.outline_style  = parse_border_style(v); }
-        "outline-color"  => { if let Some(c) = parse_color(v) { style.outline_color = c; } }
-        "outline-width"  => { if let CssLength::Px(w) = parse_length(v) { style.outline_width = w; } }
-        "outline-offset" => { if let CssLength::Px(w) = parse_length(v) { style.outline_offset = w; } }
+        PropertyId::OutlineStyle  => { style.outline_style  = parse_border_style(v); }
+        PropertyId::OutlineColor  => { if let Some(c) = parse_color(v) { style.outline_color = c; } }
+        PropertyId::OutlineWidth  => { if let CssLength::Px(w) = parse_length(v) { style.outline_width = w; } }
+        PropertyId::OutlineOffset => { if let CssLength::Px(w) = parse_length(v) { style.outline_offset = w; } }
 
         // ── Text & content ──────────────────────────────────────────────────
-        "text-overflow"    => { style.text_overflow = if v == "ellipsis" { TextOverflow::Ellipsis } else { TextOverflow::Clip }; }
-        "text-shadow"      => {
+        PropertyId::TextOverflow    => { style.text_overflow = if v == "ellipsis" { TextOverflow::Ellipsis } else { TextOverflow::Clip }; }
+        PropertyId::TextShadow      => {
             if v == "none" {
                 style.text_shadow = None;
             } else {
@@ -2764,9 +2822,9 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 style.text_shadow = Some(TextShadow { offset_x: ts.0, offset_y: ts.1, blur: ts.2, color: ts.3 });
             }
         }
-        "font-variant"     => { style.small_caps = v == "small-caps"; }
-        "tab-size"         => { style.tab_size = v.parse().unwrap_or(8); }
-        "hyphens"          => {
+        PropertyId::FontVariant     => { style.small_caps = v == "small-caps"; }
+        PropertyId::TabSize         => { style.tab_size = v.parse().unwrap_or(8); }
+        PropertyId::Hyphens          => {
             style.hyphens = match v {
                 "none"   => Hyphens::None,
                 "manual" => Hyphens::Manual,
@@ -2774,11 +2832,11 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _        => Hyphens::Manual,
             };
         }
-        "widows"  => { if let Ok(n) = v.parse() { style.widows  = n; } }
-        "orphans" => { if let Ok(n) = v.parse() { style.orphans = n; } }
+        PropertyId::Widows  => { if let Ok(n) = v.parse() { style.widows  = n; } }
+        PropertyId::Orphans => { if let Ok(n) = v.parse() { style.orphans = n; } }
 
         // ── Unicode-bidi & writing ───────────────────────────────────────────
-        "unicode-bidi" => {
+        PropertyId::UnicodeBidi => {
             style.unicode_bidi = match v {
                 "normal"           => UnicodeBidi::Normal,
                 "embed"            => UnicodeBidi::Embed,
@@ -2789,7 +2847,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                  => UnicodeBidi::Normal,
             };
         }
-        "writing-mode" => {
+        PropertyId::WritingMode => {
             style.writing_mode = match v {
                 "vertical-rl" => WritingMode::VerticalRL,
                 "vertical-lr" => WritingMode::VerticalLR,
@@ -2798,7 +2856,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Object fit ──────────────────────────────────────────────────────
-        "object-fit" => {
+        PropertyId::ObjectFit => {
             style.object_fit = match v {
                 "contain"    => ObjectFit::Contain,
                 "cover"      => ObjectFit::Cover,
@@ -2809,14 +2867,14 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── List style ──────────────────────────────────────────────────────
-        "list-style" => {
+        PropertyId::ListStyle => {
             if v.contains("none")          { style.list_style_type = ListStyleType::None; }
             else if v.contains("disc")     { style.list_style_type = ListStyleType::Disc; }
             else if v.contains("circle")   { style.list_style_type = ListStyleType::Circle; }
             else if v.contains("square")   { style.list_style_type = ListStyleType::Square; }
             else if v.contains("decimal")  { style.list_style_type = ListStyleType::Decimal; }
         }
-        "list-style-image" => {
+        PropertyId::ListStyleImage => {
             if v == "none" {
                 style.list_style_image = String::new();
             } else if let Some(url) = extract_url(v) {
@@ -2825,7 +2883,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Flex shorthands ──────────────────────────────────────────────────
-        "flex" => {
+        PropertyId::Flex => {
             match v {
                 "none" => { style.flex_grow = 0.0; style.flex_shrink = 0.0; style.flex_basis = CssLength::Auto; }
                 "auto" => { style.flex_grow = 1.0; style.flex_shrink = 1.0; style.flex_basis = CssLength::Auto; }
@@ -2857,7 +2915,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "flex-flow" => {
+        PropertyId::FlexFlow => {
             for tok in v.split_whitespace() {
                 match tok {
                     "row"            => { style.flex_direction = FlexDirection::Row; }
@@ -2873,63 +2931,63 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Grid shorthands ──────────────────────────────────────────────────
-        "grid" | "grid-template" => {
+        PropertyId::GridTemplate => {
             if v == "none" {
                 style.grid_template_rows.clear(); style.grid_template_columns.clear();
                 style.subgrid_columns = false; style.subgrid_rows = false;
             } else if let Some(slash) = v.find('/') {
                 let rows_part = v[..slash].trim();
                 let cols_part = v[slash+1..].trim();
-                apply_property(style, "grid-template-rows", rows_part);
-                apply_property(style, "grid-template-columns", cols_part);
+                apply_property_by_id(style, PropertyId::GridTemplateRows, rows_part);
+                apply_property_by_id(style, PropertyId::GridTemplateColumns, cols_part);
             }
         }
 
         // ── Logical properties (block/inline) ───────────────────────────────
-        "margin-block"        => { let m = parse_length(v); style.margin_top = m.clone(); style.margin_bottom = m; }
-        "margin-block-start"  => { style.margin_top    = parse_length(v); }
-        "margin-block-end"    => { style.margin_bottom = parse_length(v); }
-        "margin-inline"       => { let m = parse_length(v); style.margin_left = m.clone(); style.margin_right = m; }
-        "margin-inline-start" => { style.margin_left   = parse_length(v); }
-        "margin-inline-end"   => { style.margin_right  = parse_length(v); }
+        PropertyId::MarginBlock        => { let m = parse_length(v); style.margin_top = m.clone(); style.margin_bottom = m; }
+        PropertyId::MarginBlockStart  => { style.margin_top    = parse_length(v); }
+        PropertyId::MarginBlockEnd    => { style.margin_bottom = parse_length(v); }
+        PropertyId::MarginInline       => { let m = parse_length(v); style.margin_left = m.clone(); style.margin_right = m; }
+        PropertyId::MarginInlineStart => { style.margin_left   = parse_length(v); }
+        PropertyId::MarginInlineEnd   => { style.margin_right  = parse_length(v); }
 
-        "padding-block"        => { let p = parse_length(v); style.padding_top = p.clone(); style.padding_bottom = p; }
-        "padding-block-start"  => { style.padding_top    = parse_length(v); }
-        "padding-block-end"    => { style.padding_bottom = parse_length(v); }
-        "padding-inline"       => { let p = parse_length(v); style.padding_left = p.clone(); style.padding_right = p; }
-        "padding-inline-start" => { style.padding_left  = parse_length(v); }
-        "padding-inline-end"   => { style.padding_right = parse_length(v); }
+        PropertyId::PaddingBlock        => { let p = parse_length(v); style.padding_top = p.clone(); style.padding_bottom = p; }
+        PropertyId::PaddingBlockStart  => { style.padding_top    = parse_length(v); }
+        PropertyId::PaddingBlockEnd    => { style.padding_bottom = parse_length(v); }
+        PropertyId::PaddingInline       => { let p = parse_length(v); style.padding_left = p.clone(); style.padding_right = p; }
+        PropertyId::PaddingInlineStart => { style.padding_left  = parse_length(v); }
+        PropertyId::PaddingInlineEnd   => { style.padding_right = parse_length(v); }
 
-        "inset-block-start"  => { style.top    = parse_length(v); }
-        "inset-block-end"    => { style.bottom = parse_length(v); }
-        "inset-inline-start" => {
+        PropertyId::InsetBlockStart  => { style.top    = parse_length(v); }
+        PropertyId::InsetBlockEnd    => { style.bottom = parse_length(v); }
+        PropertyId::InsetInlineStart => {
             if style.direction == Direction::RTL { style.right = parse_length(v); }
             else                                 { style.left  = parse_length(v); }
         }
-        "inset-inline-end" => {
+        PropertyId::InsetInlineEnd => {
             if style.direction == Direction::RTL { style.left  = parse_length(v); }
             else                                 { style.right = parse_length(v); }
         }
 
         // ── Place shorthands ─────────────────────────────────────────────────
-        "place-self" => {
+        PropertyId::PlaceSelf => {
             let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property(style, "align-self",   parts.first().copied().unwrap_or(v));
-            apply_property(style, "justify-self", parts.get(1).copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::AlignSelf,   parts.first().copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::JustifySelf, parts.get(1).copied().unwrap_or(v));
         }
-        "place-items" => {
+        PropertyId::PlaceItems => {
             let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property(style, "align-items",   parts.first().copied().unwrap_or(v));
-            apply_property(style, "justify-items", parts.get(1).copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::AlignItems,   parts.first().copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::JustifyItems, parts.get(1).copied().unwrap_or(v));
         }
-        "place-content" => {
+        PropertyId::PlaceContent => {
             let parts: Vec<&str> = v.splitn(2, ' ').collect();
-            apply_property(style, "align-content",   parts.first().copied().unwrap_or(v));
-            apply_property(style, "justify-content", parts.get(1).copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::AlignContent,   parts.first().copied().unwrap_or(v));
+            apply_property_by_id(style, PropertyId::JustifyContent, parts.get(1).copied().unwrap_or(v));
         }
 
         // ── Break ────────────────────────────────────────────────────────────
-        "break-before" | "page-break-before" => {
+        PropertyId::BreakBefore | PropertyId::PageBreakBefore => {
             style.break_before = match v {
                 "always" | "page" => BreakValue::Always,
                 "avoid"           => BreakValue::Avoid,
@@ -2938,7 +2996,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                 => BreakValue::Auto,
             };
         }
-        "break-after" | "page-break-after" => {
+        PropertyId::BreakAfter | PropertyId::PageBreakAfter => {
             style.break_after = match v {
                 "always" | "page" => BreakValue::Always,
                 "avoid"           => BreakValue::Avoid,
@@ -2947,12 +3005,12 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _                 => BreakValue::Auto,
             };
         }
-        "break-inside" | "page-break-inside" => {
+        PropertyId::BreakInside | PropertyId::PageBreakInside => {
             style.break_inside = if v == "avoid" { BreakInside::Avoid } else { BreakInside::Auto };
         }
 
         // ── Box shadow ───────────────────────────────────────────────────────
-        "box-shadow" => {
+        PropertyId::BoxShadow => {
             if v == "none" {
                 style.box_shadow = None;
             } else {
@@ -2968,36 +3026,8 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             }
         }
 
-        // ── Cursor ────────────────────────────────────────────────────────────
-        "cursor" => {
-            style.cursor = match v {
-                "default"      => CSSCursor::Default,
-                "pointer"      => CSSCursor::Pointer,
-                "text"         => CSSCursor::Text,
-                "move"         => CSSCursor::Move,
-                "crosshair"    => CSSCursor::Crosshair,
-                "wait"         => CSSCursor::Wait,
-                "help"         => CSSCursor::Help,
-                "not-allowed"  => CSSCursor::NotAllowed,
-                "grab"         => CSSCursor::Grab,
-                "grabbing"     => CSSCursor::Grabbing,
-                "col-resize"   => CSSCursor::ColResize,
-                "row-resize"   => CSSCursor::RowResize,
-                "n-resize"     => CSSCursor::NResize,
-                "e-resize"     => CSSCursor::EResize,
-                "s-resize"     => CSSCursor::SResize,
-                "w-resize"     => CSSCursor::WResize,
-                "ne-resize"    => CSSCursor::NEResize,
-                "nw-resize"    => CSSCursor::NWResize,
-                "se-resize"    => CSSCursor::SEResize,
-                "sw-resize"    => CSSCursor::SWResize,
-                "none"         => CSSCursor::None,
-                _              => CSSCursor::Auto,
-            };
-        }
-
         // ── Pointer events ────────────────────────────────────────────────────
-        "pointer-events" => {
+        PropertyId::PointerEvents => {
             style.pointer_events = match v {
                 "none"           => PointerEvents::None,
                 "visiblePainted" => PointerEvents::VisiblePainted,
@@ -3013,7 +3043,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Scrollbar & caret ─────────────────────────────────────────────────
-        "scrollbar-color" => {
+        PropertyId::ScrollbarColor => {
             if v != "auto" {
                 // find space not inside parens: "thumb track"
                 let sp = find_split_space(v);
@@ -3025,12 +3055,12 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "caret-color" => {
+        PropertyId::CaretColor => {
             style.caret_color = if v == "auto" { None } else { parse_color(v) };
         }
 
         // ── Quotes ────────────────────────────────────────────────────────────
-        "quotes" => {
+        PropertyId::Quotes => {
             style.quotes.clear();
             if v != "none" && v != "auto" {
                 let bytes = v.as_bytes();
@@ -3048,28 +3078,28 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Container queries ─────────────────────────────────────────────────
-        "container-type" => {
+        PropertyId::ContainerType => {
             style.container_type = match v {
                 "size"        => ContainerType::Size,
                 "inline-size" => ContainerType::InlineSize,
                 _             => ContainerType::Normal,
             };
         }
-        "container-name" => { style.container_name = v.to_string(); }
-        "container" => {
+        PropertyId::ContainerName => { style.container_name = v.to_string(); }
+        PropertyId::Container => {
             if let Some(slash) = v.find('/') {
                 style.container_name = v[..slash].trim().to_string();
-                apply_property(style, "container-type", v[slash+1..].trim());
+                apply_property_by_id(style, PropertyId::ContainerType, v[slash+1..].trim());
             } else {
                 match v {
-                    "size" | "inline-size" => apply_property(style, "container-type", v),
+                    "size" | "inline-size" => apply_property_by_id(style, PropertyId::ContainerType, v),
                     _ => style.container_name = v.to_string(),
                 }
             }
         }
 
         // ── Legacy clip: rect(top, right, bottom, left) ──────────────────────
-        "clip" => {
+        PropertyId::Clip => {
             if v == "auto" || v == "none" {
                 style.clip_rect = None;
             } else if let Some(inner) = v.strip_prefix("rect(").and_then(|s| s.strip_suffix(')')) {
@@ -3097,7 +3127,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Clip path ─────────────────────────────────────────────────────────
-        "clip-path" => {
+        PropertyId::ClipPath => {
             if v == "none" {
                 style.clip_path = ClipPath::default();
             } else if v.starts_with("inset(") {
@@ -3155,7 +3185,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Object position ──────────────────────────────────────────────────
-        "object-position" => {
+        PropertyId::ObjectPosition => {
             let parts: Vec<&str> = v.split_whitespace().collect();
             style.object_position_x = match parts.first().copied().unwrap_or("50%") {
                 "left"   => CssLength::Percent(0.0),
@@ -3172,7 +3202,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Aspect ratio ──────────────────────────────────────────────────────
-        "aspect-ratio" => {
+        PropertyId::AspectRatio => {
             if v == "auto" {
                 style.aspect_ratio = None;
             } else if let Some(slash) = v.find('/') {
@@ -3185,15 +3215,15 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Text decoration sub-properties ───────────────────────────────────
-        "text-decoration-line" => {
+        PropertyId::TextDecorationLine => {
             style.text_decoration.underline     = v.contains("underline");
             style.text_decoration.overline      = v.contains("overline");
             style.text_decoration.strikethrough = v.contains("line-through");
         }
-        "text-decoration-color" => {
+        PropertyId::TextDecorationColor => {
             style.text_decoration_color = parse_color(v);
         }
-        "text-decoration-style" => {
+        PropertyId::TextDecorationStyle => {
             style.text_decoration_style = match v {
                 "double" => TextDecorationStyle::Double,
                 "dotted" => TextDecorationStyle::Dotted,
@@ -3202,15 +3232,15 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _        => TextDecorationStyle::Solid,
             };
         }
-        "text-decoration-thickness" => {
+        PropertyId::TextDecorationThickness => {
             style.text_decoration_thickness = parse_length(v);
         }
-        "text-underline-offset" => {
+        PropertyId::TextUnderlineOffset => {
             style.text_underline_offset = parse_length(v);
         }
 
         // ── User interaction ──────────────────────────────────────────────────
-        "user-select" | "-webkit-user-select" | "-moz-user-select" => {
+        PropertyId::UserSelect => {
             style.user_select = match v {
                 "none"    => UserSelect::None,
                 "text"    => UserSelect::Text,
@@ -3219,7 +3249,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _         => UserSelect::Auto,
             };
         }
-        "resize" => {
+        PropertyId::Resize => {
             style.resize = match v {
                 "both"       => Resize::Both,
                 "horizontal" => Resize::Horizontal,
@@ -3229,7 +3259,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Background extras ─────────────────────────────────────────────────
-        "background-clip" | "-webkit-background-clip" => {
+        PropertyId::BackgroundClip => {
             style.background_clip = match v {
                 "padding-box" => BackgroundClip::PaddingBox,
                 "content-box" => BackgroundClip::ContentBox,
@@ -3237,14 +3267,14 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _             => BackgroundClip::BorderBox,
             };
         }
-        "background-origin" => {
+        PropertyId::BackgroundOrigin => {
             style.background_origin = match v {
                 "border-box"  => BackgroundClip::BorderBox,
                 "content-box" => BackgroundClip::ContentBox,
                 _             => BackgroundClip::PaddingBox,
             };
         }
-        "background-attachment" => {
+        PropertyId::BackgroundAttachment => {
             style.background_attachment = match v {
                 "fixed" => BackgroundAttachment::Fixed,
                 "local" => BackgroundAttachment::Local,
@@ -3253,13 +3283,13 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Multi-column ─────────────────────────────────────────────────────
-        "column-count" => {
+        PropertyId::ColumnCount => {
             style.column_count = if v == "auto" { None } else { v.parse().ok() };
         }
-        "column-width" => {
+        PropertyId::ColumnWidth => {
             style.column_width = parse_length(v);
         }
-        "columns" => {
+        PropertyId::Columns => {
             // "auto auto" | "2" | "200px" | "2 200px"
             for tok in v.split_whitespace() {
                 if let Ok(n) = tok.parse::<i32>() {
@@ -3269,42 +3299,42 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 }
             }
         }
-        "column-rule" => {
+        PropertyId::ColumnRule => {
             apply_border_side_shorthand(v,
                 &mut style.column_rule_width,
                 &mut style.column_rule_style,
                 &mut style.column_rule_color);
         }
-        "column-rule-width" => { style.column_rule_width = parse_length(v); }
-        "column-rule-style" => { style.column_rule_style = parse_border_style(v); }
-        "column-rule-color" => { if let Some(c) = parse_color(v) { style.column_rule_color = c; } }
-        "column-fill" => { style.column_fill = v == "balance"; }
-        "column-span" => { style.column_span_all = v == "all"; }
+        PropertyId::ColumnRuleWidth => { style.column_rule_width = parse_length(v); }
+        PropertyId::ColumnRuleStyle => { style.column_rule_style = parse_border_style(v); }
+        PropertyId::ColumnRuleColor => { if let Some(c) = parse_color(v) { style.column_rule_color = c; } }
+        PropertyId::ColumnFill => { style.column_fill = v == "balance"; }
+        PropertyId::ColumnSpan => { style.column_span_all = v == "all"; }
 
         // ── Transform / filter ────────────────────────────────────────────────
-        "transform" => {
+        PropertyId::Transform => {
             style.transform = v.to_string();
             style.css_transform = parse_css_transform(v);
         }
-        "transform-origin" => {
+        PropertyId::TransformOrigin => {
             let (ox, oy) = parse_transform_origin(v);
             style.transform_origin_x = ox;
             style.transform_origin_y = oy;
         }
-        "transform-box" | "transform-style" | "perspective-origin" | "perspective" | "backface-visibility" => {
+        PropertyId::TransformStyle | PropertyId::PerspectiveOrigin | PropertyId::Perspective | PropertyId::BackfaceVisibility => {
             // Accepted but not implemented
         }
-        "filter"          => {
+        PropertyId::Filter          => {
             style.filter = v.to_string();
             style.css_filter = parse_css_filter(v);
         }
-        "backdrop-filter" => { style.backdrop_filter = v.to_string(); }
+        PropertyId::BackdropFilter => { style.backdrop_filter = v.to_string(); }
 
         // ── Transition / animation ────────────────────────────────────────────
-        "transition" => {
+        PropertyId::Transition => {
             style.transitions = parse_transition_shorthand(v);
         }
-        "transition-property" | "transition-duration" | "transition-timing-function" | "transition-delay" => {
+        PropertyId::TransitionProperty | PropertyId::TransitionDuration | PropertyId::TransitionTimingFunction | PropertyId::TransitionDelay => {
             // Sub-properties: rebuild the transitions list by patching index 0.
             if style.transitions.is_empty() {
                 style.transitions.push(ParsedTransition {
@@ -3313,21 +3343,21 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 });
             }
             for tr in &mut style.transitions {
-                match prop {
-                    "transition-property"         => tr.property    = v.to_string(),
-                    "transition-duration"          => tr.duration_ms = parse_time_ms(v).unwrap_or(0.0),
-                    "transition-timing-function"   => tr.timing_fn   = parse_easing(v),
-                    "transition-delay"             => tr.delay_ms    = parse_time_ms(v).unwrap_or(0.0),
+                match id {
+                    PropertyId::TransitionProperty        => tr.property    = v.to_string(),
+                    PropertyId::TransitionDuration         => tr.duration_ms = parse_time_ms(v).unwrap_or(0.0),
+                    PropertyId::TransitionTimingFunction   => tr.timing_fn   = parse_easing(v),
+                    PropertyId::TransitionDelay            => tr.delay_ms    = parse_time_ms(v).unwrap_or(0.0),
                     _ => {}
                 }
             }
         }
-        "animation" => {
+        PropertyId::Animation => {
             style.animations = parse_animation_shorthand(v);
         }
-        "animation-name" | "animation-duration" | "animation-timing-function"
-        | "animation-delay" | "animation-iteration-count" | "animation-direction"
-        | "animation-fill-mode" | "animation-play-state" => {
+        PropertyId::AnimationName | PropertyId::AnimationDuration | PropertyId::AnimationTimingFunction
+        | PropertyId::AnimationDelay | PropertyId::AnimationIterationCount | PropertyId::AnimationDirection
+        | PropertyId::AnimationFillMode | PropertyId::AnimationPlayState => {
             if style.animations.is_empty() {
                 style.animations.push(ParsedAnimation {
                     name: String::new(), duration_ms: 0.0, delay_ms: 0.0,
@@ -3337,43 +3367,43 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 });
             }
             for anim in &mut style.animations {
-                match prop {
-                    "animation-name"             => anim.name              = v.to_string(),
-                    "animation-duration"         => anim.duration_ms       = parse_time_ms(v).unwrap_or(0.0),
-                    "animation-timing-function"  => anim.timing_fn         = parse_easing(v),
-                    "animation-delay"            => anim.delay_ms          = parse_time_ms(v).unwrap_or(0.0),
-                    "animation-iteration-count"  => anim.iteration_count   = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) },
-                    "animation-direction"        => anim.direction         = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal },
-                    "animation-fill-mode"        => anim.fill_mode         = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None },
-                    "animation-play-state"       => anim.play_state_paused = v == "paused",
+                match id {
+                    PropertyId::AnimationName            => anim.name              = v.to_string(),
+                    PropertyId::AnimationDuration        => anim.duration_ms       = parse_time_ms(v).unwrap_or(0.0),
+                    PropertyId::AnimationTimingFunction  => anim.timing_fn         = parse_easing(v),
+                    PropertyId::AnimationDelay           => anim.delay_ms          = parse_time_ms(v).unwrap_or(0.0),
+                    PropertyId::AnimationIterationCount  => anim.iteration_count   = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) },
+                    PropertyId::AnimationDirection       => anim.direction         = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal },
+                    PropertyId::AnimationFillMode        => anim.fill_mode         = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None },
+                    PropertyId::AnimationPlayState       => anim.play_state_paused = v == "paused",
                     _ => {}
                 }
             }
         }
-        "will-change" => {
+        PropertyId::WillChange => {
             style.will_change = v.to_string();
             style.will_change_transform = v.contains("transform");
         }
 
         // ── Misc ──────────────────────────────────────────────────────────────
-        "scroll-behavior" => {
+        PropertyId::ScrollBehavior => {
             style.scroll_behavior = if v == "smooth" { ScrollBehavior::Smooth } else { ScrollBehavior::Auto };
         }
-        "overscroll-behavior" => {
+        PropertyId::OverscrollBehavior => {
             let val = parse_overscroll(v.split_whitespace().next().unwrap_or("auto"));
             style.overscroll_behavior_x = val;
             style.overscroll_behavior_y = val;
         }
-        "overscroll-behavior-x" => {
+        PropertyId::OverscrollBehaviorX => {
             style.overscroll_behavior_x = parse_overscroll(v);
         }
-        "overscroll-behavior-y" => {
+        PropertyId::OverscrollBehaviorY => {
             style.overscroll_behavior_y = parse_overscroll(v);
         }
-        "isolation" => {
+        PropertyId::Isolation => {
             style.isolation = v == "isolate";
         }
-        "mix-blend-mode" => {
+        PropertyId::MixBlendMode => {
             style.mix_blend_mode = match v {
                 "multiply"    => MixBlendMode::Multiply,
                 "screen"      => MixBlendMode::Screen,
@@ -3395,19 +3425,19 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Counter ───────────────────────────────────────────────────────────
-        "counter-reset" => {
+        PropertyId::CounterReset => {
             style.counter_reset = parse_counter_list(v);
         }
-        "counter-increment" => {
+        PropertyId::CounterIncrement => {
             style.counter_increment = parse_counter_list(v);
         }
-        "counter-set" => {
+        PropertyId::CounterSet => {
             // Same syntax as counter-reset
             style.counter_reset = parse_counter_list(v);
         }
 
         // ── Font extras ───────────────────────────────────────────────────────
-        "font-stretch" | "-webkit-font-stretch" => {
+        PropertyId::FontStretch => {
             style.font_stretch = match v {
                 "ultra-condensed"  => 50.0,
                 "extra-condensed"  => 62.5,
@@ -3424,17 +3454,17 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Inset shorthand ───────────────────────────────────────────────────
-        "inset" => {
+        PropertyId::Inset => {
             apply_shorthand_4(v,
                 &mut style.top, &mut style.right,
                 &mut style.bottom, &mut style.left,
                 parse_length);
         }
-        "inset-block"  => { let l = parse_length(v); style.top    = l.clone(); style.bottom = l; }
-        "inset-inline" => { let l = parse_length(v); style.left   = l.clone(); style.right  = l; }
+        PropertyId::InsetBlock  => { let l = parse_length(v); style.top    = l.clone(); style.bottom = l; }
+        PropertyId::InsetInline => { let l = parse_length(v); style.left   = l.clone(); style.right  = l; }
 
         // ── border-radius shorthand (per-corner) ─────────────────────────────
-        "border-radius" => {
+        PropertyId::BorderRadius => {
             // Support "Xpx / Ypx" (elliptical corners) and up to 4 values
             let radii = if let Some(slash) = v.find('/') {
                 v[..slash].trim()
@@ -3454,32 +3484,32 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
         }
 
         // ── Appearance ────────────────────────────────────────────────────────
-        "appearance" | "-webkit-appearance" | "-moz-appearance" => {
+        PropertyId::Appearance => {
             // Accepted, not implemented
         }
 
         // ── Color-scheme / accent-color ───────────────────────────────────────
-        "color-scheme" | "forced-color-adjust" | "color-interpolation" | "color-rendering" => {}
-        "accent-color" => {
+        PropertyId::ColorScheme | PropertyId::ForcedColorAdjust | PropertyId::ColorInterpolation => {}
+        PropertyId::AccentColor => {
             // Store as background fallback for form controls
             if let Some(c) = parse_color(v) { style.background_color = c; }
         }
 
         // ── Image rendering ───────────────────────────────────────────────────
-        "image-rendering" | "image-orientation" => {}
+        PropertyId::ImageRendering | PropertyId::ImageOrientation => {}
 
         // ── Containment ───────────────────────────────────────────────────────
-        "contain" => {
+        PropertyId::Contain => {
             let is_strict  = v == "strict";
             let is_content = v == "content";
             style.contain_layout = v.contains("layout") || is_strict || is_content;
             style.contain_paint  = v.contains("paint")  || is_strict || is_content;
             style.contain_size   = v.contains("size")   || is_strict;
         }
-        "content-visibility" => {}
+        PropertyId::ContentVisibility => {}
 
         // ── Scroll snap ───────────────────────────────────────────────────────
-        "scroll-snap-type" => {
+        PropertyId::ScrollSnapType => {
             // CSS: `scroll-snap-type: <axis> [mandatory|proximity]`
             let mut words = v.split_whitespace();
             let axis = match words.next().unwrap_or("none") {
@@ -3496,7 +3526,7 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
             };
             style.scroll_snap_type = ScrollSnapType { axis, mandatory };
         }
-        "scroll-snap-align" => {
+        PropertyId::ScrollSnapAlign => {
             style.scroll_snap_align = match v.split_whitespace().next().unwrap_or("none") {
                 "start"  => ScrollSnapAlign::Start,
                 "end"    => ScrollSnapAlign::End,
@@ -3504,28 +3534,23 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
                 _        => ScrollSnapAlign::None,
             };
         }
-        "scroll-snap-stop" | "scroll-margin" | "scroll-margin-top"
-        | "scroll-margin-right" | "scroll-margin-bottom" | "scroll-margin-left" => {}
-        "scroll-padding" => {
+        PropertyId::ScrollSnapStop | PropertyId::ScrollMargin | PropertyId::ScrollMarginTop
+        | PropertyId::ScrollMarginRight | PropertyId::ScrollMarginBottom | PropertyId::ScrollMarginLeft => {}
+        PropertyId::ScrollPadding => {
             apply_shorthand_4(v,
                 &mut style.scroll_padding_top, &mut style.scroll_padding_right,
                 &mut style.scroll_padding_bottom, &mut style.scroll_padding_left,
                 parse_length);
         }
-        "scroll-padding-top"    => { style.scroll_padding_top    = parse_length(v); }
-        "scroll-padding-right"  => { style.scroll_padding_right  = parse_length(v); }
-        "scroll-padding-bottom" => { style.scroll_padding_bottom = parse_length(v); }
-        "scroll-padding-left"   => { style.scroll_padding_left   = parse_length(v); }
+        PropertyId::ScrollPaddingTop    => { style.scroll_padding_top    = parse_length(v); }
+        PropertyId::ScrollPaddingRight  => { style.scroll_padding_right  = parse_length(v); }
+        PropertyId::ScrollPaddingBottom => { style.scroll_padding_bottom = parse_length(v); }
+        PropertyId::ScrollPaddingLeft   => { style.scroll_padding_left   = parse_length(v); }
 
         // ── Touch / interaction ───────────────────────────────────────────────
-        "touch-action" | "-webkit-touch-callout" | "-webkit-tap-highlight-color" => {}
+        PropertyId::TouchAction => {}
 
-        _ => {
-            // CSS custom property
-            if prop.starts_with("--") {
-                style.custom_props.insert(prop.to_string(), v.to_string());
-            }
-        }
+        _ => {}
     }
 }
 

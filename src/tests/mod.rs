@@ -25,5 +25,6 @@ pub mod test_incremental_cascade;
 pub mod test_frame;
 pub mod test_event_dispatch;
 pub mod test_css_values;
+pub mod test_property_id;
 #[cfg(feature = "accessibility")]
 pub mod test_accessibility;
