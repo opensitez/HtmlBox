@@ -156,6 +156,14 @@ fn replay_inner(
             PaintCmd::Text { x, y, text, font_family, font_size, font_weight,
                              font_style, font_stretch, line_height, color,
                              letter_spacing, small_caps, decoration } => {
+                // Skip text that's entirely outside the current clip region
+                // (handles text-indent:-9999px with overflow:hidden)
+                if let Some(clip) = clip_stack.last() {
+                    if *x + 1000.0 < clip.x || *x > clip.right()
+                        || *y + *line_height < clip.y || *y > clip.bottom() {
+                        continue;
+                    }
+                }
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
                     let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);

@@ -82,6 +82,15 @@ pub fn load_background_images(node: &mut HtmlBox, base_url: &str) {
             node.bg_image_height = h;
         }
     }
+    // Load mask-image (CSS masking for icons etc.)
+    if node.mask_image_data.is_none() && !node.style.mask_image_url.is_empty() {
+        let url = node.style.mask_image_url.clone();
+        if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
+            node.mask_image_data   = Some(data);
+            node.mask_image_width  = w;
+            node.mask_image_height = h;
+        }
+    }
     for child in &mut node.children {
         load_background_images(child, base_url);
     }
@@ -392,13 +401,21 @@ fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     use image::ImageReader;
     use std::io::Cursor;
-    let reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()?;
-    let img = reader.decode().ok()?;
-    let rgba = img.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    Some((rgba.into_raw(), w, h))
+    // Try raster formats first (PNG, JPEG, etc.)
+    if let Ok(reader) = ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
+        if let Ok(img) = reader.decode() {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            return Some((rgba.into_raw(), w, h));
+        }
+    }
+    // Try SVG via resvg
+    if let Ok(svg_str) = std::str::from_utf8(bytes) {
+        if svg_str.trim_start().starts_with('<') {
+            return rasterize_svg_intrinsic(svg_str);
+        }
+    }
+    None
 }
 
 /// Minimal base64 decoder (no external dependency needed for this).

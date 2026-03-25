@@ -757,6 +757,9 @@ pub struct ComputedStyle {
     // Background image URL
     pub background_image_url: String,
 
+    // CSS mask-image URL (used for icon masking)
+    pub mask_image_url: String,
+
     // Bidi & writing
     pub unicode_bidi: UnicodeBidi,
     pub writing_mode: WritingMode,
@@ -1231,6 +1234,7 @@ impl Default for ComputedStyle {
             border_bottom_right_radius: CssLength::Zero,
 
             background_image_url: String::new(),
+            mask_image_url: String::new(),
 
             unicode_bidi: UnicodeBidi::Normal,
             writing_mode: WritingMode::HorizontalTB,
@@ -1470,6 +1474,11 @@ pub struct HtmlBox {
     pub bg_image_width:  u32,
     pub bg_image_height: u32,
 
+    // CSS mask-image data (SVG rasterized to alpha mask)
+    pub mask_image_data:   Option<Vec<u8>>,
+    pub mask_image_width:  u32,
+    pub mask_image_height: u32,
+
     // SVG source markup (for round-trip and re-rasterization)
     pub svg_markup: Option<String>,
     /// SVG viewBox intrinsic dimensions (width, height). Used for aspect ratio
@@ -1619,6 +1628,9 @@ impl HtmlBox {
             image_height: 0,
 
             bg_image_data:   None,
+            mask_image_data:   None,
+            mask_image_width:  0,
+            mask_image_height: 0,
             bg_image_width:  0,
             bg_image_height: 0,
 

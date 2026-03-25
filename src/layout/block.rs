@@ -408,8 +408,15 @@ pub fn layout_block_with_fc(
     }
 
     // ─── Float context ────────────────────────────────────────────────────────
+    // BFC roots always get their own float context so that their floated children
+    // are contained within them (CSS §9.4.1).  Non-BFC blocks share the parent's
+    // float context so floats can escape and affect ancestor layout.
     let mut fc_owned;
-    let fc = if let Some(f) = parent_fc {
+    let fc = if is_bfc {
+        fc_owned = FloatContext::default();
+        fc_owned.origin_y = content_y;
+        &mut fc_owned
+    } else if let Some(f) = parent_fc {
         f
     } else {
         fc_owned = FloatContext::default();
@@ -454,6 +461,7 @@ pub fn layout_block_with_fc(
     // If the parent passed a float context with floats, children need to
     // receive it so their inline content wraps around those floats.
     let mut seen_float = !is_bfc && !fc.floats.is_empty();
+    let mut has_own_floats = false; // tracks if THIS block has directly floated children
     // Inline flow state for anonymous inline formatting contexts
     let mut inline_x = 0.0f32;
     let mut inline_line_h = 0.0f32;
@@ -496,6 +504,7 @@ pub fn layout_block_with_fc(
 
         if !matches!(child_float, Float::None) {
             seen_float = true;
+            has_own_floats = true;
             // Layout float to get natural size
             engine.layout_box(
                 grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
@@ -691,9 +700,23 @@ pub fn layout_block_with_fc(
     };
 
     // ─── Content height ───────────────────────────────────────────────────────
-    // Include float bottom if BFC
+    // Include float bottom when:
+    // - This element is a BFC root (spec-correct), OR
+    // - This element has its OWN directly floated children (practical fix —
+    //   without this, containers collapse and subsequent siblings overlap).
+    //   Only use own-float expansion for auto-height containers to avoid
+    //   breaking elements with explicit heights.
     let float_bottom = if is_bfc {
+        // BFC: fc.origin_y == content_y since we created our own FC
         fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
+    } else if has_own_floats && rbox.content_height.is_none() {
+        // Include floats placed by THIS container, converted to local height.
+        // f.clear is relative to fc.origin_y; convert to relative to content_y.
+        let offset = content_y - fc.origin_y;
+        fc.floats.iter()
+            .map(|f| f.clear - offset)
+            .fold(0.0f32, f32::max)
+            .max(0.0)
     } else {
         0.0
     };

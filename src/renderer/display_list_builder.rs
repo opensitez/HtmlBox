@@ -312,7 +312,8 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     {
         let raw_bg = eff_style.background_color;
         let opacity = eff_style.opacity;
-        if raw_bg.a > 0 {
+        let has_mask = node.mask_image_data.is_some() && node.mask_image_width > 0;
+        if raw_bg.a > 0 && !has_mask {
             let alpha = ((raw_bg.a as f32) * opacity) as u8;
             let bg = Color::rgba(raw_bg.r, raw_bg.g, raw_bg.b, alpha);
             list.push(PaintCmd::FillRect {
@@ -320,6 +321,37 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
                 color: bg,
                 radius: radii_arr,
             });
+        }
+        // CSS mask-image: draw background color masked by the mask image.
+        // The mask SVG's luminance/alpha determines which pixels are visible.
+        if has_mask {
+            if let Some(ref mask_data) = node.mask_image_data {
+                let mw = node.mask_image_width;
+                let mh = node.mask_image_height;
+                // Create a colored version: replace mask pixels' color with bg color,
+                // keeping the mask's alpha channel
+                let alpha = ((raw_bg.a as f32) * opacity) as u8;
+                let mut colored = Vec::with_capacity((mw * mh * 4) as usize);
+                for i in 0..(mw * mh) as usize {
+                    let base = i * 4;
+                    // Use mask pixel's luminance as alpha
+                    let mr = mask_data.get(base).copied().unwrap_or(0) as u32;
+                    let mg = mask_data.get(base + 1).copied().unwrap_or(0) as u32;
+                    let mb = mask_data.get(base + 2).copied().unwrap_or(0) as u32;
+                    let ma = mask_data.get(base + 3).copied().unwrap_or(0) as u32;
+                    // Luminance-based alpha (weighted average)
+                    let lum = (mr * 77 + mg * 150 + mb * 29) >> 8; // approx 0.3R + 0.59G + 0.11B
+                    let final_alpha = ((lum * ma * alpha as u32) / (255 * 255)) as u8;
+                    colored.push(raw_bg.r);
+                    colored.push(raw_bg.g);
+                    colored.push(raw_bg.b);
+                    colored.push(final_alpha);
+                }
+                list.push(PaintCmd::Image {
+                    rect: Rect::new(px, py, pw, ph),
+                    data: ImageRef::Owned(colored, mw, mh),
+                });
+            }
         }
     }
 
@@ -770,6 +802,21 @@ fn build_inline_text(
     let fallback_font_px = node.style.font_size_px(16.0, 16.0).max(1.0);
     let fallback_letter_spc = node.style.letter_spacing.resolve(fallback_font_px, 0.0, 16.0);
 
+    // When overflow is clipping and text-indent pushes content far outside the
+    // element's box, skip all text rendering — the clip would hide it anyway and
+    // this avoids emitting paint commands for offscreen text.
+    let overflow_clips = matches!(
+        node.style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    ) || matches!(
+        node.style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    );
+    if overflow_clips {
+        let ti = node.style.text_indent.resolve(fallback_font_px, node.content_rect.w, 16.0);
+        if ti < -(node.content_rect.w + 100.0) {
+            return;
+        }
+    }
+
     for line in &node.line_cache {
         let line_start = floor_cb(&flat, line.text_start.min(flat.len()));
         let line_end =
@@ -1055,6 +1102,10 @@ fn build_inline_text(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn build_list_marker(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) {
+    // Skip marker entirely when list-style-type is None
+    if matches!(node.style.list_style_type, ListStyleType::None) {
+        return;
+    }
     let ms = node.style.marker_style.as_deref();
     let font_px = ms
         .map(|s| s.font_size_px(16.0, 16.0))

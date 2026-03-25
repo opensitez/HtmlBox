@@ -327,6 +327,7 @@ pub fn layout_inline_block(
     }
 
     // ── 4. Line-by-line layout (float-aware) ──────────────────────────────────
+    let floats_before = float_ctx.as_ref().map_or(0, |fc| fc.floats.len());
     let text_indent = engine.res_len(&node.style.text_indent, font_px, content_w, root_font_px);
     let is_rtl = node.style.direction == Direction::RTL;
 
@@ -668,11 +669,16 @@ pub fn layout_inline_block(
     // ── 5. Compute content height ──────────────────────────────────────────────
     let inline_h = (cursor_y - content_y).max(0.0);
     // Include float bottom so the container encloses its floats.
-    // Only do this for the element that OWNS the float context, not children
-    // that inherit it (they shouldn't extend to contain the parent's floats).
-    let float_bottom = if !has_parent_fc {
+    // A BFC owner (!has_parent_fc) always contains all its floats.
+    // A non-BFC element that placed its OWN floats also needs to expand
+    // (CSS §9.5: containers with floated children don't collapse).
+    let has_own_floats = float_ctx.as_ref().map_or(false, |fc| fc.floats.len() > floats_before);
+    let float_bottom = if !has_parent_fc || has_own_floats {
         if let Some(ref fc) = float_ctx {
-            fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
+            let offset = content_y - fc.origin_y;
+            fc.floats.iter()
+                .map(|f| (f.clear - offset).max(0.0))
+                .fold(0.0f32, f32::max)
         } else { 0.0 }
     } else { 0.0 };
     let raw_h = inline_h.max(float_bottom);

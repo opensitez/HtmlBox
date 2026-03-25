@@ -220,6 +220,9 @@ pub fn get(id: PropertyId) -> &'static PropertyDef {
         BackgroundOrigin     => &PropertyDef { id: BackgroundOrigin,     name: "background-origin",      inherited: false, apply: apply_background_origin,     copy: copy_background_origin,     longhands: &[] },
         BackgroundAttachment => &PropertyDef { id: BackgroundAttachment, name: "background-attachment",   inherited: false, apply: apply_background_attachment, copy: copy_background_attachment, longhands: &[] },
 
+        // ── Mask ──
+        MaskImage => &PropertyDef { id: MaskImage, name: "mask-image", inherited: false, apply: apply_mask_image, copy: copy_mask_image, longhands: &[] },
+
         // ── Outline ──
         Outline       => &PropertyDef { id: Outline,       name: "outline",        inherited: false, apply: apply_outline,        copy: copy_noop, longhands: &[OutlineWidth, OutlineStyle, OutlineColor] },
         OutlineStyle  => &PropertyDef { id: OutlineStyle,  name: "outline-style",  inherited: false, apply: apply_outline_style,  copy: copy_outline_style,  longhands: &[] },
@@ -759,18 +762,64 @@ fn apply_border_width(s: &mut ComputedStyle, v: &str) {
         parse_length);
 }
 fn apply_border_style_sh(s: &mut ComputedStyle, v: &str) {
-    let bs = super::parse_border_style(v);
-    s.border_top_style    = bs;
-    s.border_right_style  = bs;
-    s.border_bottom_style = bs;
-    s.border_left_style   = bs;
+    let parts: Vec<&str> = v.split_whitespace().collect();
+    match parts.len() {
+        1 => {
+            let bs = super::parse_border_style(parts[0]);
+            s.border_top_style = bs; s.border_right_style = bs;
+            s.border_bottom_style = bs; s.border_left_style = bs;
+        }
+        2 => {
+            let tb = super::parse_border_style(parts[0]);
+            let rl = super::parse_border_style(parts[1]);
+            s.border_top_style = tb; s.border_bottom_style = tb;
+            s.border_right_style = rl; s.border_left_style = rl;
+        }
+        3 => {
+            s.border_top_style = super::parse_border_style(parts[0]);
+            let rl = super::parse_border_style(parts[1]);
+            s.border_right_style = rl; s.border_left_style = rl;
+            s.border_bottom_style = super::parse_border_style(parts[2]);
+        }
+        4 => {
+            s.border_top_style    = super::parse_border_style(parts[0]);
+            s.border_right_style  = super::parse_border_style(parts[1]);
+            s.border_bottom_style = super::parse_border_style(parts[2]);
+            s.border_left_style   = super::parse_border_style(parts[3]);
+        }
+        _ => {}
+    }
 }
 fn apply_border_color_sh(s: &mut ComputedStyle, v: &str) {
-    let bc = parse_color(v).unwrap_or(Color::BLACK);
-    s.border_top_color    = bc;
-    s.border_right_color  = bc;
-    s.border_bottom_color = bc;
-    s.border_left_color   = bc;
+    // Split by whitespace, but be careful with color functions like rgb(...)
+    // Use the same comma/space-aware splitting as other shorthands
+    let parts: Vec<&str> = super::split_shorthand_values(v);
+    match parts.len() {
+        1 => {
+            let bc = parse_color(parts[0]).unwrap_or(Color::BLACK);
+            s.border_top_color = bc; s.border_right_color = bc;
+            s.border_bottom_color = bc; s.border_left_color = bc;
+        }
+        2 => {
+            let tb = parse_color(parts[0]).unwrap_or(Color::BLACK);
+            let rl = parse_color(parts[1]).unwrap_or(Color::BLACK);
+            s.border_top_color = tb; s.border_bottom_color = tb;
+            s.border_right_color = rl; s.border_left_color = rl;
+        }
+        3 => {
+            s.border_top_color = parse_color(parts[0]).unwrap_or(Color::BLACK);
+            let rl = parse_color(parts[1]).unwrap_or(Color::BLACK);
+            s.border_right_color = rl; s.border_left_color = rl;
+            s.border_bottom_color = parse_color(parts[2]).unwrap_or(Color::BLACK);
+        }
+        4 => {
+            s.border_top_color    = parse_color(parts[0]).unwrap_or(Color::BLACK);
+            s.border_right_color  = parse_color(parts[1]).unwrap_or(Color::BLACK);
+            s.border_bottom_color = parse_color(parts[2]).unwrap_or(Color::BLACK);
+            s.border_left_color   = parse_color(parts[3]).unwrap_or(Color::BLACK);
+        }
+        _ => {}
+    }
 }
 fn apply_border_top_width(s: &mut ComputedStyle, v: &str)    { s.border_top_width    = parse_length(v); }
 fn apply_border_right_width(s: &mut ComputedStyle, v: &str)  { s.border_right_width  = parse_length(v); }
@@ -1456,6 +1505,15 @@ fn copy_background_repeat(d: &mut ComputedStyle, s: &ComputedStyle)     { d.back
 fn copy_background_clip(d: &mut ComputedStyle, s: &ComputedStyle)       { d.background_clip = s.background_clip; }
 fn copy_background_origin(d: &mut ComputedStyle, s: &ComputedStyle)     { d.background_origin = s.background_origin; }
 fn copy_background_attachment(d: &mut ComputedStyle, s: &ComputedStyle) { d.background_attachment = s.background_attachment; }
+
+fn apply_mask_image(s: &mut ComputedStyle, v: &str) {
+    if v == "none" {
+        s.mask_image_url.clear();
+    } else if let Some(url) = super::extract_url(v) {
+        s.mask_image_url = url;
+    }
+}
+fn copy_mask_image(d: &mut ComputedStyle, s: &ComputedStyle) { d.mask_image_url = s.mask_image_url.clone(); }
 
 // ── Outline ─────────────────────────────────────────────────────────────────
 

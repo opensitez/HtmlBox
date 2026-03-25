@@ -27,6 +27,7 @@ pub enum PropertyId {
     // Color & Background
     Color,
     Background, BackgroundColor, BackgroundImage, BackgroundSize, BackgroundRepeat, BackgroundPosition, BackgroundAttachment, BackgroundOrigin, BackgroundClip,
+    MaskImage,
 
     // Font
     Font, FontFamily, FontSize, FontWeight, FontStyle, FontStretch, FontVariant, FontFeatureSettings, FontVariationSettings,
@@ -224,6 +225,7 @@ pub fn resolve(name: &str) -> PropertyId {
         "background" => PropertyId::Background,
         "background-color" => PropertyId::BackgroundColor,
         "background-image" => PropertyId::BackgroundImage,
+        "mask-image" => PropertyId::MaskImage,
         "background-size" => PropertyId::BackgroundSize,
         "background-repeat" => PropertyId::BackgroundRepeat,
         "background-position" => PropertyId::BackgroundPosition,

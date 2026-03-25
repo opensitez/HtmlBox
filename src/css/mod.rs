@@ -2420,6 +2420,31 @@ pub fn parse_counter_list(v: &str) -> Vec<(String, i32)> {
     result
 }
 
+/// Split a shorthand value into top-level tokens, respecting parentheses.
+/// E.g. "rgb(200,200,200) red" → ["rgb(200,200,200)", "red"]
+pub fn split_shorthand_values(v: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = None;
+    for (i, ch) in v.char_indices() {
+        match ch {
+            '(' => { depth += 1; if start.is_none() { start = Some(i); } }
+            ')' => { depth = depth.saturating_sub(1); }
+            _ if ch.is_whitespace() && depth == 0 => {
+                if let Some(s) = start {
+                    parts.push(&v[s..i]);
+                    start = None;
+                }
+            }
+            _ => { if start.is_none() { start = Some(i); } }
+        }
+    }
+    if let Some(s) = start {
+        parts.push(&v[s..]);
+    }
+    parts
+}
+
 pub fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
     v: &str,
     top: &mut CssLength, right: &mut CssLength,
@@ -4807,6 +4832,25 @@ fn apply_cascade_inner(
     // Preserve list_index: set by the HTML parser (ol counter), not by CSS.
     // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
     style.list_index = root.style.list_index;
+    // Safety: block-level elements that end up as Inline despite no author CSS
+    // setting display:inline should be forced to Block. Only apply when no
+    // matched rule explicitly sets display (i.e., the Inline came from default).
+    if matches!(style.display, Display::Inline) {
+        let has_explicit_display = matched.iter().any(|&(_, ri)| {
+            stylesheet.rules[ri].declarations.iter().any(|(k, _)| k == "display")
+        });
+        if !has_explicit_display {
+            let should_be_block = matches!(root.tag.as_str(),
+                "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "blockquote" | "hr"
+                | "section" | "article" | "aside" | "nav" | "header" | "footer" | "main"
+                | "address" | "figure" | "figcaption" | "details" | "center"
+                | "form" | "fieldset" | "legend" | "hgroup" | "search");
+            if should_be_block {
+                style.display = Display::Block;
+            }
+        }
+    }
     root.style = style.clone();
     // Store matched CSS rules for inspector (only when enabled).
     if stylesheet.inspect_mode {
