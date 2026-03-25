@@ -52,6 +52,10 @@ path = "examples/event_playground.rs"
 name = "snapshot"
 path = "examples/snapshot.rs"
 
+[[example]]
+name = "debugserver"
+path = "examples/debugserver.rs"
+
 [features]
 accessibility = ["dep:accesskit", "dep:accesskit_winit"]
 
