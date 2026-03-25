@@ -5203,7 +5203,7 @@ input:disabled, select:disabled, textarea:disabled, button:disabled {
   opacity: 0.6; cursor: default;
 }
 input[type=hidden] { display: none; }
-input[type=radio], input[type=checkbox] { display: inline-block; width: 16px; height: 16px; vertical-align: middle; margin: 0 6px 0 2px; border: none; padding: 0; background: transparent; }
+input[type=radio], input[type=checkbox] { display: inline-block; width: 16px; height: 16px; vertical-align: middle; margin: 0 6px 0 2px; border: none; padding: 0; background: transparent; flex-shrink: 0; }
 label { display: inline-block; }
 input { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
 input[type=submit], input[type=button], input[type=reset] { width: auto; height: auto; border: 1px solid #767676; padding: 3px 8px; background-color: #e8e8e8; }

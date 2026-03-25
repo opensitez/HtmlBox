@@ -368,7 +368,10 @@ pub fn layout_flex(
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
 
-        // Set CSS dimension to the resolved content-box main size
+        // Set CSS dimension to the resolved content-box main size.
+        // Save and restore the original value so repeated layout passes
+        // don't accumulate (e.g. width:100% → Px(38) → shrinks further).
+        let saved_dim = if is_row { child.style.width.clone() } else { child.style.height.clone() };
         if is_row {
             let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
                 item.main_used + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
@@ -392,6 +395,9 @@ pub fn layout_flex(
         };
 
         engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+
+        // Restore original CSS dimension so next layout pass computes correctly
+        if is_row { child.style.width = saved_dim; } else { child.style.height = saved_dim; }
 
         // CSS Flexbox §4.5: resolve deferred min-height:auto for column flex items.
         // If the item's content height exceeds its allocated main_used, expand it.
@@ -571,13 +577,14 @@ pub fn layout_flex(
                     let cross_extra = irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                                     + irb.margin_top + irb.margin_bottom;
                     let target_h = (lc - cross_extra).max(0.0);
-                    // Re-layout if the child doesn't fill the line cross size
                     if target_h > 0.0 && (target_h - child.content_rect.h).abs() > 0.5 {
                         let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
                             target_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                         } else { target_h };
+                        let saved_h = child.style.height.clone();
                         child.style.height = CssLength::Px(css_h);
                         engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+                        child.style.height = saved_h;
                         items[item_idx].cross_size = child.margin_rect.h;
                     }
                 } else if !is_row {
@@ -588,8 +595,10 @@ pub fn layout_flex(
                         let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
                             stretch_w + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                         } else { stretch_w };
+                        let saved_w = child.style.width.clone();
                         child.style.width = CssLength::Px(css_w);
                         engine.layout_box(child, css_w, content_x, content_y, font_px, root_font_px);
+                        child.style.width = saved_w;
                         items[item_idx].cross_size = child.margin_rect.w;
                     }
                 }

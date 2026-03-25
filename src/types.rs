@@ -2213,7 +2213,10 @@ impl Document {
                 }
                 // Track hover over open dropdown
                 if self.open_select != 0 {
-                    let sel = self.get_box_by_id(self.open_select).unwrap();
+                    let sel = match self.get_box_by_id(self.open_select) {
+                        Some(s) => s,
+                        None => { self.open_select = 0; return redraw; }
+                    };
                     let sel: &HtmlBox = unsafe { &*(sel as *const HtmlBox) };
                     let dropdown_y = sel.border_rect.y + sel.border_rect.h;
                     let font_px = sel.style.font_size_px(16.0, 16.0);

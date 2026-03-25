@@ -217,8 +217,27 @@ impl DomArena {
 
     /// Append `child` as the last child of `parent`.
     /// `child` must be detached (no parent).
+    /// Detach a node from its parent (if any).
+    pub fn detach(&mut self, node: NodeId) {
+        let parent = self.get(node).parent;
+        if parent.is_none() { return; }
+        let prev = self.get(node).prev_sibling;
+        let next = self.get(node).next_sibling;
+        if prev.is_some() { self.get_mut(prev).next_sibling = next; }
+        else { self.get_mut(parent).first_child = next; }
+        if next.is_some() { self.get_mut(next).prev_sibling = prev; }
+        else { self.get_mut(parent).last_child = prev; }
+        self.get_mut(node).parent = NodeId::NONE;
+        self.get_mut(node).prev_sibling = NodeId::NONE;
+        self.get_mut(node).next_sibling = NodeId::NONE;
+    }
+
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        debug_assert!(self.get(child).parent.is_none(), "child already has a parent");
+        // If child already has a parent, detach it first (prevents double-parenting
+        // which causes double rendering and tree corruption).
+        if self.get(child).parent.is_some() {
+            self.detach(child);
+        }
         let last = self.get(parent).last_child;
 
         self.get_mut(child).parent = parent;

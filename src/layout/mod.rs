@@ -1158,6 +1158,16 @@ impl LayoutEngine {
             None
         };
 
+        // Replaced elements (input, select, textarea, img) cannot be flex/grid
+        // containers per CSS spec — blockify so parent flex/grid also sees correct display.
+        if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe") {
+            match node.style.display {
+                Display::Flex | Display::Grid => { node.style.display = Display::Block; }
+                Display::InlineFlex | Display::InlineGrid => { node.style.display = Display::InlineBlock; }
+                _ => {}
+            }
+        }
+
         let h = match node.style.display {
             Display::Flex | Display::InlineFlex => {
                 flex::layout_flex(self, node, &rbox, containing_w, x, y, font_px, root_font_px)

@@ -257,6 +257,12 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
         });
     }
 
+    // Form elements (input, select, button, textarea, etc.) are rendered entirely
+    // by the FormElement paint command. Skip CSS background/border/text to avoid
+    // double rendering.
+    let is_form_element = matches!(node.tag.as_str(),
+        "input" | "textarea" | "select" | "button" | "progress" | "meter");
+
     // ── (a) Outer box-shadow ─────────────────────────────────────────────────
     if let Some(ref bs) = eff_style.box_shadow {
         if !bs.inset {
@@ -272,6 +278,10 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
             });
         }
     }
+
+    // Form elements: CSS background/border/padding renders normally (below).
+    // The FormElement command only draws the control CONTENT (value text,
+    // placeholder, checkbox mark, radio dot, etc.) — not the box decoration.
 
     // ── (b) Background color (opacity applied to alpha) ──────────────────────
     {
@@ -600,7 +610,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
         });
     }
 
-    // ── (o) Form elements ────────────────────────────────────────────────────
+    // ── (o) Form elements (content only — box decoration handled by CSS steps above)
     build_form_element(node, list, eff_sx, eff_sy);
 
     // ── (p) Image / SVG ──────────────────────────────────────────────────────
@@ -1200,11 +1210,22 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
 
     let cr = node.content_rect;
     let font_px = node.style.font_size_px(16.0, 16.0).max(1.0);
-    let value = node
-        .attributes
-        .get("value")
-        .cloned()
-        .unwrap_or_default();
+    let value = if tag == "select" {
+        // For select, get the text of the selected option (or first option)
+        node.children.iter()
+            .find(|c| c.tag == "option" && c.attributes.get("selected").is_some())
+            .or_else(|| node.children.iter().find(|c| c.tag == "option"))
+            .map(|opt| {
+                opt.children.iter()
+                    .filter(|c| c.tag == "#text")
+                    .map(|c| c.text.trim())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default()
+    } else {
+        crate::types::input_value(node)
+    };
     let placeholder = node
         .attributes
         .get("placeholder")

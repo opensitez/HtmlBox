@@ -76,29 +76,57 @@ fn replay_inner(
             PaintCmd::Border { rect, widths, colors, styles: _, radii } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                let mut paint = Paint::default();
-                if widths[0] > 0.0 {
-                    paint.set_color(to_sk_color(&apply_opacity(&colors[0], alpha)));
-                    if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, widths[0]) {
-                        target.fill_rect(r, &paint, ts, clip_mask);
+                let max_r = radii[0].max(radii[1]).max(radii[2]).max(radii[3]);
+
+                // Uniform border with border-radius → use stroked rounded rect
+                let uniform_width = widths[0] == widths[1] && widths[1] == widths[2] && widths[2] == widths[3];
+                let uniform_color = colors[0] == colors[1] && colors[1] == colors[2] && colors[2] == colors[3];
+
+                if max_r > 0.5 && uniform_width && uniform_color && widths[0] > 0.0 {
+                    let bw = widths[0];
+                    let half = bw / 2.0;
+                    // Inset the path by half the border width so the stroke straddles the edge
+                    if let Some(path) = rounded_rect_path_corners(
+                        rect.x + half, rect.y + half,
+                        rect.w - bw, rect.h - bw,
+                        (radii[0] - half).max(0.0),
+                        (radii[1] - half).max(0.0),
+                        (radii[2] - half).max(0.0),
+                        (radii[3] - half).max(0.0),
+                    ) {
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&apply_opacity(&colors[0], alpha)));
+                        paint.anti_alias = true;
+                        let mut stroke = tiny_skia::Stroke::default();
+                        stroke.width = bw;
+                        target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                     }
-                }
-                if widths[2] > 0.0 {
-                    paint.set_color(to_sk_color(&apply_opacity(&colors[2], alpha)));
-                    if let Some(r) = SkRect::from_xywh(rect.x, rect.y + rect.h - widths[2], rect.w, widths[2]) {
-                        target.fill_rect(r, &paint, ts, clip_mask);
+                } else {
+                    // Fallback: draw borders as filled rectangles (no rounding)
+                    let mut paint = Paint::default();
+                    if widths[0] > 0.0 {
+                        paint.set_color(to_sk_color(&apply_opacity(&colors[0], alpha)));
+                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, widths[0]) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
                     }
-                }
-                if widths[3] > 0.0 {
-                    paint.set_color(to_sk_color(&apply_opacity(&colors[3], alpha)));
-                    if let Some(r) = SkRect::from_xywh(rect.x, rect.y, widths[3], rect.h) {
-                        target.fill_rect(r, &paint, ts, clip_mask);
+                    if widths[2] > 0.0 {
+                        paint.set_color(to_sk_color(&apply_opacity(&colors[2], alpha)));
+                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y + rect.h - widths[2], rect.w, widths[2]) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
                     }
-                }
-                if widths[1] > 0.0 {
-                    paint.set_color(to_sk_color(&apply_opacity(&colors[1], alpha)));
-                    if let Some(r) = SkRect::from_xywh(rect.x + rect.w - widths[1], rect.y, widths[1], rect.h) {
-                        target.fill_rect(r, &paint, ts, clip_mask);
+                    if widths[3] > 0.0 {
+                        paint.set_color(to_sk_color(&apply_opacity(&colors[3], alpha)));
+                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y, widths[3], rect.h) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
+                    }
+                    if widths[1] > 0.0 {
+                        paint.set_color(to_sk_color(&apply_opacity(&colors[1], alpha)));
+                        if let Some(r) = SkRect::from_xywh(rect.x + rect.w - widths[1], rect.y, widths[1], rect.h) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
                     }
                 }
             }
@@ -372,29 +400,167 @@ fn replay_inner(
             }
 
             PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor } => {
-                // TODO: full form element replay — for now draw a border and value text
+                // CSS background/border/padding are drawn by the normal pipeline.
+                // FormElement only draws the CONTENT: value text, check marks, radio dots, etc.
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                // Draw border
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(169, 169, 169, 200);
-                let mut stroke = tiny_skia::Stroke::default();
-                stroke.width = 1.0;
-                if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 2.0) {
-                    target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
-                }
-                // Draw value text
-                let display_text = if value.is_empty() { placeholder } else { value };
-                if !display_text.is_empty() {
-                    if let Some((ref mut fs, ref mut sc)) = text_ctx {
-                        let c = apply_opacity(color, a2);
-                        draw_text_cmd(
-                            target, *fs, *sc, scale,
-                            rect.x + 2.0, rect.y, display_text, font_family, *font_size, *font_weight,
-                            0, 100.0, *font_size * 1.2,
-                            &c, &super::display_list::TextDecoration::default(),
-                            0.0, false,
-                        );
+                let _ = (node_id, attributes, input_cursor); // suppress warnings
+
+                match (tag.as_str(), input_type.as_str()) {
+                    ("input", "checkbox") => {
+                        // Draw checkbox box
+                        let sz = rect.w.min(rect.h);
+                        let bx = rect.x + (rect.w - sz) / 2.0;
+                        let by = rect.y + (rect.h - sz) / 2.0;
+                        // Background
+                        let mut paint = Paint::default();
+                        paint.set_color_rgba8(255, 255, 255, 255);
+                        paint.anti_alias = true;
+                        if let Some(path) = rounded_rect_path(bx, by, sz, sz, 2.0) {
+                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                        }
+                        // Border
+                        paint.set_color_rgba8(118, 118, 118, 255);
+                        let mut stroke = tiny_skia::Stroke::default();
+                        stroke.width = 1.0;
+                        if let Some(path) = rounded_rect_path(bx, by, sz, sz, 2.0) {
+                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
+                        }
+                        // Check mark
+                        if *checked {
+                            let cx = bx + sz / 2.0;
+                            let cy = by + sz / 2.0;
+                            let s = sz * 0.3;
+                            paint.set_color_rgba8(51, 51, 51, 255);
+                            stroke.width = 2.0;
+                            let mut pb = PathBuilder::new();
+                            pb.move_to(cx - s, cy);
+                            pb.line_to(cx - s * 0.3, cy + s * 0.7);
+                            pb.line_to(cx + s, cy - s * 0.6);
+                            if let Some(path) = pb.finish() {
+                                target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
+                            }
+                        }
+                    }
+                    ("input", "radio") => {
+                        // Draw radio circle
+                        let sz = rect.w.min(rect.h);
+                        let cx = rect.x + rect.w / 2.0;
+                        let cy = rect.y + rect.h / 2.0;
+                        let r = sz / 2.0;
+                        let mut paint = Paint::default();
+                        paint.anti_alias = true;
+                        // Outer circle (white fill + gray border)
+                        if let Some(path) = circle_path_4q(cx, cy, r) {
+                            paint.set_color_rgba8(255, 255, 255, 255);
+                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                            paint.set_color_rgba8(118, 118, 118, 255);
+                            let mut stroke = tiny_skia::Stroke::default();
+                            stroke.width = 1.0;
+                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
+                        }
+                        // Inner dot if checked
+                        if *checked {
+                            let ir = r * 0.45;
+                            if let Some(path) = circle_path_4q(cx, cy, ir) {
+                                paint.set_color_rgba8(51, 51, 51, 255);
+                                target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                            }
+                        }
+                    }
+                    ("select", _) => {
+                        // Draw dropdown arrow
+                        let arrow_x = rect.x + rect.w - 16.0;
+                        let arrow_y = rect.y + rect.h / 2.0;
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&apply_opacity(color, a2)));
+                        paint.anti_alias = true;
+                        let mut pb = PathBuilder::new();
+                        pb.move_to(arrow_x - 4.0, arrow_y - 2.0);
+                        pb.line_to(arrow_x, arrow_y + 2.0);
+                        pb.line_to(arrow_x + 4.0, arrow_y - 2.0);
+                        let mut stroke = tiny_skia::Stroke::default();
+                        stroke.width = 1.5;
+                        if let Some(path) = pb.finish() {
+                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
+                        }
+                        // Draw selected value text
+                        let display_text = if value.is_empty() { placeholder } else { value };
+                        if !display_text.is_empty() {
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                let c = apply_opacity(color, a2);
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    rect.x + 2.0, rect.y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    &c, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
+                    }
+                    ("input", "text") | ("input", "tel") | ("input", "email") |
+                    ("input", "password") | ("input", "search") | ("input", "url") |
+                    ("input", "number") | ("textarea", _) => {
+                        // Draw value or placeholder text
+                        let display_text = if value.is_empty() { placeholder } else { value };
+                        if !display_text.is_empty() {
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                let c = if value.is_empty() {
+                                    // Placeholder: use a dimmed version of the color
+                                    let mut pc = apply_opacity(color, a2);
+                                    pc.a = (pc.a as f32 * 0.5) as u8;
+                                    pc
+                                } else {
+                                    apply_opacity(color, a2)
+                                };
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    rect.x + 2.0, rect.y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    &c, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
+                    }
+                    ("input", "range") => {
+                        // Draw track
+                        let track_y = rect.y + rect.h / 2.0;
+                        let mut paint = Paint::default();
+                        paint.set_color_rgba8(128, 128, 128, 180);
+                        if let Some(r) = SkRect::from_xywh(rect.x, track_y - 2.0, rect.w, 4.0) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
+                        // Draw thumb
+                        let val: f32 = value.parse().unwrap_or(50.0);
+                        let min: f32 = attributes.iter().find(|(k,_)| k == "min").map(|(_,v)| v.parse().unwrap_or(0.0)).unwrap_or(0.0);
+                        let max: f32 = attributes.iter().find(|(k,_)| k == "max").map(|(_,v)| v.parse().unwrap_or(100.0)).unwrap_or(100.0);
+                        let pct = ((val - min) / (max - min).max(0.001)).clamp(0.0, 1.0);
+                        let thumb_x = rect.x + pct * rect.w;
+                        paint.set_color(to_sk_color(&apply_opacity(color, a2)));
+                        if let Some(r) = SkRect::from_xywh(thumb_x - 6.0, track_y - 6.0, 12.0, 12.0) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
+                        }
+                    }
+                    ("input", "submit") | ("input", "button") | ("input", "reset") | ("button", _) => {
+                        // Button text is rendered by the inline text pipeline — nothing to do here
+                    }
+                    _ => {
+                        // Other form elements: draw value text if present
+                        let display_text = if value.is_empty() { placeholder } else { value };
+                        if !display_text.is_empty() {
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                let c = apply_opacity(color, a2);
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    rect.x + 2.0, rect.y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    &c, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -415,12 +581,16 @@ fn replay_inner(
             }
 
             PaintCmd::BackgroundImage { container, data, size_mode: _, draw_w, draw_h, pos_x, pos_y, repeat_x, repeat_y, radii } => {
-                // Draw background image
+                // Draw background image, clipped to the container rect
                 let (rgba, iw, ih) = match data {
                     ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
                     ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
                 };
                 if iw == 0 || ih == 0 || *draw_w <= 0.0 || *draw_h <= 0.0 { continue; }
+                // Build a clip mask for the container so background doesn't bleed out
+                // (essential for CSS sprites where background-position is negative)
+                let bg_clip = build_clip_mask(container, radii, pw, ph, scale);
+                let bg_clip_ref = bg_clip.as_ref().or(clip_mask);
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
                     let sx_img = draw_w / iw as f32;
                     let sy_img = draw_h / ih as f32;
@@ -452,7 +622,7 @@ fn replay_inner(
                             let mut tx = first_tx;
                             while tx < end_x {
                                 let tile_ts = ts.pre_translate(tx, ty).pre_scale(sx_img, sy_img);
-                                pixmap.draw_pixmap(0, 0, img_pixmap, &paint, tile_ts, clip_mask);
+                                pixmap.draw_pixmap(0, 0, img_pixmap, &paint, tile_ts, bg_clip_ref);
                                 tx += draw_w;
                                 if !*repeat_x { break; }
                             }
@@ -461,7 +631,7 @@ fn replay_inner(
                         }
                     } else {
                         let img_ts = ts.pre_translate(*pos_x, *pos_y).pre_scale(sx_img, sy_img);
-                        pixmap.draw_pixmap(0, 0, img_pixmap, &paint, img_ts, clip_mask);
+                        pixmap.draw_pixmap(0, 0, img_pixmap, &paint, img_ts, bg_clip_ref);
                     }
                 }
             }
@@ -632,6 +802,19 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
             *d = p;
         }
     }
+}
+
+fn circle_path_4q(cx: f32, cy: f32, r: f32) -> Option<tiny_skia::Path> {
+    // Approximate circle with 4 cubic bezier curves (kappa = 0.5522847498)
+    let k = r * 0.5522847498;
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx, cy - r);
+    pb.cubic_to(cx + k, cy - r, cx + r, cy - k, cx + r, cy);
+    pb.cubic_to(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
+    pb.cubic_to(cx - k, cy + r, cx - r, cy + k, cx - r, cy);
+    pb.cubic_to(cx - r, cy - k, cx - k, cy - r, cx, cy - r);
+    pb.close();
+    pb.finish()
 }
 
 fn build_clip_mask(rect: &Rect, radius: &[f32; 4], pw: u32, ph: u32, scale: f32) -> Option<tiny_skia::Mask> {
