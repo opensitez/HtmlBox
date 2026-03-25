@@ -173,9 +173,18 @@ pub fn layout_inline_block(
     let mut text_offset = 0usize;
     let mut items: Vec<InlineItem> = Vec::new();
     let mut runs:  Vec<InlineRun>  = Vec::new();
+    // Pass the containing element's text-decoration to child text nodes
+    let container_deco = if node.style.text_decoration.underline
+        || node.style.text_decoration.overline
+        || node.style.text_decoration.strikethrough
+    {
+        Some(&node.style)
+    } else {
+        None
+    };
     for (i, child) in node.children.iter().enumerate() {
         if matches!(child.style.display, Display::None) { continue; }
-        collect_items(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true, &[]);
+        collect_items_inner(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true, &[], container_deco);
     }
     // Also collect from own text (text directly inside element)
     if !node.text.is_empty() {
@@ -903,6 +912,25 @@ pub fn collect_items(
     is_direct_child: bool,
     ancestor_path:   &[usize],
 ) {
+    // Text decoration is not inherited via CSS cascade, but visually paints
+    // across descendants. Track the nearest ancestor's decoration to apply
+    // to text runs within decorated inline elements.
+    collect_items_inner(engine, node, parent_font_px, root_font_px, items, runs, text_offset, box_idx, is_direct_child, ancestor_path, None);
+}
+
+fn collect_items_inner(
+    engine:          &LayoutEngine,
+    node:            &HtmlBox,
+    parent_font_px:  f32,
+    root_font_px:    f32,
+    items:           &mut Vec<InlineItem>,
+    runs:            &mut Vec<InlineRun>,
+    text_offset:     &mut usize,
+    box_idx:         usize,
+    is_direct_child: bool,
+    ancestor_path:   &[usize],
+    parent_decoration: Option<&crate::types::ComputedStyle>,
+) {
     if matches!(node.style.display, Display::None) { return; }
 
     // Absolutely/fixed positioned elements are out of flow — skip them here;
@@ -934,7 +962,24 @@ pub fn collect_items(
         if !node.text.is_empty() {
             let start = *text_offset;
             tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
-            runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
+            let mut run_style = node.style.clone();
+            // Inherit text-decoration from parent inline element (span, a, etc.)
+            // since text-decoration is not a CSS inherited property but paints on descendants
+            if let Some(ps) = parent_decoration {
+                if ps.text_decoration.underline { run_style.text_decoration.underline = true; }
+                if ps.text_decoration.overline { run_style.text_decoration.overline = true; }
+                if ps.text_decoration.strikethrough { run_style.text_decoration.strikethrough = true; }
+                if run_style.text_decoration_color.is_none() && ps.text_decoration_color.is_some() {
+                    run_style.text_decoration_color = ps.text_decoration_color;
+                }
+                if matches!(run_style.text_decoration_style, crate::types::TextDecorationStyle::Solid) {
+                    run_style.text_decoration_style = ps.text_decoration_style;
+                }
+                if run_style.text_decoration_thickness.is_auto() {
+                    run_style.text_decoration_thickness = ps.text_decoration_thickness.clone();
+                }
+            }
+            runs.push(InlineRun { text_offset: start, length: node.text.len(), style: run_style });
             *text_offset += node.text.len();
         }
         return;
@@ -1016,8 +1061,17 @@ pub fn collect_items(
     let runs_before = runs.len();
     let mut child_path = ancestor_path.to_vec();
     child_path.push(box_idx);
+    // Pass this element's style as parent decoration if it has any decoration set
+    let deco_source = if node.style.text_decoration.underline
+        || node.style.text_decoration.overline
+        || node.style.text_decoration.strikethrough
+    {
+        Some(&node.style)
+    } else {
+        parent_decoration
+    };
     for (i, child) in node.children.iter().enumerate() {
-        collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i, false, &child_path);
+        collect_items_inner(engine, child, font_px, root_font_px, items, runs, text_offset, i, false, &child_path, deco_source);
     }
 
     // Emit right decoration

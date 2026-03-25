@@ -70,6 +70,14 @@ pub enum PaintCmd {
     /// Pop opacity.
     PopOpacity,
 
+    /// Push a CSS filter — content rendered into a layer, filter applied on pop.
+    PushFilter { filters: Vec<(u8, f32, crate::types::Color)> },
+    // filter type: 0=blur, 1=brightness, 2=contrast, 3=grayscale, 4=hue-rotate,
+    //              5=invert, 6=opacity, 7=saturate, 8=sepia, 9=drop-shadow
+
+    /// Pop filter layer.
+    PopFilter,
+
     /// Push a blend mode layer — subsequent content is composited with this mode.
     PushBlendMode { mode: u8 }, // 0=normal, 1=multiply, 2=screen, 3=overlay, etc.
 

@@ -249,6 +249,10 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── CSS transform ────────────────────────────────────────────────────────
+    // Use the element's DOCUMENT position (pr.x, pr.y) for the transform origin,
+    // not the scroll-adjusted position (px, py). The scroll offset is applied
+    // separately by the replay's global transform. This prevents transforms from
+    // shifting when the user scrolls.
     let has_transform = !eff_style.css_transform.ops.is_empty();
     if has_transform {
         let tr_rect = Rect::new(px, py, pw, ph);
@@ -262,6 +266,27 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // double rendering.
     let is_form_element = matches!(node.tag.as_str(),
         "input" | "textarea" | "select" | "button" | "progress" | "meter");
+
+    // ── CSS filters ───────────────────────────────────────────────────────────
+    let has_filter = !eff_style.css_filter.ops.is_empty();
+    if has_filter {
+        use crate::types::FilterOp;
+        let filters: Vec<(u8, f32, Color)> = eff_style.css_filter.ops.iter().map(|op| {
+            match op {
+                FilterOp::Blur(v)       => (0, *v, Color::TRANSPARENT),
+                FilterOp::Brightness(v) => (1, *v, Color::TRANSPARENT),
+                FilterOp::Contrast(v)   => (2, *v, Color::TRANSPARENT),
+                FilterOp::Grayscale(v)  => (3, *v, Color::TRANSPARENT),
+                FilterOp::HueRotate(v)  => (4, *v, Color::TRANSPARENT),
+                FilterOp::Invert(v)     => (5, *v, Color::TRANSPARENT),
+                FilterOp::Opacity(v)    => (6, *v, Color::TRANSPARENT),
+                FilterOp::Saturate(v)   => (7, *v, Color::TRANSPARENT),
+                FilterOp::Sepia(v)      => (8, *v, Color::TRANSPARENT),
+                FilterOp::DropShadow { dx: _, dy: _, blur, color } => (9, *blur, *color),
+            }
+        }).collect();
+        list.push(PaintCmd::PushFilter { filters });
+    }
 
     // ── (a) Outer box-shadow ─────────────────────────────────────────────────
     if let Some(ref bs) = eff_style.box_shadow {
@@ -716,7 +741,9 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
         list.push(PaintCmd::EndStackingContext);
     }
 
-    // TODO: CSS filters (blur, brightness, etc.) — no PaintCmd variant yet
+    if has_filter {
+        list.push(PaintCmd::PopFilter);
+    }
     // TODO: clip-path masks — no PaintCmd variant yet
 }
 

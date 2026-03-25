@@ -43,7 +43,9 @@ fn replay_inner(
     scale: f32,
     mut text_ctx: Option<(&mut FontSystem, &mut SwashCache)>,
 ) {
-    let ts = Transform::from_scale(scale, scale);
+    let mut ts = Transform::from_scale(scale, scale);
+    let mut transform_stack: Vec<Transform> = Vec::new();
+    let mut filter_stack: Vec<Vec<(u8, f32, crate::types::Color)>> = Vec::new();
     let mut clip_stack: Vec<Rect> = Vec::new();
     let mut clip_mask_stack: Vec<Option<tiny_skia::Mask>> = Vec::new();
     let mut opacity_stack: Vec<f32> = Vec::new();
@@ -186,29 +188,43 @@ fn replay_inner(
             }
 
             PaintCmd::PushTransform { transform: m } => {
-                // Render into a temp layer, composite with transform applied
-                if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
-                    // Store transform matrix for use when popping
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 255, transform: Some(*m) });
-                }
+                // Apply CSS transform by modifying the global transform matrix.
+                // The transform matrix m = [a,b,c,d,e,f] is a 2D affine transform
+                // that already includes translate-to-origin and translate-back.
+                let css_t = Transform::from_row(m[0], m[1], m[2], m[3], m[4], m[5]);
+                let new_ts = ts.pre_concat(css_t);
+                // Push old ts onto a stack so we can restore it
+                transform_stack.push(ts);
+                ts = new_ts;
             }
             PaintCmd::PopTransform => {
-                if let Some(layer) = layer_stack.pop() {
-                    if let Some(m) = layer.transform {
-                        // Composite layer with CSS transform applied
-                        let css_t = Transform::from_row(m[0], m[1], m[2], m[3], m[4] * scale, m[5] * scale);
-                        let combined = Transform::from_scale(scale, scale)
-                            .pre_concat(css_t)
-                            .pre_concat(Transform::from_scale(1.0 / scale, 1.0 / scale));
-                        pixmap.draw_pixmap(
-                            0, 0, layer.pixmap.as_ref(),
-                            &tiny_skia::PixmapPaint::default(),
-                            combined, None,
-                        );
-                    }
+                if let Some(old_ts) = transform_stack.pop() {
+                    ts = old_ts;
                 }
             }
 
+            PaintCmd::PushFilter { filters } => {
+                if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
+                    // Store filter ops encoded in the blend_mode field won't work,
+                    // so we store them separately via a filter_stack
+                    filter_stack.push(filters.clone());
+                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 254, transform: None });
+                }
+            }
+            PaintCmd::PopFilter => {
+                let filters = filter_stack.pop().unwrap_or_default();
+                if let Some(layer) = layer_stack.pop() {
+                    let mut pm = layer.pixmap;
+                    // Apply each filter to the layer pixels
+                    for (filter_type, value, _color) in &filters {
+                        apply_pixel_filter(&mut pm, *filter_type, *value);
+                    }
+                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    target.draw_pixmap(0, 0, pm.as_ref(),
+                        &tiny_skia::PixmapPaint::default(),
+                        Transform::identity(), None);
+                }
+            }
             PaintCmd::PushBlendMode { mode } => {
                 // Create a temporary layer for blend compositing
                 if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
@@ -730,28 +746,98 @@ fn draw_text_cmd(
         }
     });
 
-    // Draw text decorations (underline, strikethrough)
-    if decoration.underline {
-        let uy = phys_y + phys_px * 0.9;
-        let mut paint = Paint::default();
-        paint.set_color(to_sk_color(&Color::rgba(
-            decoration.color.r, decoration.color.g, decoration.color.b, decoration.color.a,
-        )));
-        let thickness = (decoration.thickness * sc).max(1.0);
-        if let Some(r) = SkRect::from_xywh(phys_x, uy, buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0), thickness) {
-            pixmap.fill_rect(r, &paint, Transform::identity(), None);
+    // Draw text decorations (underline, overline, strikethrough)
+    let line_w = buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0);
+    let thickness = (decoration.thickness * sc).max(1.0);
+    let mut paint = Paint::default();
+    paint.set_color(to_sk_color(&Color::rgba(
+        decoration.color.r, decoration.color.g, decoration.color.b, decoration.color.a,
+    )));
+    paint.anti_alias = true;
+
+    let draw_deco_line = |pixmap: &mut Pixmap, y: f32, style: u8| {
+        match style {
+            0 => {
+                // solid
+                if let Some(r) = SkRect::from_xywh(phys_x, y, line_w, thickness) {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+            }
+            1 => {
+                // double
+                if let Some(r) = SkRect::from_xywh(phys_x, y, line_w, 1.0f32.max(thickness * 0.4)) {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+                if let Some(r) = SkRect::from_xywh(phys_x, y + thickness * 1.5, line_w, 1.0f32.max(thickness * 0.4)) {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+            }
+            2 => {
+                // dotted
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = thickness;
+                stroke.dash = tiny_skia::StrokeDash::new(vec![thickness * 1.5, thickness * 2.0], 0.0);
+                let mut pb = PathBuilder::new();
+                pb.move_to(phys_x, y + thickness / 2.0);
+                pb.line_to(phys_x + line_w, y + thickness / 2.0);
+                if let Some(path) = pb.finish() {
+                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+            3 => {
+                // dashed
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = thickness;
+                stroke.dash = tiny_skia::StrokeDash::new(vec![thickness * 4.0, thickness * 3.0], 0.0);
+                let mut pb = PathBuilder::new();
+                pb.move_to(phys_x, y + thickness / 2.0);
+                pb.line_to(phys_x + line_w, y + thickness / 2.0);
+                if let Some(path) = pb.finish() {
+                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+            4 => {
+                // wavy
+                let wave_h = thickness * 1.5;
+                let wave_len = thickness * 4.0;
+                let mut pb = PathBuilder::new();
+                let mut x = phys_x;
+                pb.move_to(x, y);
+                while x < phys_x + line_w {
+                    pb.quad_to(x + wave_len * 0.25, y - wave_h, x + wave_len * 0.5, y);
+                    pb.quad_to(x + wave_len * 0.75, y + wave_h, x + wave_len, y);
+                    x += wave_len;
+                }
+                let mut stroke = tiny_skia::Stroke::default();
+                stroke.width = thickness;
+                if let Some(path) = pb.finish() {
+                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+            _ => {
+                // fallback to solid
+                if let Some(r) = SkRect::from_xywh(phys_x, y, line_w, thickness) {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+            }
         }
+    };
+
+    if decoration.underline {
+        // Position underline below the baseline (baseline ≈ 80% of em)
+        // plus text-underline-offset
+        let baseline_y = phys_y + phys_px * 0.82;
+        let offset = thickness * 2.0; // approximate text-underline-offset
+        let uy = baseline_y + offset;
+        draw_deco_line(pixmap, uy, decoration.style);
+    }
+    if decoration.overline {
+        let oy = phys_y - thickness;
+        draw_deco_line(pixmap, oy, decoration.style);
     }
     if decoration.strikethrough {
-        let sy = phys_y + phys_px * 0.55;
-        let mut paint = Paint::default();
-        paint.set_color(to_sk_color(&Color::rgba(
-            decoration.color.r, decoration.color.g, decoration.color.b, decoration.color.a,
-        )));
-        let thickness = (decoration.thickness * sc).max(1.0);
-        if let Some(r) = SkRect::from_xywh(phys_x, sy, buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0), thickness) {
-            pixmap.fill_rect(r, &paint, Transform::identity(), None);
-        }
+        let sy = phys_y + phys_px * 0.4;
+        draw_deco_line(pixmap, sy, decoration.style);
     }
 }
 
@@ -785,11 +871,43 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
             }
             4 => (dr_n.min(sr_n), dg_n.min(sg_n), db_n.min(sb_n)), // darken
             5 => (dr_n.max(sr_n), dg_n.max(sg_n), db_n.max(sb_n)), // lighten
+            6 => { // color-dodge
+                let dodge = |d: u32, s: u32| -> u32 { if s >= 255 { 255 } else { (d * 255 / (255 - s)).min(255) } };
+                (dodge(dr_n, sr_n), dodge(dg_n, sg_n), dodge(db_n, sb_n))
+            }
+            7 => { // color-burn
+                let burn = |d: u32, s: u32| -> u32 { if s == 0 { 0 } else { 255 - ((255 - d) * 255 / s).min(255) } };
+                (burn(dr_n, sr_n), burn(dg_n, sg_n), burn(db_n, sb_n))
+            }
+            8 => { // hard-light (like overlay but src/dst swapped)
+                let blend = |d: u32, s: u32| -> u32 {
+                    if s < 128 { 2 * d * s / 255 } else { 255 - 2 * (255 - d) * (255 - s) / 255 }
+                };
+                (blend(dr_n, sr_n), blend(dg_n, sg_n), blend(db_n, sb_n))
+            }
+            9 => { // soft-light
+                let soft = |d: u32, s: u32| -> u32 {
+                    let df = d as f32 / 255.0;
+                    let sf = s as f32 / 255.0;
+                    let r = if sf <= 0.5 {
+                        df - (1.0 - 2.0 * sf) * df * (1.0 - df)
+                    } else {
+                        let g = if df <= 0.25 { ((16.0 * df - 12.0) * df + 4.0) * df } else { df.sqrt() };
+                        df + (2.0 * sf - 1.0) * (g - df)
+                    };
+                    (r * 255.0).round().clamp(0.0, 255.0) as u32
+                };
+                (soft(dr_n, sr_n), soft(dg_n, sg_n), soft(db_n, sb_n))
+            }
             10 => { // difference
                 let diff = |a: u32, b: u32| -> u32 { if a > b { a - b } else { b - a } };
                 (diff(dr_n, sr_n), diff(dg_n, sg_n), diff(db_n, sb_n))
             }
-            _ => (sr_n, sg_n, sb_n), // normal fallback
+            11 => { // exclusion
+                let excl = |a: u32, b: u32| -> u32 { a + b - 2 * a * b / 255 };
+                (excl(dr_n, sr_n), excl(dg_n, sg_n), excl(db_n, sb_n))
+            }
+            _ => (sr_n, sg_n, sb_n), // normal / hue / saturation / color / luminosity fallback
         };
 
         // Premultiply result and composite with source alpha
@@ -801,6 +919,126 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
         if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(fr, fg, fb, fa) {
             *d = p;
         }
+    }
+}
+
+/// Apply a CSS filter to a pixmap's pixels in-place.
+/// filter_type: 0=blur,1=brightness,2=contrast,3=grayscale,4=hue-rotate,5=invert,6=opacity,7=saturate,8=sepia
+fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
+    let pixels = pm.pixels_mut();
+
+    // Helper: un-premultiply, apply transform, re-premultiply
+    let process = |px: &mut tiny_skia::PremultipliedColorU8, f: &dyn Fn(f32, f32, f32) -> (f32, f32, f32)| {
+        let a = px.alpha();
+        if a == 0 { return; }
+        // Un-premultiply
+        let af = a as f32 / 255.0;
+        let r = px.red() as f32 / af;
+        let g = px.green() as f32 / af;
+        let b = px.blue() as f32 / af;
+        let (r2, g2, b2) = f(r, g, b);
+        // Re-premultiply
+        let pr = (r2 * af).round().clamp(0.0, 255.0) as u8;
+        let pg = (g2 * af).round().clamp(0.0, 255.0) as u8;
+        let pb = (b2 * af).round().clamp(0.0, 255.0) as u8;
+        if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(pr, pg, pb, a) {
+            *px = p;
+        }
+    };
+
+    match filter_type {
+        0 => {} // blur — needs convolution, skipped
+        1 => {
+            // brightness
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| (
+                    (r * value).min(255.0),
+                    (g * value).min(255.0),
+                    (b * value).min(255.0),
+                ));
+            }
+        }
+        2 => {
+            // contrast
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let adj = |c: f32| ((c / 255.0 - 0.5) * value + 0.5) * 255.0;
+                    (adj(r).clamp(0.0, 255.0), adj(g).clamp(0.0, 255.0), adj(b).clamp(0.0, 255.0))
+                });
+            }
+        }
+        3 => {
+            // grayscale
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let mix = |c: f32| c * (1.0 - value) + lum * value;
+                    (mix(r), mix(g), mix(b))
+                });
+            }
+        }
+        4 => {
+            // hue-rotate
+            let rad = value * std::f32::consts::PI / 180.0;
+            let cos = rad.cos();
+            let sin = rad.sin();
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let (rf, gf, bf) = (r / 255.0, g / 255.0, b / 255.0);
+                    let r2 = ((0.213 + 0.787*cos - 0.213*sin)*rf + (0.715 - 0.715*cos - 0.715*sin)*gf + (0.072 - 0.072*cos + 0.928*sin)*bf) * 255.0;
+                    let g2 = ((0.213 - 0.213*cos + 0.143*sin)*rf + (0.715 + 0.285*cos + 0.140*sin)*gf + (0.072 - 0.072*cos - 0.283*sin)*bf) * 255.0;
+                    let b2 = ((0.213 - 0.213*cos - 0.787*sin)*rf + (0.715 - 0.715*cos + 0.715*sin)*gf + (0.072 + 0.928*cos + 0.072*sin)*bf) * 255.0;
+                    (r2.clamp(0.0, 255.0), g2.clamp(0.0, 255.0), b2.clamp(0.0, 255.0))
+                });
+            }
+        }
+        5 => {
+            // invert
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let inv = |c: f32| (255.0 - c) * value + c * (1.0 - value);
+                    (inv(r), inv(g), inv(b))
+                });
+            }
+        }
+        6 => {
+            // opacity — operates on premultiplied alpha directly
+            for px in pixels.iter_mut() {
+                let a = px.alpha();
+                if a == 0 { continue; }
+                let new_a = (a as f32 * value).round().clamp(0.0, 255.0) as u8;
+                let scale_factor = if a > 0 { new_a as f32 / a as f32 } else { 0.0 };
+                let pr = (px.red() as f32 * scale_factor).round().clamp(0.0, 255.0) as u8;
+                let pg = (px.green() as f32 * scale_factor).round().clamp(0.0, 255.0) as u8;
+                let pb = (px.blue() as f32 * scale_factor).round().clamp(0.0, 255.0) as u8;
+                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(pr, pg, pb, new_a) {
+                    *px = p;
+                }
+            }
+        }
+        7 => {
+            // saturate
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let sat = |c: f32| (lum + (c - lum) * value).clamp(0.0, 255.0);
+                    (sat(r), sat(g), sat(b))
+                });
+            }
+        }
+        8 => {
+            // sepia
+            for px in pixels.iter_mut() {
+                process(px, &|r, g, b| {
+                    let sr = (0.393 * r + 0.769 * g + 0.189 * b).min(255.0);
+                    let sg = (0.349 * r + 0.686 * g + 0.168 * b).min(255.0);
+                    let sb = (0.272 * r + 0.534 * g + 0.131 * b).min(255.0);
+                    let mix = |c: f32, s: f32| c * (1.0 - value) + s * value;
+                    (mix(r, sr), mix(g, sg), mix(b, sb))
+                });
+            }
+        }
+        _ => {} // drop-shadow or unknown
     }
 }
 
