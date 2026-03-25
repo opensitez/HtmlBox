@@ -933,7 +933,7 @@ pub fn collect_items(
     if node.is_text_node() {
         if !node.text.is_empty() {
             let start = *text_offset;
-            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style);
+            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
             runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
             *text_offset += node.text.len();
         }
@@ -980,9 +980,36 @@ pub fn collect_items(
     // ── Own text ──────────────────────────────────────────────────────────
     if !node.text.is_empty() {
         let start = *text_offset;
-        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style);
+        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
         runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
         *text_offset += node.text.len();
+    }
+
+    // ── Inline box decoration: account for padding/border/margin ────────
+    // CSS inline elements (not the block container itself) with
+    // padding/border/margin add to the line width at the start and end.
+    let has_inline_decoration = !is_direct_child
+        && matches!(node.style.display, Display::Inline);
+    let (inline_left, inline_right) = if has_inline_decoration {
+        let l = engine.res_len(&node.style.padding_left, font_px, 0.0, root_font_px)
+            + engine.res_len(&node.style.border_left_width, font_px, 0.0, root_font_px)
+            + engine.res_len(&node.style.margin_left, font_px, 0.0, root_font_px);
+        let r = engine.res_len(&node.style.padding_right, font_px, 0.0, root_font_px)
+            + engine.res_len(&node.style.border_right_width, font_px, 0.0, root_font_px)
+            + engine.res_len(&node.style.margin_right, font_px, 0.0, root_font_px);
+        (l, r)
+    } else {
+        (0.0, 0.0)
+    };
+
+    // Emit left decoration as a non-breakable zero-height advance
+    if inline_left > 0.0 {
+        items.push(InlineItem {
+            kind:      InlineItemKind::Text { text_start: *text_offset, text_len: 0, box_idx },
+            advance:   inline_left,
+            ascent:    0.0, descent: 0.0, height: 0.0,
+            is_space:  false, breakable: false,
+        });
     }
 
     // ── Recurse into children ─────────────────────────────────────────────
@@ -991,6 +1018,16 @@ pub fn collect_items(
     child_path.push(box_idx);
     for (i, child) in node.children.iter().enumerate() {
         collect_items(engine, child, font_px, root_font_px, items, runs, text_offset, i, false, &child_path);
+    }
+
+    // Emit right decoration
+    if inline_right > 0.0 {
+        items.push(InlineItem {
+            kind:      InlineItemKind::Text { text_start: *text_offset, text_len: 0, box_idx },
+            advance:   inline_right,
+            ascent:    0.0, descent: 0.0, height: 0.0,
+            is_space:  false, breakable: false,
+        });
     }
     // CSS background-color is not inherited, but an inline element's background
     // must visually paint behind its descendant text runs.  Propagate this
@@ -1020,6 +1057,7 @@ fn tokenize_text(
     items:       &mut Vec<InlineItem>,
     font_weight: FontWeight,
     font_style:  FontStyle,
+    font_family: &str,
 ) {
     if text.is_empty() { return; }
 
@@ -1037,7 +1075,7 @@ fn tokenize_text(
         if (at_end || is_space || is_nl) && i > word_start {
             // Emit word
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style, engine.scale);
+            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style, engine.scale, font_family);
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + word_start,
@@ -1085,7 +1123,7 @@ fn tokenize_text(
             // (Previously all consecutive spaces were collapsed to one rendered item,
             //  causing the caret to drift right while text stayed left.)
             let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style, engine.scale);
+            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style, engine.scale, font_family);
             // In white-space:pre / pre-wrap, spaces are significant (not collapsible).
             // Mark them as non-space so break_one_line doesn't strip leading whitespace,
             // and non-breakable in pre mode (only \n breaks lines).
@@ -1320,6 +1358,7 @@ pub fn measure_text_width_weighted(
     weight:      FontWeight,
     style:       FontStyle,
     scale:       f32,
+    font_family: &str,
 ) -> f32 {
     if let Some(fs) = font_system {
         let ct_weight = Weight(weight.value());
@@ -1328,18 +1367,15 @@ pub fn measure_text_width_weighted(
             FontStyle::Oblique => CTextStyle::Oblique,
             FontStyle::Normal  => CTextStyle::Normal,
         };
-        measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style, scale)
+        measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style, scale, font_family)
     } else {
         let w = measure_text_width_ts(text, font_px, 8);
-        // Bold/semi-bold text is typically ~15% wider than normal weight.
-        // Apply a correction factor so layout content-width better matches the
-        // actual rendered width, preventing text from overflowing the background.
         if weight.is_bold() { w * 1.15 } else { w }
     }
 }
 
 pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_px: f32, scale: f32) -> f32 {
-    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal, scale)
+    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal, scale, "")
 }
 
 /// Measure text width by shaping at physical pixel size (font_px * scale) and
@@ -1353,15 +1389,18 @@ pub fn measure_text_width_fs_attrs(
     weight: Weight,
     style:  CTextStyle,
     scale:  f32,
+    font_family: &str,
 ) -> f32 {
     if text.is_empty() { return 0.0; }
-    // Shape at physical pixel size to match renderer glyph widths, then
-    // convert back to logical pixels.  At scale=1 this is a no-op.
     let phys_px = font_px * scale.max(1.0);
     let inv     = if scale > 1.0 { 1.0 / scale } else { 1.0 };
     let metrics = Metrics::new(phys_px, phys_px * 1.2);
     let mut buffer = Buffer::new(fs, metrics);
-    let attrs = Attrs::new().weight(weight).style(style);
+    let mut attrs = Attrs::new().weight(weight).style(style);
+    // Set the correct font family so monospace/serif/etc. are measured accurately
+    if !font_family.is_empty() {
+        attrs = attrs.family(cosmic_text_family(font_family));
+    }
     buffer.set_text(fs, text, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(fs, false);
 
@@ -1370,6 +1409,19 @@ pub fn measure_text_width_fs_attrs(
         if run.line_w > max_w { max_w = run.line_w; }
     }
     max_w * inv
+}
+
+/// Map a CSS font-family string to a cosmic_text Family.
+fn cosmic_text_family(family: &str) -> cosmic_text::Family<'_> {
+    let f = family.trim().trim_matches('"').trim_matches('\'');
+    match f.to_ascii_lowercase().as_str() {
+        "monospace" | "courier" | "courier new" => cosmic_text::Family::Monospace,
+        "serif" | "times" | "times new roman" | "georgia" => cosmic_text::Family::Serif,
+        "sans-serif" | "arial" | "helvetica" => cosmic_text::Family::SansSerif,
+        "cursive" => cosmic_text::Family::Cursive,
+        "fantasy" => cosmic_text::Family::Fantasy,
+        _ => cosmic_text::Family::Name(f),
+    }
 }
 
 pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {

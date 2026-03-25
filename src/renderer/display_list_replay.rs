@@ -213,14 +213,81 @@ fn replay_inner(
             PaintCmd::EndStackingContext => {}
 
             PaintCmd::Gradient { rect, gradient_type, angle, stops, radii, opacity: grad_opacity, blend_mode: _ } => {
-                // TODO: full gradient replay (linear/radial with stops)
-                // For now, draw a simple fill with the first stop color as fallback
-                if let Some((color, _)) = stops.first() {
-                    let a2 = opacity_stack.iter().product::<f32>().min(1.0);
-                    let mut paint = Paint::default();
-                    paint.set_color(to_sk_color(&apply_opacity(color, a2 * grad_opacity)));
+                use tiny_skia::{
+                    LinearGradient, RadialGradient,
+                    GradientStop as SkStop, SpreadMode, Point as SkPoint,
+                };
+                if stops.len() < 2 { continue; }
+                let a2 = opacity_stack.iter().product::<f32>().min(1.0);
+                let combined_opacity = a2 * grad_opacity;
+
+                let px = rect.x;
+                let py = rect.y;
+                let pw = rect.w;
+                let ph = rect.h;
+                if pw <= 0.0 || ph <= 0.0 { continue; }
+
+                let sk_stops: Vec<SkStop> = stops.iter()
+                    .map(|(color, pos)| {
+                        let a = ((color.a as f32) * combined_opacity) as u8;
+                        SkStop::new(*pos, tiny_skia::Color::from_rgba8(color.r, color.g, color.b, a))
+                    })
+                    .collect();
+
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+
+                let shader = match gradient_type {
+                    1 => {
+                        // Linear gradient
+                        let rad = angle * std::f32::consts::PI / 180.0;
+                        let dx = rad.sin();
+                        let dy = -rad.cos();
+                        let corners = [0.0f32, dx, dy, dx + dy];
+                        let t_min = corners.iter().cloned().fold(f32::MAX, f32::min);
+                        let t_max = corners.iter().cloned().fold(f32::MIN, f32::max);
+                        let t_range = (t_max - t_min).max(0.001);
+
+                        let start_nx = if dx >= 0.0 { 0.0 } else { 1.0 };
+                        let start_ny = if dy >= 0.0 { 0.0 } else { 1.0 };
+                        let sx = px + start_nx * pw;
+                        let sy = py + start_ny * ph;
+
+                        let denom = dx * dx * ph * ph + dy * dy * pw * pw;
+                        let (ex, ey) = if denom > 1e-6 {
+                            (sx + dx * pw * ph * ph * t_range / denom,
+                             sy + dy * ph * pw * pw * t_range / denom)
+                        } else {
+                            (sx + pw, sy)
+                        };
+
+                        LinearGradient::new(
+                            SkPoint::from_xy(sx, sy), SkPoint::from_xy(ex, ey),
+                            sk_stops, SpreadMode::Pad, Transform::identity(),
+                        )
+                    }
+                    2 => {
+                        // Radial gradient
+                        let cx = px + pw / 2.0;
+                        let cy = py + ph / 2.0;
+                        let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
+                        let center = SkPoint::from_xy(cx, cy);
+                        RadialGradient::new(center, 0.0, center, r,
+                            sk_stops, SpreadMode::Pad, Transform::identity())
+                    }
+                    _ => None,
+                };
+
+                if let Some(shader) = shader {
+                    paint.shader = shader;
                     let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
+                    let [r_tl, r_tr, r_br, r_bl] = radii;
+                    let max_r = (*r_tl).max(*r_tr).max(*r_br).max(*r_bl);
+                    if max_r > 0.0 {
+                        if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, *r_tl, *r_tr, *r_br, *r_bl) {
+                            target.fill_path(&path, &paint, FillRule::Winding, ts, None);
+                        }
+                    } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
                         target.fill_rect(r, &paint, ts, None);
                     }
                 }
@@ -525,6 +592,27 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
             *d = p;
         }
     }
+}
+
+fn rounded_rect_path_corners(x: f32, y: f32, w: f32, h: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32) -> Option<tiny_skia::Path> {
+    if w <= 0.0 || h <= 0.0 { return None; }
+    let half = (w / 2.0).min(h / 2.0);
+    let tl = r_tl.min(half);
+    let tr = r_tr.min(half);
+    let br = r_br.min(half);
+    let bl = r_bl.min(half);
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + tl, y);
+    pb.line_to(x + w - tr, y);
+    pb.quad_to(x + w, y, x + w, y + tr);
+    pb.line_to(x + w, y + h - br);
+    pb.quad_to(x + w, y + h, x + w - br, y + h);
+    pb.line_to(x + bl, y + h);
+    pb.quad_to(x, y + h, x, y + h - bl);
+    pb.line_to(x, y + tl);
+    pb.quad_to(x, y, x + tl, y);
+    pb.close();
+    pb.finish()
 }
 
 fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {

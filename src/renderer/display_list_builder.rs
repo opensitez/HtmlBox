@@ -613,6 +613,36 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
                     data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
                 });
             }
+        } else if node.tag == "svg" {
+            // Inline SVG: rasterize from svg_markup on demand
+            if let Some(ref markup) = node.svg_markup {
+                let cr = node.content_rect;
+                if cr.w > 0.0 && cr.h > 0.0 {
+                    let raster_w = cr.w.round() as u32;
+                    let raster_h = cr.h.round() as u32;
+                    if raster_w > 0 && raster_h > 0 {
+                        // Inject inherited CSS color for currentColor support
+                        let c = node.style.color;
+                        let color_hex = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+                        let mut colored = markup.replace("currentColor", &color_hex);
+                        if colored.starts_with("<svg") {
+                            if let Some(gt) = colored.find('>') {
+                                let inject = format!(
+                                    "<style>svg{{color:{0}}}path:not([fill]),circle:not([fill]),rect:not([fill]),polygon:not([fill]),line:not([fill]),polyline:not([fill]){{fill:{0}}}</style>",
+                                    color_hex
+                                );
+                                colored.insert_str(gt + 1, &inject);
+                            }
+                        }
+                        if let Some(rgba) = crate::html::rasterize_svg_to_rgba(&colored, raster_w, raster_h) {
+                            list.push(PaintCmd::Image {
+                                rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
+                                data: ImageRef::Owned(rgba, raster_w, raster_h),
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -407,14 +407,18 @@ pub fn layout_table(
                     .map(|cc| col_widths[c + cc] + if cc > 0 { spacing } else { 0.0 })
                     .sum();
 
-                // Apply cellpadding to cells with auto (unset) padding
+                // Apply cellpadding as a presentational hint.
+                // Per the HTML spec, cellpadding maps to padding on td/th and sits
+                // above the UA origin in the cascade. Override auto or UA-default
+                // padding (1px), but not explicit author CSS padding.
                 if !cellpad.is_auto() {
                     let row = row_ref_mut(node, &row_refs[row_idx]);
                     let cell = &mut row.children[ci];
-                    if cell.style.padding_left.is_auto()   { cell.style.padding_left   = cellpad.clone(); }
-                    if cell.style.padding_right.is_auto()  { cell.style.padding_right  = cellpad.clone(); }
-                    if cell.style.padding_top.is_auto()    { cell.style.padding_top    = cellpad.clone(); }
-                    if cell.style.padding_bottom.is_auto() { cell.style.padding_bottom = cellpad.clone(); }
+                    let is_ua_default = |v: &CssLength| v.is_auto() || matches!(v, CssLength::Px(p) if *p == 1.0);
+                    if is_ua_default(&cell.style.padding_left)   { cell.style.padding_left   = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_right)  { cell.style.padding_right  = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_top)    { cell.style.padding_top    = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_bottom) { cell.style.padding_bottom = cellpad.clone(); }
                 }
 
                 // Layout cell
@@ -553,11 +557,17 @@ pub fn layout_table(
                 cell.padding_rect.w = cell_w - cell.resolved_border_left - cell.resolved_border_right;
                 cell.padding_rect.h = cell_h - cell.resolved_border_top - cell.resolved_border_bottom;
 
-                // Apply vertical alignment offset to content and children
+                // Apply vertical alignment offset to content and children.
+                // Use absolute positioning from the padding top to avoid
+                // accumulating offsets across multiple layout passes.
                 if v_offset > 0.0 {
-                    cell.content_rect.y += v_offset;
-                    for ln in &mut cell.line_cache { ln.y += v_offset; }
-                    shift_children_y(&mut cell.children, v_offset);
+                    let target_y = cell.padding_rect.y + pad_top + v_offset;
+                    let dy_align = target_y - cell.content_rect.y;
+                    if dy_align.abs() > 0.01 {
+                        cell.content_rect.y = target_y;
+                        for ln in &mut cell.line_cache { ln.y += dy_align; }
+                        shift_children_y(&mut cell.children, dy_align);
+                    }
                 }
 
                 // empty-cells: hide in separate border mode

@@ -160,11 +160,14 @@ pub fn load_html_with_registry(
     start_async_image_fetches(&mut doc);
 
     let t3 = std::time::Instant::now();
-    let mut engine = LayoutEngine::new();
-    engine.viewport_w = viewport_width;
-    engine.viewport_h = viewport_height;
-    engine.component_registry = registry;
-    engine.layout(&mut doc, viewport_width);
+    let mut renderer = Renderer::new();
+    {
+        let engine = renderer.layout_engine();
+        engine.viewport_w = viewport_width;
+        engine.viewport_h = viewport_height;
+        engine.component_registry = registry;
+        engine.layout(&mut doc, viewport_width);
+    }
     eprintln!("  Layout: {:.0}ms", t3.elapsed().as_millis());
 
     // Post-layout: load background images (layout may re-run cascade with viewport)

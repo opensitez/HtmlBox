@@ -542,6 +542,7 @@ impl LayoutEngine {
                         Some(fs),
                         node.style.font_weight, node.style.font_style,
                         self.scale,
+                        &node.style.font_family,
                     )
                 } else {
                     crate::layout::inline_layout::measure_text_width_ts(word, font_px, 8)
@@ -598,6 +599,7 @@ impl LayoutEngine {
                     Some(fs),
                     node.style.font_weight, node.style.font_style,
                     self.scale,
+                    &node.style.font_family,
                 )
             } else {
                 crate::layout::inline_layout::measure_text_width_ts(text, font_px, 8)
