@@ -755,11 +755,17 @@ pub fn layout_inline_block(
         .collect();
     for path in &abs_paths2 {
         let child = crate::layout::grid::grid_child_mut(node, path);
+        // Record static position: where this element would sit in normal flow
+        // (content_y of the inline container).
+        if child.abs_static_y.is_none() {
+            child.abs_static_y = Some(content_y);
+        }
+        let had_static_y = child.abs_static_y.is_some();
         layout_positioned(engine, child, containing_rect, font_px, root_font_px);
         let child = crate::layout::grid::grid_child_mut(node, path);
         let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                     && child.style.top.is_auto()   && child.style.bottom.is_auto();
-        if all_auto && matches!(child.style.position, Position::Absolute) {
+        if all_auto && matches!(child.style.position, Position::Absolute) && !had_static_y {
             let dx = containing_rect.x - child.border_rect.x;
             let dy = containing_rect.y - child.border_rect.y;
             if dx.abs() > 0.01 || dy.abs() > 0.01 {
@@ -942,7 +948,13 @@ fn collect_items_inner(
 
     // Absolutely/fixed positioned elements are out of flow — skip them here;
     // they are laid out separately by layout_positioned.
-    if matches!(node.style.position, Position::Absolute | Position::Fixed) { return; }
+    // Record the static position so deeply nested abs elements can use it.
+    if matches!(node.style.position, Position::Absolute | Position::Fixed) {
+        // Note: we don't have cursor_y here, but the parent's content_y is available
+        // through the node's parent position. We'll set abs_static_y in layout_inline_block
+        // after items are collected.
+        return;
+    }
 
     // ── Float ─────────────────────────────────────────────────────────────
     // Only emit a Float item when this node is a *direct* child of the

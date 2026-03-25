@@ -1464,6 +1464,10 @@ pub struct HtmlBox {
     pub scroll_top:    f32,
     pub scroll_left:   f32,
 
+    /// Static y position for absolutely positioned elements (set during parent layout).
+    /// Used when top/bottom are both auto to place the element where it would be in flow.
+    pub abs_static_y: Option<f32>,
+
     // Image pixel data for <img> and replaced elements (RGBA8, row-major)
     pub image_data:   Option<Vec<u8>>,
     pub image_width:  u32,
@@ -1644,6 +1648,7 @@ impl HtmlBox {
             scroll_width:  0.0,
             scroll_top:    0.0,
             scroll_left:   0.0,
+            abs_static_y:  None,
             layout_dirty:          false,
             last_containing_width: 0.0,
             input_cursor: 0,

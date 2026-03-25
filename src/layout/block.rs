@@ -480,7 +480,11 @@ pub fn layout_block_with_fc(
         if matches!(child_position, Position::Absolute | Position::Fixed) {
             // Record absolute document-space y as the static position for this abs child.
             // content_y is already in document space; child_y is relative to content_y.
-            abs_static_y.insert(eff_idx, content_y + child_y);
+            let sy = content_y + child_y;
+            abs_static_y.insert(eff_idx, sy);
+            // Also store on the node itself for deeply nested abs elements whose
+            // containing block is an ancestor further up the tree.
+            grid_child_mut(node, path).abs_static_y = Some(sy);
             continue;
         }
 

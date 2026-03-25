@@ -5167,6 +5167,8 @@ html { display: block; }
 body { display: block; margin: 8px; }
 article, aside, nav, section { display: block; }
 h1 { display: block; font-size: 2em; font-weight: bold; margin-top: 0.67em; margin-bottom: 0.67em; break-after: avoid; break-inside: avoid; }
+article h1, aside h1, nav h1, section h1 { font-size: 1.5em; margin-top: 0.83em; margin-bottom: 0.83em; }
+article article h1, article aside h1, article nav h1, article section h1, aside article h1, aside aside h1, aside nav h1, aside section h1, nav article h1, nav aside h1, nav nav h1, nav section h1, section article h1, section aside h1, section nav h1, section section h1 { font-size: 1.17em; margin-top: 1em; margin-bottom: 1em; }
 h2 { display: block; font-size: 1.5em; font-weight: bold; margin-top: 0.83em; margin-bottom: 0.83em; break-after: avoid; break-inside: avoid; }
 h3 { display: block; font-size: 1.17em; font-weight: bold; margin-top: 1em; margin-bottom: 1em; break-after: avoid; break-inside: avoid; }
 h4 { display: block; font-size: 1em; font-weight: bold; margin-top: 1.33em; margin-bottom: 1.33em; break-after: avoid; break-inside: avoid; }

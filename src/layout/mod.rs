@@ -1385,6 +1385,10 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
         // Static position: absolute document-space y where the element would
         // appear in normal flow. Already accounts for parent offsets.
         abs_sy + rbox.margin_top
+    } else if let Some(abs_sy) = node.abs_static_y {
+        // Static position recorded on the node itself (set during parent's
+        // inline/block layout for deeply nested absolute elements).
+        abs_sy + rbox.margin_top
     } else {
         // Fallback: containing block content start.
         containing_y + rbox.margin_top
