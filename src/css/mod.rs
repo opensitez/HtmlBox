@@ -757,10 +757,9 @@ impl Stylesheet {
         // Strip comments once, share the cleaned string across all extractors.
         let cleaned = strip_css_comments(css);
         let cleaned = cleaned.as_str();
-        // Extract :root CSS variables first, then pre-resolve any var() references
-        // within the variable values so every lookup is O(1) with no recursion.
+        // Extract :root CSS variables. Cross-file resolution is deferred to
+        // resolve_variables_for_viewport() which runs after all CSS is loaded.
         extract_root_variables_cleaned(cleaned, &mut self.variables);
-        pre_resolve_variables(&mut self.variables);
         self.raw_sources.push(cleaned.to_string());
         // Extract @font-face declarations
         extract_font_faces_cleaned(cleaned, &mut self.font_faces);
@@ -1213,6 +1212,11 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
             } else { break; }
             continue;
         }
+        // Skip stray closing braces (from minified CSS where blocks run together)
+        if s.starts_with('}') {
+            s = &s[1..];
+            continue;
+        }
         if let Some(brace) = s.find('{') {
             let selector = s[..brace].trim();
             let (block, rest) = consume_block(&s[brace..]);
@@ -1220,9 +1224,13 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
             // (universal scope). Selector-specific variables are handled
             // by the per-element cascade via inherited_vars.
             let sel_lower = selector.to_ascii_lowercase();
-            let is_root = sel_lower == ":root" || sel_lower == "html"
-                || sel_lower.starts_with(":root ")
-                || sel_lower.starts_with("html ");
+            let is_root = sel_lower.split(',').any(|s| {
+                let s = s.trim();
+                s == ":root" || s == "html" || s == "*"
+                    || s.starts_with(":root ") || s.starts_with(":root,")
+                    || s.starts_with("html ") || s.starts_with("html,")
+                    || s.starts_with("html[")
+            });
             if is_root && block.contains("--") {
                 for decl in block.split(';') {
                     let decl = decl.trim();
@@ -1230,7 +1238,11 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
                         let prop = decl[..colon].trim();
                         if prop.starts_with("--") {
                             let val = decl[colon+1..].trim().to_string();
-                            vars.insert(prop.to_string(), val);
+                            // Don't overwrite a non-empty value with an empty one
+                            // (prevents dark-mode selectors from clobbering light-mode defaults)
+                            if !val.is_empty() || !vars.contains_key(prop) {
+                                vars.insert(prop.to_string(), val);
+                            }
                         }
                     }
                 }
@@ -1243,10 +1255,11 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
 /// Expand `var()` references within the variable map itself so all values are concrete.
 /// Handles chains (--a: var(--b), --b: 1rem) and circular refs (uses fallback or "").
 fn pre_resolve_variables(vars: &mut HashMap<String, String>) {
-    // Collect keys to avoid borrowing issues
     let keys: Vec<String> = vars.keys().cloned().collect();
-    for _ in 0..keys.len().min(8) {
-        // Keep resolving until stable or limit reached
+    // Resolve until no more changes (converged) or safety limit to prevent infinite loops
+    // from circular references like --a: var(--b); --b: var(--a)
+    let max_passes = keys.len().min(50);
+    for _ in 0..max_passes {
         let mut changed = false;
         let snapshot = vars.clone();
         for key in &keys {
@@ -1266,8 +1279,23 @@ fn pre_resolve_variables(vars: &mut HashMap<String, String>) {
     let keys: Vec<String> = vars.keys().cloned().collect();
     for key in &keys {
         if let Some(val) = vars.get(key) {
-            if val.contains("var(") {
-                let resolved = resolve_var_pass(val, &HashMap::new());
+            let mut resolved = val.clone();
+            if resolved.contains("var(") {
+                resolved = resolve_var_pass(&resolved, &HashMap::new());
+            }
+            // Resolve light-dark() → use light value
+            if resolved.contains("light-dark(") {
+                if let Some(start) = resolved.find("light-dark(") {
+                    let inner = &resolved[start + 11..];
+                    if let Some(comma) = inner.find(',') {
+                        if let Some(end) = inner.rfind(')') {
+                            let light_val = inner[..comma].trim().to_string();
+                            resolved = format!("{}{}{}", &resolved[..start], light_val, &inner[end+1..]);
+                        }
+                    }
+                }
+            }
+            if resolved != *val {
                 vars.insert(key.clone(), resolved);
             }
         }
@@ -3045,6 +3073,14 @@ fn try_parse_border_style(v: &str) -> Option<BorderStyle> {
 /// Parse a CSS color value into a `Color`.
 pub fn parse_color(v: &str) -> Option<Color> {
     let v = v.trim();
+
+    // light-dark(light, dark) — use light value (we render in light mode)
+    if v.starts_with("light-dark(") {
+        if let Some(inner) = v.strip_prefix("light-dark(").and_then(|s| s.strip_suffix(')')) {
+            let comma = inner.find(',')?;
+            return parse_color(inner[..comma].trim());
+        }
+    }
 
     // Named colors
     let named = match v {

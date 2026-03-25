@@ -60,7 +60,7 @@ pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, Shadow
                 find_parent_form_action, collect_form_data, reset_form,
                 encode_form_urlencoded, build_form_submit_url, apply_autofocus};
 pub use markdown::{parse_markdown, serializer::serialize_markdown};
-pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base};
+pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base, resolve_url};
 pub use layout::LayoutEngine;
 pub use frame::EngineFrame;
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
@@ -228,22 +228,7 @@ fn collect_remote_images(
 }
 
 fn resolve_css_url(base: &str, href: &str) -> String {
-    if href.starts_with("http://") || href.starts_with("https://") { return href.to_string(); }
-    if href.starts_with("//") {
-        let scheme = if base.starts_with("https") { "https:" } else { "http:" };
-        return format!("{scheme}{href}");
-    }
-    if let Some(p) = base.find("://") {
-        let rest = &base[p + 3..];
-        let origin_end = rest.find('/').map(|i| p + 3 + i).unwrap_or(base.len());
-        let origin = &base[..origin_end];
-        if href.starts_with('/') { return format!("{origin}{href}"); }
-        let dir = if let Some(i) = base.rfind('/') {
-            if &base[..i] == "https:" || &base[..i] == "http:" { base } else { &base[..i + 1] }
-        } else { base };
-        return format!("{dir}{href}");
-    }
-    href.to_string()
+    html::resolve_url(href, base)
 }
 
 /// Build a `reqwest::blocking::Client` with browser-like defaults.

@@ -149,6 +149,18 @@ pub fn layout_grid_subgrid(
     item_indices.sort_by(|a, b| grid_child_ref(node, a).style.order.cmp(&grid_child_ref(node, b).style.order));
     let n_items = item_indices.len();
 
+    // CSS Grid §5.4: blockify grid items — inline items become block-level.
+    let mut blockified = 0;
+    for path in &item_indices {
+        let child = grid_child_mut(node, path);
+        match child.style.display {
+            Display::Inline => { child.style.display = Display::Block; blockified += 1; }
+            Display::InlineFlex => { child.style.display = Display::Flex; blockified += 1; }
+            Display::InlineGrid => { child.style.display = Display::Grid; blockified += 1; }
+            _ => {}
+        }
+    }
+
     // --- Placement ---
     let area_map = build_area_map(&node.style.grid_template_areas);
     let sub_col_names = node.style.grid_col_line_names.clone();
@@ -358,6 +370,17 @@ pub fn layout_grid(
         .collect();
     // Sort by order property (CSS order: default 0)
     item_indices.sort_by(|a, b| grid_child_ref(node, a).style.order.cmp(&grid_child_ref(node, b).style.order));
+
+    // CSS Grid §5.4: blockify grid items — inline items become block-level.
+    for path in &item_indices {
+        let child = grid_child_mut(node, path);
+        match child.style.display {
+            Display::Inline => { child.style.display = Display::Block; }
+            Display::InlineFlex => { child.style.display = Display::Flex; }
+            Display::InlineGrid => { child.style.display = Display::Grid; }
+            _ => {}
+        }
+    }
 
     let n_items = item_indices.len();
     if n_items == 0 {
@@ -1217,13 +1240,26 @@ fn resolve_to_pixels(
                     &GridTrackSize { kind: track.min_kind, value: track.min_value, ..Default::default() },
                     container, font_px, root_font_px,
                 );
-                sizes[i] = min_px;
-                used += min_px;
                 if track.max_kind == GridTrackKind::Fractional {
+                    sizes[i] = min_px;
+                    used += min_px;
                     fr_indices.push(i);
                     fr_values.push(track.max_value);
+                } else if matches!(track.max_kind, GridTrackKind::Auto | GridTrackKind::MaxContent | GridTrackKind::MinContent) {
+                    // minmax(min, auto/max-content): use content width, clamped to min
+                    let cw = content_widths.get(i).copied().unwrap_or(0.0);
+                    sizes[i] = cw.max(min_px);
+                    used += sizes[i];
+                    flexible_cols += 1;
+                } else {
+                    // minmax(min, fixed/percent): use the max
+                    let max_px = track_to_px(
+                        &GridTrackSize { kind: track.max_kind, value: track.max_value, ..Default::default() },
+                        container, font_px, root_font_px,
+                    );
+                    sizes[i] = max_px.max(min_px);
+                    used += sizes[i];
                 }
-                // Non-fr max handled in second pass
             }
             GridTrackKind::Auto | GridTrackKind::MinContent | GridTrackKind::MaxContent => {
                 let cw = content_widths.get(i).copied().unwrap_or(0.0);

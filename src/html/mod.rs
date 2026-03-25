@@ -240,26 +240,41 @@ pub fn parse_html_bytes_with_base(data: &[u8], base_url: &str) -> Document {
 
 /// Resolve a URL against a base URL.
 pub fn resolve_url(src: &str, base_url: &str) -> String {
-    if src.contains("://") {
-        return src.to_string();
-    }
+    if src.is_empty() { return base_url.to_string(); }
+    if src.starts_with("data:") { return src.to_string(); }
+    if src.contains("://") { return src.to_string(); }
+
+    // Strip "./" prefix
+    let src = src.strip_prefix("./").unwrap_or(src);
+
     if base_url.starts_with("http://") || base_url.starts_with("https://") {
+        let scheme_end = base_url.find("://").unwrap(); // safe: starts_with guarantees this
+        let after_scheme = &base_url[scheme_end + 3..];
+
+        // Origin = scheme + host (no path)
+        let origin = match after_scheme.find('/') {
+            Some(i) => &base_url[..scheme_end + 3 + i],
+            None => base_url,
+        };
+
         if src.starts_with("//") {
-            // Protocol-relative URL
-            let scheme = if base_url.starts_with("https") { "https:" } else { "http:" };
+            let scheme = &base_url[..scheme_end + 1]; // "https:" or "http:"
             return format!("{}{}", scheme, src);
         }
         if src.starts_with('/') {
-            if let Some(slash3) = base_url.find("://").and_then(|i| base_url[i+3..].find('/').map(|j| i+3+j)) {
-                return format!("{}{}", &base_url[..slash3], src);
+            return format!("{}{}", origin, src);
+        }
+        // Relative path — resolve against directory of base URL
+        let dir = match after_scheme.rfind('/') {
+            Some(i) => &base_url[..scheme_end + 3 + i + 1], // include trailing slash
+            None => {
+                // Base has no path (e.g. "https://example.com") — treat as root
+                return format!("{}/{}", origin, src);
             }
-            return format!("{}{}", base_url.trim_end_matches('/'), src);
-        }
-        // Relative path
-        if let Some(last_slash) = base_url.rfind('/') {
-            return format!("{}{}", &base_url[..=last_slash], src);
-        }
+        };
+        return format!("{}{}", dir, src);
     }
+    // File or local path
     if src.starts_with('/') || base_url.is_empty() {
         return src.to_string();
     }

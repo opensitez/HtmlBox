@@ -45,15 +45,17 @@ fn replay_inner(
 ) {
     let ts = Transform::from_scale(scale, scale);
     let mut clip_stack: Vec<Rect> = Vec::new();
+    let mut clip_mask_stack: Vec<Option<tiny_skia::Mask>> = Vec::new();
     let mut opacity_stack: Vec<f32> = Vec::new();
     let mut layer_stack: Vec<Layer> = Vec::new();
 
-    // Current drawing target — either the main pixmap or a layer
-    // We use a pointer approach to avoid borrow issues
     let pw = pixmap.width();
     let ph = pixmap.height();
 
     for cmd in &list.commands {
+        // Get the current clip mask (topmost on the stack)
+        let clip_mask = clip_mask_stack.last().and_then(|m| m.as_ref());
+
         match cmd {
             PaintCmd::FillRect { rect, color, radius } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
@@ -64,10 +66,10 @@ fn replay_inner(
                 let max_r = radius[0].max(radius[1]).max(radius[2]).max(radius[3]);
                 if max_r > 0.5 {
                     if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, max_r) {
-                        target.fill_path(&path, &paint, FillRule::Winding, ts, None);
+                        target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
                     }
                 } else if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
-                    target.fill_rect(r, &paint, ts, None);
+                    target.fill_rect(r, &paint, ts, clip_mask);
                 }
             }
 
@@ -78,25 +80,25 @@ fn replay_inner(
                 if widths[0] > 0.0 {
                     paint.set_color(to_sk_color(&apply_opacity(&colors[0], alpha)));
                     if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, widths[0]) {
-                        target.fill_rect(r, &paint, ts, None);
+                        target.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
                 if widths[2] > 0.0 {
                     paint.set_color(to_sk_color(&apply_opacity(&colors[2], alpha)));
                     if let Some(r) = SkRect::from_xywh(rect.x, rect.y + rect.h - widths[2], rect.w, widths[2]) {
-                        target.fill_rect(r, &paint, ts, None);
+                        target.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
                 if widths[3] > 0.0 {
                     paint.set_color(to_sk_color(&apply_opacity(&colors[3], alpha)));
                     if let Some(r) = SkRect::from_xywh(rect.x, rect.y, widths[3], rect.h) {
-                        target.fill_rect(r, &paint, ts, None);
+                        target.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
                 if widths[1] > 0.0 {
                     paint.set_color(to_sk_color(&apply_opacity(&colors[1], alpha)));
                     if let Some(r) = SkRect::from_xywh(rect.x + rect.w - widths[1], rect.y, widths[1], rect.h) {
-                        target.fill_rect(r, &paint, ts, None);
+                        target.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
             }
@@ -116,7 +118,7 @@ fn replay_inner(
                         img_pixmap,
                         &tiny_skia::PixmapPaint::default(),
                         img_ts,
-                        None,
+                        clip_mask,
                     );
                 }
             }
@@ -137,12 +139,15 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::PushClip { rect, .. } => {
+            PaintCmd::PushClip { rect, radius } => {
                 clip_stack.push(*rect);
-                // TODO: actual clip mask on pixmap
+                // Build a clip mask from the clip rect
+                let mask = build_clip_mask(rect, radius, pw, ph, scale);
+                clip_mask_stack.push(mask);
             }
             PaintCmd::PopClip => {
                 clip_stack.pop();
+                clip_mask_stack.pop();
             }
 
             PaintCmd::PushOpacity { alpha } => {
@@ -204,7 +209,7 @@ fn replay_inner(
                     c.a = (c.a as f32 * 0.5) as u8; // soften
                     paint.set_color(to_sk_color(&c));
                     if let Some(r) = SkRect::from_xywh(sr.x, sr.y, sr.w, sr.h) {
-                        pixmap.fill_rect(r, &paint, ts, None);
+                        pixmap.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
             }
@@ -285,10 +290,10 @@ fn replay_inner(
                     let max_r = (*r_tl).max(*r_tr).max(*r_br).max(*r_bl);
                     if max_r > 0.0 {
                         if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, *r_tl, *r_tr, *r_br, *r_bl) {
-                            target.fill_path(&path, &paint, FillRule::Winding, ts, None);
+                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
                         }
                     } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
-                        target.fill_rect(r, &paint, ts, None);
+                        target.fill_rect(r, &paint, ts, clip_mask);
                     }
                 }
             }
@@ -302,7 +307,7 @@ fn replay_inner(
                 stroke.width = *width;
                 if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 0.0) {
                     let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                    target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                 }
             }
 
@@ -316,7 +321,7 @@ fn replay_inner(
                 pb.line_to(*x2, *y1);
                 if let Some(path) = pb.finish() {
                     let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                    target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                 }
             }
 
@@ -330,7 +335,7 @@ fn replay_inner(
                         let mut paint = Paint::default();
                         paint.set_color(to_sk_color(&c));
                         if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
-                            target.fill_rect(r, &paint, ts, None);
+                            target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
                     1 => {
@@ -338,7 +343,7 @@ fn replay_inner(
                         let mut paint = Paint::default();
                         paint.set_color(to_sk_color(&c));
                         if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
-                            target.fill_rect(r, &paint, ts, None);
+                            target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
                     2 => {
@@ -347,7 +352,7 @@ fn replay_inner(
                         paint.set_color(to_sk_color(&c));
                         let half = size / 2.0;
                         if let Some(r) = SkRect::from_xywh(x - half, y - half, *size, *size) {
-                            target.fill_rect(r, &paint, ts, None);
+                            target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
                     3 => {
@@ -376,7 +381,7 @@ fn replay_inner(
                 let mut stroke = tiny_skia::Stroke::default();
                 stroke.width = 1.0;
                 if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 2.0) {
-                    target.stroke_path(&path, &paint, &stroke, ts, None);
+                    target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                 }
                 // Draw value text
                 let display_text = if value.is_empty() { placeholder } else { value };
@@ -419,10 +424,45 @@ fn replay_inner(
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
                     let sx_img = draw_w / iw as f32;
                     let sy_img = draw_h / ih as f32;
-                    let img_ts = ts.pre_translate(*pos_x, *pos_y).pre_scale(sx_img, sy_img);
-                    pixmap.draw_pixmap(0, 0, img_pixmap,
-                        &tiny_skia::PixmapPaint::default(), img_ts, None);
-                    // TODO: repeat_x/repeat_y tiling
+                    let paint = tiny_skia::PixmapPaint::default();
+                    let cx = container.x;
+                    let cy = container.y;
+                    let cw = container.w;
+                    let ch = container.h;
+
+                    if *repeat_x || *repeat_y {
+                        // Tile the image across the container
+                        let start_x = if *repeat_x { cx } else { *pos_x };
+                        let end_x   = if *repeat_x { cx + cw } else { *pos_x + *draw_w };
+                        let start_y = if *repeat_y { cy } else { *pos_y };
+                        let end_y   = if *repeat_y { cy + ch } else { *pos_y + *draw_h };
+
+                        // Align to tile grid from pos_x/pos_y
+                        let first_tx = if *repeat_x {
+                            let offset = ((*pos_x - cx) % draw_w + draw_w) % draw_w;
+                            cx - (draw_w - offset) % draw_w
+                        } else { *pos_x };
+                        let first_ty = if *repeat_y {
+                            let offset = ((*pos_y - cy) % draw_h + draw_h) % draw_h;
+                            cy - (draw_h - offset) % draw_h
+                        } else { *pos_y };
+
+                        let mut ty = first_ty;
+                        while ty < end_y {
+                            let mut tx = first_tx;
+                            while tx < end_x {
+                                let tile_ts = ts.pre_translate(tx, ty).pre_scale(sx_img, sy_img);
+                                pixmap.draw_pixmap(0, 0, img_pixmap, &paint, tile_ts, clip_mask);
+                                tx += draw_w;
+                                if !*repeat_x { break; }
+                            }
+                            ty += draw_h;
+                            if !*repeat_y { break; }
+                        }
+                    } else {
+                        let img_ts = ts.pre_translate(*pos_x, *pos_y).pre_scale(sx_img, sy_img);
+                        pixmap.draw_pixmap(0, 0, img_pixmap, &paint, img_ts, clip_mask);
+                    }
                 }
             }
         }
@@ -592,6 +632,33 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
             *d = p;
         }
     }
+}
+
+fn build_clip_mask(rect: &Rect, radius: &[f32; 4], pw: u32, ph: u32, scale: f32) -> Option<tiny_skia::Mask> {
+    let mut mask = tiny_skia::Mask::new(pw, ph)?;
+    let ts = Transform::from_scale(scale, scale);
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    let max_r = radius[0].max(radius[1]).max(radius[2]).max(radius[3]);
+    if max_r > 0.5 {
+        if let Some(path) = rounded_rect_path_corners(rect.x, rect.y, rect.w, rect.h,
+            radius[0], radius[1], radius[2], radius[3])
+        {
+            mask.fill_path(&path, FillRule::Winding, true, ts);
+        }
+    } else {
+        // Simple rect clip
+        if let Some(path) = {
+            let mut pb = PathBuilder::new();
+            if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
+                pb.push_rect(r);
+            }
+            pb.finish()
+        } {
+            mask.fill_path(&path, FillRule::Winding, true, ts);
+        }
+    }
+    Some(mask)
 }
 
 fn rounded_rect_path_corners(x: f32, y: f32, w: f32, h: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32) -> Option<tiny_skia::Path> {
