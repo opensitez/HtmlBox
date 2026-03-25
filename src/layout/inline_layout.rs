@@ -173,10 +173,11 @@ pub fn layout_inline_block(
     let mut text_offset = 0usize;
     let mut items: Vec<InlineItem> = Vec::new();
     let mut runs:  Vec<InlineRun>  = Vec::new();
-    // Pass the containing element's text-decoration to child text nodes
+    // Pass the containing element's style to children for text-decoration and href
     let container_deco = if node.style.text_decoration.underline
         || node.style.text_decoration.overline
         || node.style.text_decoration.strikethrough
+        || !node.style.href.is_empty()
     {
         Some(&node.style)
     } else {
@@ -963,8 +964,10 @@ fn collect_items_inner(
             let start = *text_offset;
             tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
             let mut run_style = node.style.clone();
-            // Inherit text-decoration from parent inline element (span, a, etc.)
-            // since text-decoration is not a CSS inherited property but paints on descendants
+            // Inherit non-inherited visual properties from parent inline element
+            // (span, a, etc.) that paint across descendants:
+            // - text-decoration (not CSS-inherited but visually applies to children)
+            // - href (from <a> elements, needed for hit-testing links)
             if let Some(ps) = parent_decoration {
                 if ps.text_decoration.underline { run_style.text_decoration.underline = true; }
                 if ps.text_decoration.overline { run_style.text_decoration.overline = true; }
@@ -977,6 +980,10 @@ fn collect_items_inner(
                 }
                 if run_style.text_decoration_thickness.is_auto() {
                     run_style.text_decoration_thickness = ps.text_decoration_thickness.clone();
+                }
+                // Propagate href from parent <a> element
+                if run_style.href.is_empty() && !ps.href.is_empty() {
+                    run_style.href = ps.href.clone();
                 }
             }
             runs.push(InlineRun { text_offset: start, length: node.text.len(), style: run_style });
@@ -1061,10 +1068,12 @@ fn collect_items_inner(
     let runs_before = runs.len();
     let mut child_path = ancestor_path.to_vec();
     child_path.push(box_idx);
-    // Pass this element's style as parent decoration if it has any decoration set
+    // Pass this element's style to children if it has text-decoration or href
+    // (text-decoration paints across descendants; href needed for link hit-testing)
     let deco_source = if node.style.text_decoration.underline
         || node.style.text_decoration.overline
         || node.style.text_decoration.strikethrough
+        || !node.style.href.is_empty()
     {
         Some(&node.style)
     } else {

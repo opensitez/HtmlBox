@@ -2177,23 +2177,39 @@ impl Document {
         evt.doc_pos    = doc_pt;
         evt.client_pos = client_pos;
         evt.button     = button;
-        let hit_ptr: *const HtmlBox = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button)
-            .map(|h| h.box_ptr)
-            .unwrap_or(std::ptr::null());
+        let hit_result = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button);
+        let hit_ptr: *const HtmlBox = hit_result.as_ref().map(|h| h.box_ptr).unwrap_or(std::ptr::null());
         // Extract node_id from hit box. If the hit box has node_id=0 (e.g. a text node
         // created by post_process_node or a ::before pseudo), walk up to find the
         // nearest parent with a valid node_id.
-        let hit_node_id: u32 = if hit_ptr.is_null() {
+        let mut hit_node_id: u32 = if hit_ptr.is_null() {
             0
         } else {
             let hit = unsafe { &*hit_ptr };
             if hit.node_id != 0 {
                 hit.node_id
             } else {
-                // Find parent with valid node_id by walking the tree
                 find_parent_node_id(&self.root, hit_ptr)
             }
         };
+        // For inline links: check if the hit point is inside an inline run
+        // with an href. If so, find the ancestor <a> element for hover styling.
+        if !hit_ptr.is_null() {
+            let hit_box = unsafe { &*hit_ptr };
+            if let Some(ref hr) = hit_result {
+                for run in &hit_box.inline_runs {
+                    if hr.local_offset >= run.text_offset && hr.local_offset < run.text_offset + run.length {
+                        if !run.style.href.is_empty() {
+                            // Find the <a> ancestor with this href
+                            if let Some(link_id) = find_link_node_id(&self.root, &run.style.href) {
+                                hit_node_id = link_id;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
         evt.target = hit_ptr;
 
         let mut redraw = false;
@@ -4363,6 +4379,19 @@ pub fn find_parent_node_id(root: &HtmlBox, target_ptr: *const HtmlBox) -> u32 {
         None
     }
     walk(root, target_ptr).unwrap_or(0)
+}
+
+/// Find the node_id of an <a> element with the given href.
+pub fn find_link_node_id(root: &HtmlBox, href: &str) -> Option<u32> {
+    if root.tag == "a" && root.node_id != 0 && root.style.href == href {
+        return Some(root.node_id);
+    }
+    for child in &root.children {
+        if let Some(id) = find_link_node_id(child, href) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 pub(crate) fn subtree_contains_id(node: &HtmlBox, target_id: u32) -> bool {
