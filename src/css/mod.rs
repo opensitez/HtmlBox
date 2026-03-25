@@ -1255,9 +1255,20 @@ fn extract_root_variables_vp(css: &str, vars: &mut HashMap<String, String>, vw: 
 /// Expand `var()` references within the variable map itself so all values are concrete.
 /// Handles chains (--a: var(--b), --b: 1rem) and circular refs (uses fallback or "").
 fn pre_resolve_variables(vars: &mut HashMap<String, String>) {
+    // Handle csstools light-dark() polyfill: in light mode (our default),
+    // the toggle variables should be empty so fallback (light) values are used.
+    // The polyfill sets --csstools-color-scheme--light: initial in light mode,
+    // which makes --csstools-light-dark-toggle--N invalid → fallback kicks in.
+    // We simulate this by removing the toggle variables entirely.
+    let toggle_keys: Vec<String> = vars.keys()
+        .filter(|k| k.starts_with("--csstools-light-dark-toggle-"))
+        .cloned()
+        .collect();
+    for key in &toggle_keys {
+        vars.remove(key);
+    }
+
     let keys: Vec<String> = vars.keys().cloned().collect();
-    // Resolve until no more changes (converged) or safety limit to prevent infinite loops
-    // from circular references like --a: var(--b); --b: var(--a)
     let max_passes = keys.len().min(50);
     for _ in 0..max_passes {
         let mut changed = false;
@@ -2257,7 +2268,13 @@ fn resolve_var_pass(val: &str, variables: &HashMap<String, String>) -> String {
                 (inner.trim(), None)
             };
             if let Some(resolved) = variables.get(name) {
-                out.push_str(resolved);
+                if resolved.is_empty() {
+                    if let Some(fb) = fallback {
+                        out.push_str(fb);
+                    }
+                } else {
+                    out.push_str(resolved);
+                }
             } else if let Some(fb) = fallback {
                 out.push_str(fb);
             }
