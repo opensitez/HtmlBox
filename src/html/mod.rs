@@ -2114,6 +2114,8 @@ fn parse_html_full(
 
     let mut doc = Document {
         root: html_box,
+        nodes: crate::types::NodeArena::new(),
+        nodes_stale: true,
         stylesheet,
         title,
         base_url: base_url.to_string(),
@@ -2190,6 +2192,9 @@ fn parse_html_full(
     apply_details_summary_post_cascade(&mut doc.root);
     number_lists(&mut doc.root);
 
+    // Populate flat NodeArena from the tree
+    // Arena rebuilt lazily on first render
+
     doc
 }
 
@@ -2228,8 +2233,7 @@ fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut H
     use crate::dom::arena::NodeId;
     // Create arena node
     let arena_id = if node.tag == "#text" {
-        let id = arena.create_text(&node.text);
-        id
+        arena.create_text(&node.text)
     } else {
         let id = arena.create_element(&node.tag);
         for (k, v) in &node.attributes {
@@ -2244,6 +2248,31 @@ fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut H
         rebuild_arena_recursive(arena, child);
         let child_id = NodeId(child.node_id);
         arena.append_child(arena_id, child_id);
+    }
+    // Populate linked-list pointers on HtmlBox (second pass — all node_ids assigned)
+    populate_sibling_links(node);
+}
+
+/// Populate parent/first_child/last_child/next_sibling/prev_sibling on a node
+/// and all its Vec children. Called after node_ids are assigned.
+pub fn populate_sibling_links(node: &mut HtmlBox) {
+    let parent_id = node.node_id;
+    let n = node.children.len();
+    if n == 0 {
+        node.first_child = 0;
+        node.last_child = 0;
+        return;
+    }
+    node.first_child = node.children[0].node_id;
+    node.last_child = node.children[n - 1].node_id;
+    for i in 0..n {
+        node.children[i].parent = parent_id;
+        node.children[i].prev_sibling = if i > 0 { node.children[i - 1].node_id } else { 0 };
+        node.children[i].next_sibling = if i + 1 < n { node.children[i + 1].node_id } else { 0 };
+    }
+    // Recurse
+    for child in &mut node.children {
+        populate_sibling_links(child);
     }
 }
 

@@ -619,9 +619,13 @@ pub fn layout_inline_block(
 
         // Fill per-character x positions using real glyph metrics, shaped at
         // physical pixel size so positions match the renderer exactly.
-        if let Some(fs_ptr) = engine.font_system {
-            let fs = unsafe { &mut *fs_ptr };
-            fill_char_x_for_line(fs, &flat_text, &runs, &mut ll, engine.scale);
+        // Skip for lines far below the viewport (they won't be rendered this frame).
+        let line_visible = ll.y < engine.viewport_h * 3.0; // 3 screens buffer
+        if line_visible {
+            if let Some(fs_ptr) = engine.font_system {
+                let fs = unsafe { &mut *fs_ptr };
+                fill_char_x_for_line(fs, &flat_text, &runs, &mut ll, engine.scale);
+            }
         }
 
         line_cache.push(ll);

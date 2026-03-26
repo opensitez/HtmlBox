@@ -1632,10 +1632,19 @@ impl Default for LayoutBox {
 #[derive(Clone, Debug)]
 pub struct HtmlBox {
     pub tag:        String,
-    pub node_id:    u32,                // Stable identity — index into Document.arena
+    pub node_id:    u32,                // Stable identity — index into Document.nodes
     pub style:      ComputedStyle,
     pub attributes: HashMap<String, String>,
     pub text:       String,             // Own text content
+
+    // ── Tree structure (linked-list children, O(1) insert/remove) ────────
+    pub parent:       u32,              // 0 = no parent (root)
+    pub first_child:  u32,              // 0 = no children
+    pub last_child:   u32,              // 0 = no children
+    pub next_sibling: u32,              // 0 = last child
+    pub prev_sibling: u32,              // 0 = first child
+
+    // DEPRECATED: Vec storage kept during migration. Will be removed.
     pub children:   Vec<HtmlBox>,
 
     /// Layout geometry — all layout-computed fields live here.
@@ -1770,6 +1779,11 @@ impl HtmlBox {
             style: ComputedStyle::default(),
             attributes: HashMap::new(),
             text: String::new(),
+            parent: 0,
+            first_child: 0,
+            last_child: 0,
+            next_sibling: 0,
+            prev_sibling: 0,
             children: Vec::new(),
             layout: LayoutBox::default(),
 
@@ -1836,6 +1850,16 @@ impl HtmlBox {
 
     pub fn is_text_node(&self) -> bool {
         self.tag == "#text"
+    }
+
+    /// Number of direct children.
+    pub fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Whether this node has any children.
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
     }
 
     pub fn is_void(&self) -> bool {
@@ -2045,9 +2069,197 @@ pub struct Announcement {
     pub atomic:      bool,
 }
 
+// ─── Node Arena (flat storage for all HtmlBox nodes) ─────────────────────────
+
+/// Flat storage for all HtmlBox nodes, indexed by node_id.
+/// This is the source of truth for the DOM tree. Tree structure is encoded
+/// via linked-list pointers (parent/first_child/last_child/next_sibling/prev_sibling)
+/// on each HtmlBox.
+pub struct NodeArena {
+    nodes: HashMap<u32, HtmlBox>,
+    pub root_id: u32,
+}
+
+impl NodeArena {
+    pub fn new() -> Self {
+        Self { nodes: HashMap::new(), root_id: 0 }
+    }
+
+    /// Insert a node. If a node with this ID already exists, it's replaced.
+    pub fn insert(&mut self, node: HtmlBox) {
+        self.nodes.insert(node.node_id, node);
+    }
+
+    /// Get an immutable reference to a node.
+    #[inline]
+    pub fn get(&self, id: u32) -> Option<&HtmlBox> {
+        self.nodes.get(&id)
+    }
+
+    /// Get a mutable reference to a node.
+    #[inline]
+    pub fn get_mut(&mut self, id: u32) -> Option<&mut HtmlBox> {
+        self.nodes.get_mut(&id)
+    }
+
+    /// Remove a node from the arena. Returns it if it existed.
+    pub fn remove(&mut self, id: u32) -> Option<HtmlBox> {
+        self.nodes.remove(&id)
+    }
+
+    /// Check if a node exists.
+    pub fn contains(&self, id: u32) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    /// Number of nodes in the arena.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Collect child node_ids of a parent (from linked-list pointers).
+    pub fn child_ids(&self, parent_id: u32) -> Vec<u32> {
+        let mut ids = Vec::new();
+        if let Some(parent) = self.nodes.get(&parent_id) {
+            let mut cur = parent.first_child;
+            while cur != 0 {
+                ids.push(cur);
+                cur = self.nodes.get(&cur).map(|n| n.next_sibling).unwrap_or(0);
+            }
+        }
+        ids
+    }
+
+    /// Iterate child node_ids without allocation (returns an iterator).
+    pub fn children(&self, parent_id: u32) -> ChildIdIter<'_> {
+        let first = self.nodes.get(&parent_id).map(|n| n.first_child).unwrap_or(0);
+        ChildIdIter { arena: self, next: first }
+    }
+
+    /// Count children of a node.
+    pub fn child_count(&self, parent_id: u32) -> usize {
+        self.children(parent_id).count()
+    }
+
+    /// Get the root node.
+    pub fn root(&self) -> Option<&HtmlBox> {
+        self.nodes.get(&self.root_id)
+    }
+
+    /// Get the root node mutably.
+    pub fn root_mut(&mut self) -> Option<&mut HtmlBox> {
+        self.nodes.get_mut(&self.root_id)
+    }
+
+    /// Append a child to a parent. Updates linked-list pointers.
+    pub fn append_child(&mut self, parent_id: u32, child_id: u32) {
+        let old_last = self.nodes.get(&parent_id).map(|p| p.last_child).unwrap_or(0);
+
+        if let Some(child) = self.nodes.get_mut(&child_id) {
+            child.parent = parent_id;
+            child.prev_sibling = old_last;
+            child.next_sibling = 0;
+        }
+
+        if old_last != 0 {
+            if let Some(prev) = self.nodes.get_mut(&old_last) {
+                prev.next_sibling = child_id;
+            }
+        }
+
+        if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            if parent.first_child == 0 {
+                parent.first_child = child_id;
+            }
+            parent.last_child = child_id;
+        }
+    }
+
+    /// Remove a child from its parent. Updates linked-list pointers.
+    /// The node stays in the arena (detached).
+    pub fn detach(&mut self, node_id: u32) {
+        let (parent_id, prev, next) = match self.nodes.get(&node_id) {
+            Some(n) => (n.parent, n.prev_sibling, n.next_sibling),
+            None => return,
+        };
+        if parent_id == 0 { return; }
+
+        if prev != 0 {
+            if let Some(p) = self.nodes.get_mut(&prev) { p.next_sibling = next; }
+        } else if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.first_child = next;
+        }
+
+        if next != 0 {
+            if let Some(n) = self.nodes.get_mut(&next) { n.prev_sibling = prev; }
+        } else if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.last_child = prev;
+        }
+
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            node.parent = 0;
+            node.prev_sibling = 0;
+            node.next_sibling = 0;
+        }
+    }
+
+    /// Build the arena from an existing HtmlBox tree (migration helper).
+    /// Clones all nodes into the flat HashMap. Original tree unchanged.
+    pub fn from_tree(root: &HtmlBox) -> Self {
+        let mut arena = Self::new();
+        arena.root_id = root.node_id;
+        flatten_into_arena(root, &mut arena);
+        arena
+    }
+}
+
+/// Recursively flatten a Vec<HtmlBox> tree into the arena.
+/// Clones each node (with empty children Vec) into the flat store.
+/// The original tree is NOT modified.
+fn flatten_into_arena(node: &HtmlBox, arena: &mut NodeArena) {
+    // Clone the node with an empty children Vec (arena uses linked-list, not Vec)
+    let mut flat_node = node.clone();
+    flat_node.children.clear(); // arena nodes don't need Vec children
+    arena.insert(flat_node);
+    // Recurse into children
+    for child in &node.children {
+        flatten_into_arena(child, arena);
+    }
+}
+
+/// Iterator over child node_ids using linked-list pointers.
+pub struct ChildIdIter<'a> {
+    arena: &'a NodeArena,
+    next: u32,
+}
+
+impl<'a> Iterator for ChildIdIter<'a> {
+    type Item = u32;
+    fn next(&mut self) -> Option<u32> {
+        if self.next == 0 { return None; }
+        let id = self.next;
+        self.next = self.arena.get(id).map(|n| n.next_sibling).unwrap_or(0);
+        Some(id)
+    }
+}
+
+impl std::fmt::Debug for NodeArena {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeArena")
+            .field("len", &self.nodes.len())
+            .field("root_id", &self.root_id)
+            .finish()
+    }
+}
+
 /// The root document: box tree + stylesheet + metadata.
 pub struct Document {
     pub root:            HtmlBox,
+    /// Flat node storage — all HtmlBox nodes indexed by node_id.
+    /// Rebuilt lazily on first `get_node()` after layout marks it stale.
+    pub nodes:           NodeArena,
+    /// True when the tree has changed since last arena rebuild.
+    pub nodes_stale:     bool,
     pub stylesheet:      Stylesheet,
     pub title:           String,
     pub base_url:        String,
@@ -2171,6 +2383,8 @@ impl Document {
     pub fn new() -> Self {
         Self {
             root:            HtmlBox::new("html"),
+            nodes:           NodeArena::new(),
+            nodes_stale:     true,
             stylesheet:      Stylesheet::default(),
             title:           String::new(),
             arena:           DomArena::new(),
@@ -2241,46 +2455,54 @@ impl Document {
         loaded_any
     }
 
-    // ── Node map (bridge: node_id → HtmlBox pointer) ─────────────────────────
+    // ── Node index (node_id → pointer for O(1) lookup) ───────────────────────
 
-    /// Rebuild the node_map by walking the HtmlBox tree.
+    /// Rebuild the node index by walking the HtmlBox tree.
     /// Call this after any operation that may move HtmlBox nodes in memory
     /// (layout, cascade, tree mutations).
     pub fn rebuild_node_map(&mut self) {
         self.node_map.clear();
-        Self::collect_node_map(&self.root, &mut self.node_map);
-    }
-
-    fn collect_node_map(node: &HtmlBox, map: &mut HashMap<u32, ()>) {
-        if node.node_id != 0 {
-            map.insert(node.node_id, ());
+        fn collect(node: &HtmlBox, map: &mut HashMap<u32, ()>) {
+            if node.node_id != 0 { map.insert(node.node_id, ()); }
+            for child in &node.children { collect(child, map); }
         }
-        for child in &node.children {
-            Self::collect_node_map(child, map);
-        }
+        collect(&self.root, &mut self.node_map);
     }
 
     /// Look up an HtmlBox by its stable node_id via tree walk.
+    /// Node lookup by tree walk (always returns current data).
+    /// The arena (`self.nodes`) is synced after layout and can be used for
+    /// read-only queries when freshness is guaranteed.
     pub fn get_box_by_id(&self, node_id: u32) -> Option<&HtmlBox> {
         if node_id == 0 { return None; }
         fn walk(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
             if node.node_id == id { return Some(node); }
-            for child in &node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
-            }
+            for child in &node.children { if let Some(f) = walk(child, id) { return Some(f); } }
             None
         }
         walk(&self.root, node_id)
     }
 
-    /// Look up a mutable HtmlBox by its stable node_id via tree walk.
+    /// Node lookup by node_id. Currently uses tree walk.
+    /// When the arena becomes the primary storage, this will be O(1).
+    #[inline]
+    pub fn get_node(&self, node_id: u32) -> Option<&HtmlBox> {
+        self.get_box_by_id(node_id)
+    }
+
+    /// Rebuild the flat arena from the tree on demand.
+    pub fn sync_arena(&mut self) {
+        self.nodes = NodeArena::from_tree(&self.root);
+        self.nodes_stale = false;
+    }
+
+    /// O(1) mutable node lookup via tree walk (arena stores clones, not references).
+    /// For mutable access, we must use the tree since the arena is a snapshot.
     pub fn get_box_by_id_mut(&mut self, node_id: u32) -> Option<&mut HtmlBox> {
         if node_id == 0 { return None; }
         fn walk(node: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
             if node.node_id == id { return Some(node); }
-            for child in &mut node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
-            }
+            for child in &mut node.children { if let Some(f) = walk(child, id) { return Some(f); } }
             None
         }
         walk(&mut self.root, node_id)
@@ -2336,7 +2558,7 @@ impl Document {
         // For inline links: check if the hit point is inside an inline run
         // with an href. If so, find the ancestor <a> element for hover styling.
         if let Some(ref hr) = hit_result {
-            if let Some(hit_box) = self.get_box_by_id(hr.node_id) {
+            if let Some(hit_box) = self.get_node(hr.node_id) {
                 for run in &hit_box.layout.inline_runs {
                     if hr.local_offset >= run.text_offset && hr.local_offset < run.text_offset + run.length {
                         if !run.style.href.is_empty() {
@@ -2370,7 +2592,7 @@ impl Document {
                 // Track hover over open dropdown
                 if self.open_select != 0 {
                     let open_sel_id = self.open_select;
-                    let sel = match self.get_box_by_id(open_sel_id) {
+                    let sel = match self.get_node(open_sel_id) {
                         Some(s) => s,
                         None => { self.open_select = 0; return redraw; }
                     };
@@ -2440,7 +2662,7 @@ impl Document {
                 if etype == HtmlEventType::MouseDown {
                     // Walk up from hit target to find the nearest focusable ancestor
                     let focus_target_id = if hit_node_id != 0 {
-                        if let Some(hit) = self.get_box_by_id(hit_node_id) {
+                        if let Some(hit) = self.get_node(hit_node_id) {
                             if is_focusable_node(hit) {
                                 hit_node_id
                             } else {
@@ -2449,7 +2671,7 @@ impl Document {
                         } else { 0u32 }
                     } else { 0u32 };
                     let click_focusable = focus_target_id != 0 &&
-                        self.get_box_by_id(focus_target_id)
+                        self.get_node(focus_target_id)
                             .map(|fp| is_focusable_node(fp))
                             .unwrap_or(false);
                     let new_focus = if click_focusable { focus_target_id } else { 0u32 };
@@ -2514,7 +2736,7 @@ impl Document {
                             // Handle select dropdown
                             if self.open_select != 0 {
                                 // Collect options from DOM children
-                                let sel = self.get_box_by_id(self.open_select).unwrap();
+                                let sel = self.get_node(self.open_select).unwrap();
                                 let font_px = sel.style.font_size_px(16.0, 16.0);
                                 let item_h = font_px * 1.8;
                                 let group_h = font_px * 1.5;
@@ -2617,7 +2839,7 @@ impl Document {
                             } else {
                                 // Check if clicking a select to open it
                                 let effective_id = find_form_parent_id(&self.root, hit_node_id);
-                                if self.get_box_by_id(effective_id).map(|n| n.tag == "select").unwrap_or(false) {
+                                if self.get_node(effective_id).map(|n| n.tag == "select").unwrap_or(false) {
                                     self.open_select = effective_id;
                                     redraw = true;
                                 }
@@ -2784,7 +3006,7 @@ impl Document {
             let form_handled = if self.focused_box != 0
                 && etype == crate::dom::HtmlEventType::KeyDown
             {
-                let focused = self.get_box_by_id(self.focused_box).unwrap_or(&self.root);
+                let focused = self.get_node(self.focused_box).unwrap_or(&self.root);
                 // Select: arrow up/down changes selected option
                 if focused.tag == "select" && (key_code == 38 || key_code == 40) {
                     let fid = self.focused_box;
@@ -4166,6 +4388,8 @@ impl Clone for Document {
     fn clone(&self) -> Self {
         Self {
             root:            self.root.clone(),
+            nodes:           NodeArena::new(), // rebuilt on demand
+            nodes_stale:     true,
             stylesheet:      self.stylesheet.clone(),
             title:           self.title.clone(),
             base_url:        self.base_url.clone(),

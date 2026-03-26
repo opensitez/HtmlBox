@@ -986,7 +986,11 @@ impl LayoutEngine {
         doc.root.layout.border_rect.w  = content_w; doc.root.layout.border_rect.h  = 0.0;
         doc.root.layout.margin_rect.x  = 0.0; doc.root.layout.margin_rect.y  = 0.0;
         doc.root.layout.margin_rect.w  = content_w; doc.root.layout.margin_rect.h  = 0.0;
-        doc.root.layout.layout_dirty = true; // force root to always re-layout
+        // Root is dirty on initial layout or when content_rect.h is 0 (not yet laid out).
+        // On subsequent passes (hover, incremental), preserve the dirty state from propagate_dirty.
+        if doc.root.layout.content_rect.h == 0.0 {
+            doc.root.layout.layout_dirty = true;
+        }
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
@@ -1004,6 +1008,9 @@ impl LayoutEngine {
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);
+
+        // Mark arena as stale — it will be rebuilt on next get_node() call
+        doc.nodes_stale = true;
 
         // Bump generation so renderer knows to rebuild display list
         doc.layout_generation = doc.layout_generation.wrapping_add(1);

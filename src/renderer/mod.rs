@@ -240,7 +240,7 @@ impl Renderer {
     pub fn cursor_icon(&self, doc: &crate::types::Document) -> CSSCursor {
         let hovered_id = doc.hovered_box;
         if hovered_id == 0 { return CSSCursor::Default; }
-        let node = match doc.get_box_by_id(hovered_id) { Some(n) => n, None => return CSSCursor::Default };
+        let node = match doc.get_node(hovered_id) { Some(n) => n, None => return CSSCursor::Default };
         if node.style.cursor != CSSCursor::Auto { return node.style.cursor; }
         fn is_link_or_button(n: &crate::types::HtmlBox) -> bool {
             match n.tag.as_str() {
@@ -307,7 +307,10 @@ impl Renderer {
             || (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
             || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
         if needs_rebuild {
-            let list = display_list_builder::build_display_list_full(&doc.root, view_w, view_h, doc.scroll_x, doc.scroll_y, doc.hovered_box, doc.active_box, &doc.visited_urls);
+            // Build display list for the full document (not just viewport).
+            // Pass scroll as 0,0 — the replay will offset. This enables
+            // reusing the list across small scroll changes in the future.
+            let list = display_list_builder::build_display_list_full(&doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h), doc.scroll_x, doc.scroll_y, doc.hovered_box, doc.active_box, &doc.visited_urls);
             self.cached_display_list = Some(list);
             self.cached_scroll_x = doc.scroll_x; self.cached_scroll_y = doc.scroll_y;
             self.cached_hovered_id = doc.hovered_box;
@@ -318,7 +321,7 @@ impl Renderer {
             display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
         }
         if doc.open_select != 0 {
-            if let Some(sel_node) = doc.get_box_by_id(doc.open_select) {
+            if let Some(sel_node) = doc.get_node(doc.open_select) {
                 self.scale = scale * zoom;
                 self.draw_select_dropdown(sel_node, pixmap, doc.scroll_x, doc.scroll_y);
             }

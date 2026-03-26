@@ -480,7 +480,7 @@ impl Document {
 
     /// Get the bounding rect of a node (border box in document coordinates).
     pub fn dom_get_bounding_rect(&self, id: u32) -> Option<Rect> {
-        self.get_box_by_id(id).map(|node| node.layout.border_rect)
+        self.get_node(id).or_else(|| self.get_box_by_id(id)).map(|node| node.layout.border_rect)
     }
 
     /// Get the offset width (border box width).

@@ -40,6 +40,11 @@ pub struct CssSelector {
     pub has_hover:   bool,
     pub has_active:  bool,
     pub has_visited: bool,
+    /// Parts with :hover/:active/:visited stripped. Cached to avoid per-match allocation.
+    pub base_parts:  Vec<SelectorPart>,
+    /// True when selector is a single simple selector (`.class`, `tag`, `#id`) with
+    /// no combinators. The candidate_rules index already matched it → skip full matching.
+    pub is_simple: bool,
 }
 
 /// Info about one ancestor box, threaded through the cascade for selector matching.
@@ -80,7 +85,22 @@ impl CssSelector {
         let has_hover = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
         let has_active = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
         let has_visited = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
-        Self { parts, has_hover, has_active, has_visited }
+        let base_parts = if has_hover || has_active || has_visited {
+            parts.iter()
+                .filter(|p| !matches!(p, SelectorPart::PseudoClass(n)
+                    if matches!(n.as_str(), "hover" | "active" | "visited")))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Simple selector: no combinators, no pseudo-classes, just class/tag/id parts
+        let is_simple = !parts.is_empty()
+            && !parts.iter().any(|p| matches!(p,
+                SelectorPart::Combinator(_) | SelectorPart::PseudoClass(_) |
+                SelectorPart::PseudoElement(_) | SelectorPart::Attribute { .. }))
+            && !has_hover && !has_active && !has_visited;
+        Self { parts, has_hover, has_active, has_visited, base_parts, is_simple }
     }
 
     pub fn specificity(&self) -> u32 {
@@ -1156,8 +1176,17 @@ impl Stylesheet {
         // Add universal rules (always candidates)
         out.extend_from_slice(&self.idx_universal);
         // Add tag-matched rules
-        let tag_lower = tag.to_ascii_lowercase();
-        if let Some(indices) = self.idx_by_tag.get(&tag_lower) {
+        // HTML tags are already lowercase from the parser; this handles edge cases.
+        let mut tag_buf = [0u8; 32];
+        let tag_key: &str = if tag.len() <= 32 && tag.bytes().any(|b| b.is_ascii_uppercase()) {
+            let len = tag.len().min(32);
+            tag_buf[..len].copy_from_slice(&tag.as_bytes()[..len]);
+            tag_buf[..len].make_ascii_lowercase();
+            std::str::from_utf8(&tag_buf[..len]).unwrap_or(tag)
+        } else {
+            tag // already lowercase or too long (rare)
+        };
+        if let Some(indices) = self.idx_by_tag.get(tag_key) {
             out.extend_from_slice(indices);
         }
         // Add id-matched rules
@@ -5174,14 +5203,11 @@ fn apply_cascade_inner(
             let has_visited = sel.has_visited;
 
             if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
-                // Strip state pseudo-classes and match base selector.
-                let base_parts: Vec<SelectorPart> = sel.parts.iter()
-                    .filter(|p| !matches!(p, SelectorPart::PseudoClass(n)
-                        if matches!(n.as_str(), "hover" | "active" | "visited")))
-                    .cloned()
-                    .collect();
-                let base_sel = CssSelector::new(base_parts);
-                if base_sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
+                // Use pre-computed base_parts (no per-match allocation)
+                if matches_selector_with_ancestors(
+                    &sel.base_parts, &root.tag, &root.attributes,
+                    child_index, sibling_count, ancestors, &match_ctx,
+                ) {
                     if has_hover   { hover_matched.push((rule.specificity, rule_idx)); }
                     if has_active  { active_matched.push((rule.specificity, rule_idx)); }
                     if has_visited { visited_matched.push((rule.specificity, rule_idx)); }
@@ -5934,18 +5960,14 @@ fn parallel_selector_match(
             }
             if !rule.container_condition.is_empty() { continue; }
             for sel in &rule.selectors {
-                let has_hover   = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
-                let has_active  = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
-                let has_visited = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
+                let has_hover   = sel.has_hover;
+                let has_active  = sel.has_active;
+                let has_visited = sel.has_visited;
 
                 if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
-                    let base_parts: Vec<SelectorPart> = sel.parts.iter()
-                        .filter(|p| !matches!(p, SelectorPart::PseudoClass(n)
-                            if matches!(n.as_str(), "hover" | "active" | "visited")))
-                        .cloned()
-                        .collect();
-                    let base_sel = CssSelector::new(base_parts);
-                    if base_sel.matches_with_ancestors_ctx_raw(
+                    // Use pre-computed base_parts (no allocation per match)
+                    if matches_selector_with_ancestors(
+                        &sel.base_parts,
                         &item.tag, &item.attributes,
                         item.child_index, item.sibling_count,
                         &item.ancestors, &match_ctx,

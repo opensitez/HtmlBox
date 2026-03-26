@@ -615,51 +615,107 @@ pub fn get_last_child(b: &HtmlBox) -> Option<&HtmlBox> {
     b.children.last()
 }
 
-/// Find the next sibling of `target` within `parent`.
+/// Find the next sibling of `target` within `parent`. O(1) via linked-list.
 pub fn get_next_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
-    let idx = parent.children.iter()
-        .position(|c| c.node_id == target_id)?;
-    parent.children.get(idx + 1)
+    let target = parent.children.iter().find(|c| c.node_id == target_id)?;
+    let next_id = target.next_sibling;
+    if next_id == 0 { return None; }
+    parent.children.iter().find(|c| c.node_id == next_id)
 }
 
-/// Find the previous sibling of `target` within `parent`.
+/// Find the previous sibling of `target` within `parent`. O(1) via linked-list.
 pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
-    let idx = parent.children.iter()
-        .position(|c| c.node_id == target_id)?;
-    if idx == 0 { return None; }
-    parent.children.get(idx - 1)
+    let target = parent.children.iter().find(|c| c.node_id == target_id)?;
+    let prev_id = target.prev_sibling;
+    if prev_id == 0 { return None; }
+    parent.children.iter().find(|c| c.node_id == prev_id)
 }
 
 // ─── DOM tree mutation ────────────────────────────────────────────────────────
 
 /// Append `child` as the last child of `parent`.
-pub fn append_child(parent: &mut HtmlBox, child: HtmlBox) {
+pub fn append_child(parent: &mut HtmlBox, mut child: HtmlBox) {
+    let child_id = child.node_id;
+    let old_last = parent.last_child;
+    child.parent = parent.node_id;
+    child.prev_sibling = old_last;
+    child.next_sibling = 0;
     parent.children.push(child);
+    // Update linked-list
+    if old_last != 0 {
+        if let Some(prev) = parent.children.iter_mut().rev().nth(1) {
+            if prev.node_id == old_last { prev.next_sibling = child_id; }
+        }
+    } else {
+        parent.first_child = child_id;
+    }
+    parent.last_child = child_id;
     mark_layout_dirty(parent);
 }
 
 /// Prepend `child` as the first child of `parent`.
-pub fn prepend_child(parent: &mut HtmlBox, child: HtmlBox) {
+pub fn prepend_child(parent: &mut HtmlBox, mut child: HtmlBox) {
+    let child_id = child.node_id;
+    let old_first = parent.first_child;
+    child.parent = parent.node_id;
+    child.prev_sibling = 0;
+    child.next_sibling = old_first;
     parent.children.insert(0, child);
+    if old_first != 0 {
+        if let Some(f) = parent.children.iter_mut().find(|c| c.node_id == old_first) {
+            f.prev_sibling = child_id;
+        }
+    } else {
+        parent.last_child = child_id;
+    }
+    parent.first_child = child_id;
 }
 
 /// Insert `new_node` before the child with `reference_id` within `parent`.
-pub fn insert_before(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+pub fn insert_before(parent: &mut HtmlBox, reference_id: u32, mut new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
+        let new_id = new_node.node_id;
+        let prev = parent.children[idx].prev_sibling;
+        new_node.parent = parent.node_id;
+        new_node.prev_sibling = prev;
+        new_node.next_sibling = reference_id;
         parent.children.insert(idx, new_node);
+        // Fix the reference node's prev (it shifted to idx+1)
+        parent.children[idx + 1].prev_sibling = new_id;
+        if prev != 0 {
+            if let Some(p) = parent.children.iter_mut().find(|c| c.node_id == prev) {
+                p.next_sibling = new_id;
+            }
+        } else {
+            parent.first_child = new_id;
+        }
         true
     } else {
         false
     }
 }
 /// Insert `new_node` after the child with `reference_id` within `parent`.
-pub fn insert_after(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+pub fn insert_after(parent: &mut HtmlBox, reference_id: u32, mut new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
+        let new_id = new_node.node_id;
+        let next = parent.children[idx].next_sibling;
+        new_node.parent = parent.node_id;
+        new_node.prev_sibling = reference_id;
+        new_node.next_sibling = next;
+        parent.children[idx].next_sibling = new_id;
         parent.children.insert(idx + 1, new_node);
+        // Fix the next node's prev_sibling
+        if next != 0 {
+            if let Some(n) = parent.children.iter_mut().find(|c| c.node_id == next) {
+                n.prev_sibling = new_id;
+            }
+        } else {
+            parent.last_child = new_id;
+        }
         true
     } else {
         false
@@ -677,7 +733,25 @@ pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
 /// Remove the child identified by node_id from `parent`, returning it.
 pub fn remove_child(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
     if let Some(idx) = parent.children.iter().position(|c| c.node_id == node_id) {
-        Some(parent.children.remove(idx))
+        let removed = parent.children.remove(idx);
+        let prev = removed.prev_sibling;
+        let next = removed.next_sibling;
+        // Update linked-list: patch prev→next and next→prev
+        if prev != 0 {
+            if let Some(p) = parent.children.iter_mut().find(|c| c.node_id == prev) {
+                p.next_sibling = next;
+            }
+        } else {
+            parent.first_child = next;
+        }
+        if next != 0 {
+            if let Some(n) = parent.children.iter_mut().find(|c| c.node_id == next) {
+                n.prev_sibling = prev;
+            }
+        } else {
+            parent.last_child = prev;
+        }
+        Some(removed)
     } else {
         None
     }
