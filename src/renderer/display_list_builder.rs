@@ -50,7 +50,7 @@ pub fn build_display_list_full(
     let mut list = DisplayList::new();
     build_for_box(root, &mut list, &ctx);
 
-    // Fixed elements: skipped during tree walk, rendered here with no scroll
+    // Fixed elements: rendered at viewport position (already scroll=0)
     let fixed_ctx = BuildContext {
         scroll_x: 0.0, scroll_y: 0.0,
         hovered_id, active_id, visited_hrefs,

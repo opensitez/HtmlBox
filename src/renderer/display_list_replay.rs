@@ -16,7 +16,7 @@ use super::display_list::{DisplayList, PaintCmd, ImageRef};
 
 /// Replay a display list onto a pixmap (no text — use replay_with_text for full rendering).
 pub fn replay(list: &DisplayList, pixmap: &mut Pixmap, scale: f32) {
-    replay_inner(list, pixmap, scale, None);
+    replay_inner(list, pixmap, scale, None, 0.0, 0.0);
 }
 
 /// Replay with text rendering via cosmic_text.
@@ -27,7 +27,21 @@ pub fn replay_with_text(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
 ) {
-    replay_inner(list, pixmap, scale, Some((font_system, swash_cache)));
+    replay_inner(list, pixmap, scale, Some((font_system, swash_cache)), 0.0, 0.0);
+}
+
+/// Replay with a scroll offset — the display list is in document coordinates,
+/// the scroll offset translates to screen coordinates during replay.
+pub fn replay_with_scroll(
+    list: &DisplayList,
+    pixmap: &mut Pixmap,
+    scale: f32,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    scroll_x: f32,
+    scroll_y: f32,
+) {
+    replay_inner(list, pixmap, scale, Some((font_system, swash_cache)), scroll_x, scroll_y);
 }
 
 /// Layer for blend mode / opacity compositing.
@@ -41,8 +55,13 @@ fn replay_inner(
     pixmap: &mut Pixmap,
     scale: f32,
     mut text_ctx: Option<(&mut FontSystem, &mut SwashCache)>,
+    scroll_x: f32,
+    scroll_y: f32,
 ) {
-    let mut ts = Transform::from_scale(scale, scale);
+    // Start with scale + scroll translation. Display list is in document
+    // coordinates; the scroll offset maps to screen coordinates.
+    let mut ts = Transform::from_scale(scale, scale)
+        .pre_translate(-scroll_x, -scroll_y);
     let mut transform_stack: Vec<Transform> = Vec::new();
     let mut filter_stack: Vec<Vec<(u8, f32, crate::types::Color)>> = Vec::new();
     let mut clip_stack: Vec<Rect> = Vec::new();

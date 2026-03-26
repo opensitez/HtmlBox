@@ -307,12 +307,14 @@ impl Renderer {
             || (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
             || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
         if needs_rebuild {
-            // Build display list for the full document (not just viewport).
-            // Pass scroll as 0,0 — the replay will offset. This enables
-            // reusing the list across small scroll changes in the future.
-            let list = display_list_builder::build_display_list_full(&doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h), doc.scroll_x, doc.scroll_y, doc.hovered_box, doc.active_box, &doc.visited_urls);
+            let list = display_list_builder::build_display_list_full(
+                &doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h),
+                doc.scroll_x, doc.scroll_y, // used for viewport culling in builder
+                doc.hovered_box, doc.active_box, &doc.visited_urls,
+            );
             self.cached_display_list = Some(list);
-            self.cached_scroll_x = doc.scroll_x; self.cached_scroll_y = doc.scroll_y;
+            self.cached_scroll_x = doc.scroll_x;
+            self.cached_scroll_y = doc.scroll_y;
             self.cached_hovered_id = doc.hovered_box;
             self.cached_layout_generation = doc.layout_generation;
             self.display_list_dirty = false;

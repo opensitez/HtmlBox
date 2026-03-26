@@ -47,6 +47,63 @@ pub struct CssSelector {
     pub is_simple: bool,
 }
 
+// ─── Bloom filter for fast ancestor rejection ────────────────────────────────
+
+/// A compact Bloom filter for ancestor tag/class names.
+/// Used to quickly reject selectors that require an ancestor with a specific
+/// tag or class that no ancestor has. False positives are OK (full match catches them),
+/// false negatives are not (would incorrectly skip matching rules).
+#[derive(Clone)]
+pub struct AncestorBloom {
+    bits: [u64; 4], // 256 bits
+}
+
+impl AncestorBloom {
+    pub fn new() -> Self { Self { bits: [0; 4] } }
+
+    #[inline]
+    fn hash(s: &str) -> (usize, usize) {
+        // Two simple hash functions for double-hashing
+        let mut h1: u32 = 0x811c9dc5;
+        let mut h2: u32 = 0;
+        for &b in s.as_bytes() {
+            h1 = h1.wrapping_mul(0x01000193) ^ (b as u32);
+            h2 = h2.wrapping_add(b as u32).wrapping_mul(31);
+        }
+        ((h1 as usize) % 256, (h2 as usize) % 256)
+    }
+
+    #[inline]
+    pub fn add(&mut self, s: &str) {
+        let (h1, h2) = Self::hash(s);
+        self.bits[h1 / 64] |= 1 << (h1 % 64);
+        self.bits[h2 / 64] |= 1 << (h2 % 64);
+    }
+
+    /// Add a node's tag and class names to the filter.
+    pub fn add_element(&mut self, tag: &str, attrs: &std::collections::HashMap<String, String>) {
+        self.add(tag);
+        if let Some(cls) = attrs.get("class") {
+            for c in cls.split_whitespace() { self.add(c); }
+        }
+        if let Some(id) = attrs.get("id") { self.add(id); }
+    }
+
+    #[inline]
+    pub fn might_contain(&self, s: &str) -> bool {
+        let (h1, h2) = Self::hash(s);
+        (self.bits[h1 / 64] & (1 << (h1 % 64))) != 0
+            && (self.bits[h2 / 64] & (1 << (h2 % 64))) != 0
+    }
+}
+
+impl Default for AncestorBloom { fn default() -> Self { Self::new() } }
+impl std::fmt::Debug for AncestorBloom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AncestorBloom({} bits set)", self.bits.iter().map(|w| w.count_ones()).sum::<u32>())
+    }
+}
+
 /// Info about one ancestor box, threaded through the cascade for selector matching.
 #[derive(Clone, Debug, Default)]
 pub struct AncestorInfo {

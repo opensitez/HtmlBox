@@ -1718,6 +1718,167 @@ pub enum ShadowMode {
     Closed,
 }
 
+// ─── Canvas 2D Context ──────────────────────────────────────────────────────
+
+/// A 2D drawing context for `<canvas>` elements.
+/// Provides a subset of the HTML Canvas2D API for drawing shapes, text, and images.
+pub struct CanvasContext {
+    pub width: u32,
+    pub height: u32,
+    /// RGBA pixel buffer (premultiplied alpha, row-major).
+    pub pixels: Vec<u8>,
+    fill_r: u8, fill_g: u8, fill_b: u8, fill_a: u8,
+    stroke_r: u8, stroke_g: u8, stroke_b: u8, stroke_a: u8,
+    line_width: f32,
+    font_size: f32,
+}
+
+impl CanvasContext {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width, height,
+            pixels: vec![0u8; (width * height * 4) as usize],
+            fill_r: 0, fill_g: 0, fill_b: 0, fill_a: 255,
+            stroke_r: 0, stroke_g: 0, stroke_b: 0, stroke_a: 255,
+            line_width: 1.0,
+            font_size: 16.0,
+        }
+    }
+
+    /// Set fill color from CSS-style string: "#rgb", "#rrggbb", "rgb(r,g,b)", or named colors.
+    pub fn set_fill_style(&mut self, color: &str) {
+        if let Some(c) = crate::css::parse_color(color) {
+            self.fill_r = c.r; self.fill_g = c.g; self.fill_b = c.b; self.fill_a = c.a;
+        }
+    }
+
+    /// Set stroke color.
+    pub fn set_stroke_style(&mut self, color: &str) {
+        if let Some(c) = crate::css::parse_color(color) {
+            self.stroke_r = c.r; self.stroke_g = c.g; self.stroke_b = c.b; self.stroke_a = c.a;
+        }
+    }
+
+    pub fn set_line_width(&mut self, w: f32) { self.line_width = w; }
+    pub fn set_font_size(&mut self, px: f32) { self.font_size = px; }
+
+    /// Fill a rectangle.
+    pub fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let x0 = x.max(0.0) as u32;
+        let y0 = y.max(0.0) as u32;
+        let x1 = ((x + w) as u32).min(self.width);
+        let y1 = ((y + h) as u32).min(self.height);
+        let (r, g, b, a) = (self.fill_r, self.fill_g, self.fill_b, self.fill_a);
+        // Premultiply
+        let pr = (r as u16 * a as u16 / 255) as u8;
+        let pg = (g as u16 * a as u16 / 255) as u8;
+        let pb = (b as u16 * a as u16 / 255) as u8;
+        let stride = self.width as usize * 4;
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let i = py as usize * stride + px as usize * 4;
+                if i + 3 < self.pixels.len() {
+                    if a == 255 {
+                        self.pixels[i] = r; self.pixels[i+1] = g; self.pixels[i+2] = b; self.pixels[i+3] = 255;
+                    } else {
+                        // Alpha blend (premultiplied)
+                        let da = self.pixels[i+3] as u16;
+                        let ia = 255 - a as u16;
+                        self.pixels[i]   = (pr as u16 + self.pixels[i] as u16 * ia / 255) as u8;
+                        self.pixels[i+1] = (pg as u16 + self.pixels[i+1] as u16 * ia / 255) as u8;
+                        self.pixels[i+2] = (pb as u16 + self.pixels[i+2] as u16 * ia / 255) as u8;
+                        self.pixels[i+3] = (a as u16 + da * ia / 255) as u8;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clear a rectangle to transparent.
+    pub fn clear_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let x0 = x.max(0.0) as u32;
+        let y0 = y.max(0.0) as u32;
+        let x1 = ((x + w) as u32).min(self.width);
+        let y1 = ((y + h) as u32).min(self.height);
+        let stride = self.width as usize * 4;
+        for py in y0..y1 {
+            let row = py as usize * stride;
+            for px in x0..x1 {
+                let i = row + px as usize * 4;
+                if i + 3 < self.pixels.len() {
+                    self.pixels[i] = 0; self.pixels[i+1] = 0; self.pixels[i+2] = 0; self.pixels[i+3] = 0;
+                }
+            }
+        }
+    }
+
+    /// Stroke a rectangle outline.
+    pub fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let lw = self.line_width;
+        let saved = (self.fill_r, self.fill_g, self.fill_b, self.fill_a);
+        self.fill_r = self.stroke_r; self.fill_g = self.stroke_g;
+        self.fill_b = self.stroke_b; self.fill_a = self.stroke_a;
+        self.fill_rect(x, y, w, lw);           // top
+        self.fill_rect(x, y + h - lw, w, lw);  // bottom
+        self.fill_rect(x, y, lw, h);            // left
+        self.fill_rect(x + w - lw, y, lw, h);  // right
+        self.fill_r = saved.0; self.fill_g = saved.1; self.fill_b = saved.2; self.fill_a = saved.3;
+    }
+
+    /// Fill a circle.
+    pub fn fill_circle(&mut self, cx: f32, cy: f32, radius: f32) {
+        let r2 = radius * radius;
+        let x0 = (cx - radius).max(0.0) as i32;
+        let y0 = (cy - radius).max(0.0) as i32;
+        let x1 = ((cx + radius) as i32 + 1).min(self.width as i32);
+        let y1 = ((cy + radius) as i32 + 1).min(self.height as i32);
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let dx = px as f32 + 0.5 - cx;
+                let dy = py as f32 + 0.5 - cy;
+                if dx * dx + dy * dy <= r2 {
+                    let i = (py as usize * self.width as usize + px as usize) * 4;
+                    if i + 3 < self.pixels.len() {
+                        self.pixels[i] = self.fill_r; self.pixels[i+1] = self.fill_g;
+                        self.pixels[i+2] = self.fill_b; self.pixels[i+3] = self.fill_a;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw a line from (x1,y1) to (x2,y2) using Bresenham.
+    pub fn stroke_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
+        let (mut x, mut y) = (x1 as i32, y1 as i32);
+        let (ex, ey) = (x2 as i32, y2 as i32);
+        let dx = (ex - x).abs();
+        let dy = -(ey - y).abs();
+        let sx = if x < ex { 1 } else { -1 };
+        let sy = if y < ey { 1 } else { -1 };
+        let mut err = dx + dy;
+        loop {
+            if x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height {
+                let i = (y as usize * self.width as usize + x as usize) * 4;
+                if i + 3 < self.pixels.len() {
+                    self.pixels[i] = self.stroke_r; self.pixels[i+1] = self.stroke_g;
+                    self.pixels[i+2] = self.stroke_b; self.pixels[i+3] = self.stroke_a;
+                }
+            }
+            if x == ex && y == ey { break; }
+            let e2 = 2 * err;
+            if e2 >= dy { err += dy; x += sx; }
+            if e2 <= dx { err += dx; y += sy; }
+        }
+    }
+
+    /// Copy pixel buffer to an HtmlBox's image_data for rendering.
+    pub fn apply_to_node(&self, node: &mut HtmlBox) {
+        node.image_data = Some(self.pixels.clone());
+        node.image_width = self.width;
+        node.image_height = self.height;
+    }
+}
+
 /// Form interaction event — fired by the engine, handled by the host.
 #[derive(Debug, Clone)]
 pub struct FormEvent {
@@ -2330,6 +2491,18 @@ pub struct Document {
     /// Called when users interact with form elements (click checkbox, type in input, etc.).
     pub on_form_event:   Option<FormEventCallback>,
 
+    // ── Engine callbacks ─────────────────────────────────────────────────────
+    /// Called when a link is clicked (href). Return `true` to handle navigation,
+    /// `false` to let the engine follow the link.
+    pub on_navigate:     Option<Box<dyn FnMut(&str) -> bool + Send>>,
+    /// Called when the document title changes (e.g. via `<title>` or DOM mutation).
+    pub on_title_change: Option<Box<dyn FnMut(&str) + Send>>,
+    /// Called after any DOM mutation (node added/removed/attribute changed).
+    /// The argument is the node_id of the mutated node.
+    pub on_dom_mutation:  Option<Box<dyn FnMut(u32) + Send>>,
+    /// Called when a node becomes visible in the viewport (intersection observer pattern).
+    pub on_visibility_change: Option<Box<dyn FnMut(u32, bool) + Send>>,
+
     // ── CSS animation / transition runtime ────────────────────────────────────
     /// All currently running CSS animations (one entry per animation per element).
     pub active_animations: Vec<AnimState>,
@@ -2415,7 +2588,7 @@ impl Document {
             viewport_h:        0.0,
             keyboard_focus:    false,
             caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
-            on_form_event:     None,
+            on_form_event:     None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
             prev_styles:           HashMap::new(),
@@ -2866,10 +3039,13 @@ impl Document {
                         }
                     }
                     self.mousedown_target = 0;
-                    // Track visited links.
+                    // Track visited links + fire on_navigate callback.
                     if button == 0 {
                         if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
-                            self.visited_urls.insert(href);
+                            self.visited_urls.insert(href.clone());
+                            if let Some(ref mut cb) = self.on_navigate {
+                                cb(&href);
+                            }
                         }
                     }
                 }
@@ -4437,7 +4613,7 @@ impl Clone for Document {
             // Async image state is not cloned — cloned docs start with no pending fetches.
             pending_images:   None,
             images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            on_form_event: None, // callbacks not cloned
+            on_form_event: None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None, // callbacks not cloned
         }
     }
 }

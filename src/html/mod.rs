@@ -86,22 +86,9 @@ pub fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u
         None => return None,
     };
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    // resvg outputs premultiplied RGBA; convert to straight alpha
-    let pma = pixmap.data();
-    let mut rgba = Vec::with_capacity(pma.len());
-    for chunk in pma.chunks(4) {
-        let (pr, pg, pb, a) = (chunk[0] as u32, chunk[1] as u32, chunk[2] as u32, chunk[3]);
-        if a == 0 {
-            rgba.extend_from_slice(&[0, 0, 0, 0]);
-        } else {
-            let a32 = a as u32;
-            rgba.push(((pr * 255 + a32 / 2) / a32).min(255) as u8);
-            rgba.push(((pg * 255 + a32 / 2) / a32).min(255) as u8);
-            rgba.push(((pb * 255 + a32 / 2) / a32).min(255) as u8);
-            rgba.push(a);
-        }
-    }
-    Some(rgba)
+    // resvg outputs premultiplied RGBA — same format tiny_skia expects.
+    // Return the data directly without un-premultiplying.
+    Some(pixmap.data().to_vec())
 }
 
 /// Rasterize an SVG at its intrinsic (viewBox) size. Returns (rgba, w, h).
@@ -398,14 +385,24 @@ pub enum DecodedImage {
 }
 
 pub fn decode_image_bytes_ex(bytes: &[u8]) -> Option<DecodedImage> {
-    use image::ImageReader;
-    use std::io::Cursor;
-    // Try raster formats first (PNG, JPEG, etc.)
-    if let Ok(reader) = ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
-        if let Ok(img) = reader.decode() {
+    // Try raster formats first (PNG, JPEG, GIF, WebP, BMP)
+    if let Ok(img) = image::load_from_memory(bytes) {
+        {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            return Some(DecodedImage::Raster(rgba.into_raw(), w, h));
+            // Premultiply alpha — tiny_skia expects premultiplied RGBA.
+            let mut raw = rgba.into_raw();
+            for pixel in raw.chunks_exact_mut(4) {
+                let a = pixel[3] as u16;
+                if a == 0 {
+                    pixel[0] = 0; pixel[1] = 0; pixel[2] = 0;
+                } else if a < 255 {
+                    pixel[0] = ((pixel[0] as u16 * a) / 255) as u8;
+                    pixel[1] = ((pixel[1] as u16 * a) / 255) as u8;
+                    pixel[2] = ((pixel[2] as u16 * a) / 255) as u8;
+                }
+            }
+            return Some(DecodedImage::Raster(raw, w, h));
         }
     }
     // SVG: return the markup for deferred rasterization at paint time
@@ -764,7 +761,7 @@ pub fn default_display(tag: &str) -> &'static str {
         "col"      => "table-column",
         "colgroup" => "table-column-group",
         "caption"  => "table-caption",
-        "img" | "svg" => "inline-block",
+        "img" | "svg" | "canvas" | "video" | "audio" => "inline-block",
         "input" | "button" | "select" | "textarea" => "inline-block",
         "ruby" => "ruby",
         "rt"   => "ruby-text",
@@ -1575,6 +1572,25 @@ impl HtmlParser {
                 node.attributes.insert("_resolved_src".to_string(), resolved);
             }
         }
+        // Canvas/video/audio: set default dimensions from width/height attributes
+        if matches!(tag.as_str(), "canvas" | "video" | "audio") {
+            let default_w: u32 = if tag == "canvas" { 300 } else { 300 };
+            let default_h: u32 = if tag == "canvas" { 150 } else { 150 };
+            let w = node.attributes.get("width").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_w);
+            let h = node.attributes.get("height").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_h);
+            if node.style.width.is_auto() {
+                node.style.width = crate::types::CssLength::Px(w as f32);
+            }
+            if node.style.height.is_auto() {
+                node.style.height = crate::types::CssLength::Px(h as f32);
+            }
+            if tag == "canvas" {
+                node.image_width = w;
+                node.image_height = h;
+                // Transparent pixel buffer — ready for drawing
+                node.image_data = Some(vec![0u8; (w * h * 4) as usize]);
+            }
+        }
         if !node.style.background_image_url.is_empty() {
             let url = node.style.background_image_url.clone();
             if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
@@ -2162,7 +2178,7 @@ fn parse_html_full(
         layout_generation:   0,
         pending_images:      None,
         images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        on_form_event:       None,
+        on_form_event: None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None,
     };
 
     // NOTE: External CSS fetching, cascade, layout, and image loading are

@@ -464,6 +464,9 @@ pub struct LayoutEngine {
     /// Y cutoff for progressive layout — nodes below this are deferred.
     /// 0 = no cutoff (full layout). Set to viewport_h * 1.5 for first-screen priority.
     pub progressive_cutoff: f32,
+    /// True after the first layout pass has completed. Prevents progressive
+    /// layout from running on every subsequent layout (hover, image load, etc.).
+    initial_layout_done: bool,
     /// Whether @font-face font fetches have been kicked off (not necessarily finished).
     fonts_loaded: bool,
     /// Receiver for async font data arriving from background threads.
@@ -501,6 +504,7 @@ impl LayoutEngine {
             cached_has_media_q: false,
             cached_has_container_q: false,
             progressive_cutoff: 0.0,
+            initial_layout_done: false,
             fonts_loaded: false,
             text_width_cache: std::cell::RefCell::new(HashMap::new()),
             pending_fonts: None,
@@ -925,16 +929,13 @@ impl LayoutEngine {
         }
         // ──────────────────────────────────────────────────────────────────
 
-        // Progressive layout: on initial load (root has no height yet),
-        // lay out only above-fold content first so the renderer can paint
-        // the first screen sooner. Below-fold is finished immediately after.
-        let is_initial = doc.root.layout.content_rect.h == 0.0;
-        if is_initial && self.viewport_h > 0.0 {
+        // Progressive layout: on the very first layout pass, lay out only
+        // above-fold content first so the renderer can paint the first screen sooner.
+        if !self.initial_layout_done && self.viewport_h > 0.0 {
+            self.initial_layout_done = true;
             self.progressive_cutoff = self.viewport_h * 1.5;
             self.layout_geometry(doc, viewport_width, root_font_px);
-            // Signal that first screen is ready for display
             doc.layout_generation = doc.layout_generation.wrapping_add(1);
-            // Now finish the rest
             self.progressive_cutoff = 0.0;
             doc.root.layout.layout_dirty = true;
         }
@@ -1023,11 +1024,8 @@ impl LayoutEngine {
         doc.root.layout.border_rect.w  = content_w; doc.root.layout.border_rect.h  = 0.0;
         doc.root.layout.margin_rect.x  = 0.0; doc.root.layout.margin_rect.y  = 0.0;
         doc.root.layout.margin_rect.w  = content_w; doc.root.layout.margin_rect.h  = 0.0;
-        // Root is dirty on initial layout or when content_rect.h is 0 (not yet laid out).
-        // On subsequent passes (hover, incremental), preserve the dirty state from propagate_dirty.
-        if doc.root.layout.content_rect.h == 0.0 {
-            doc.root.layout.layout_dirty = true;
-        }
+        // Root always needs re-layout since we reset its height to 0 above.
+        doc.root.layout.layout_dirty = true;
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {

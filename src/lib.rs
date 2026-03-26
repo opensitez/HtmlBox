@@ -55,7 +55,7 @@ pub mod tests;
 pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, ShadowRoot, ShadowMode, LivePoliteness, Announcement,
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState, MatchedRule,
-                FormEvent, FormEventKind, FormEventCallback,
+                FormEvent, FormEventKind, FormEventCallback, CanvasContext,
                 is_text_input, input_value, process_form_input_key,
                 find_parent_form_action, collect_form_data, reset_form,
                 encode_form_urlencoded, build_form_submit_url, apply_autofocus};
