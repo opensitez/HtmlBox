@@ -57,6 +57,7 @@ pub fn serialize_length(len: &CssLength) -> String {
         CssLength::Clamp(min, val, max) => {
             format!("clamp({}, {}, {})", serialize_length(min), serialize_length(val), serialize_length(max))
         }
+        CssLength::CalcExpr(_) => "calc(...)".to_string(),
     }
 }
 

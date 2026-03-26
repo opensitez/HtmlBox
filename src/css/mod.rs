@@ -2899,6 +2899,12 @@ pub fn parse_length(v: &str) -> CssLength {
 /// At layout time, each coefficient is multiplied by its resolved unit value.
 fn parse_calc(expr: &str) -> CssLength {
     let expr = expr.trim();
+    // If the expression contains min()/max()/clamp(), use tree-based parser
+    // since these can't be represented as linear coefficients.
+    if expr.contains("min(") || expr.contains("max(") || expr.contains("clamp(") {
+        let node = parse_calc_tree(expr);
+        return CssLength::CalcExpr(Box::new(node));
+    }
     let bytes = expr.as_bytes();
     let mut pos = 0usize;
     let coeffs = calc_parse_additive(bytes, &mut pos);
@@ -2914,6 +2920,116 @@ fn parse_calc(expr: &str) -> CssLength {
         return CssLength::Px(vals[1]);
     }
     CssLength::Calc(vals)
+}
+
+/// Parse calc() expression into a CalcNode tree (handles nested min/max/clamp).
+fn parse_calc_tree(expr: &str) -> CalcNode {
+    use crate::types::CalcNode;
+    let expr = expr.trim();
+
+    // Split on top-level `+` and `-` (with spaces, per CSS spec)
+    let parts = split_calc_additive(expr);
+    if parts.len() == 1 {
+        return parse_calc_tree_multiplicative(parts[0].1);
+    }
+
+    let mut result = parse_calc_tree_multiplicative(parts[0].1);
+    for &(sign, term) in &parts[1..] {
+        let rhs = parse_calc_tree_multiplicative(term);
+        result = if sign == '+' {
+            CalcNode::Add(Box::new(result), Box::new(rhs))
+        } else {
+            CalcNode::Sub(Box::new(result), Box::new(rhs))
+        };
+    }
+    result
+}
+
+fn parse_calc_tree_multiplicative(expr: &str) -> CalcNode {
+    use crate::types::CalcNode;
+    let expr = expr.trim();
+    // Simple: check for * or / not inside parens
+    let mut depth = 0i32;
+    let mut last_op = 0usize;
+    let mut op_char = 0u8;
+    let bytes = expr.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'*' | b'/' if depth == 0 && i > 0 => {
+                last_op = i;
+                op_char = b;
+            }
+            _ => {}
+        }
+    }
+    if op_char != 0 && last_op > 0 {
+        let lhs = parse_calc_tree_atom(&expr[..last_op]);
+        let rhs_str = expr[last_op + 1..].trim();
+        if let Ok(scalar) = rhs_str.parse::<f32>() {
+            return if op_char == b'*' {
+                CalcNode::Mul(Box::new(lhs), scalar)
+            } else {
+                CalcNode::Div(Box::new(lhs), scalar)
+            };
+        }
+    }
+    parse_calc_tree_atom(expr)
+}
+
+fn parse_calc_tree_atom(expr: &str) -> CalcNode {
+    use crate::types::CalcNode;
+    let expr = expr.trim();
+    // Parenthesized
+    if expr.starts_with('(') && expr.ends_with(')') {
+        return parse_calc_tree(&expr[1..expr.len()-1]);
+    }
+    // min/max/clamp — delegate to parse_length which handles these
+    if expr.starts_with("min(") || expr.starts_with("max(") || expr.starts_with("clamp(") {
+        return CalcNode::Value(parse_length(expr));
+    }
+    // Simple value
+    CalcNode::Value(parse_length(expr))
+}
+
+/// Split a calc expression at top-level `+` and `-` operators (CSS requires spaces around them).
+fn split_calc_additive(expr: &str) -> Vec<(char, &str)> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let bytes = expr.as_bytes();
+    let mut start = 0usize;
+    let mut sign = '+';
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b' ' if depth == 0 && i + 2 < bytes.len() => {
+                let op = bytes[i + 1];
+                if (op == b'+' || op == b'-') && bytes[i + 2] == b' ' {
+                    let term = expr[start..i].trim();
+                    if !term.is_empty() {
+                        parts.push((sign, term));
+                    }
+                    sign = op as char;
+                    i += 3;
+                    start = i;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let tail = expr[start..].trim();
+    if !tail.is_empty() {
+        parts.push((sign, tail));
+    }
+    if parts.is_empty() {
+        parts.push(('+', expr));
+    }
+    parts
 }
 
 // ── Recursive descent calc() evaluator ───────────────────────────────────────
@@ -4133,6 +4249,7 @@ pub fn mark_hover_dirty(
     old_chain: &std::collections::HashSet<u32>,
     new_chain: &std::collections::HashSet<u32>,
     has_hover_descendant_rules: bool,
+    hover_sensitive: &std::collections::HashSet<u32>,
 ) {
     // Nodes whose hover state actually changed (in one chain but not both)
     let toggled: std::collections::HashSet<u32> = old_chain.symmetric_difference(new_chain).copied().collect();
@@ -4140,9 +4257,11 @@ pub fn mark_hover_dirty(
     let path: std::collections::HashSet<u32> = old_chain.union(new_chain).copied().collect();
 
     fn walk(node: &mut crate::types::HtmlBox, toggled: &std::collections::HashSet<u32>,
-            path: &std::collections::HashSet<u32>, has_hover_desc: bool) -> bool {
+            path: &std::collections::HashSet<u32>, has_hover_desc: bool,
+            sensitive: &std::collections::HashSet<u32>) -> bool {
         let mut any_dirty = false;
-        if toggled.contains(&node.node_id) {
+        // Only mark cascade_dirty if this node is hover-sensitive (has hover CSS rules)
+        if toggled.contains(&node.node_id) && (sensitive.is_empty() || sensitive.contains(&node.node_id)) {
             node.cascade_dirty = true;
             any_dirty = true;
             if has_hover_desc {
@@ -4154,7 +4273,7 @@ pub fn mark_hover_dirty(
             any_dirty = true;
         }
         for child in &mut node.children {
-            if walk(child, toggled, path, has_hover_desc) {
+            if walk(child, toggled, path, has_hover_desc, sensitive) {
                 node.has_dirty_descendant = true;
                 any_dirty = true;
             }
@@ -4162,7 +4281,7 @@ pub fn mark_hover_dirty(
         any_dirty
     }
 
-    walk(root, &toggled, &path, has_hover_descendant_rules);
+    walk(root, &toggled, &path, has_hover_descendant_rules, hover_sensitive);
 }
 
 fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {

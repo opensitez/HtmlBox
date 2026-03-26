@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use crate::dom::arena::DomArena;
 
@@ -82,8 +82,10 @@ pub enum CssLength {
     Vw(f32),
     /// Viewport-height percentage (1vh = 1% of viewport height).
     Vh(f32),
-    /// `calc()` — stores [percent, px, em, rem, vw, vh] contributions.
+    /// `calc()` — linear combination [percent, px, em, rem, vw, vh].
     Calc([f32; 6]),
+    /// `calc()` with non-linear parts (min/max nested inside calc).
+    CalcExpr(Box<CalcNode>),
     /// `min()` — resolves to the smallest value.
     Min(Box<[CssLength]>),
     /// `max()` — resolves to the largest value.
@@ -93,6 +95,30 @@ pub enum CssLength {
     Auto,
     Zero,
     None,
+}
+
+/// Expression node for calc() with nested min/max/clamp.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CalcNode {
+    Value(CssLength),
+    Add(Box<CalcNode>, Box<CalcNode>),
+    Sub(Box<CalcNode>, Box<CalcNode>),
+    Mul(Box<CalcNode>, f32),
+    Div(Box<CalcNode>, f32),
+}
+
+impl CalcNode {
+    pub fn resolve_vp(&self, parent_font_px: f32, containing_px: f32, root_font_px: f32, vw: f32, vh: f32) -> f32 {
+        match self {
+            CalcNode::Value(v) => v.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh),
+            CalcNode::Add(a, b) => a.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh)
+                                 + b.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh),
+            CalcNode::Sub(a, b) => a.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh)
+                                 - b.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh),
+            CalcNode::Mul(a, f) => a.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh) * f,
+            CalcNode::Div(a, f) => if *f != 0.0 { a.resolve_vp(parent_font_px, containing_px, root_font_px, vw, vh) / f } else { 0.0 },
+        }
+    }
 }
 
 impl Default for CssLength {
@@ -123,6 +149,8 @@ impl CssLength {
             CssLength::Calc(c) =>
                 c[0] / 100.0 * containing_px + c[1] + c[2] * parent_font_px
                 + c[3] * root_font_px + c[4] / 100.0 * viewport_w + c[5] / 100.0 * viewport_h,
+            CssLength::CalcExpr(node) =>
+                node.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h),
             CssLength::Min(vals) => vals.iter()
                 .map(|v| v.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h))
                 .fold(f32::INFINITY, f32::min),
@@ -2016,6 +2044,9 @@ pub struct Document {
     pub needs_animation_frame: bool,
     /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
     pub hover_changed: bool,
+    /// Node IDs of elements that have hover-dependent CSS rules.
+    /// Only these need re-cascade on hover change. Populated during full cascade.
+    pub hover_sensitive_nodes: HashSet<u32>,
     /// Set by DOM API mutations to force a full cascade on next layout.
     pub style_dirty: bool,
     /// Previous hover target — used to compute the diff for incremental cascade.
@@ -2082,6 +2113,7 @@ impl Document {
             animation_overrides:   HashMap::new(),
             needs_animation_frame: false,
             hover_changed:         false,
+            hover_sensitive_nodes: HashSet::new(),
             style_dirty:           false,
             prev_hovered_box:      0,
             pending_announcements:    Vec::new(),
@@ -4032,6 +4064,7 @@ impl Clone for Document {
             animation_overrides:   self.animation_overrides.clone(),
             needs_animation_frame: self.needs_animation_frame,
             hover_changed:         self.hover_changed,
+            hover_sensitive_nodes: self.hover_sensitive_nodes.clone(),
             style_dirty:           self.style_dirty,
             prev_hovered_box:      self.prev_hovered_box,
             pending_announcements:    self.pending_announcements.clone(),

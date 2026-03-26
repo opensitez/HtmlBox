@@ -2178,6 +2178,7 @@ fn parse_html_full(
         animation_overrides:   std::collections::HashMap::new(),
         needs_animation_frame: false,
         hover_changed:         false,
+            hover_sensitive_nodes: std::collections::HashSet::new(),
         style_dirty:           false,
         prev_hovered_box:      0,
         cascade_styles:        std::collections::HashMap::new(),

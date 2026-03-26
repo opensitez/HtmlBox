@@ -293,6 +293,16 @@ impl FloatContext {
     }
 }
 
+/// Collect node_ids of elements that have hover-dependent styles.
+fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u32>) {
+    if node.style.hover_style.is_some() {
+        out.insert(node.node_id);
+    }
+    for child in &node.children {
+        collect_hover_sensitive(child, out);
+    }
+}
+
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
@@ -871,6 +881,9 @@ impl LayoutEngine {
             crate::css::clear_cascade_dirty(&mut doc.root);
             self.last_cascade_vw = viewport_width;
             doc.prev_hovered_box = doc.hovered_box;
+            // Build hover invalidation set: collect node_ids of all elements with hover_style
+            doc.hover_sensitive_nodes.clear();
+            collect_hover_sensitive(&doc.root, &mut doc.hover_sensitive_nodes);
             true
         } else if hover_changed {
             // Incremental hover cascade — only re-cascade elements affected by
@@ -878,7 +891,7 @@ impl LayoutEngine {
             let old_chain = crate::css::build_hover_chain(&doc.root, doc.prev_hovered_box);
             let new_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             // Mark dirty flags on nodes affected by hover change
-            crate::css::mark_hover_dirty(&mut doc.root, &old_chain, &new_chain, false);
+            crate::css::mark_hover_dirty(&mut doc.root, &old_chain, &new_chain, false, &doc.hover_sensitive_nodes);
 
             crate::css::apply_cascade_incremental(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
