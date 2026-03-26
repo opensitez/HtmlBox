@@ -549,6 +549,19 @@ pub fn layout_block_with_fc(
         }
 
         if grid_child_ref(node, path).style.is_block_level() {
+            // Progressive layout: defer children below the viewport cutoff
+            let cutoff = engine.progressive_cutoff;
+            if cutoff > 0.0 && (content_y + child_y) > cutoff {
+                // Give deferred child a zero-height placeholder
+                let child = grid_child_mut(node, path);
+                child.layout.content_rect = crate::types::Rect::new(content_x, content_y + child_y, child_content_w, 0.0);
+                child.layout.padding_rect = child.layout.content_rect;
+                child.layout.border_rect  = child.layout.content_rect;
+                child.layout.margin_rect  = child.layout.content_rect;
+                child.layout.layout_dirty = true; // will be laid out in remainder pass
+                continue;
+            }
+
             let child = grid_child_ref(node, path);
             // Incremental layout: skip clean children whose containing width hasn't changed.
             // Just reposition them at the current child_y.

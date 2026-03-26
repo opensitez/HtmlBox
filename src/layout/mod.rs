@@ -461,6 +461,9 @@ pub struct LayoutEngine {
     cached_has_media_q: bool,
     /// Whether any @container rules exist — cached to avoid O(n) scan every layout.
     cached_has_container_q: bool,
+    /// Y cutoff for progressive layout — nodes below this are deferred.
+    /// 0 = no cutoff (full layout). Set to viewport_h * 1.5 for first-screen priority.
+    pub progressive_cutoff: f32,
     /// Whether @font-face font fetches have been kicked off (not necessarily finished).
     fonts_loaded: bool,
     /// Receiver for async font data arriving from background threads.
@@ -497,6 +500,7 @@ impl LayoutEngine {
             last_geometry_viewport_h: f32::NAN, // NAN forces full layout on first call
             cached_has_media_q: false,
             cached_has_container_q: false,
+            progressive_cutoff: 0.0,
             fonts_loaded: false,
             text_width_cache: std::cell::RefCell::new(HashMap::new()),
             pending_fonts: None,
@@ -921,6 +925,19 @@ impl LayoutEngine {
         }
         // ──────────────────────────────────────────────────────────────────
 
+        // Progressive layout: on initial load (root has no height yet),
+        // lay out only above-fold content first so the renderer can paint
+        // the first screen sooner. Below-fold is finished immediately after.
+        let is_initial = doc.root.layout.content_rect.h == 0.0;
+        if is_initial && self.viewport_h > 0.0 {
+            self.progressive_cutoff = self.viewport_h * 1.5;
+            self.layout_geometry(doc, viewport_width, root_font_px);
+            // Signal that first screen is ready for display
+            doc.layout_generation = doc.layout_generation.wrapping_add(1);
+            // Now finish the rest
+            self.progressive_cutoff = 0.0;
+            doc.root.layout.layout_dirty = true;
+        }
         self.layout_geometry(doc, viewport_width, root_font_px);
         self.last_geometry_viewport_h = self.viewport_h;
 
@@ -961,6 +978,26 @@ impl LayoutEngine {
     /// Use this when only text content changed (e.g. keystrokes in an editable
     /// element).  Skipping the cascade saves CSS selector matching across every
     /// element in the tree; the line-cache early-stop then skips unchanged lines.
+    /// Progressive layout: lay out only above-fold content first, return true
+    /// if there's more to do below the fold. Caller should render, then call
+    /// `layout_remainder()` to finish.
+    pub fn layout_above_fold(&mut self, doc: &mut Document, viewport_width: f32) -> bool {
+        self.progressive_cutoff = self.viewport_h * 1.5;
+        self.layout_geometry(doc, viewport_width, self.root_font_px);
+        self.progressive_cutoff = 0.0;
+        // Check if document is taller than what we laid out
+        doc.root.layout.margin_rect.h > self.viewport_h * 1.5
+    }
+
+    /// Finish layout for below-fold content (call after rendering first screen).
+    pub fn layout_remainder(&mut self, doc: &mut Document, viewport_width: f32) {
+        // Mark everything below the fold as dirty so it gets laid out
+        self.progressive_cutoff = 0.0;
+        doc.root.layout.layout_dirty = true;
+        self.layout_geometry(doc, viewport_width, self.root_font_px);
+        self.last_geometry_viewport_h = self.viewport_h;
+    }
+
     pub fn layout_no_cascade(&mut self, doc: &mut Document, viewport_width: f32) {
         self.viewport_w = viewport_width;
         let root_font_px = self.root_font_px;
