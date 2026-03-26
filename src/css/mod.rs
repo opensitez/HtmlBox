@@ -35,6 +35,10 @@ pub enum Combinator { Descendant, Child, AdjacentSibling, GeneralSibling }
 #[derive(Clone, Debug, PartialEq)]
 pub struct CssSelector {
     pub parts: Vec<SelectorPart>,
+    /// Pre-computed state pseudo-class flags (set during parse, avoids per-match scan).
+    pub has_hover:   bool,
+    pub has_active:  bool,
+    pub has_visited: bool,
 }
 
 /// Info about one ancestor box, threaded through the cascade for selector matching.
@@ -70,6 +74,14 @@ pub struct MatchContext<'a> {
 }
 
 impl CssSelector {
+    /// Create a selector with pre-computed state pseudo-class flags.
+    pub fn new(parts: Vec<SelectorPart>) -> Self {
+        let has_hover = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
+        let has_active = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
+        let has_visited = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
+        Self { parts, has_hover, has_active, has_visited }
+    }
+
     pub fn specificity(&self) -> u32 {
         let mut ids = 0u32;
         let mut classes = 0u32;
@@ -530,6 +542,8 @@ pub struct CssRule {
     pub container_name:      String,  // optional container name (empty = unnamed)
     pub original_selector:   String,  // verbatim selector text for roundtrip
     pub is_hover:            bool,
+    /// True if any declaration value contains `var(` — needs slow-path resolution.
+    pub has_var_refs:        bool,
     pub pseudo_element:      PseudoElement,
 }
 
@@ -547,6 +561,7 @@ impl Default for CssRule {
             container_name:      String::new(),
             original_selector:   String::new(),
             is_hover:            false,
+            has_var_refs:        false,
             pseudo_element:      PseudoElement::None,
         }
     }
@@ -568,6 +583,9 @@ impl CssRule {
             if id == properties::PropertyId::Unknown { continue; }
             self.compiled_important.push((id, val.clone()));
         }
+        // Pre-compute whether any declaration references var()
+        self.has_var_refs = self.declarations.values().any(|v| v.contains("var("))
+            || self.important_declarations.values().any(|v| v.contains("var("));
     }
 }
 
@@ -858,8 +876,31 @@ impl Stylesheet {
                 out.extend_from_slice(indices);
             }
         }
-        out.sort_unstable();
-        out.dedup();
+        // Use a fast dedup via a seen-bitset instead of sort+dedup.
+        // For typical pages (< 10k rules), a bitset is much faster than sorting.
+        if out.len() > 1 {
+            let max_idx = out.iter().copied().max().unwrap_or(0);
+            if max_idx < 65536 {
+                // Fast path: bitvec dedup
+                let words = (max_idx / 64) + 1;
+                let mut seen = vec![0u64; words];
+                let mut write = 0;
+                for read in 0..out.len() {
+                    let idx = out[read];
+                    let word = idx / 64;
+                    let bit = 1u64 << (idx % 64);
+                    if seen[word] & bit == 0 {
+                        seen[word] |= bit;
+                        out[write] = idx;
+                        write += 1;
+                    }
+                }
+                out.truncate(write);
+            } else {
+                out.sort_unstable();
+                out.dedup();
+            }
+        }
     }
 }
 
@@ -1829,7 +1870,7 @@ pub fn parse_selector(s: &str) -> CssSelector {
         }
     }
 
-    CssSelector { parts }
+    CssSelector::new(parts)
 }
 
 fn read_ident(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
@@ -4554,11 +4595,10 @@ fn apply_cascade_inner(
         // Container rules require layout context — applied in a post-layout pass.
         if !rule.container_condition.is_empty() { continue; }
         for sel in &rule.selectors {
-            // Detect state-pseudo-class rules (:hover, :active) and match their
-            // base selector so the style can be stored for runtime activation.
-            let has_hover   = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
-            let has_active  = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
-            let has_visited = sel.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
+            // Use pre-computed per-selector state flags (no scanning needed).
+            let has_hover   = sel.has_hover;
+            let has_active  = sel.has_active;
+            let has_visited = sel.has_visited;
 
             if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
                 // Strip state pseudo-classes and match base selector.
@@ -4567,7 +4607,7 @@ fn apply_cascade_inner(
                         if matches!(n.as_str(), "hover" | "active" | "visited")))
                     .cloned()
                     .collect();
-                let base_sel = CssSelector { parts: base_parts };
+                let base_sel = CssSelector::new(base_parts);
                 if base_sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
                     if has_hover   { hover_matched.push((rule.specificity, rule_idx)); }
                     if has_active  { active_matched.push((rule.specificity, rule_idx)); }
@@ -4645,17 +4685,34 @@ fn apply_cascade_inner(
     // Track properties whose highest-specificity declaration is `inherit`.
     // After all rules are applied, these properties are reset to the parent's value.
     let mut inherit_props: HashSet<String> = HashSet::new();
+    let has_vars = !local_vars.is_empty();
     for &(_, ri) in &matched {
-        for (prop, val) in &stylesheet.rules[ri].declarations {
-            if prop.starts_with("--") { continue; }
-            let resolved = resolve_var_references(val, &local_vars);
-            // If var() resolved to empty, skip — keep inherited/default value
-            if resolved.trim().is_empty() && val.contains("var(") { continue; }
-            if resolved.trim() == "inherit" {
-                inherit_props.insert(prop.to_string());
-            } else {
-                inherit_props.remove(prop.as_str());
-                apply_property(&mut style, prop, &resolved);
+        // Fast path: use pre-compiled declarations (PropertyId dispatch, no string matching).
+        // Only fall back to raw declarations when var() resolution is needed.
+        let rule = &stylesheet.rules[ri];
+        if has_vars && rule.has_var_refs {
+            // Slow path: var() references need string-based resolution
+            for (prop, val) in &rule.declarations {
+                if prop.starts_with("--") { continue; }
+                let resolved = resolve_var_references(val, &local_vars);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                if resolved.trim() == "inherit" {
+                    inherit_props.insert(prop.to_string());
+                } else {
+                    inherit_props.remove(prop.as_str());
+                    apply_property(&mut style, prop, &resolved);
+                }
+            }
+        } else {
+            // Fast path: no var() — use compiled declarations directly
+            for &(id, ref val) in &rule.compiled_decls {
+                let v = val.trim();
+                if v == "inherit" {
+                    let name = property_defs::get(id).name;
+                    inherit_props.insert(name.to_string());
+                } else {
+                    apply_property_by_id(&mut style, id, v);
+                }
             }
         }
     }
