@@ -1048,6 +1048,23 @@ impl LayoutEngine {
             return 0.0;
         }
 
+        // Fast path: skip full layout if the containing width hasn't changed
+        // and the node isn't dirty. Just reposition the cached result.
+        if !node.layout_dirty
+            && node.last_containing_width > 0.0
+            && (node.last_containing_width - containing_w).abs() < 0.5
+            && node.margin_rect.w > 0.0
+            && fc.is_none()  // can't skip when float context is shared
+        {
+            let dx = x - node.margin_rect.x;
+            let dy = y - node.margin_rect.y;
+            if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                shift_rects(node, dx, dy);
+            }
+            self.layout_depth.set(depth);
+            return node.margin_rect.h;
+        }
+
         self.layout_depth.set(depth + 1);
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
