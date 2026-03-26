@@ -662,11 +662,152 @@ fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssVa
             }
         }
 
+        // ── Keyword properties ──
+        Display => if let Some(d) = parse_display_keyword(v) { return CssValue::Display(d); },
+        Position => if let Some(p) = parse_position_keyword(v) { return CssValue::Position(p); },
+        Float => if let Some(f) = parse_float_keyword(v) { return CssValue::Float(f); },
+        Clear => if let Some(c) = parse_clear_keyword(v) { return CssValue::Clear(c); },
+        BoxSizing => if let Some(b) = parse_box_sizing_keyword(v) { return CssValue::BoxSizing(b); },
+        OverflowX | OverflowY => if let Some(o) = parse_overflow_keyword(v) { return CssValue::Overflow(o); },
+        Visibility => match v {
+            "visible" => return CssValue::Visible(true),
+            "hidden" => return CssValue::Visible(false),
+            "collapse" => return CssValue::Visible(false),
+            _ => {}
+        },
+        TextAlign => if let Some(a) = parse_text_align_keyword(v) { return CssValue::TextAlign(a); },
+        TextTransform => match v {
+            "none" => return CssValue::TextTransform(crate::types::TextTransform::None),
+            "uppercase" => return CssValue::TextTransform(crate::types::TextTransform::Uppercase),
+            "lowercase" => return CssValue::TextTransform(crate::types::TextTransform::Lowercase),
+            "capitalize" => return CssValue::TextTransform(crate::types::TextTransform::Capitalize),
+            _ => {}
+        },
+        WhiteSpace => if let Some(w) = parse_white_space_keyword(v) { return CssValue::WhiteSpace(w); },
+        FontWeight => if let Some(w) = parse_font_weight_keyword(v) { return CssValue::FontWeight(w); },
+        FontStyle => match v {
+            "normal" => return CssValue::FontStyle(crate::types::FontStyle::Normal),
+            "italic" => return CssValue::FontStyle(crate::types::FontStyle::Italic),
+            "oblique" => return CssValue::FontStyle(crate::types::FontStyle::Oblique),
+            _ => {}
+        },
+        FlexDirection => match v {
+            "row" => return CssValue::FlexDirection(crate::types::FlexDirection::Row),
+            "row-reverse" => return CssValue::FlexDirection(crate::types::FlexDirection::RowReverse),
+            "column" => return CssValue::FlexDirection(crate::types::FlexDirection::Column),
+            "column-reverse" => return CssValue::FlexDirection(crate::types::FlexDirection::ColumnReverse),
+            _ => {}
+        },
+        FlexWrap => match v {
+            "nowrap" => return CssValue::FlexWrap(crate::types::FlexWrap::Nowrap),
+            "wrap" => return CssValue::FlexWrap(crate::types::FlexWrap::Wrap),
+            "wrap-reverse" => return CssValue::FlexWrap(crate::types::FlexWrap::WrapReverse),
+            _ => {}
+        },
+        AlignItems => if let Some(a) = parse_align_items_keyword(v) { return CssValue::AlignItems(a); },
+        JustifyContent => if let Some(j) = parse_justify_content_keyword(v) { return CssValue::JustifyContent(j); },
+        BorderTopStyle | BorderRightStyle | BorderBottomStyle | BorderLeftStyle => {
+            if let Some(bs) = parse_border_style_value(v) { return CssValue::BorderStyle(bs); }
+        },
+        VerticalAlign => if let Some(va) = parse_vertical_align_keyword(v) { return CssValue::VerticalAlign(va); },
+        WordBreak => match v {
+            "normal" => return CssValue::WordBreak(crate::types::WordBreak::Normal),
+            "break-all" => return CssValue::WordBreak(crate::types::WordBreak::BreakAll),
+            "keep-all" => return CssValue::WordBreak(crate::types::WordBreak::KeepAll),
+            "break-word" => return CssValue::WordBreak(crate::types::WordBreak::BreakWord),
+            _ => {}
+        },
+
         _ => {}
     }
 
     // Fallback: keep as raw string
     CssValue::Raw(val.to_string())
+}
+
+// ── Keyword parsers for pre_parse_value ──────────────────────────────────────
+
+fn parse_display_keyword(v: &str) -> Option<crate::types::Display> {
+    use crate::types::Display::*;
+    Some(match v {
+        "none" => None, "block" => Block, "inline" => Inline, "inline-block" => InlineBlock,
+        "flex" => Flex, "inline-flex" => InlineFlex, "grid" => Grid, "inline-grid" => InlineGrid,
+        "table" => Table, "table-row" => TableRow, "table-cell" => TableCell,
+        "table-row-group" => TableRowGroup, "table-header-group" => TableHeaderGroup,
+        "table-footer-group" => TableFooterGroup, "table-column" => TableColumn,
+        "table-column-group" => TableColumnGroup, "table-caption" => TableCaption,
+        "list-item" => ListItem, "ruby" => Ruby, "ruby-text" => RubyText,
+        _ => return Option::None,
+    })
+}
+
+fn parse_position_keyword(v: &str) -> Option<crate::types::Position> {
+    use crate::types::Position::*;
+    Some(match v {
+        "static" => Static, "relative" => Relative, "absolute" => Absolute,
+        "fixed" => Fixed, "sticky" => Sticky,
+        _ => return Option::None,
+    })
+}
+
+fn parse_float_keyword(v: &str) -> Option<crate::types::Float> {
+    use crate::types::Float::*;
+    Some(match v { "none" => None, "left" => Left, "right" => Right, _ => return Option::None })
+}
+
+fn parse_clear_keyword(v: &str) -> Option<crate::types::Clear> {
+    use crate::types::Clear::*;
+    Some(match v { "none" => None, "left" => Left, "right" => Right, "both" => Both, _ => return Option::None })
+}
+
+fn parse_box_sizing_keyword(v: &str) -> Option<crate::types::BoxSizing> {
+    Some(match v { "content-box" => crate::types::BoxSizing::ContentBox, "border-box" => crate::types::BoxSizing::BorderBox, _ => return None })
+}
+
+fn parse_overflow_keyword(v: &str) -> Option<crate::types::Overflow> {
+    use crate::types::Overflow::*;
+    Some(match v { "visible" => Visible, "hidden" => Hidden, "scroll" => Scroll, "auto" => Auto, _ => return Option::None })
+}
+
+fn parse_text_align_keyword(v: &str) -> Option<crate::types::TextAlign> {
+    use crate::types::TextAlign::*;
+    Some(match v { "left" => Left, "right" => Right, "center" => Center, "justify" => Justify, "start" => Start, "end" => End, _ => return Option::None })
+}
+
+fn parse_white_space_keyword(v: &str) -> Option<crate::types::WhiteSpace> {
+    use crate::types::WhiteSpace::*;
+    Some(match v { "normal" => Normal, "nowrap" => Nowrap, "pre" => Pre, "pre-wrap" => PreWrap, "pre-line" => PreLine, _ => return Option::None })
+}
+
+fn parse_font_weight_keyword(v: &str) -> Option<crate::types::FontWeight> {
+    use crate::types::FontWeight;
+    Some(match v {
+        "normal" => FontWeight::Normal, "bold" => FontWeight::Bold,
+        "lighter" => FontWeight::Value(100), "bolder" => FontWeight::Value(700),
+        _ => {
+            if let Ok(n) = v.parse::<u16>() { FontWeight::Value(n) } else { return None }
+        }
+    })
+}
+
+fn parse_align_items_keyword(v: &str) -> Option<crate::types::AlignItems> {
+    use crate::types::AlignItems::*;
+    Some(match v { "stretch" => Stretch, "flex-start" | "start" => FlexStart, "flex-end" | "end" => FlexEnd, "center" => Center, "baseline" => Baseline, _ => return Option::None })
+}
+
+fn parse_justify_content_keyword(v: &str) -> Option<crate::types::JustifyContent> {
+    use crate::types::JustifyContent::*;
+    Some(match v { "flex-start" | "start" => FlexStart, "flex-end" | "end" => FlexEnd, "center" => Center, "space-between" => SpaceBetween, "space-around" => SpaceAround, "space-evenly" => SpaceEvenly, _ => return Option::None })
+}
+
+fn parse_border_style_value(v: &str) -> Option<crate::types::BorderStyleValue> {
+    use crate::types::BorderStyleValue as BSV;
+    Some(match v { "none" => BSV::None, "hidden" => BSV::Hidden, "solid" => BSV::Solid, "dashed" => BSV::Dashed, "dotted" => BSV::Dotted, "double" => BSV::Double, "groove" => BSV::Groove, "ridge" => BSV::Ridge, "inset" => BSV::Inset, "outset" => BSV::Outset, _ => return Option::None })
+}
+
+fn parse_vertical_align_keyword(v: &str) -> Option<crate::types::VerticalAlign> {
+    use crate::types::VerticalAlign::*;
+    Some(match v { "baseline" => Baseline, "top" => Top, "middle" => Middle, "bottom" => Bottom, "text-top" => TextTop, "text-bottom" => TextBottom, "sub" => Sub, "super" => Super, _ => return Option::None })
 }
 
 /// Try to parse a CSS length value. Returns None for values that aren't pure lengths.
@@ -2293,7 +2434,6 @@ pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, va
         CssValue::Inherit | CssValue::Initial | CssValue::Unset => return,
         CssValue::Length(l) => {
             if apply_length_value(style, id, l) { return; }
-            // Unhandled property — serialize back to string and use string path
         }
         CssValue::Color(c) => {
             if apply_color_value(style, id, c) { return; }
@@ -2304,6 +2444,40 @@ pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, va
         CssValue::Integer(n) => {
             if apply_integer_value(style, id, *n) { return; }
         }
+        // ── Keyword values — direct assignment, no parsing ──
+        CssValue::Display(d) => { style.display = *d; return; }
+        CssValue::Position(p) => { style.position = *p; return; }
+        CssValue::Float(f) => { style.float = *f; return; }
+        CssValue::Clear(c) => { style.clear = *c; return; }
+        CssValue::BoxSizing(b) => { style.box_sizing = *b; return; }
+        CssValue::Overflow(o) => {
+            use properties::PropertyId::*;
+            match id { OverflowX => style.overflow_x = *o, OverflowY => style.overflow_y = *o, _ => { style.overflow_x = *o; style.overflow_y = *o; } }
+            return;
+        }
+        CssValue::Visible(v) => { style.visibility = *v; return; }
+        CssValue::TextAlign(a) => { style.text_align = *a; return; }
+        CssValue::TextTransform(t) => { style.text_transform = *t; return; }
+        CssValue::WhiteSpace(w) => { style.white_space = *w; return; }
+        CssValue::FontWeight(w) => { style.font_weight = *w; return; }
+        CssValue::FontStyle(s) => { style.font_style = *s; return; }
+        CssValue::FlexDirection(d) => { style.flex_direction = *d; return; }
+        CssValue::FlexWrap(w) => { style.flex_wrap = *w; return; }
+        CssValue::AlignItems(a) => { style.align_items = *a; return; }
+        CssValue::AlignSelf(a) => { style.align_self = *a; return; }
+        CssValue::AlignContent(a) => { style.align_content = *a; return; }
+        CssValue::JustifyContent(j) => { style.justify_content = *j; return; }
+        CssValue::ListStyleType(l) => { style.list_style_type = *l; return; }
+        CssValue::ListStylePosition(l) => { style.list_style_position = *l; return; }
+        CssValue::WordBreak(w) => { style.word_break = *w; return; }
+        CssValue::BorderStyle(bs) => {
+            use crate::types::BorderStyleValue as BSV;
+            let s = match bs { BSV::None => crate::types::BorderStyle::None, BSV::Hidden => crate::types::BorderStyle::Hidden, BSV::Solid => crate::types::BorderStyle::Solid, BSV::Dashed => crate::types::BorderStyle::Dashed, BSV::Dotted => crate::types::BorderStyle::Dotted, BSV::Double => crate::types::BorderStyle::Double, BSV::Groove => crate::types::BorderStyle::Groove, BSV::Ridge => crate::types::BorderStyle::Ridge, BSV::Inset => crate::types::BorderStyle::Inset, BSV::Outset => crate::types::BorderStyle::Outset };
+            use properties::PropertyId::*;
+            match id { BorderTopStyle => style.border_top_style = s, BorderRightStyle => style.border_right_style = s, BorderBottomStyle => style.border_bottom_style = s, BorderLeftStyle => style.border_left_style = s, _ => {} }
+            return;
+        }
+        CssValue::VerticalAlign(v) => { style.vertical_align = *v; return; }
         CssValue::Raw(s) => {
             apply_property_by_id_str(style, id, s);
             return;

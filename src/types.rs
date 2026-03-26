@@ -86,6 +86,31 @@ pub enum CssValue {
     Number(f32),
     /// An integer value (z-index, order, column-count, etc.)
     Integer(i32),
+    /// Pre-parsed keyword enums — avoids string matching during cascade.
+    Display(Display),
+    Position(Position),
+    Float(Float),
+    Clear(Clear),
+    BoxSizing(BoxSizing),
+    Overflow(Overflow),
+    /// visibility: true=visible, false=hidden
+    Visible(bool),
+    TextAlign(TextAlign),
+    TextTransform(TextTransform),
+    WhiteSpace(WhiteSpace),
+    FontWeight(FontWeight),
+    FontStyle(FontStyle),
+    FlexDirection(FlexDirection),
+    FlexWrap(FlexWrap),
+    AlignItems(AlignItems),
+    AlignSelf(AlignSelf),
+    AlignContent(AlignContent),
+    JustifyContent(JustifyContent),
+    ListStyleType(ListStyleType),
+    ListStylePosition(ListStylePosition),
+    WordBreak(WordBreak),
+    BorderStyle(BorderStyleValue),
+    VerticalAlign(VerticalAlign),
     /// Global CSS keyword.
     Inherit,
     Initial,
@@ -93,6 +118,12 @@ pub enum CssValue {
     /// Unparsed string — fallback for complex values, var() references,
     /// and properties that haven't been converted to typed form yet.
     Raw(String),
+}
+
+/// Border-style single value (not the shorthand).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderStyleValue {
+    None, Hidden, Solid, Dashed, Dotted, Double, Groove, Ridge, Inset, Outset,
 }
 
 impl CssValue {
