@@ -2,7 +2,17 @@ pub mod properties;
 pub mod property_defs;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
 use rayon::prelude::*;
+
+/// Global counter for allocating unique node_ids for pseudo-elements and
+/// dynamically created nodes during cascade (where Document isn't accessible).
+/// Starts at a high value to avoid colliding with parser-assigned IDs.
+static PSEUDO_NODE_ID: AtomicU32 = AtomicU32::new(1_000_000);
+
+fn alloc_pseudo_node_id() -> u32 {
+    PSEUDO_NODE_ID.fetch_add(1, Ordering::Relaxed)
+}
 use crate::types::*;
 
 // ─── CSS Rule & Selector ─────────────────────────────────────────────────────
@@ -1974,10 +1984,10 @@ fn strip_quotes(s: &str) -> String {
 /// on top of the cascaded computed styles.
 pub fn apply_animation_overrides(
     node:      &mut HtmlBox,
-    overrides: &HashMap<usize, Vec<(String, String)>>,
+    overrides: &HashMap<u32, Vec<(String, String)>>,
 ) {
-    let ptr = node as *const HtmlBox as usize;
-    if let Some(props) = overrides.get(&ptr) {
+    let id = node.node_id;
+    if let Some(props) = overrides.get(&id) {
         for (prop, val) in props {
             apply_property(&mut node.style, prop, val);
         }

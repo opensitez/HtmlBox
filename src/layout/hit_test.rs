@@ -267,6 +267,8 @@ pub fn get_offset_from_x(
 pub struct HitResult {
     /// Raw pointer to the hit box (valid while the Document is unmodified).
     pub box_ptr:      *const HtmlBox,
+    /// Stable node identity (survives tree mutations).
+    pub node_id:      u32,
     /// Byte offset within that box's flat text.
     pub local_offset: usize,
 }
@@ -311,7 +313,7 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
                 let b = &child.border_rect;
                 if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
                     if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-                    return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
+                    return Some(HitResult { box_ptr: child as *const HtmlBox, node_id: child.node_id, local_offset: 0 });
                 }
             }
         }
@@ -332,7 +334,7 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-            return Some(HitResult { box_ptr: child as *const HtmlBox, local_offset: 0 });
+            return Some(HitResult { box_ptr: child as *const HtmlBox, node_id: child.node_id, local_offset: 0 });
         }
     }
 
@@ -367,9 +369,9 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
             let flat = collect_flat_text(node);
             let line = snap_to_line(&node.line_cache, py);
             let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
-            return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: off });
+            return Some(HitResult { box_ptr: node as *const HtmlBox, node_id: node.node_id, local_offset: off });
         }
-        return Some(HitResult { box_ptr: node as *const HtmlBox, local_offset: 0 });
+        return Some(HitResult { box_ptr: node as *const HtmlBox, node_id: node.node_id, local_offset: 0 });
     }
 
     None

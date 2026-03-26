@@ -43,10 +43,10 @@ pub struct Renderer {
     /// Logical viewport height (layout pixels) — kept in sync by `render()` so
     /// that `vh` units and `flex-stretch` heights work on every repaint.
     viewport_h: f32,
-    /// Element IDs (HtmlBox pointer as usize) that currently have active transitions
+    /// Element IDs (node_id) that currently have active transitions
     /// or animation overrides. When set, the renderer uses node.style (already has
     /// the interpolated values applied) rather than hover_style for these elements.
-    transitioning_ids: std::collections::HashSet<usize>,
+    transitioning_ids: std::collections::HashSet<u32>,
     /// Focused element node_id — set during render() for form element caret drawing.
     focused_id: u32,
     /// Hovered dropdown option index (-1 = none).
@@ -86,7 +86,7 @@ impl Renderer {
             touch_centroid:  None,
             cursor_physical: (0.0, 0.0),
             viewport_h: 700.0,
-            transitioning_ids: std::collections::HashSet::new(),
+            transitioning_ids: std::collections::HashSet::<u32>::new(),
             focused_id: 0,
             dropdown_hover_idx: -1,
             content_offset_y: 0.0,
@@ -616,8 +616,7 @@ impl Renderer {
         // it OR any of its descendants, so we check the whole subtree.
         // If a transition is running, node.style already has the interpolated values
         // applied via animation_overrides — skip hover_style so the transition shows.
-        let elem_usize_id = node as *const HtmlBox as usize;
-        let has_transition = self.transitioning_ids.contains(&elem_usize_id);
+        let has_transition = self.transitioning_ids.contains(&node.node_id);
         let is_hovered = !has_transition
             && hovered_id != 0
             && node.style.hover_style.is_some()

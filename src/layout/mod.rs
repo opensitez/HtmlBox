@@ -295,9 +295,6 @@ impl FloatContext {
 
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
-/// Skips subtrees where `has_dirty_descendant` is false and the node itself
-/// is not dirty, making this O(dirty_path) instead of O(all_nodes) after
-/// incremental cascade.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
     let mut child_dirty = false;
     node.cached_intrinsic_w.set(f32::NAN);
@@ -1054,7 +1051,9 @@ impl LayoutEngine {
             && node.last_containing_width > 0.0
             && (node.last_containing_width - containing_w).abs() < 0.5
             && node.margin_rect.w > 0.0
-            && fc.is_none()  // can't skip when float context is shared
+            && node.margin_rect.h > 0.0
+            && fc.is_none()
+            && !matches!(node.style.display, Display::None | Display::Contents)
         {
             let dx = x - node.margin_rect.x;
             let dy = y - node.margin_rect.y;
@@ -1187,6 +1186,7 @@ impl LayoutEngine {
                     shift_rects(node, dx, dy);
                 }
                 node.layout_dirty = false;
+                node.last_containing_width = containing_w;
                 return node.margin_rect.h;
             }
         }
@@ -1268,6 +1268,7 @@ impl LayoutEngine {
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);
         node.layout_dirty = false;
+        node.last_containing_width = containing_w;
         h
     }
 

@@ -66,8 +66,12 @@ pub struct HtmlEvent {
     pub event_type:  HtmlEventType,
     /// Deepest box hit (valid only during dispatch).
     pub target:          *const HtmlBox,
+    /// Stable node_id of the target element.
+    pub target_id:       u32,
     /// Box the current listener is registered on.
     pub current_target:  *const HtmlBox,
+    /// Stable node_id of the current target.
+    pub current_target_id: u32,
     /// Root of the document tree (valid only during dispatch).
     pub root:        *const HtmlBox,
     /// Position in window coordinates.
@@ -97,7 +101,9 @@ impl HtmlEvent {
         Self {
             event_type,
             target:          std::ptr::null(),
+            target_id:       0,
             current_target:  std::ptr::null(),
+            current_target_id: 0,
             root:            std::ptr::null(),
             client_pos:      (0.0, 0.0),
             doc_pos:         (0.0, 0.0),
@@ -242,6 +248,7 @@ impl EventListeners {
             for &box_ptr in path.iter().rev() {
                 let b = unsafe { &*box_ptr };
                 evt.current_target = box_ptr;
+                evt.current_target_id = b.node_id;
                 for entry in &inner.entries {
                     if entry.event_type != evt.event_type { continue; }
                     if !matches_simple_selector(b, &entry.selector) { continue; }
@@ -285,6 +292,7 @@ impl EventListeners {
             for &box_ptr in path.iter().rev() {
                 let b = unsafe { &*box_ptr };
                 evt.current_target = box_ptr;
+                evt.current_target_id = b.node_id;
                 for entry in &inner.entries {
                     if entry.event_type != evt.event_type { continue; }
                     if !matches_simple_selector(b, &entry.selector) { continue; }
@@ -314,10 +322,33 @@ impl EventListeners {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Build path `[root, ..., parent, target]` from root down to `target`.
+/// Uses node_id when available (stable identity), falls back to pointer comparison.
 fn find_ancestor_path(root: &HtmlBox, target: *const HtmlBox) -> Vec<*const HtmlBox> {
     let mut path = Vec::new();
-    collect_path(root, target, &mut path);
+    // Try node_id path first (stable, doesn't depend on pointer validity)
+    let target_id = if !target.is_null() {
+        unsafe { (*target).node_id }
+    } else { 0 };
+    if target_id != 0 {
+        collect_path_by_id(root, target_id, &mut path);
+    } else {
+        collect_path(root, target, &mut path);
+    }
     path
+}
+
+fn collect_path_by_id(
+    node:      &HtmlBox,
+    target_id: u32,
+    path:      &mut Vec<*const HtmlBox>,
+) -> bool {
+    path.push(node as *const HtmlBox);
+    if node.node_id == target_id { return true; }
+    for child in &node.children {
+        if collect_path_by_id(child, target_id, path) { return true; }
+    }
+    path.pop();
+    false
 }
 
 fn collect_path(
@@ -632,6 +663,15 @@ pub fn remove_child(parent: &mut HtmlBox, target: *const HtmlBox) -> Option<Html
     if let Some(idx) = parent.children.iter()
         .position(|c| std::ptr::eq(c as *const HtmlBox, target))
     {
+        Some(parent.children.remove(idx))
+    } else {
+        None
+    }
+}
+
+/// Remove the child identified by node_id from `parent`, returning it.
+pub fn remove_child_by_id(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
+    if let Some(idx) = parent.children.iter().position(|c| c.node_id == node_id) {
         Some(parent.children.remove(idx))
     } else {
         None

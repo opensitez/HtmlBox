@@ -1612,9 +1612,11 @@ pub struct MatchedRule {
 
 impl HtmlBox {
     pub fn new(tag: impl Into<String>) -> Self {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT_ID: AtomicU32 = AtomicU32::new(500_000);
         Self {
             tag: tag.into(),
-            node_id: 0,
+            node_id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             style: ComputedStyle::default(),
             attributes: HashMap::new(),
             text: String::new(),
@@ -1887,7 +1889,7 @@ pub struct ParsedTransition {
 #[derive(Clone, Debug)]
 pub struct AnimState {
     /// The HtmlBox raw pointer, stored as `usize` for Hash/Eq.
-    pub element_id: usize,
+    pub element_id: u32,
     pub animation:  ParsedAnimation,
     pub start_time: std::time::Instant,
 }
@@ -2006,16 +2008,16 @@ pub struct Document {
     /// All currently running CSS animations (one entry per animation per element).
     pub active_animations: Vec<AnimState>,
     /// Per-element active transitions, keyed by HtmlBox pointer (as usize).
-    pub(crate) transition_states: HashMap<usize, Vec<TransitionState>>,
+    pub(crate) transition_states: HashMap<u32, Vec<TransitionState>>,
     /// Previous transitionable style values per element, for change detection.
-    pub(crate) prev_styles: HashMap<usize, HashMap<String, String>>,
+    pub(crate) prev_styles: HashMap<u32, HashMap<String, String>>,
     /// Clean cascade-time style snapshot, keyed by element pointer.
     /// Populated when the cascade runs; never mutated by animation overrides.
     /// Used by sync_transitions so hover-out correctly reads the base (not overridden) values.
-    pub(crate) cascade_styles: HashMap<usize, HashMap<String, String>>,
+    pub(crate) cascade_styles: HashMap<u32, HashMap<String, String>>,
     /// Interpolated CSS property overrides produced by `tick_animations`.
     /// Applied on top of the cascade result before geometry runs.
-    pub(crate) animation_overrides: HashMap<usize, Vec<(String, String)>>,
+    pub(crate) animation_overrides: HashMap<u32, Vec<(String, String)>>,
     /// Set by `tick_animations`; tells the host to request another render frame.
     pub needs_animation_frame: bool,
     /// Set when `hovered_box` changes; cleared by `layout()` after running `sync_transitions`.
@@ -2030,7 +2032,7 @@ pub struct Document {
     pub pending_announcements: Vec<Announcement>,
     /// Text-content snapshots for each aria-live region, keyed by HtmlBox pointer.
     /// Updated every layout pass to detect content changes.
-    pub(crate) live_region_snapshots: HashMap<usize, String>,
+    pub(crate) live_region_snapshots: HashMap<u32, String>,
     /// `false` until the first `check_live_regions()` call.
     /// On the very first pass, only assertive regions announce their initial content;
     /// polite regions are silently initialised so they don't flood the user on load.
@@ -2196,18 +2198,12 @@ impl Document {
         evt.button     = button;
         let hit_result = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button);
         let hit_ptr: *const HtmlBox = hit_result.as_ref().map(|h| h.box_ptr).unwrap_or(std::ptr::null());
-        // Extract node_id from hit box. If the hit box has node_id=0 (e.g. a text node
-        // created by post_process_node or a ::before pseudo), walk up to find the
-        // nearest parent with a valid node_id.
-        let mut hit_node_id: u32 = if hit_ptr.is_null() {
-            0
-        } else {
-            let hit = unsafe { &*hit_ptr };
-            if hit.node_id != 0 {
-                hit.node_id
-            } else {
-                find_parent_node_id(&self.root, hit_ptr)
-            }
+        // Use the pre-computed node_id from HitResult. If it's 0 (text node or
+        // pseudo-element), walk up to find the nearest parent with a valid node_id.
+        let mut hit_node_id: u32 = match hit_result.as_ref() {
+            Some(hr) if hr.node_id != 0 => hr.node_id,
+            Some(_) => find_parent_node_id(&self.root, hit_ptr),
+            None => 0,
         };
         // For inline links: check if the hit point is inside an inline run
         // with an href. If so, find the ancestor <a> element for hover styling.
@@ -2228,6 +2224,7 @@ impl Document {
             }
         }
         evt.target = hit_ptr;
+        evt.target_id = hit_node_id;
 
         let mut redraw = false;
         match etype {
@@ -2799,7 +2796,7 @@ impl Document {
 
         fn walk(
             node:         &HtmlBox,
-            snapshots:    &mut HashMap<usize, String>,
+            snapshots:    &mut HashMap<u32, String>,
             out:          &mut Vec<Announcement>,
             initialized:  bool,
         ) {
@@ -2814,7 +2811,7 @@ impl Document {
                 let busy = node.attributes.get("aria-busy")
                     .map(|v| v == "true").unwrap_or(false);
                 if !busy {
-                    let ptr   = node as *const HtmlBox as usize;
+                    let ptr   = node.node_id;
                     let text  = collect_live_text(node);
                     let atomic = node.attributes.get("aria-atomic")
                         .map(|v| v == "true").unwrap_or(false);
@@ -2866,9 +2863,9 @@ impl Document {
     /// Walk the tree and ensure an `AnimState` exists for every element that
     /// currently has an `animation` property.  Call this after each cascade pass.
     pub fn sync_animations(&mut self, now: std::time::Instant) {
-        let mut current: Vec<(usize, ParsedAnimation)> = Vec::new();
-        fn collect(node: &HtmlBox, out: &mut Vec<(usize, ParsedAnimation)>) {
-            let id = node as *const HtmlBox as usize;
+        let mut current: Vec<(u32, ParsedAnimation)> = Vec::new();
+        fn collect(node: &HtmlBox, out: &mut Vec<(u32, ParsedAnimation)>) {
+            let id = node.node_id;
             for a in &node.style.animations {
                 out.push((id, a.clone()));
             }
@@ -2901,15 +2898,15 @@ impl Document {
     /// so animation-overridden node.style values don't pollute change detection.
     pub fn sync_transitions(&mut self, now: std::time::Instant, cascade_ran: bool) {
         let hovered = self.hovered_box;
-        let mut current: Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
+        let mut current: Vec<(u32, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
         fn collect(
             node: &HtmlBox,
             hovered: u32,
             cascade_ran: bool,
-            cascade_styles: &HashMap<usize, HashMap<String, String>>,
-            out: &mut Vec<(usize, Vec<ParsedTransition>, HashMap<String, String>)>,
+            cascade_styles: &HashMap<u32, HashMap<String, String>>,
+            out: &mut Vec<(u32, Vec<ParsedTransition>, HashMap<String, String>)>,
         ) {
-            let id = node as *const HtmlBox as usize;
+            let id = node.node_id;
             if !node.style.transitions.is_empty() {
                 // Base values: use the clean cascade snapshot when available, so that
                 // animation_overrides applied to node.style don't corrupt detection.
@@ -2938,9 +2935,9 @@ impl Document {
 
         // When cascade ran, save the clean base styles for hover-only frames.
         if cascade_ran {
-            fn snapshot(node: &HtmlBox, out: &mut HashMap<usize, HashMap<String, String>>) {
+            fn snapshot(node: &HtmlBox, out: &mut HashMap<u32, HashMap<String, String>>) {
                 if !node.style.transitions.is_empty() {
-                    out.insert(node as *const HtmlBox as usize, extract_transitionable(node));
+                    out.insert(node.node_id, extract_transitionable(node));
                 }
                 for child in &node.children { snapshot(child, out); }
             }
@@ -3067,7 +3064,7 @@ impl Document {
         for idx in done.into_iter().rev() { self.active_animations.remove(idx); }
 
         // ── CSS Transitions ──────────────────────────────────────────────────
-        let mut empty_elems: Vec<usize> = Vec::new();
+        let mut empty_elems: Vec<u32> = Vec::new();
         for (elem_id, trs) in &mut self.transition_states {
             let mut done_trs: Vec<usize> = Vec::new();
             for (i, tr) in trs.iter().enumerate() {
@@ -3108,6 +3105,20 @@ impl Document {
         for eid in empty_elems { self.transition_states.remove(&eid); }
 
         self.needs_animation_frame = still_running;
+
+        // Mark all elements with active overrides as layout_dirty so the
+        // layout cache doesn't return stale geometry for animated elements.
+        if !self.animation_overrides.is_empty() {
+            fn mark_dirty(node: &mut HtmlBox, ids: &HashMap<u32, Vec<(String, String)>>) {
+                if ids.contains_key(&node.node_id) {
+                    node.layout_dirty = true;
+                }
+                for child in &mut node.children {
+                    mark_dirty(child, ids);
+                }
+            }
+            mark_dirty(&mut self.root, &self.animation_overrides);
+        }
     }
 
     /// Handle a mouse event for scrollbars (click, drag, release).
