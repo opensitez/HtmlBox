@@ -49,6 +49,15 @@ pub struct Renderer {
     transitioning_ids: std::collections::HashSet<u32>,
     /// Focused element node_id — set during render() for form element caret drawing.
     focused_id: u32,
+    /// Cached display list — rebuilt only when content changes.
+    cached_display_list: Option<display_list::DisplayList>,
+    /// Scroll position when the display list was last built.
+    cached_scroll_x: f32,
+    cached_scroll_y: f32,
+    /// Hovered element when the display list was last built.
+    cached_hovered_id: u32,
+    /// Whether the display list cache is valid.
+    display_list_dirty: bool,
     /// Hovered dropdown option index (-1 = none).
     dropdown_hover_idx: i32,
     /// Vertical offset for content area (e.g. browser chrome height).
@@ -88,11 +97,21 @@ impl Renderer {
             viewport_h: 700.0,
             transitioning_ids: std::collections::HashSet::<u32>::new(),
             focused_id: 0,
+            cached_display_list: None,
+            cached_scroll_x: 0.0,
+            cached_scroll_y: 0.0,
+            cached_hovered_id: 0,
+            display_list_dirty: true,
             dropdown_hover_idx: -1,
             content_offset_y: 0.0,
             caret_epoch: std::time::Instant::now(),
             deferred_z: Vec::new(),
         }
+    }
+
+    /// Mark the display list cache as stale. Call after layout or DOM mutation.
+    pub fn invalidate_display_list(&mut self) {
+        self.display_list_dirty = true;
     }
 
     /// Handle a winit `WindowEvent` for built-in zoom and pan.
@@ -494,19 +513,35 @@ impl Renderer {
             .unwrap_or(tiny_skia::Color::WHITE);
         pixmap.fill(canvas_color);
 
-        // Build display list with exact layout positions
-        let list = display_list_builder::build_display_list_full(
-            &doc.root, view_w, view_h,
-            doc.scroll_x, doc.scroll_y,
-            doc.hovered_box, doc.active_box,
-            &doc.visited_urls,
-        );
+        // Build or reuse cached display list.
+        // Rebuild when: content changed, hover changed, or scroll position changed.
+        let needs_rebuild = self.display_list_dirty
+            || self.cached_display_list.is_none()
+            || doc.hovered_box != self.cached_hovered_id
+            || (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
+            || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
+
+        if needs_rebuild {
+            let list = display_list_builder::build_display_list_full(
+                &doc.root, view_w, view_h,
+                doc.scroll_x, doc.scroll_y,
+                doc.hovered_box, doc.active_box,
+                &doc.visited_urls,
+            );
+            self.cached_display_list = Some(list);
+            self.cached_scroll_x = doc.scroll_x;
+            self.cached_scroll_y = doc.scroll_y;
+            self.cached_hovered_id = doc.hovered_box;
+            self.display_list_dirty = false;
+        }
 
         // Replay display list to pixmap with text rendering
-        display_list_replay::replay_with_text(
-            &list, pixmap, scale * zoom,
-            &mut self.font_system, &mut self.swash_cache,
-        );
+        if let Some(ref list) = self.cached_display_list {
+            display_list_replay::replay_with_text(
+                list, pixmap, scale * zoom,
+                &mut self.font_system, &mut self.swash_cache,
+            );
+        }
 
         // ── UI overlays (not part of display list) ───────────────────────────
 

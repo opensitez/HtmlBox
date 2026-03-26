@@ -2841,10 +2841,34 @@ pub fn apply_font_shorthand(style: &mut ComputedStyle, v: &str) {
 
 // ─── Value Parsers ────────────────────────────────────────────────────────────
 
+/// Cache for parsed CSS length values — avoids re-parsing the same string
+/// (e.g. "100%" or "calc(100% - 21.5rem)") thousands of times during cascade.
+static LENGTH_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<String, CssLength>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
 pub fn parse_length(v: &str) -> CssLength {
     let v = v.trim();
     if v == "auto"       { return CssLength::Auto; }
     if v == "0"          { return CssLength::Zero; }
+    // Check cache for previously parsed values
+    if let Ok(cache) = LENGTH_CACHE.lock() {
+        if let Some(cached) = cache.get(v) {
+            return cached.clone();
+        }
+    }
+    let result = parse_length_inner(v);
+    // Cache the result (only for non-trivial values)
+    if v.len() > 4 {
+        if let Ok(mut cache) = LENGTH_CACHE.lock() {
+            if cache.len() < 50000 {
+                cache.insert(v.to_string(), result.clone());
+            }
+        }
+    }
+    result
+}
+
+fn parse_length_inner(v: &str) -> CssLength {
     if let Some(inner) = v.strip_prefix("calc(").and_then(|s| s.strip_suffix(')')) {
         return parse_calc(inner);
     }
