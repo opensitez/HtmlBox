@@ -2,17 +2,7 @@ pub mod properties;
 pub mod property_defs;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, Ordering};
 use rayon::prelude::*;
-
-/// Global counter for allocating unique node_ids for pseudo-elements and
-/// dynamically created nodes during cascade (where Document isn't accessible).
-/// Starts at a high value to avoid colliding with parser-assigned IDs.
-static PSEUDO_NODE_ID: AtomicU32 = AtomicU32::new(1_000_000);
-
-fn alloc_pseudo_node_id() -> u32 {
-    PSEUDO_NODE_ID.fetch_add(1, Ordering::Relaxed)
-}
 use crate::types::*;
 
 // ─── CSS Rule & Selector ─────────────────────────────────────────────────────
@@ -544,9 +534,9 @@ pub struct CssRule {
     /// Pre-resolved declarations: (PropertyId, value_string).
     /// Populated during `compile_declarations()`. Used by the cascade for
     /// fast enum dispatch instead of string matching.
-    pub compiled_decls:      Vec<(properties::PropertyId, String)>,
+    pub compiled_decls:      Vec<(properties::PropertyId, crate::types::CssValue)>,
     /// Pre-resolved important declarations.
-    pub compiled_important:  Vec<(properties::PropertyId, String)>,
+    pub compiled_important:  Vec<(properties::PropertyId, crate::types::CssValue)>,
     pub specificity:         u32,     // max of all selectors
     pub media_condition:     String,  // non-empty if inside @media
     pub container_condition: String,  // non-empty if inside @container
@@ -579,24 +569,178 @@ impl Default for CssRule {
 }
 
 impl CssRule {
-    /// Pre-compile declarations from HashMap<String,String> into Vec<(PropertyId, String)>.
-    /// Called during rebuild_index(). Shorthands are expanded into longhands.
+    /// Pre-compile declarations from HashMap<String,String> into Vec<(PropertyId, CssValue)>.
+    /// Called during rebuild_index(). Values are wrapped as CssValue::Raw for now;
+    /// Pre-compile declarations into typed CssValue where possible.
+    /// Lengths, colors, and numbers are parsed once here instead of on every cascade.
     pub fn compile_declarations(&mut self) {
+        
         self.compiled_decls.clear();
         for (prop, val) in &self.declarations {
             let id = properties::resolve(prop);
             if id == properties::PropertyId::Unknown { continue; }
-            self.compiled_decls.push((id, val.clone()));
+            self.compiled_decls.push((id, pre_parse_value(id, val)));
         }
         self.compiled_important.clear();
         for (prop, val) in &self.important_declarations {
             let id = properties::resolve(prop);
             if id == properties::PropertyId::Unknown { continue; }
-            self.compiled_important.push((id, val.clone()));
+            self.compiled_important.push((id, pre_parse_value(id, val)));
         }
-        // Pre-compute whether any declaration references var()
         self.has_var_refs = self.declarations.values().any(|v| v.contains("var("))
             || self.important_declarations.values().any(|v| v.contains("var("));
+    }
+}
+
+/// Try to pre-parse a CSS value into a typed CssValue at stylesheet compilation time.
+/// Falls back to CssValue::Raw for values that can't be pre-parsed (var(), complex shorthands, etc.)
+fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssValue {
+    use properties::PropertyId::*;
+    use crate::types::CssValue;
+    let v = val.trim();
+
+    // Skip var() references — must be resolved at cascade time
+    if v.contains("var(") { return CssValue::Raw(val.to_string()); }
+
+    // Skip shorthand properties — they need string-based expansion into longhands
+    if !property_defs::get(id).longhands.is_empty() {
+        return CssValue::Raw(val.to_string());
+    }
+
+    // Global keywords
+    match v {
+        "inherit" => return CssValue::Inherit,
+        "initial" | "revert" | "unset" | "revert-layer" => return CssValue::Initial,
+        _ => {}
+    }
+
+    // Try to parse based on property type
+    match id {
+        // ── Length properties ──
+        Width | Height | MinWidth | MinHeight | MaxWidth | MaxHeight |
+        MarginTop | MarginRight | MarginBottom | MarginLeft |
+        PaddingTop | PaddingRight | PaddingBottom | PaddingLeft |
+        BorderTopWidth | BorderRightWidth | BorderBottomWidth | BorderLeftWidth |
+        Top | Right | Bottom | Left |
+        FlexBasis | LineHeight | LetterSpacing | WordSpacing |
+        TextIndent | Gap | RowGap | ColumnGap |
+        TextDecorationThickness | TextUnderlineOffset |
+        InlineSize | BlockSize |
+        BorderTopLeftRadius | BorderTopRightRadius |
+        BorderBottomLeftRadius | BorderBottomRightRadius |
+        InsetBlockStart | InsetBlockEnd | InsetInlineStart | InsetInlineEnd => {
+            if let Some(l) = try_parse_length(v) {
+                return CssValue::Length(l);
+            }
+        }
+
+        // ── Color properties ──
+        Color | BackgroundColor |
+        BorderTopColor | BorderRightColor | BorderBottomColor | BorderLeftColor |
+        OutlineColor | CaretColor => {
+            if let Some(c) = try_parse_color(v) {
+                return CssValue::Color(c);
+            }
+        }
+
+        // ── Number properties ──
+        Opacity => {
+            if let Ok(n) = v.parse::<f32>() {
+                return CssValue::Number(n.clamp(0.0, 1.0));
+            }
+        }
+        FlexGrow | FlexShrink => {
+            if let Ok(n) = v.parse::<f32>() {
+                return CssValue::Number(n);
+            }
+        }
+
+        // ── Integer properties ──
+        ZIndex | Order => {
+            if let Ok(n) = v.parse::<i32>() {
+                return CssValue::Integer(n);
+            }
+        }
+
+        _ => {}
+    }
+
+    // Fallback: keep as raw string
+    CssValue::Raw(val.to_string())
+}
+
+/// Try to parse a CSS length value. Returns None for values that aren't pure lengths.
+fn try_parse_length(v: &str) -> Option<crate::types::CssLength> {
+    let v = v.trim();
+    if v == "auto" { return Some(crate::types::CssLength::Auto); }
+    if v == "none" { return Some(crate::types::CssLength::None); }
+    if v == "0" || v == "0px" { return Some(crate::types::CssLength::Zero); }
+    // Use the existing parse_length which handles px, em, rem, %, vw, vh, calc, min, max, clamp
+    let l = parse_length(v);
+    // parse_length returns Auto for unrecognized values — only accept if it parsed to something specific
+    match l {
+        crate::types::CssLength::Auto => {
+            // Only return Auto if the input was actually "auto"
+            if v == "auto" { Some(l) } else { None }
+        }
+        _ => Some(l),
+    }
+}
+
+/// Try to parse a CSS color value. Returns None for values that aren't colors.
+fn try_parse_color(v: &str) -> Option<crate::types::Color> {
+    let v = v.trim();
+    if v == "transparent" { return Some(crate::types::Color::TRANSPARENT); }
+    if v == "currentcolor" || v == "currentColor" { return None; } // needs cascade context
+    let c = match parse_color(v) { Some(c) => c, None => return None };
+    // parse_color succeeded — accept for hex, rgb, hsl
+    if v.starts_with('#') || v.starts_with("rgb") || v.starts_with("hsl") {
+        return Some(c);
+    }
+    // Named colors
+    if v == "black" { return Some(c); }
+    if c != crate::types::Color::BLACK {
+        return Some(c);
+    }
+    // Could also be a valid named color that happens to be black — check common names
+    let lower = v.to_ascii_lowercase();
+    match lower.as_str() {
+        "white" | "red" | "green" | "blue" | "yellow" | "cyan" | "magenta" |
+        "gray" | "grey" | "orange" | "purple" | "pink" | "brown" | "navy" |
+        "teal" | "olive" | "lime" | "aqua" | "fuchsia" | "silver" | "maroon" |
+        "darkred" | "darkgreen" | "darkblue" | "lightgray" | "lightgrey" |
+        "whitesmoke" | "gainsboro" | "ghostwhite" | "aliceblue" |
+        "indianred" | "lightcoral" | "salmon" | "darksalmon" | "lightsalmon" |
+        "crimson" | "firebrick" | "tomato" | "coral" | "orangered" |
+        "gold" | "khaki" | "darkkhaki" | "plum" | "violet" | "orchid" |
+        "thistle" | "lavender" | "steelblue" | "royalblue" | "cornflowerblue" |
+        "midnightblue" | "slateblue" | "darkslateblue" | "mediumslateblue" |
+        "darkgray" | "darkgrey" | "dimgray" | "dimgrey" | "lightslategray" |
+        "slategray" | "slategrey" => return Some(c),
+        _ => {}
+    }
+    None
+}
+
+/// Apply a CssValue to a style, resolving var() references for Raw values.
+/// Used in hover/active/visited cascade paths where var() resolution is needed.
+fn apply_css_value_with_vars(
+    style: &mut ComputedStyle,
+    id: properties::PropertyId,
+    val: &crate::types::CssValue,
+    local_vars: &std::collections::HashMap<String, String>,
+) {
+    use crate::types::CssValue;
+    match val {
+        CssValue::Raw(s) => {
+            let resolved = resolve_var_references(s, local_vars);
+            if resolved.trim().is_empty() && s.contains("var(") { return; }
+            apply_property_by_id_str(style, id, &resolved);
+        }
+        _ => {
+            // Typed value — apply directly, no var resolution needed
+            apply_css_value(style, id, val);
+        }
     }
 }
 
@@ -1213,11 +1357,6 @@ fn is_timing_fn(s: &str) -> bool {
 /// Collects from any rule block, since custom properties can be set on any element
 /// and are inherited. This matches the common patterns: `:root`, `html`, `html.class`,
 /// `body`, and element-level overrides.
-fn extract_root_variables(css: &str, vars: &mut HashMap<String, String>) {
-    let cleaned = strip_css_comments(css);
-    extract_root_variables_cleaned(&cleaned, vars);
-}
-
 fn extract_root_variables_cleaned(css: &str, vars: &mut HashMap<String, String>) {
     extract_root_variables_inner(css, vars);
 }
@@ -2146,16 +2285,135 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
     apply_property_by_id(style, id, value);
 }
 
-pub fn apply_property_by_id(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
+/// Apply a pre-parsed CssValue to a computed style. This is the primary cascade
+/// path — values are pre-parsed during stylesheet compilation.
+pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, value: &crate::types::CssValue) {
+    use crate::types::CssValue;
+    match value {
+        CssValue::Inherit | CssValue::Initial | CssValue::Unset => return,
+        CssValue::Length(l) => {
+            if apply_length_value(style, id, l) { return; }
+            // Unhandled property — serialize back to string and use string path
+        }
+        CssValue::Color(c) => {
+            if apply_color_value(style, id, c) { return; }
+        }
+        CssValue::Number(n) => {
+            if apply_number_value(style, id, *n) { return; }
+        }
+        CssValue::Integer(n) => {
+            if apply_integer_value(style, id, *n) { return; }
+        }
+        CssValue::Raw(s) => {
+            apply_property_by_id_str(style, id, s);
+            return;
+        }
+    }
+    // Fallback: typed value wasn't handled — serialize back to string
+    let s = match value {
+        CssValue::Length(l) => crate::html::serializer::serialize_length(l),
+        CssValue::Color(c) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
+        CssValue::Number(n) => format!("{}", n),
+        CssValue::Integer(n) => format!("{}", n),
+        _ => return,
+    };
+    apply_property_by_id_str(style, id, &s);
+}
+
+/// Apply a raw string value — used for var() resolution, inline styles,
+/// and properties that haven't been converted to typed CssValue yet.
+pub fn apply_property_by_id_str(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
     let v = value.trim();
-    // `inherit` means "use the parent's computed value". For inherited properties,
-    // `inherit_from` already copied the parent value before rules are applied, so
-    // skipping the application keeps the inherited value intact. For non-inherited
-    // properties this is also the safest default (avoids incorrect fallback).
     if v == "inherit" { return; }
-    // `initial` / `revert` / `unset` — treat as reset to default (skip for now, close enough).
     if matches!(v, "initial" | "revert" | "unset" | "revert-layer") { return; }
     (property_defs::get(id).apply)(style, v);
+}
+
+/// Backward-compat wrapper — accepts &str directly.
+pub fn apply_property_by_id(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
+    apply_property_by_id_str(style, id, value);
+}
+
+// ── Typed value application (fast paths for pre-parsed values) ────────────
+
+fn apply_length_value(style: &mut ComputedStyle, id: properties::PropertyId, l: &crate::types::CssLength) -> bool {
+    use properties::PropertyId::*;
+    match id {
+        Width => style.width = l.clone(),
+        Height => style.height = l.clone(),
+        MinWidth => style.min_width = l.clone(),
+        MinHeight => style.min_height = l.clone(),
+        MaxWidth => style.max_width = l.clone(),
+        MaxHeight => style.max_height = l.clone(),
+        MarginTop => style.margin_top = l.clone(),
+        MarginRight => style.margin_right = l.clone(),
+        MarginBottom => style.margin_bottom = l.clone(),
+        MarginLeft => style.margin_left = l.clone(),
+        PaddingTop => style.padding_top = l.clone(),
+        PaddingRight => style.padding_right = l.clone(),
+        PaddingBottom => style.padding_bottom = l.clone(),
+        PaddingLeft => style.padding_left = l.clone(),
+        BorderTopWidth => style.border_top_width = l.clone(),
+        BorderRightWidth => style.border_right_width = l.clone(),
+        BorderBottomWidth => style.border_bottom_width = l.clone(),
+        BorderLeftWidth => style.border_left_width = l.clone(),
+        Top => style.top = l.clone(),
+        Right => style.right = l.clone(),
+        Bottom => style.bottom = l.clone(),
+        Left => style.left = l.clone(),
+        FlexBasis => style.flex_basis = l.clone(),
+        // FontSize is NOT handled here — it needs special em/rem resolution at cascade time
+        LineHeight => style.line_height = l.clone(),
+        LetterSpacing => style.letter_spacing = l.clone(),
+        WordSpacing => style.word_spacing = l.clone(),
+        TextIndent => style.text_indent = l.clone(),
+        Gap | RowGap => style.row_gap = l.clone(),
+        ColumnGap => style.column_gap = l.clone(),
+        OutlineWidth => if let crate::types::CssLength::Px(px) = l { style.outline_width = *px; },
+        OutlineOffset => if let crate::types::CssLength::Px(px) = l { style.outline_offset = *px; },
+        TextDecorationThickness => style.text_decoration_thickness = l.clone(),
+        TextUnderlineOffset => style.text_underline_offset = l.clone(),
+        _ => return false, // Unhandled — caller falls back to string path
+    }
+    true
+}
+
+fn apply_color_value(style: &mut ComputedStyle, id: properties::PropertyId, c: &crate::types::Color) -> bool {
+    use properties::PropertyId::*;
+    match id {
+        Color => style.color = *c,
+        BackgroundColor => style.background_color = *c,
+        BorderTopColor => style.border_top_color = *c,
+        BorderRightColor => style.border_right_color = *c,
+        BorderBottomColor => style.border_bottom_color = *c,
+        BorderLeftColor => style.border_left_color = *c,
+        OutlineColor => style.outline_color = *c,
+        CaretColor => style.caret_color = Some(*c),
+        _ => return false
+    }
+    true
+}
+
+fn apply_number_value(style: &mut ComputedStyle, id: properties::PropertyId, n: f32) -> bool {
+    use properties::PropertyId::*;
+    match id {
+        Opacity => style.opacity = n.clamp(0.0, 1.0),
+        FlexGrow => style.flex_grow = n,
+        FlexShrink => style.flex_shrink = n,
+        FontStretch => style.font_stretch = n,
+        _ => return false
+    }
+    true
+}
+
+fn apply_integer_value(style: &mut ComputedStyle, id: properties::PropertyId, n: i32) -> bool {
+    use properties::PropertyId::*;
+    match id {
+        ZIndex => style.z_index = n,
+        Order => style.order = n,
+        _ => return false
+    }
+    true
 }
 
 /// Parse a CSS `transform` value string into a `CssTransform`.
@@ -2587,7 +2845,7 @@ pub fn resolve_css_urls(css: &str, css_base_url: &str) -> String {
         // Copy everything before url(
         result.push_str(&remaining[..url_start]);
         let after_url = &remaining[url_start + 4..];
-        let inner = after_url.trim_start();
+        let _inner = after_url.trim_start();
         // Find the closing )
         let mut depth = 1;
         let mut end_idx = 0;
@@ -3195,32 +3453,6 @@ fn calc_parse_atom(b: &[u8], pos: &mut usize) -> Coeffs {
 }
 
 /// Find the index of the closing `)` that matches the opening `(` at position 0.
-fn find_matching_paren(s: &str) -> Option<usize> {
-    let mut depth = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => { depth -= 1; if depth == 0 { return Some(i); } }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Find the first comma outside nested parentheses.
-fn find_top_level_comma(s: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => { if depth > 0 { depth -= 1; } }
-            ',' if depth == 0 => return Some(i),
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Split a string at top-level commas (not inside nested parentheses).
 fn split_top_level_commas(s: &str) -> Vec<&str> {
     let mut parts = Vec::new();
@@ -4494,9 +4726,9 @@ fn swap_hover_inner(
         let should_hover = in_hover;
         if should_hover != node.hover_applied {
             // Swap: style becomes the other variant, hover_style stores the current
-            let mut other = node.style.hover_style.take().unwrap();
+            let other = node.style.hover_style.take().unwrap();
             // Preserve hover_style/active_style/visited_style from the base side
-            let hs_backup = node.style.hover_style.take(); // already None after take above
+            let _hs_backup = node.style.hover_style.take(); // already None after take above
             let as_backup = node.style.active_style.take();
             let vs_backup = node.style.visited_style.take();
             // Preserve before/after pseudo styles from the incoming variant
@@ -4820,8 +5052,7 @@ fn apply_cascade_inner(
         .map(|(n, _)| n.keys().any(|p| p.starts_with("--")))
         .unwrap_or(false);
 
-    let mut local_vars_owned = HashMap::new();
-    let mut local_vars: &HashMap<String, String> = if has_new_vars || has_inline_vars {
+    let local_vars_owned = if has_new_vars || has_inline_vars {
         let mut vars = inherited_vars.clone();
         for &(_, ri) in &matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
@@ -4844,11 +5075,11 @@ fn apply_cascade_inner(
             }
         }
         pre_resolve_variables(&mut vars);
-        local_vars_owned = vars;
-        &local_vars_owned
+        Some(vars)
     } else {
-        inherited_vars
+        None
     };
+    let local_vars: &HashMap<String, String> = local_vars_owned.as_ref().unwrap_or(inherited_vars);
     // Track properties whose highest-specificity declaration is `inherit`.
     // After all rules are applied, these properties are reset to the parent's value.
     let mut inherit_props: HashSet<String> = HashSet::new();
@@ -4873,13 +5104,28 @@ fn apply_cascade_inner(
         } else {
             // Fast path: no var() — use compiled declarations directly
             for &(id, ref val) in &rule.compiled_decls {
-                let v = val.trim();
-                if v == "inherit" {
+                if matches!(val, crate::types::CssValue::Inherit) {
                     let name = property_defs::get(id).name;
                     inherit_props.insert(name.to_string());
                 } else {
-                    apply_property_by_id(&mut style, id, v);
+                    apply_css_value(&mut style, id, val);
                 }
+            }
+        }
+    }
+    // Second pass: !important declarations override everything (applied in specificity order).
+    for &(_, ri) in &matched {
+        let rule = &stylesheet.rules[ri];
+        if has_vars && rule.has_var_refs {
+            for (prop, val) in &rule.important_declarations {
+                if prop.starts_with("--") { continue; }
+                let resolved = resolve_var_references(val, &local_vars);
+                if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                apply_property(&mut style, prop, &resolved);
+            }
+        } else {
+            for &(id, ref val) in &rule.compiled_important {
+                apply_css_value(&mut style, id, val);
             }
         }
     }
@@ -4897,16 +5143,12 @@ fn apply_cascade_inner(
         let mut hs = style.clone();
         for &(_, ri) in &hover_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut hs, id, &resolved);
+                apply_css_value_with_vars(&mut hs, id, val, &local_vars);
             }
         }
         for &(_, ri) in &hover_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut hs, id, &resolved);
+                apply_css_value_with_vars(&mut hs, id, val, &local_vars);
             }
         }
         // Prevent infinite nesting: state styles don't carry their own state overrides.
@@ -4919,16 +5161,12 @@ fn apply_cascade_inner(
         let mut as_ = style.clone();
         for &(_, ri) in &active_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut as_, id, &resolved);
+                apply_css_value_with_vars(&mut as_, id, val, &local_vars);
             }
         }
         for &(_, ri) in &active_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut as_, id, &resolved);
+                apply_css_value_with_vars(&mut as_, id, val, &local_vars);
             }
         }
         as_.hover_style = None; as_.active_style = None; as_.visited_style = None;
@@ -4940,16 +5178,12 @@ fn apply_cascade_inner(
         let mut vs = style.clone();
         for &(_, ri) in &visited_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut vs, id, &resolved);
+                apply_css_value_with_vars(&mut vs, id, val, &local_vars);
             }
         }
         for &(_, ri) in &visited_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut vs, id, &resolved);
+                apply_css_value_with_vars(&mut vs, id, val, &local_vars);
             }
         }
         vs.hover_style = None; vs.active_style = None; vs.visited_style = None;
@@ -4997,9 +5231,7 @@ fn apply_cascade_inner(
     // Apply !important stylesheet declarations — these override inline styles
     for &(_, ri) in &matched {
         for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-            let resolved = resolve_var_references(val, &local_vars);
-            if resolved.trim().is_empty() && val.contains("var(") { continue; }
-            apply_property_by_id(&mut style, id, &resolved);
+            apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
 
@@ -5751,8 +5983,7 @@ fn apply_matched_results(
         .map(|(n, _)| n.keys().any(|p| p.starts_with("--")))
         .unwrap_or(false);
 
-    let mut local_vars_owned = HashMap::new();
-    let local_vars: &HashMap<String, String> = if has_new_vars || has_inline_vars {
+    let local_vars_owned = if has_new_vars || has_inline_vars {
         let mut vars = inherited_vars.clone();
         for &(_, ri) in &matched {
             for (prop, val) in &stylesheet.rules[ri].declarations {
@@ -5768,11 +5999,11 @@ fn apply_matched_results(
             }
         }
         pre_resolve_variables(&mut vars);
-        local_vars_owned = vars;
-        &local_vars_owned
+        Some(vars)
     } else {
-        inherited_vars
+        None
     };
+    let local_vars: &HashMap<String, String> = local_vars_owned.as_ref().unwrap_or(inherited_vars);
 
     // Apply normal declarations
     let mut inherit_props: HashSet<String> = HashSet::new();
@@ -5803,16 +6034,12 @@ fn apply_matched_results(
         let mut hs = style.clone();
         for &(_, ri) in &hover_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut hs, id, &resolved);
+                apply_css_value_with_vars(&mut hs, id, val, &local_vars);
             }
         }
         for &(_, ri) in &hover_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut hs, id, &resolved);
+                apply_css_value_with_vars(&mut hs, id, val, &local_vars);
             }
         }
         hs.hover_style = None; hs.active_style = None; hs.visited_style = None;
@@ -5824,16 +6051,12 @@ fn apply_matched_results(
         let mut as_ = style.clone();
         for &(_, ri) in &active_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut as_, id, &resolved);
+                apply_css_value_with_vars(&mut as_, id, val, &local_vars);
             }
         }
         for &(_, ri) in &active_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut as_, id, &resolved);
+                apply_css_value_with_vars(&mut as_, id, val, &local_vars);
             }
         }
         as_.hover_style = None; as_.active_style = None; as_.visited_style = None;
@@ -5845,16 +6068,12 @@ fn apply_matched_results(
         let mut vs = style.clone();
         for &(_, ri) in &visited_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut vs, id, &resolved);
+                apply_css_value_with_vars(&mut vs, id, val, &local_vars);
             }
         }
         for &(_, ri) in &visited_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-                let resolved = resolve_var_references(val, local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property_by_id(&mut vs, id, &resolved);
+                apply_css_value_with_vars(&mut vs, id, val, &local_vars);
             }
         }
         vs.hover_style = None; vs.active_style = None; vs.visited_style = None;
@@ -5898,9 +6117,7 @@ fn apply_matched_results(
     // !important stylesheet declarations
     for &(_, ri) in &matched {
         for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
-            let resolved = resolve_var_references(val, local_vars);
-            if resolved.trim().is_empty() && val.contains("var(") { continue; }
-            apply_property_by_id(&mut style, id, &resolved);
+            apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
 

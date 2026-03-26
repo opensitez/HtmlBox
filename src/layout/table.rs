@@ -112,7 +112,7 @@ fn collect_rows(table: &HtmlBox,
                             tbody.push(RowRef { child_idx: i, grandchild_idx: Some(j) });
                         }
                         Display::TableHeaderGroup => {
-                            for (k, ggc) in gc.children.iter().enumerate() {
+                            for (_k, ggc) in gc.children.iter().enumerate() {
                                 if matches!(ggc.style.display, Display::TableRow) {
                                     thead.push(RowRef { child_idx: i, grandchild_idx: Some(j) });
                                 }

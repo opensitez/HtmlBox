@@ -664,7 +664,7 @@ impl LayoutEngine {
 
         let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
             && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
-        let is_col_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
+        let _is_col_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
             && !is_row_flex;
 
         if is_row_flex {

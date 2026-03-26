@@ -10,8 +10,6 @@ pub struct Platform {
     height:  u32,
     /// Reused across frames to avoid per-frame allocation (~10 MB on 2× Retina).
     pixmap:  Option<Pixmap>,
-    /// Last cursor position in physical pixels, updated by CursorMoved events.
-    cursor_physical: (f32, f32),
 }
 
 impl Platform {
@@ -19,7 +17,7 @@ impl Platform {
         let context = Context::new(window.clone()).expect("Failed to create softbuffer context");
         let surface = Surface::new(&context, window.clone()).expect("Failed to create surface");
         let size = window.inner_size();
-        let mut platform = Self { surface, window, width: size.width, height: size.height, pixmap: None, cursor_physical: (0.0, 0.0) };
+        let mut platform = Self { surface, window, width: size.width, height: size.height, pixmap: None };
         platform.resize(size.width, size.height);
         platform
     }
@@ -50,13 +48,6 @@ impl Platform {
                 std::num::NonZeroU32::new(self.height).unwrap(),
             )
             .expect("Failed to resize surface");
-    }
-
-    /// Track cursor position (physical pixels from winit CursorMoved).
-    /// Call this from your CursorMoved handler — the platform forwards it to the
-    /// renderer so hover state updates automatically on the next render().
-    pub fn cursor_moved(&mut self, x: f32, y: f32) {
-        self.cursor_physical = (x, y);
     }
 
     /// Render a frame using a closure that calls `renderer.render(doc, pixmap, scale)`.

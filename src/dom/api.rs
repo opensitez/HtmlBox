@@ -3,7 +3,6 @@
 //! Every mutation goes through these methods, which update both the arena and the
 //! HtmlBox tree (bridge period), and set dirty flags for incremental re-style/layout.
 
-use std::collections::HashMap;
 use crate::types::{Document, HtmlBox, Rect};
 use crate::dom::arena::NodeId;
 use crate::css::apply_property;

@@ -70,6 +70,51 @@ impl Default for Color {
     fn default() -> Self { Self::BLACK }
 }
 
+// ─── CSS Value (pre-parsed declaration value) ───────────────────────────────
+
+/// Pre-parsed CSS declaration value. Produced during stylesheet compilation
+/// so the cascade never re-parses strings. The `Raw` variant is the fallback
+/// for values that haven't been converted to typed form yet, or for values
+/// containing `var()` references that must be resolved at cascade time.
+#[derive(Clone, Debug)]
+pub enum CssValue {
+    /// A pre-parsed length value (px, em, %, calc, min, max, clamp, auto, etc.)
+    Length(CssLength),
+    /// A pre-parsed color value.
+    Color(Color),
+    /// A numeric value (opacity, flex-grow, flex-shrink, etc.)
+    Number(f32),
+    /// An integer value (z-index, order, column-count, etc.)
+    Integer(i32),
+    /// Global CSS keyword.
+    Inherit,
+    Initial,
+    Unset,
+    /// Unparsed string — fallback for complex values, var() references,
+    /// and properties that haven't been converted to typed form yet.
+    Raw(String),
+}
+
+impl CssValue {
+    /// Extract the raw string for var() resolution and backward-compat paths.
+    /// Returns the string for Raw values, empty string for typed values
+    /// (typed values don't contain var() references).
+    pub fn raw_str(&self) -> &str {
+        match self {
+            CssValue::Raw(s) => s.as_str(),
+            _ => "",
+        }
+    }
+
+    /// Check if this value contains a var() reference (only possible in Raw).
+    pub fn has_var(&self) -> bool {
+        match self {
+            CssValue::Raw(s) => s.contains("var("),
+            _ => false,
+        }
+    }
+}
+
 // ─── CSS Length ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2582,6 +2627,18 @@ impl Document {
         let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
         if handled { redraw = true; }
 
+        // Also dispatch through the NodeId-based event system (capture/bubble).
+        if evt.target != 0 {
+            let mut dom_evt = crate::dom::events::DomEvent::new(
+                etype.as_str(), evt.target);
+            dom_evt.client_x = client_pos.0;
+            dom_evt.client_y = client_pos.1;
+            dom_evt.button = button;
+            if self.event_targets.dispatch_on_tree(&self.root, &mut dom_evt) {
+                redraw = true;
+            }
+        }
+
         // Only perform editor/default behavior if not prevented by handlers.
         if !evt.default_prevented {
             if self.editor.handle_mouse_event(&self.root, etype, doc_pt, button) {
@@ -2634,6 +2691,21 @@ impl Document {
             ev!(HtmlEventType::PointerOver,  new_id, old_id, true);
             ev!(HtmlEventType::PointerEnter, new_id, old_id, false);
         }
+
+        // Also dispatch through NodeId-based event system
+        if old_id != 0 {
+            let mut e = crate::dom::events::DomEvent::new("mouseout", old_id);
+            e.related_target = new_id;
+            e.client_x = client_pos.0; e.client_y = client_pos.1;
+            self.event_targets.dispatch_on_tree(&self.root, &mut e);
+        }
+        if new_id != 0 {
+            let mut e = crate::dom::events::DomEvent::new("mouseover", new_id);
+            e.related_target = old_id;
+            e.client_x = client_pos.0; e.client_y = client_pos.1;
+            self.event_targets.dispatch_on_tree(&self.root, &mut e);
+        }
+
         redraw
     }
 
@@ -2658,6 +2730,21 @@ impl Document {
         evt.meta_key = meta;
 
         let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
+
+        // Also dispatch through NodeId-based event system (capture/bubble).
+        let target = if self.focused_box != 0 { self.focused_box } else { self.root.node_id };
+        {
+            let mut dom_evt = crate::dom::events::DomEvent::new(etype.as_str(), target);
+            dom_evt.key_code = key_code;
+            dom_evt.char_code = ch;
+            dom_evt.ctrl_key = ctrl;
+            dom_evt.shift_key = shift;
+            dom_evt.alt_key = alt;
+            dom_evt.meta_key = meta;
+            if self.event_targets.dispatch_on_tree(&self.root, &mut dom_evt) {
+                // handled via new system
+            }
+        }
 
         let mut redraw = handled;
 
@@ -3816,7 +3903,7 @@ fn resolve_slots_inner(shadow_children: &mut Vec<HtmlBox>, light_children: &[Htm
     for child in shadow_children.iter_mut() {
         if child.tag == "slot" {
             let slot_name = child.attributes.get("name").cloned().unwrap_or_default();
-            let mut projected: Vec<HtmlBox> = if slot_name.is_empty() {
+            let projected: Vec<HtmlBox> = if slot_name.is_empty() {
                 // Default slot: all light children without a `slot` attribute
                 light_children.iter()
                     .filter(|lc| !lc.attributes.contains_key("slot") && lc.tag != "#text"
@@ -3871,7 +3958,7 @@ pub fn input_value(node: &HtmlBox) -> String {
 }
 
 /// Process a key event on a focused form input. Returns true if the value changed.
-pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>, ctrl: bool, shift: bool) -> bool {
+pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>, ctrl: bool, _shift: bool) -> bool {
     if !is_text_input(node) { return false; }
     // Disabled elements don't accept any input
     if node.attributes.contains_key("disabled") { return false; }

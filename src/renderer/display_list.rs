@@ -241,7 +241,7 @@ impl DisplayList {
     /// Hit test: find the deepest node_id at a point by walking the display
     /// list in reverse (last painted = topmost visual).
     pub fn hit_test(&self, x: f32, y: f32) -> Option<u32> {
-        let mut clip_stack: Vec<Rect> = Vec::new();
+        let _clip_stack: Vec<Rect> = Vec::new();
         let mut stacking_ids: Vec<u32> = Vec::new();
 
         // Walk forward to build clip context, then check each rect

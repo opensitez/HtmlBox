@@ -41,34 +41,6 @@ fn parse_viewbox_value(val: Option<&str>) -> Option<(u32, u32)> {
     }
 }
 
-/// Resolve replaced element dimensions per CSS Images §5.2.
-/// With both explicit → use them. One explicit + viewBox ratio → derive the other.
-/// Neither explicit → fit viewBox ratio into 300×150 default object size.
-fn resolve_replaced_size(ew: Option<u32>, eh: Option<u32>, vb: Option<(u32, u32)>) -> (u32, u32) {
-    match (ew, eh) {
-        (Some(w), Some(h)) => (w, h),
-        (Some(w), None) => {
-            let h = vb.map(|(vw, vh)| (w as f64 * vh as f64 / vw.max(1) as f64) as u32)
-                .unwrap_or(w);
-            (w, h)
-        }
-        (None, Some(h)) => {
-            let w = vb.map(|(vw, vh)| (h as f64 * vw as f64 / vh.max(1) as f64) as u32)
-                .unwrap_or(h);
-            (w, h)
-        }
-        (None, None) => {
-            if let Some((vw, vh)) = vb {
-                // Use viewBox dimensions directly for inline SVGs (icon sizing).
-                // Most inline SVGs use viewBox="0 0 24 24" and rely on CSS for final size.
-                (vw.max(1), vh.max(1))
-            } else {
-                (300, 150)
-            }
-        }
-    }
-}
-
 /// Post-pass: walk the box tree, find `<img>` placeholders with `__svg_N__` src,
 /// rasterize the SVG to RGBA pixel data, and store it on the box.
 /// Post-cascade pass: load background images for elements whose
@@ -1426,14 +1398,14 @@ impl HtmlParser {
         // When the dropdown opens, all options are rendered as a popup.
         if node.tag == "select" {
             let mut selected_idx: usize = 0;
-            let mut found_selected = false;
+            let mut _found_selected = false;
             let mut opt_count = 0usize;
             // Find which option is selected
             for child in &node.children {
                 if child.tag == "option" {
                     if child.attributes.contains_key("selected") {
                         selected_idx = opt_count;
-                        found_selected = true;
+                        _found_selected = true;
                     }
                     opt_count += 1;
                 } else if child.tag == "optgroup" {
@@ -1441,7 +1413,7 @@ impl HtmlParser {
                         if gc.tag == "option" {
                             if gc.attributes.contains_key("selected") {
                                 selected_idx = opt_count;
-                                found_selected = true;
+                                _found_selected = true;
                             }
                             opt_count += 1;
                         }

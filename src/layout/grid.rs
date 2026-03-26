@@ -150,13 +150,12 @@ pub fn layout_grid_subgrid(
     let n_items = item_indices.len();
 
     // CSS Grid §5.4: blockify grid items — inline items become block-level.
-    let mut blockified = 0;
     for path in &item_indices {
         let child = grid_child_mut(node, path);
         match child.style.display {
-            Display::Inline => { child.style.display = Display::Block; blockified += 1; }
-            Display::InlineFlex => { child.style.display = Display::Flex; blockified += 1; }
-            Display::InlineGrid => { child.style.display = Display::Grid; blockified += 1; }
+            Display::Inline => { child.style.display = Display::Block; }
+            Display::InlineFlex => { child.style.display = Display::Flex; }
+            Display::InlineGrid => { child.style.display = Display::Grid; }
             _ => {}
         }
     }

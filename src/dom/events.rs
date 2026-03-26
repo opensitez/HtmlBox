@@ -159,15 +159,35 @@ impl EventTargetMap {
         self.listeners.is_empty()
     }
 
-    /// Dispatch an event through the DOM tree with capture → target → bubble.
+    /// Dispatch an event through the arena-based DOM tree with capture → target → bubble.
     /// Returns true if any handler was called.
     pub fn dispatch_event(&self, arena: &DomArena, event: &mut DomEvent) -> bool {
         if event.target == 0 { return false; }
-
-        // Build the propagation path: root → ... → parent → target
         let path = arena.ancestor_chain(NodeId(event.target));
-        // ancestor_chain returns [target, parent, ..., root] — reverse for capture order
         let path_root_to_target: Vec<u32> = path.iter().rev().map(|id| id.0).collect();
+        self.dispatch_with_path(event, &path_root_to_target)
+    }
+
+    /// Dispatch an event through the HtmlBox tree with capture → target → bubble.
+    /// Uses the HtmlBox tree for the ancestor path (no DomArena needed).
+    pub fn dispatch_on_tree(&self, root: &crate::types::HtmlBox, event: &mut DomEvent) -> bool {
+        if event.target == 0 { return false; }
+        let mut path: Vec<u32> = Vec::new();
+        fn collect_path(node: &crate::types::HtmlBox, target: u32, path: &mut Vec<u32>) -> bool {
+            path.push(node.node_id);
+            if node.node_id == target { return true; }
+            for child in &node.children {
+                if collect_path(child, target, path) { return true; }
+            }
+            path.pop();
+            false
+        }
+        collect_path(root, event.target, &mut path);
+        self.dispatch_with_path(event, &path)
+    }
+
+    /// Core dispatch logic — given a root-to-target path, run capture → target → bubble.
+    fn dispatch_with_path(&self, event: &mut DomEvent, path_root_to_target: &[u32]) -> bool {
 
         let mut any_handled = false;
 

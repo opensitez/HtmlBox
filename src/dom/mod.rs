@@ -60,6 +60,34 @@ pub enum HtmlEventType {
     Resize,
 }
 
+impl HtmlEventType {
+    /// DOM event type string (e.g. "click", "mousedown", "keydown").
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Click => "click", Self::DblClick => "dblclick",
+            Self::MouseDown => "mousedown", Self::MouseUp => "mouseup",
+            Self::MouseMove => "mousemove", Self::MouseOver => "mouseover",
+            Self::MouseOut => "mouseout", Self::MouseEnter => "mouseenter",
+            Self::MouseLeave => "mouseleave", Self::ContextMenu => "contextmenu",
+            Self::PointerDown => "pointerdown", Self::PointerUp => "pointerup",
+            Self::PointerMove => "pointermove", Self::PointerCancel => "pointercancel",
+            Self::PointerEnter => "pointerenter", Self::PointerLeave => "pointerleave",
+            Self::PointerOver => "pointerover", Self::PointerOut => "pointerout",
+            Self::DragStart => "dragstart", Self::Drag => "drag",
+            Self::DragEnter => "dragenter", Self::DragOver => "dragover",
+            Self::DragLeave => "dragleave", Self::Drop => "drop", Self::DragEnd => "dragend",
+            Self::KeyDown => "keydown", Self::KeyUp => "keyup", Self::KeyPress => "keypress",
+            Self::Wheel => "wheel", Self::Scroll => "scroll",
+            Self::Input => "input", Self::Change => "change",
+            Self::Focus => "focus", Self::Blur => "blur",
+            Self::FocusIn => "focusin", Self::FocusOut => "focusout",
+            Self::SelectionChange => "selectionchange",
+            Self::DOMContentLoaded => "DOMContentLoaded",
+            Self::Unload => "unload", Self::Resize => "resize",
+        }
+    }
+}
+
 // ─── HtmlEvent ────────────────────────────────────────────────────────────────
 
 pub struct HtmlEvent {

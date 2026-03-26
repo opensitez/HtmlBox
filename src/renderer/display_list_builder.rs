@@ -4,9 +4,9 @@
 //! Faithfully ports the render_box logic from mod.rs into PaintCmd recording.
 
 use crate::types::{
-    BackgroundRepeat, BackgroundSize, Color, ComputedStyle, CssLength, Display,
-    FontStyle, FontWeight, GradientType, ListStylePosition, ListStyleType,
-    MixBlendMode, Overflow, Position, TextDecorationStyle, TextOverflow,
+    BackgroundRepeat, BackgroundSize, Color, ComputedStyle, Display,
+    FontStyle, GradientType, ListStylePosition, ListStyleType,
+    MixBlendMode, Overflow, Position, TextDecorationStyle,
     TextTransform,
 };
 use crate::types::{HtmlBox, Rect};
@@ -270,7 +270,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // Form elements (input, select, button, textarea, etc.) are rendered entirely
     // by the FormElement paint command. Skip CSS background/border/text to avoid
     // double rendering.
-    let is_form_element = matches!(node.tag.as_str(),
+    let _is_form_element = matches!(node.tag.as_str(),
         "input" | "textarea" | "select" | "button" | "progress" | "meter");
 
     // ── CSS filters ───────────────────────────────────────────────────────────

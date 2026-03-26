@@ -9,7 +9,7 @@ use tiny_skia::{
 };
 use cosmic_text::{
     Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache,
-    Style as CTextStyle, Weight as CTextWeight, Stretch as CTextStretch,
+    Style as CTextStyle, Weight as CTextWeight,
 };
 use crate::types::{Rect, Color};
 use super::display_list::{DisplayList, PaintCmd, ImageRef};
@@ -34,7 +34,6 @@ pub fn replay_with_text(
 struct Layer {
     pixmap: Pixmap,
     blend_mode: u8,
-    transform: Option<[f32; 6]>,  // CSS transform matrix, if this is a transform layer
 }
 
 fn replay_inner(
@@ -216,7 +215,7 @@ fn replay_inner(
                     // Store filter ops encoded in the blend_mode field won't work,
                     // so we store them separately via a filter_stack
                     filter_stack.push(filters.clone());
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 254, transform: None });
+                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 254 });
                 }
             }
             PaintCmd::PopFilter => {
@@ -236,7 +235,7 @@ fn replay_inner(
             PaintCmd::PushBlendMode { mode } => {
                 // Create a temporary layer for blend compositing
                 if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: *mode, transform: None });
+                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: *mode });
                 }
             }
             PaintCmd::PopBlendMode => {
@@ -246,7 +245,7 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::BoxShadow { rect, color, offset_x, offset_y, blur, spread, inset, radii } => {
+            PaintCmd::BoxShadow { rect, color, offset_x, offset_y, blur: _, spread, inset, radii: _ } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if !inset {
                     let sr = Rect::new(
@@ -350,7 +349,7 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::Outline { rect, width, color, style: _, offset } => {
+            PaintCmd::Outline { rect, width, color, style: _, offset: _ } => {
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let mut paint = Paint::default();
                 paint.set_color(to_sk_color(&apply_opacity(color, a2)));
@@ -598,7 +597,7 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::TextShadow { x, y, text, font_family, font_size, font_weight, font_style, font_stretch, line_height, color, blur } => {
+            PaintCmd::TextShadow { x, y, text, font_family, font_size, font_weight, font_style, font_stretch, line_height, color, blur: _ } => {
                 // Draw text shadow (simplified — no blur convolution)
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
                     let a2 = opacity_stack.iter().product::<f32>().min(1.0);
@@ -635,9 +634,9 @@ fn replay_inner(
 
                     if *repeat_x || *repeat_y {
                         // Tile the image across the container
-                        let start_x = if *repeat_x { cx } else { *pos_x };
+                        let _start_x = if *repeat_x { cx } else { *pos_x };
                         let end_x   = if *repeat_x { cx + cw } else { *pos_x + *draw_w };
-                        let start_y = if *repeat_y { cy } else { *pos_y };
+                        let _start_y = if *repeat_y { cy } else { *pos_y };
                         let end_y   = if *repeat_y { cy + ch } else { *pos_y + *draw_h };
 
                         // Align to tile grid from pos_x/pos_y
