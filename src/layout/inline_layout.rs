@@ -1154,9 +1154,11 @@ fn tokenize_text(
         let is_space = !at_end && !is_nl && bytes[i].is_ascii_whitespace();
 
         if (at_end || is_space || is_nl) && i > word_start {
-            // Emit word
-            let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let w = measure_text_width_weighted(&text[word_start..i], font_px, font_system, font_weight, font_style, engine.scale, font_family);
+            // Emit word — use cached measurement to avoid redundant font shaping
+            let w = engine.measure_text_cached(
+                &text[word_start..i], font_px,
+                font_weight, font_style, font_family,
+            );
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + word_start,
@@ -1203,8 +1205,9 @@ fn tokenize_text(
             // Emit one space item per space character so caret byte offsets stay in sync.
             // (Previously all consecutive spaces were collapsed to one rendered item,
             //  causing the caret to drift right while text stayed left.)
-            let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-            let space_w = measure_text_width_weighted(" ", font_px, font_system, font_weight, font_style, engine.scale, font_family);
+            let space_w = engine.measure_text_cached(
+                " ", font_px, font_weight, font_style, font_family,
+            );
             // In white-space:pre / pre-wrap, spaces are significant (not collapsible).
             // Mark them as non-space so break_one_line doesn't strip leading whitespace,
             // and non-breakable in pre mode (only \n breaks lines).

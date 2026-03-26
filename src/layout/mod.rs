@@ -3,6 +3,8 @@ pub mod inline_layout;
 pub mod text;
 pub mod flex;
 pub mod grid;
+
+use std::collections::HashMap;
 pub mod table;
 pub mod hit_test;
 pub mod layout_box;
@@ -463,6 +465,9 @@ pub struct LayoutEngine {
     layout_calls: Cell<usize>,
     /// Layout start time — detect long-running layout.
     layout_start: Cell<Option<std::time::Instant>>,
+    /// Text measurement cache: (text_hash, font_size_bits, weight, family_hash) → width.
+    /// Avoids redundant cosmic_text font shaping on re-layout.
+    text_width_cache: std::cell::RefCell<HashMap<u64, f32>>,
 }
 
 /// Maximum layout recursion depth to prevent stack overflow.
@@ -482,6 +487,7 @@ impl LayoutEngine {
             cached_has_media_q: false,
             cached_has_container_q: false,
             fonts_loaded: false,
+            text_width_cache: std::cell::RefCell::new(HashMap::new()),
             pending_fonts: None,
             fonts_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             pos_cb: Cell::new(Rect::new(0.0, 0.0, 0.0, 0.0)),
@@ -489,6 +495,51 @@ impl LayoutEngine {
             layout_calls: Cell::new(0),
             layout_start: Cell::new(None),
         }
+    }
+
+    /// Measure text width with caching. Returns logical pixel width.
+    pub fn measure_text_cached(
+        &self,
+        text: &str,
+        font_px: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        font_family: &str,
+    ) -> f32 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        // Build a compact cache key from text + font properties
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        font_px.to_bits().hash(&mut hasher);
+        weight.value().hash(&mut hasher);
+        (style as u8).hash(&mut hasher);
+        font_family.hash(&mut hasher);
+        self.scale.to_bits().hash(&mut hasher);
+        let key = hasher.finish();
+
+        // Check cache
+        if let Some(&w) = self.text_width_cache.borrow().get(&key) {
+            return w;
+        }
+
+        // Measure and cache
+        let w = if let Some(fs_ptr) = self.font_system {
+            let fs = unsafe { &mut *fs_ptr };
+            crate::layout::inline_layout::measure_text_width_weighted(
+                text, font_px,
+                Some(fs),
+                weight, style,
+                self.scale,
+                font_family,
+            )
+        } else {
+            crate::layout::inline_layout::measure_text_width_ts(text, font_px, 8)
+        };
+
+        self.text_width_cache.borrow_mut().insert(key, w);
+        w
     }
 
     /// Resolve a box's styles using the engine's viewport dimensions.
@@ -535,20 +586,11 @@ impl LayoutEngine {
             let mut max_word = 0.0f32;
             for word in text.split(|c: char| c.is_ascii_whitespace()) {
                 if word.is_empty() { continue; }
-                // Note: measure_text_width_weighted handles scaling internally,
-                // so pass logical font_px, not font_px * scale.
-                let w = if let Some(fs_ptr) = self.font_system {
-                    let fs = unsafe { &mut *fs_ptr };
-                    crate::layout::inline_layout::measure_text_width_weighted(
-                        word, font_px,
-                        Some(fs),
-                        node.style.font_weight, node.style.font_style,
-                        self.scale,
-                        &node.style.font_family,
-                    )
-                } else {
-                    crate::layout::inline_layout::measure_text_width_ts(word, font_px, 8)
-                };
+                let w = self.measure_text_cached(
+                    word, font_px,
+                    node.style.font_weight, node.style.font_style,
+                    &node.style.font_family,
+                );
                 if w > max_word { max_word = w; }
             }
             return max_word;
@@ -602,21 +644,11 @@ impl LayoutEngine {
                 text.clone()
             };
             if text.is_empty() { return 0.0; }
-            let w = if let Some(fs_ptr) = self.font_system {
-                let fs = unsafe { &mut *fs_ptr };
-                // Note: measure_text_width_weighted handles scaling internally,
-                // so pass logical font_px, not font_px * scale.
-                crate::layout::inline_layout::measure_text_width_weighted(
-                    &text, font_px,
-                    Some(fs),
-                    node.style.font_weight, node.style.font_style,
-                    self.scale,
-                    &node.style.font_family,
-                )
-            } else {
-                crate::layout::inline_layout::measure_text_width_ts(&text, font_px, 8)
-            };
-            return w;
+            return self.measure_text_cached(
+                &text, font_px,
+                node.style.font_weight, node.style.font_style,
+                &node.style.font_family,
+            );
         }
 
         let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
@@ -792,6 +824,12 @@ impl LayoutEngine {
     /// Main entry point: layout the full document.
     pub fn layout(&mut self, doc: &mut Document, viewport_width: f32) {
         self.viewport_w = viewport_width;
+        // Use the document's viewport_h if it was set during load_html (it knows
+        // the real window height); only fall back to the engine default if the
+        // document doesn't have a value yet.
+        if doc.viewport_h > 0.0 {
+            self.viewport_h = doc.viewport_h;
+        }
         // Keep viewport in doc so focus-change recascades use the correct size.
         doc.viewport_w = self.viewport_w;
         doc.viewport_h = self.viewport_h;
