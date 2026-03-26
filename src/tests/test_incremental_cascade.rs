@@ -84,7 +84,7 @@ fn incremental_cascade_correctness() {
     doc_inc.rebuild_node_map();
     let hover_chain_inc = build_hover_chain(&doc_inc.root, link_id);
     let old_chain = HashSet::new(); // no previous hover
-    mark_hover_dirty(&old_chain, &hover_chain_inc, &doc_inc.node_map, false);
+    mark_hover_dirty(&mut doc_inc.root, &old_chain, &hover_chain_inc, false);
     apply_cascade_incremental(
         &mut doc_inc.root, &doc_inc.stylesheet, None, 16.0,
         800.0, 600.0, 0, false, &hover_chain_inc,
@@ -128,7 +128,7 @@ fn incremental_cascade_skips_clean_subtrees() {
     let hover_chain = build_hover_chain(&doc.root, nav0);
     let old_chain = HashSet::new();
     doc.rebuild_node_map();
-    mark_hover_dirty(&old_chain, &hover_chain, &doc.node_map, false);
+    mark_hover_dirty(&mut doc.root, &old_chain, &hover_chain, false);
 
     // Incremental cascade
     let t1 = std::time::Instant::now();
@@ -148,7 +148,7 @@ fn incremental_cascade_skips_clean_subtrees() {
     let nav1 = doc.get_element_by_id("nav1").unwrap();
     let chain_nav1 = build_hover_chain(&doc.root, nav1);
     doc.rebuild_node_map();
-    mark_hover_dirty(&hover_chain, &chain_nav1, &doc.node_map,
+    mark_hover_dirty(&mut doc.root, &hover_chain, &chain_nav1,
         doc.stylesheet.has_hover_descendant_rules);
 
     let t2 = std::time::Instant::now();
@@ -221,7 +221,7 @@ fn incremental_cascade_handles_hover_transition() {
     let chain_a = build_hover_chain(&doc.root, a);
     let old_empty = HashSet::new();
     doc.rebuild_node_map();
-    mark_hover_dirty(&old_empty, &chain_a, &doc.node_map, false);
+    mark_hover_dirty(&mut doc.root, &old_empty, &chain_a, false);
     apply_cascade_incremental(
         &mut doc.root, &doc.stylesheet, None, 16.0,
         800.0, 600.0, 0, false, &chain_a,
@@ -231,7 +231,7 @@ fn incremental_cascade_handles_hover_transition() {
     // Move hover from A to B
     let chain_b = build_hover_chain(&doc.root, b);
     doc.rebuild_node_map();
-    mark_hover_dirty(&chain_a, &chain_b, &doc.node_map, false);
+    mark_hover_dirty(&mut doc.root, &chain_a, &chain_b, false);
     apply_cascade_incremental(
         &mut doc.root, &doc.stylesheet, None, 16.0,
         800.0, 600.0, 0, false, &chain_b,

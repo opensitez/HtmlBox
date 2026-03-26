@@ -4125,13 +4125,13 @@ pub fn apply_cascade_vp_hover(
 
 // ─── Incremental Hover Cascade ──────────────────────────────────────────────
 
-/// Mark nodes affected by a hover change using O(1) node_map lookups.
+/// Mark nodes affected by a hover change by walking the tree.
 /// Sets `cascade_dirty` on nodes whose hover state toggled (symmetric difference),
 /// and `has_dirty_descendant` on their ancestors (the hover chain path).
 pub fn mark_hover_dirty(
+    root: &mut crate::types::HtmlBox,
     old_chain: &std::collections::HashSet<u32>,
     new_chain: &std::collections::HashSet<u32>,
-    node_map: &HashMap<u32, *const crate::types::HtmlBox>,
     has_hover_descendant_rules: bool,
 ) {
     // Nodes whose hover state actually changed (in one chain but not both)
@@ -4139,25 +4139,30 @@ pub fn mark_hover_dirty(
     // All nodes on the path (for has_dirty_descendant traversal)
     let path: std::collections::HashSet<u32> = old_chain.union(new_chain).copied().collect();
 
-    // Mark toggled nodes as cascade_dirty
-    for &nid in &toggled {
-        if let Some(&ptr) = node_map.get(&nid) {
-            let node = unsafe { &mut *(ptr as *mut crate::types::HtmlBox) };
+    fn walk(node: &mut crate::types::HtmlBox, toggled: &std::collections::HashSet<u32>,
+            path: &std::collections::HashSet<u32>, has_hover_desc: bool) -> bool {
+        let mut any_dirty = false;
+        if toggled.contains(&node.node_id) {
             node.cascade_dirty = true;
-            // If descendant hover rules exist, mark children dirty too
-            if has_hover_descendant_rules {
+            any_dirty = true;
+            if has_hover_desc {
                 mark_children_cascade_dirty(node);
             }
         }
+        if path.contains(&node.node_id) {
+            node.has_dirty_descendant = true;
+            any_dirty = true;
+        }
+        for child in &mut node.children {
+            if walk(child, toggled, path, has_hover_desc) {
+                node.has_dirty_descendant = true;
+                any_dirty = true;
+            }
+        }
+        any_dirty
     }
 
-    // Mark path nodes (ancestors) as has_dirty_descendant
-    for &nid in &path {
-        if let Some(&ptr) = node_map.get(&nid) {
-            let node = unsafe { &mut *(ptr as *mut crate::types::HtmlBox) };
-            node.has_dirty_descendant = true;
-        }
-    }
+    walk(root, &toggled, &path, has_hover_descendant_rules);
 }
 
 fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {

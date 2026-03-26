@@ -878,7 +878,7 @@ impl LayoutEngine {
             let old_chain = crate::css::build_hover_chain(&doc.root, doc.prev_hovered_box);
             let new_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             // Mark dirty flags on nodes affected by hover change
-            crate::css::mark_hover_dirty(&old_chain, &new_chain, &doc.node_map, false);
+            crate::css::mark_hover_dirty(&mut doc.root, &old_chain, &new_chain, false);
 
             crate::css::apply_cascade_incremental(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
@@ -958,13 +958,18 @@ impl LayoutEngine {
         // ancestors dirty so the subtree-pruning check doesn't skip them.
         propagate_dirty(&mut doc.root);
 
-        // Set up root geometry
+        // Set up root geometry — only reset height, preserve width for cache stability
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
-        doc.root.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.content_rect.x = 0.0; doc.root.content_rect.y = 0.0;
+        doc.root.content_rect.w = content_w; doc.root.content_rect.h = 0.0;
+        doc.root.padding_rect.x = 0.0; doc.root.padding_rect.y = 0.0;
+        doc.root.padding_rect.w = content_w; doc.root.padding_rect.h = 0.0;
+        doc.root.border_rect.x  = 0.0; doc.root.border_rect.y  = 0.0;
+        doc.root.border_rect.w  = content_w; doc.root.border_rect.h  = 0.0;
+        doc.root.margin_rect.x  = 0.0; doc.root.margin_rect.y  = 0.0;
+        doc.root.margin_rect.w  = content_w; doc.root.margin_rect.h  = 0.0;
+        doc.root.layout_dirty = true; // force root to always re-layout
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
@@ -1049,7 +1054,7 @@ impl LayoutEngine {
         // and the node isn't dirty. Just reposition the cached result.
         if !node.layout_dirty
             && node.last_containing_width > 0.0
-            && (node.last_containing_width - containing_w).abs() < 0.5
+            && (node.last_containing_width - containing_w).abs() < 0.01
             && node.margin_rect.w > 0.0
             && node.margin_rect.h > 0.0
             && fc.is_none()

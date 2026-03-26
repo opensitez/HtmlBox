@@ -64,16 +64,12 @@ pub enum HtmlEventType {
 
 pub struct HtmlEvent {
     pub event_type:  HtmlEventType,
-    /// Deepest box hit (valid only during dispatch).
-    pub target:          *const HtmlBox,
-    /// Stable node_id of the target element.
-    pub target_id:       u32,
-    /// Box the current listener is registered on.
-    pub current_target:  *const HtmlBox,
-    /// Stable node_id of the current target.
-    pub current_target_id: u32,
-    /// Root of the document tree (valid only during dispatch).
-    pub root:        *const HtmlBox,
+    /// Stable node_id of the deepest box hit.
+    pub target:          u32,
+    /// Stable node_id of the current listener's element.
+    pub current_target:  u32,
+    /// Root of the document tree (mutable access for DOM manipulation in callbacks).
+    pub root:        *mut HtmlBox,
     /// Position in window coordinates.
     pub client_pos:  (f32, f32),
     /// Position in document coordinates.
@@ -89,9 +85,10 @@ pub struct HtmlEvent {
     /// Wheel scroll delta in logical pixels (positive = scroll down/right).
     pub delta_x: f32,
     pub delta_y: f32,
-    /// Source box for drag events.
-    pub drag_source:     *const HtmlBox,
-    pub related_target:  *const HtmlBox,
+    /// Source node_id for drag events.
+    pub drag_source:     u32,
+    /// Related target node_id (e.g. focus/blur counterpart).
+    pub related_target:  u32,
     pub default_prevented:   bool,
     pub propagation_stopped: bool,
 }
@@ -100,11 +97,9 @@ impl HtmlEvent {
     pub fn new(event_type: HtmlEventType) -> Self {
         Self {
             event_type,
-            target:          std::ptr::null(),
-            target_id:       0,
-            current_target:  std::ptr::null(),
-            current_target_id: 0,
-            root:            std::ptr::null(),
+            target:          0,
+            current_target:  0,
+            root:            std::ptr::null_mut(),
             client_pos:      (0.0, 0.0),
             doc_pos:         (0.0, 0.0),
             button:          0,
@@ -116,8 +111,8 @@ impl HtmlEvent {
             meta_key:        false,
             delta_x:         0.0,
             delta_y:         0.0,
-            drag_source:     std::ptr::null(),
-            related_target:  std::ptr::null(),
+            drag_source:     0,
+            related_target:  0,
             default_prevented:   false,
             propagation_stopped: false,
         }
@@ -125,6 +120,7 @@ impl HtmlEvent {
 
     pub fn stop_propagation(&mut self) { self.propagation_stopped = true; }
     pub fn prevent_default(&mut self) { self.default_prevented = true; }
+
 }
 
 // ─── Event listener registry ──────────────────────────────────────────────────
@@ -214,11 +210,21 @@ impl EventListeners {
     pub fn dispatch_direct(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
         let inner = self.inner.read().unwrap();
         if inner.entries.is_empty() { return false; }
-        evt.root = root as *const HtmlBox;
-        let target = evt.target;
-        if target.is_null() { return false; }
-        let b = unsafe { &*target };
-        evt.current_target = target;
+        evt.root = root as *const HtmlBox as *mut HtmlBox;
+        let target_id = evt.target;
+        if target_id == 0 { return false; }
+        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+            if node.node_id == id { return Some(node); }
+            for child in &node.children {
+                if let Some(f) = find_node(child, id) { return Some(f); }
+            }
+            None
+        }
+        let b = match find_node(root, target_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        evt.current_target = target_id;
         let mut handled = false;
         for entry in &inner.entries {
             if entry.event_type != evt.event_type { continue; }
@@ -235,20 +241,31 @@ impl EventListeners {
     pub fn dispatch(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
         let inner = self.inner.read().unwrap();
         if inner.entries.is_empty() { return false; }
-        evt.root = root as *const HtmlBox;
+        evt.root = root as *const HtmlBox as *mut HtmlBox;
 
         let mut handled = false;
-        let target = evt.target;
+        let target_id = evt.target;
 
-        if !target.is_null() {
-            // Build the ancestor path [root … parent, target]
-            let path = find_ancestor_path(root, target);
+        if target_id != 0 {
+            // Build the ancestor path by node_id
+            let mut path: Vec<u32> = Vec::new();
+            collect_id_path(root, target_id, &mut path);
 
             // Bubble: fire from target outward
-            for &box_ptr in path.iter().rev() {
-                let b = unsafe { &*box_ptr };
-                evt.current_target = box_ptr;
-                evt.current_target_id = b.node_id;
+            for &nid in path.iter().rev() {
+                // Look up the node to check selector matching
+                fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+                    if node.node_id == id { return Some(node); }
+                    for child in &node.children {
+                        if let Some(f) = find_node(child, id) { return Some(f); }
+                    }
+                    None
+                }
+                let b = match find_node(root, nid) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                evt.current_target = nid;
                 for entry in &inner.entries {
                     if entry.event_type != evt.event_type { continue; }
                     if !matches_simple_selector(b, &entry.selector) { continue; }
@@ -260,7 +277,7 @@ impl EventListeners {
             }
         } else {
             // No positional target: fire on root (keyboard, scroll, selection-change)
-            evt.current_target = root as *const HtmlBox;
+            evt.current_target = root.node_id;
             for entry in &inner.entries {
                 if entry.event_type != evt.event_type { continue; }
                 let sel = entry.selector.as_str();
@@ -279,20 +296,28 @@ impl EventListeners {
     pub fn dispatch_and_return(&self, root: &HtmlBox, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
         let inner = self.inner.read().unwrap();
         if inner.entries.is_empty() { return (false, evt); }
-        evt.root = root as *const HtmlBox;
+        evt.root = root as *const HtmlBox as *mut HtmlBox;
 
         let mut handled = false;
-        let target = evt.target;
+        let target_id = evt.target;
 
-        if !target.is_null() {
-            // Build the ancestor path [root … parent, target]
-            let path = find_ancestor_path(root, target);
+        if target_id != 0 {
+            let mut path: Vec<u32> = Vec::new();
+            collect_id_path(root, target_id, &mut path);
 
-            // Bubble: fire from target outward
-            for &box_ptr in path.iter().rev() {
-                let b = unsafe { &*box_ptr };
-                evt.current_target = box_ptr;
-                evt.current_target_id = b.node_id;
+            for &nid in path.iter().rev() {
+                fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+                    if node.node_id == id { return Some(node); }
+                    for child in &node.children {
+                        if let Some(f) = find_node(child, id) { return Some(f); }
+                    }
+                    None
+                }
+                let b = match find_node(root, nid) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                evt.current_target = nid;
                 for entry in &inner.entries {
                     if entry.event_type != evt.event_type { continue; }
                     if !matches_simple_selector(b, &entry.selector) { continue; }
@@ -303,8 +328,7 @@ impl EventListeners {
                 if evt.propagation_stopped { break; }
             }
         } else {
-            // No positional target: fire on root (keyboard, scroll, selection-change)
-            evt.current_target = root as *const HtmlBox;
+            evt.current_target = root.node_id;
             for entry in &inner.entries {
                 if entry.event_type != evt.event_type { continue; }
                 let sel = entry.selector.as_str();
@@ -321,45 +345,12 @@ impl EventListeners {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Build path `[root, ..., parent, target]` from root down to `target`.
-/// Uses node_id when available (stable identity), falls back to pointer comparison.
-fn find_ancestor_path(root: &HtmlBox, target: *const HtmlBox) -> Vec<*const HtmlBox> {
-    let mut path = Vec::new();
-    // Try node_id path first (stable, doesn't depend on pointer validity)
-    let target_id = if !target.is_null() {
-        unsafe { (*target).node_id }
-    } else { 0 };
-    if target_id != 0 {
-        collect_path_by_id(root, target_id, &mut path);
-    } else {
-        collect_path(root, target, &mut path);
-    }
-    path
-}
-
-fn collect_path_by_id(
-    node:      &HtmlBox,
-    target_id: u32,
-    path:      &mut Vec<*const HtmlBox>,
-) -> bool {
-    path.push(node as *const HtmlBox);
+/// Build path of node_ids `[root, ..., parent, target]` from root down to target.
+fn collect_id_path(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool {
+    path.push(node.node_id);
     if node.node_id == target_id { return true; }
     for child in &node.children {
-        if collect_path_by_id(child, target_id, path) { return true; }
-    }
-    path.pop();
-    false
-}
-
-fn collect_path(
-    node:   &HtmlBox,
-    target: *const HtmlBox,
-    path:   &mut Vec<*const HtmlBox>,
-) -> bool {
-    path.push(node as *const HtmlBox);
-    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
-    for child in &node.children {
-        if collect_path(child, target, path) { return true; }
+        if collect_id_path(child, target_id, path) { return true; }
     }
     path.pop();
     false
@@ -572,19 +563,32 @@ fn collect_all<'a>(node: &'a HtmlBox, sel: &str, out: &mut Vec<&'a HtmlBox>) {
 }
 
 /// Returns all boxes matching the selector (mutable).
+/// Uses internal pointer manipulation to collect multiple &mut references safely.
 pub fn query_selector_all_mut<'a>(root: &'a mut HtmlBox, selector: &str) -> Vec<&'a mut HtmlBox> {
-    let mut out: Vec<*mut HtmlBox> = Vec::new();
-    collect_all_mut_internal(root as *mut HtmlBox, selector, &mut out);
-    out.into_iter().map(|p| unsafe { &mut *p }).collect()
-}
-
-fn collect_all_mut_internal(node: *mut HtmlBox, sel: &str, out: &mut Vec<*mut HtmlBox>) {
-    unsafe {
-        if matches_simple_selector(&*node, sel) { out.push(node); }
-        for child in &mut (*node).children {
-            collect_all_mut_internal(child as *mut HtmlBox, sel, out);
+    // Collect node_ids first, then look up each one individually.
+    let ids = {
+        let mut out = Vec::new();
+        fn collect_ids(node: &HtmlBox, sel: &str, out: &mut Vec<u32>) {
+            if matches_simple_selector(node, sel) { out.push(node.node_id); }
+            for child in &node.children { collect_ids(child, sel, out); }
         }
-    }
+        collect_ids(root, selector, &mut out);
+        out
+    };
+    // Use raw pointer to collect multiple &mut references (safe because they're distinct nodes).
+    let root_ptr = root as *mut HtmlBox;
+    ids.into_iter()
+        .filter_map(|id| {
+            fn find_mut(node: &mut HtmlBox, id: u32) -> Option<*mut HtmlBox> {
+                if node.node_id == id { return Some(node as *mut HtmlBox); }
+                for child in &mut node.children {
+                    if let Some(p) = find_mut(child, id) { return Some(p); }
+                }
+                None
+            }
+            unsafe { find_mut(&mut *root_ptr, id).map(|p| &mut *p) }
+        })
+        .collect()
 }
 
 // ─── Tree traversal ───────────────────────────────────────────────────────────
@@ -598,16 +602,16 @@ pub fn get_last_child(b: &HtmlBox) -> Option<&HtmlBox> {
 }
 
 /// Find the next sibling of `target` within `parent`.
-pub fn get_next_sibling<'a>(parent: &'a HtmlBox, target: *const HtmlBox) -> Option<&'a HtmlBox> {
+pub fn get_next_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
     let idx = parent.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, target))?;
+        .position(|c| c.node_id == target_id)?;
     parent.children.get(idx + 1)
 }
 
 /// Find the previous sibling of `target` within `parent`.
-pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target: *const HtmlBox) -> Option<&'a HtmlBox> {
+pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
     let idx = parent.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, target))?;
+        .position(|c| c.node_id == target_id)?;
     if idx == 0 { return None; }
     parent.children.get(idx - 1)
 }
@@ -625,6 +629,7 @@ pub fn prepend_child(parent: &mut HtmlBox, child: HtmlBox) {
 }
 
 /// Insert `new_node` before `reference` within `parent`.
+/// Accepts `*const HtmlBox` for backward compatibility; matches by pointer identity.
 /// Returns `false` if `reference` was not found.
 pub fn insert_before(parent: &mut HtmlBox, reference: *const HtmlBox, new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
@@ -637,10 +642,35 @@ pub fn insert_before(parent: &mut HtmlBox, reference: *const HtmlBox, new_node: 
     }
 }
 
+/// Insert `new_node` before the child with `reference_id` within `parent`.
+pub fn insert_before_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+    if let Some(idx) = parent.children.iter()
+        .position(|c| c.node_id == reference_id)
+    {
+        parent.children.insert(idx, new_node);
+        true
+    } else {
+        false
+    }
+}
+
 /// Insert `new_node` after `reference` within `parent`.
+/// Accepts `*const HtmlBox` for backward compatibility; matches by pointer identity.
 pub fn insert_after(parent: &mut HtmlBox, reference: *const HtmlBox, new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| std::ptr::eq(c as *const HtmlBox, reference))
+    {
+        parent.children.insert(idx + 1, new_node);
+        true
+    } else {
+        false
+    }
+}
+
+/// Insert `new_node` after the child with `reference_id` within `parent`.
+pub fn insert_after_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+    if let Some(idx) = parent.children.iter()
+        .position(|c| c.node_id == reference_id)
     {
         parent.children.insert(idx + 1, new_node);
         true
@@ -658,7 +688,8 @@ pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
     }
 }
 
-/// Remove the child identified by raw pointer from `parent`, returning it.
+/// Remove the child identified by pointer from `parent`, returning it.
+/// Accepts `*const HtmlBox` for backward compatibility.
 pub fn remove_child(parent: &mut HtmlBox, target: *const HtmlBox) -> Option<HtmlBox> {
     if let Some(idx) = parent.children.iter()
         .position(|c| std::ptr::eq(c as *const HtmlBox, target))
@@ -890,7 +921,7 @@ impl UndoStack {
 /// High-level editor state and operations.
 #[derive(Debug, Clone)]
 pub struct Editor {
-    pub caret_box:    Option<*const HtmlBox>,
+    pub caret_box:    Option<u32>,
     pub caret_local:  usize,
     pub sel_anchor:   usize,
     pub sel_start:    usize,
@@ -932,8 +963,8 @@ impl Editor {
 
     pub fn has_selection(&self) -> bool { self.sel_start < self.sel_end }
 
-    pub fn caret_info(&self) -> Option<(*const HtmlBox, usize)> {
-        self.caret_box.map(|p| (p, self.caret_local))
+    pub fn caret_info(&self) -> Option<(u32, usize)> {
+        self.caret_box.map(|id| (id, self.caret_local))
     }
 
     pub fn sel_args(&self) -> (Option<usize>, Option<usize>) {
@@ -944,15 +975,15 @@ impl Editor {
         }
     }
 
-    pub fn set_caret_from_hit(&mut self, box_ptr: *const HtmlBox, local: usize, extend: bool) {
+    pub fn set_caret_from_hit(&mut self, node_id: u32, local: usize, extend: bool) {
         if !extend {
             self.sel_anchor  = local;
             self.sel_start   = local;
             self.sel_end     = local;
         }
-        self.caret_box   = Some(box_ptr);
+        self.caret_box   = Some(node_id);
         self.caret_local = local;
-        if extend && self.caret_box == Some(box_ptr) {
+        if extend && self.caret_box == Some(node_id) {
             self.sel_start = self.sel_anchor.min(local);
             self.sel_end   = self.sel_anchor.max(local);
         }
@@ -1027,14 +1058,14 @@ impl Editor {
                 self.mouse_down = true;
                 self.has_focus  = true;
                 if let Some(hit) = point_to_hit(root, doc_pt, button) {
-                    self.set_caret_from_hit(hit.box_ptr, hit.local_offset, false);
+                    self.set_caret_from_hit(hit.node_id, hit.local_offset, false);
                     return true;
                 }
             }
             HtmlEventType::MouseMove => {
                 if self.mouse_down {
                     if let Some(hit) = point_to_hit(root, doc_pt, button) {
-                        if self.caret_box == Some(hit.box_ptr) {
+                        if self.caret_box == Some(hit.node_id) {
                             self.caret_local = hit.local_offset;
                             self.sel_start = self.sel_anchor.min(hit.local_offset);
                             self.sel_end   = self.sel_anchor.max(hit.local_offset);
@@ -1058,24 +1089,30 @@ impl Editor {
             // Allow editing inside contenteditable="true" elements even when the document is read-only.
             // The caret_box may be a child text node, so we walk the tree from root to check ancestry.
             let is_editable = self.caret_box
-                .map(|p| is_in_contenteditable(root, p))
+                .map(|id| is_in_contenteditable_by_id(root, id))
                 .unwrap_or(false);
             if !is_editable { return false; }
         }
         if etype != HtmlEventType::KeyDown && etype != HtmlEventType::KeyPress { return false; }
 
-        let box_ptr = match self.caret_box { Some(p) => p, None => return false };
+        let caret_id = match self.caret_box { Some(id) => id, None => return false };
 
         match key_code {
             37 => { // ArrowLeft
-                let flat = crate::layout::inline_layout::collect_flat_text(unsafe { &*box_ptr });
-                self.move_left(&flat, false);
-                return true;
+                if let Some(b) = find_box_mut(root, caret_id) {
+                    let flat = crate::layout::inline_layout::collect_flat_text(b);
+                    self.move_left(&flat, false);
+                    return true;
+                }
+                return false;
             }
             39 => { // ArrowRight
-                let flat = crate::layout::inline_layout::collect_flat_text(unsafe { &*box_ptr });
-                self.move_right(&flat, false);
-                return true;
+                if let Some(b) = find_box_mut(root, caret_id) {
+                    let flat = crate::layout::inline_layout::collect_flat_text(b);
+                    self.move_right(&flat, false);
+                    return true;
+                }
+                return false;
             }
             8 => { // Backspace
                 self.delete_selection_or_before(root);
@@ -1102,10 +1139,10 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, root: &mut HtmlBox, ch: char) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
         // Consume the line-start flag before any mutation (collapse_to will clear it too).
         let at_line_start = self.caret_at_line_start;
-        if let Some(container) = find_box_mut(root, box_ptr) {
+        if let Some(container) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
@@ -1140,8 +1177,8 @@ impl Editor {
     }
 
     pub fn delete_selection_or_before(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
-        if let Some(node) = find_box_mut(root, box_ptr) {
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
@@ -1159,8 +1196,8 @@ impl Editor {
     }
 
     pub fn delete_selection_or_at(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
-        if let Some(node) = find_box_mut(root, box_ptr) {
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
                 let s = self.sel_start;
                 let e = self.sel_end;
@@ -1187,17 +1224,17 @@ impl Editor {
     /// children, `<blockquote>`, sectioning elements, …) receive a `<br>` instead,
     /// so that pressing Enter inside a flex cell does not spawn a new cell.
     pub fn insert_newline(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         // Delete selection first (before we look at the tag).
         if self.has_selection() {
             let (s, e) = (self.sel_start, self.sel_end);
-            if let Some(b) = find_box_mut(root, box_ptr) { delete_range_full(b, s, e); }
+            if let Some(b) = find_box_mut(root, caret_nid) { delete_range_full(b, s, e); }
             self.collapse_to(s);
         }
 
         // Peek at the tag — do NOT mutate yet.
-        let block_tag = match find_box_mut(root, box_ptr) {
+        let block_tag = match find_box_mut(root, caret_nid) {
             Some(b) => b.tag.clone(),
             None    => return,
         };
@@ -1212,7 +1249,7 @@ impl Editor {
 
         // Gather info and trim text after the split point from the current block.
         // The borrow of `root` ends when this block exits.
-        let (block_tag, after_text) = match find_box_mut(root, box_ptr) {
+        let (block_tag, after_text) = match find_box_mut(root, caret_nid) {
             Some(b) => {
                 let flat = crate::layout::inline_layout::collect_flat_text(b);
                 let split = split_at.min(flat.len());
@@ -1225,11 +1262,9 @@ impl Editor {
         };
 
         // Find parent, insert new sibling, then update the caret.
-        let parent_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
-        if let Some(par_ptr) = parent_raw {
-            let parent = unsafe { &mut *par_ptr };
+        if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
             let idx_opt = parent.children.iter()
-                .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr));
+                .position(|c| c.node_id == caret_nid);
             if let Some(idx) = idx_opt {
                 let new_tag = if is_block_tag(&block_tag) { block_tag.as_str() } else { "p" };
                 let mut new_block = HtmlBox::new(new_tag);
@@ -1243,8 +1278,7 @@ impl Editor {
                 parent.children[idx].layout_dirty = true;
                 parent.children.insert(idx + 1, new_block);
                 parent.layout_dirty = true;
-                let new_ptr = &parent.children[idx + 1] as *const HtmlBox;
-                self.caret_box = Some(new_ptr);
+                self.caret_box = Some(parent.children[idx + 1].node_id);
                 self.collapse_to(0);
             }
         }
@@ -1252,21 +1286,26 @@ impl Editor {
 
     /// Insert a `<br>` at the caret position (soft line break within the current block).
     pub fn insert_br(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         if self.has_selection() {
             let (s, e) = (self.sel_start, self.sel_end);
-            if let Some(b) = find_box_mut(root, box_ptr) { delete_range_full(b, s, e); }
+            if let Some(b) = find_box_mut(root, caret_nid) { delete_range_full(b, s, e); }
             self.collapse_to(s);
         }
 
         let caret = self.caret_local;
 
         // Find the leaf text node and its local offset.
-        let (leaf_ptr, local_off) = {
-            let container = match find_box_mut(root, box_ptr) { Some(c) => c, None => return };
+        let leaf_nid;
+        let local_off;
+        {
+            let container = match find_box_mut(root, caret_nid) { Some(c) => c, None => return };
             match find_node_offset_mut(container, caret) {
-                Ok((leaf, local)) => (leaf as *const HtmlBox, local),
+                Ok((leaf, local)) => {
+                    leaf_nid = leaf.node_id;
+                    local_off = local;
+                }
                 Err(_) => {
                     // Caret is past end — append a <br> as last child of container
                     container.children.push(HtmlBox::new("br"));
@@ -1275,12 +1314,12 @@ impl Editor {
                     return;
                 }
             }
-        };
+        }
 
         // Walk the tree to find the leaf's parent and split.
-        split_node_with_br(root, leaf_ptr, local_off);
+        split_node_with_br(root, leaf_nid, local_off);
         // Mark the caret box dirty so layout re-runs on this subtree.
-        if let Some(b) = find_box_mut(root, box_ptr) { b.layout_dirty = true; }
+        if let Some(b) = find_box_mut(root, caret_nid) { b.layout_dirty = true; }
         // Caret offset in flat text is unchanged (<br> is transparent to flat-text),
         // but we mark that the caret is now at the START of the next visual line so
         // that rendering and insertion prefer the node after the <br>.
@@ -1290,39 +1329,33 @@ impl Editor {
 
     /// Toggle the current block between a plain block (`<p>`) and a list item (`<ul><li>`).
     pub fn toggle_bullet_list(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
-        let is_li = find_box_mut(root, box_ptr).map(|b| b.tag == "li").unwrap_or(false);
+        let is_li = find_box_mut(root, caret_nid).map(|b| b.tag == "li").unwrap_or(false);
 
         if is_li {
             // Unwrap: convert <li> back to <p>, remove <ul> wrapper if now empty.
-            let ul_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
-            if let Some(ul_ptr) = ul_raw {
-                let ul = unsafe { &mut *ul_ptr };
+            if let Some(ul) = find_parent_mut_by_id(root, caret_nid) {
                 if ul.tag == "ul" || ul.tag == "ol" {
+                    let ul_nid = ul.node_id;
                     if let Some(li_idx) = ul.children.iter()
-                        .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+                        .position(|c| c.node_id == caret_nid)
                     {
                         ul.children[li_idx].tag = "p".to_string();
                         apply_property(&mut ul.children[li_idx].style, "display", "block");
-                        let new_ptr = &ul.children[li_idx] as *const HtmlBox;
-                        self.caret_box = Some(new_ptr);
+                        self.caret_box = Some(ul.children[li_idx].node_id);
 
                         // If the list now has only this one element, unwrap the <ul>
                         if ul.children.len() == 1 {
-                            let ul_ptr_const = ul_ptr as *const HtmlBox;
-                            let gp_raw = find_parent_mut(root, ul_ptr_const)
-                                .map(|p| p as *mut HtmlBox);
-                            if let Some(gp_ptr) = gp_raw {
-                                let gp = unsafe { &mut *gp_ptr };
+                            if let Some(gp) = find_parent_mut_by_id(root, ul_nid) {
                                 if let Some(ul_idx) = gp.children.iter()
-                                    .position(|c| std::ptr::eq(c as *const HtmlBox, ul_ptr_const))
+                                    .position(|c| c.node_id == ul_nid)
                                 {
                                     let mut ul_box = gp.children.remove(ul_idx);
                                     let p_box = ul_box.children.remove(0);
                                     gp.children.insert(ul_idx, p_box);
-                                    let new_ptr2 = &gp.children[ul_idx] as *const HtmlBox;
-                                    self.caret_box = Some(new_ptr2);
+
+                                    self.caret_box = Some(gp.children[ul_idx].node_id);
                                 }
                             }
                         }
@@ -1331,11 +1364,9 @@ impl Editor {
             }
         } else {
             // Wrap block in <ul><li>.
-            let par_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
-            if let Some(par_ptr) = par_raw {
-                let parent = unsafe { &mut *par_ptr };
+            if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
                 if let Some(idx) = parent.children.iter()
-                    .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+                    .position(|c| c.node_id == caret_nid)
                 {
                     let block = parent.children.remove(idx);
                     let mut li = HtmlBox::new("li");
@@ -1347,8 +1378,8 @@ impl Editor {
                     apply_property(&mut ul.style, "display", "block");
                     ul.children.push(li);
                     parent.children.insert(idx, ul);
-                    let li_ptr = &parent.children[idx].children[0] as *const HtmlBox;
-                    self.caret_box = Some(li_ptr);
+                    
+                    self.caret_box = Some(parent.children[idx].children[0].node_id);
                 }
             }
         }
@@ -1356,8 +1387,8 @@ impl Editor {
 
     /// Increase the left indent of the current block by `step_px` pixels.
     pub fn increase_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
-        if let Some(b) = find_box_mut(root, box_ptr) {
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", current + step_px);
             apply_property(&mut b.style, "margin-left", &new_val);
@@ -1368,8 +1399,8 @@ impl Editor {
 
     /// Decrease the left indent of the current block by `step_px` pixels (minimum 0).
     pub fn decrease_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
-        if let Some(b) = find_box_mut(root, box_ptr) {
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", (current - step_px).max(0.0));
             apply_property(&mut b.style, "margin-left", &new_val);
@@ -1380,12 +1411,10 @@ impl Editor {
 
     /// Wrap the current block in a `<blockquote>`.
     pub fn increase_quote_level(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
-        let par_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
-        if let Some(par_ptr) = par_raw {
-            let parent = unsafe { &mut *par_ptr };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
             if let Some(idx) = parent.children.iter()
-                .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+                .position(|c| c.node_id == caret_nid)
             {
                 let block = parent.children.remove(idx);
                 let mut bq = HtmlBox::new("blockquote");
@@ -1393,29 +1422,25 @@ impl Editor {
                 apply_property(&mut bq.style, "margin-left", "40px");
                 bq.children.push(block);
                 parent.children.insert(idx, bq);
-                let inner_ptr = &parent.children[idx].children[0] as *const HtmlBox;
-                self.caret_box = Some(inner_ptr);
+                
+                self.caret_box = Some(parent.children[idx].children[0].node_id);
             }
         }
     }
 
     /// Unwrap one level of `<blockquote>` around the current block.
     pub fn decrease_quote_level(&mut self, root: &mut HtmlBox) {
-        let box_ptr = match self.caret_box { Some(p) => p, None => return };
+        let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         // Confirm the immediate parent is a <blockquote>.
-        let bq_raw = find_parent_mut(root, box_ptr).map(|p| p as *mut HtmlBox);
-        let bq_ptr = match bq_raw {
-            Some(p) if unsafe { (*p).tag == "blockquote" } => p,
+        let bq_nid = match find_parent_mut_by_id(root, caret_nid) {
+            Some(p) if p.tag == "blockquote" => p.node_id,
             _ => return,
         };
 
-        let bq_ptr_const = bq_ptr as *const HtmlBox;
-        let gp_raw = find_parent_mut(root, bq_ptr_const).map(|p| p as *mut HtmlBox);
-        if let Some(gp_ptr) = gp_raw {
-            let gp = unsafe { &mut *gp_ptr };
+        if let Some(gp) = find_parent_mut_by_id(root, bq_nid) {
             if let Some(bq_idx) = gp.children.iter()
-                .position(|c| std::ptr::eq(c as *const HtmlBox, bq_ptr_const))
+                .position(|c| c.node_id == bq_nid)
             {
                 let bq_box = gp.children.remove(bq_idx);
                 let n = bq_box.children.len();
@@ -1424,8 +1449,8 @@ impl Editor {
                 }
                 if n > 0 {
                     // Point to the first extracted child (closest to original caret position).
-                    let ptr = &gp.children[bq_idx] as *const HtmlBox;
-                    self.caret_box = Some(ptr);
+                    
+                    self.caret_box = Some(gp.children[bq_idx].node_id);
                 }
             }
         }
@@ -1464,21 +1489,21 @@ fn is_prose_tag(tag: &str) -> bool {
                | "li" | "dt" | "dd" | "pre")
 }
 
-pub fn find_box_mut<'a>(root: &'a mut HtmlBox, ptr: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-    if std::ptr::eq(root as *const HtmlBox, ptr) { return Some(root); }
+pub fn find_box_mut<'a>(root: &'a mut HtmlBox, node_id: u32) -> Option<&'a mut HtmlBox> {
+    if root.node_id == node_id { return Some(root); }
     for child in &mut root.children {
-        if let Some(b) = find_box_mut(child, ptr) { return Some(b); }
+        if let Some(b) = find_box_mut(child, node_id) { return Some(b); }
     }
     None
 }
 
-/// Find the direct parent of `child_ptr` in the tree rooted at `root`.
-pub fn find_parent_mut<'a>(root: &'a mut HtmlBox, child_ptr: *const HtmlBox) -> Option<&'a mut HtmlBox> {
-    if root.children.iter().any(|c| std::ptr::eq(c as *const HtmlBox, child_ptr)) {
+/// Find the direct parent of a node by node_id.
+pub fn find_parent_mut_by_id<'a>(root: &'a mut HtmlBox, child_id: u32) -> Option<&'a mut HtmlBox> {
+    if root.children.iter().any(|c| c.node_id == child_id) {
         return Some(root);
     }
     for child in &mut root.children {
-        if let Some(p) = find_parent_mut(child, child_ptr) { return Some(p); }
+        if let Some(p) = find_parent_mut_by_id(child, child_id) { return Some(p); }
     }
     None
 }
@@ -1513,55 +1538,26 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
     Err(offset)
 }
 
-/// Returns true if `target` is `node` or a descendant of a node that has
-/// Returns true if `target` is inside a text-editable form input (<input> or <textarea>).
-pub fn is_in_form_input(node: &HtmlBox, target: *const HtmlBox) -> bool {
-    // Check if this node IS a text input and contains the target
-    let is_text_input = match node.tag.as_str() {
-        "textarea" => true,
-        "input" => {
-            let t = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
-            matches!(t, "text" | "password" | "email" | "search" | "url" | "tel" | "number")
-        }
-        _ => false,
-    };
-    if is_text_input {
-        if std::ptr::eq(node as *const HtmlBox, target) || node_contains(node, target) {
-            return true;
-        }
-    }
-    for child in &node.children {
-        if is_in_form_input(child, target) { return true; }
-    }
-    false
-}
-
 /// `contenteditable="true"`.  Used to allow key events inside contenteditable
 /// elements when the document-level editor is otherwise read-only.
-pub fn is_in_contenteditable(node: &HtmlBox, target: *const HtmlBox) -> bool {
-    let self_ptr = node as *const HtmlBox;
-    if std::ptr::eq(self_ptr, target) {
-        // The target itself: check its own attribute.
+pub fn is_in_contenteditable_by_id(node: &HtmlBox, target_id: u32) -> bool {
+    if node.node_id == target_id {
         return node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
     }
-    // If this node is contenteditable, all descendants are editable.
     let editable_root = node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
-    if editable_root && node_contains(node, target) {
+    if editable_root && node_contains_id(node, target_id) {
         return true;
     }
-    // Recurse into children without the editable_root shortcut so we can find
-    // a deeper contenteditable ancestor.
     for child in &node.children {
-        if is_in_contenteditable(child, target) { return true; }
+        if is_in_contenteditable_by_id(child, target_id) { return true; }
     }
     false
 }
 
-/// Returns true if `ancestor` is a strict ancestor of `target` (not the same node).
-fn node_contains(ancestor: &HtmlBox, target: *const HtmlBox) -> bool {
-    for child in &ancestor.children {
-        if std::ptr::eq(child as *const HtmlBox, target) { return true; }
-        if node_contains(child, target) { return true; }
+fn node_contains_id(node: &HtmlBox, target_id: u32) -> bool {
+    if node.node_id == target_id { return true; }
+    for child in &node.children {
+        if node_contains_id(child, target_id) { return true; }
     }
     false
 }
@@ -1645,18 +1641,18 @@ fn delete_flat_range(node: &mut HtmlBox, pos: &mut usize, start: usize, end: usi
     }
 }
 
-/// Split the text node at `leaf_ptr` at `local_off`, inserting a `<br>` between the halves.
-fn split_node_with_br(root: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: usize) {
-    split_node_with_br_impl(root, leaf_ptr, local_off);
+/// Split the text node at `leaf_nid` at `local_off`, inserting a `<br>` between the halves.
+fn split_node_with_br(root: &mut HtmlBox, leaf_nid: u32, local_off: usize) {
+    split_node_with_br_impl(root, leaf_nid, local_off);
 }
 
-fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_off: usize) -> bool {
+fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) -> bool {
     // Case A: the leaf is a direct *text-node* child of this node.
     // Only apply when the child is a pure text node (#text).  Element nodes
     // that happen to carry `.text` (e.g. <td>) must NOT be removed from their
     // parent — they are handled by Case B via recursion.
     if let Some(idx) = node.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, leaf_ptr))
+        .position(|c| c.node_id == leaf_nid)
     {
         if node.children[idx].is_text_node() {
             let text = node.children[idx].text.clone();
@@ -1681,7 +1677,7 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_o
     }
 
     // Case B: the leaf is this node itself (has its own .text, no children)
-    if std::ptr::eq(node as *const HtmlBox, leaf_ptr) && !node.text.is_empty() {
+    if node.node_id == leaf_nid && !node.text.is_empty() {
         let split = local_off.min(node.text.len());
         let after  = node.text[split..].to_string();
         node.text  = node.text[..split].to_string();
@@ -1693,7 +1689,7 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_o
 
     // Recurse
     for child in &mut node.children {
-        if split_node_with_br_impl(child, leaf_ptr, local_off) { return true; }
+        if split_node_with_br_impl(child, leaf_nid, local_off) { return true; }
     }
     false
 }
@@ -1702,10 +1698,10 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_ptr: *const HtmlBox, local_o
 
 /// Insert a `<hr>` element after the block that currently contains the caret.
 pub fn insert_hr(editor: &Editor, root: &mut HtmlBox) {
-    let box_ptr = match editor.caret_box { Some(p) => p, None => return };
-    if let Some(parent) = find_parent_mut(root, box_ptr) {
+    let caret_id = match editor.caret_box { Some(id) => id, None => return };
+    if let Some(parent) = find_parent_mut_by_id(root, caret_id) {
         if let Some(idx) = parent.children.iter()
-            .position(|c| std::ptr::eq(c as *const HtmlBox, box_ptr))
+            .position(|c| c.node_id == caret_id)
         {
             let mut hr = HtmlBox::new("hr");
             apply_property(&mut hr.style, "display", "block");

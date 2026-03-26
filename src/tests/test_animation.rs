@@ -626,13 +626,13 @@ fn transition_state_starts_on_style_change() {
 
     // Simulate a style change: manually inject a new opacity into the stylesheet
     // and force a re-cascade by changing the inline style.
-    let b_ptr = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div")
-        .map(|b| b as *const HtmlBox as usize);
+    let b_nid = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div")
+        .map(|b| b.node_id);
 
     // Directly write a prev_style snapshot for the element with opacity=1,
     // then do another layout — if the computed opacity changed the engine
     // should have started a transition.
-    if let Some(id) = b_ptr {
+    if let Some(id) = b_nid {
         let mut prev = std::collections::HashMap::new();
         prev.insert("opacity".to_string(), "1".to_string());
         doc.prev_styles.insert(id, prev);
@@ -653,7 +653,7 @@ fn transition_interpolates_between_values() {
     use std::collections::HashMap;
 
     let mut doc = parse_html("<html><body></body></html>");
-    let elem_id: usize = 0xDEAD_BEEF; // fake element pointer
+    let elem_id: u32 = 0xDEAD; // fake element node_id
 
     // Insert a transition state directly.
     let start = Instant::now() - Duration::from_millis(250);
@@ -681,7 +681,7 @@ fn transition_interpolates_between_values() {
 #[test]
 fn transition_completes_and_is_removed() {
     let mut doc = parse_html("<html><body></body></html>");
-    let elem_id: usize = 0xBEEF;
+    let elem_id: u32 = 0xBEEF;
 
     let start = Instant::now() - Duration::from_millis(600);
     doc.transition_states.insert(elem_id, vec![TransitionState {
@@ -704,7 +704,7 @@ fn transition_completes_and_is_removed() {
 #[test]
 fn transition_delay_applies_from_value() {
     let mut doc = parse_html("<html><body></body></html>");
-    let elem_id: usize = 0xCAFE;
+    let elem_id: u32 = 0xCAFE;
 
     let start = Instant::now();
     doc.transition_states.insert(elem_id, vec![TransitionState {

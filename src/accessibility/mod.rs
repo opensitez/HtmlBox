@@ -49,12 +49,12 @@ use crate::types::{HtmlBox, Document, Display};
 #[cfg(feature = "accessibility")]
 const ROOT_ID: NodeId = NodeId(1);
 
-/// Convert a raw `HtmlBox` pointer to a stable, non-zero `NodeId`.
-/// Setting bit 0 guarantees non-zero for any pointer including null.
+/// Convert a node_id to a stable, non-zero `NodeId`.
+/// Setting bit 0 guarantees non-zero.
 #[cfg(feature = "accessibility")]
 #[inline]
-fn ptr_to_id(ptr: *const HtmlBox) -> NodeId {
-    NodeId((ptr as u64) | 1)
+fn nid_to_ak(node_id: u32) -> NodeId {
+    NodeId((node_id as u64) | 1)
 }
 
 /// Build a complete `accesskit::TreeUpdate` from the current document state.
@@ -76,15 +76,15 @@ pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
     //   for_label_map:     element-id → label text  (from <label for="id">)
     //   wrapped_label_map: input-ptr  → label text  (from <label> wrapping the control)
     let mut for_label_map:     HashMap<&str, String>           = HashMap::new();
-    let mut wrapped_label_map: HashMap<*const HtmlBox, String> = HashMap::new();
+    let mut wrapped_label_map: HashMap<u32, String> = HashMap::new();
     collect_label_maps(&doc.root, &mut for_label_map, &mut wrapped_label_map);
 
     let mut nodes: Vec<(NodeId, Node)> = Vec::new();
-    let focused_ptr = doc.focused_box;
+    let focused_id = doc.focused_box;
 
     // Walk the real root element.
     let real_root_id = walk(
-        &doc.root, scale, &mut nodes, focused_ptr,
+        &doc.root, scale, &mut nodes, focused_id,
         &id_to_nid, &id_to_text, &for_label_map, &wrapped_label_map,
     );
 
@@ -94,10 +94,10 @@ pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
     nodes.push((ROOT_ID, doc_root));
 
     // AccessKit focus: use the focused box's id, fall back to root.
-    let focus_id = if focused_ptr.is_null() {
+    let focus_id = if focused_id == 0 {
         ROOT_ID
     } else {
-        ptr_to_id(focused_ptr)
+        nid_to_ak(focused_id)
     };
 
     TreeUpdate {
@@ -116,7 +116,7 @@ fn collect_id_maps<'a>(
 ) {
     if let Some(id) = node.attributes.get("id") {
         if !id.is_empty() {
-            id_to_nid.insert(id.as_str(), ptr_to_id(node as *const HtmlBox));
+            id_to_nid.insert(id.as_str(), nid_to_ak(node.node_id));
             id_to_text.insert(id.as_str(), collect_text(node));
         }
     }
@@ -134,7 +134,7 @@ fn collect_id_maps<'a>(
 fn collect_label_maps<'a>(
     node: &'a HtmlBox,
     for_label_map:     &mut HashMap<&'a str, String>,
-    wrapped_label_map: &mut HashMap<*const HtmlBox, String>,
+    wrapped_label_map: &mut HashMap<u32, String>,
 ) {
     if node.tag == "label" {
         // Collect the label's visible text, excluding embedded controls whose
@@ -145,8 +145,8 @@ fn collect_label_maps<'a>(
                 if !for_id.is_empty() {
                     for_label_map.insert(for_id.as_str(), text);
                 }
-            } else if let Some(ptr) = find_labelable_descendant(node) {
-                wrapped_label_map.insert(ptr, text);
+            } else if let Some(nid) = find_labelable_descendant(node) {
+                wrapped_label_map.insert(nid, text);
             }
         }
     }
@@ -178,16 +178,16 @@ fn collect_label_text(node: &HtmlBox) -> String {
 /// Find the first labelable descendant (for implicit `<label>` wrapping).
 /// Returns the raw pointer to the control so it can be used as a map key.
 #[cfg(feature = "accessibility")]
-fn find_labelable_descendant(node: &HtmlBox) -> Option<*const HtmlBox> {
+fn find_labelable_descendant(node: &HtmlBox) -> Option<u32> {
     for child in &node.children {
         let tag = child.tag.as_str();
         let labelable = matches!(tag, "button" | "input" | "meter" | "output" | "progress" | "select" | "textarea")
             && child.attributes.get("type").map(|t| t != "hidden").unwrap_or(true);
         if labelable {
-            return Some(child as *const HtmlBox);
+            return Some(child.node_id);
         }
-        if let Some(ptr) = find_labelable_descendant(child) {
-            return Some(ptr);
+        if let Some(nid) = find_labelable_descendant(child) {
+            return Some(nid);
         }
     }
     None
@@ -218,13 +218,13 @@ fn walk(
     node: &HtmlBox,
     scale: f32,
     nodes: &mut Vec<(NodeId, Node)>,
-    focused_ptr: *const HtmlBox,
+    focused_id: u32,
     id_to_nid: &HashMap<&str, NodeId>,
     id_to_text: &HashMap<&str, String>,
     for_label_map: &HashMap<&str, String>,
-    wrapped_label_map: &HashMap<*const HtmlBox, String>,
+    wrapped_label_map: &HashMap<u32, String>,
 ) -> NodeId {
-    let id = ptr_to_id(node as *const HtmlBox);
+    let id = nid_to_ak(node.node_id);
     let role = resolve_role(node);
     let mut ak = Node::new(role);
 
@@ -526,7 +526,7 @@ fn walk(
                 && c.style.visibility
                 && !c.attributes.get("aria-hidden").map(|v| v == "true").unwrap_or(false)
         })
-        .map(|c| walk(c, scale, nodes, focused_ptr, id_to_nid, id_to_text, for_label_map, wrapped_label_map))
+        .map(|c| walk(c, scale, nodes, focused_id, id_to_nid, id_to_text, for_label_map, wrapped_label_map))
         .collect();
     if !child_ids.is_empty() {
         ak.set_children(child_ids);
@@ -721,7 +721,7 @@ fn compute_name(
     node: &HtmlBox,
     id_to_text: &HashMap<&str, String>,
     for_label_map: &HashMap<&str, String>,
-    wrapped_label_map: &HashMap<*const HtmlBox, String>,
+    wrapped_label_map: &HashMap<u32, String>,
 ) -> Option<String> {
     // 1. aria-labelledby handled by caller before reaching here.
 
@@ -738,7 +738,7 @@ fn compute_name(
     }
 
     // 3b. Wrapping <label>
-    if let Some(text) = wrapped_label_map.get(&(node as *const HtmlBox)) {
+    if let Some(text) = wrapped_label_map.get(&node.node_id) {
         if !text.is_empty() { return Some(text.clone()); }
     }
 

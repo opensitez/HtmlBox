@@ -265,8 +265,6 @@ pub fn get_offset_from_x(
 
 /// Result of a hit test: identifies which box was hit and where within it.
 pub struct HitResult {
-    /// Raw pointer to the hit box (valid while the Document is unmodified).
-    pub box_ptr:      *const HtmlBox,
     /// Stable node identity (survives tree mutations).
     pub node_id:      u32,
     /// Byte offset within that box's flat text.
@@ -313,7 +311,7 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
                 let b = &child.border_rect;
                 if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
                     if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-                    return Some(HitResult { box_ptr: child as *const HtmlBox, node_id: child.node_id, local_offset: 0 });
+                    return Some(HitResult { node_id: child.node_id, local_offset: 0 });
                 }
             }
         }
@@ -334,7 +332,7 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
         let b = &child.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-            return Some(HitResult { box_ptr: child as *const HtmlBox, node_id: child.node_id, local_offset: 0 });
+            return Some(HitResult { node_id: child.node_id, local_offset: 0 });
         }
     }
 
@@ -369,9 +367,9 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
             let flat = collect_flat_text(node);
             let line = snap_to_line(&node.line_cache, py);
             let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
-            return Some(HitResult { box_ptr: node as *const HtmlBox, node_id: node.node_id, local_offset: off });
+            return Some(HitResult { node_id: node.node_id, local_offset: off });
         }
-        return Some(HitResult { box_ptr: node as *const HtmlBox, node_id: node.node_id, local_offset: 0 });
+        return Some(HitResult { node_id: node.node_id, local_offset: 0 });
     }
 
     None
@@ -413,30 +411,29 @@ pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<Hi
     hit_test_impl(root, doc_pt, button)
 }
 
-/// Map a (box_ptr, local_byte_offset) back to a document-space (x, y) point
+/// Map a (node_id, local_byte_offset) back to a document-space (x, y) point
 /// for caret or selection-anchor rendering.
 ///
 /// Pass `scroll_x = 0, scroll_y = 0` to get absolute document coordinates.
 pub fn offset_to_point(
     root:         &HtmlBox,
-    box_ptr:      *const HtmlBox,
+    target_id:    u32,
     local_offset: usize,
     scroll_x:     f32,
     scroll_y:     f32,
 ) -> Option<(f32, f32)> {
-    find_and_measure(root, box_ptr, local_offset, scroll_x, scroll_y)
+    find_and_measure(root, target_id, local_offset, scroll_x, scroll_y)
 }
 
 fn find_and_measure(
     node:         &HtmlBox,
-    box_ptr:      *const HtmlBox,
+    target_id:    u32,
     local_offset: usize,
     scroll_x:     f32,
     scroll_y:     f32,
 ) -> Option<(f32, f32)> {
-    if std::ptr::eq(node as *const HtmlBox, box_ptr) {
+    if node.node_id == target_id {
         let flat = collect_flat_text(node);
-        // line.x and line.y are absolute doc coords — just subtract scroll
         return Some(caret_point_in_box(
             &flat, &node.inline_runs, &node.line_cache,
             local_offset, scroll_x, scroll_y,
@@ -447,7 +444,7 @@ fn find_and_measure(
     // check whether the target is an inline descendant laid out here.
     if !node.line_cache.is_empty() {
         let mut acc: usize = 0;
-        if let Some(abs_off) = inline_offset_of(node, box_ptr, local_offset, &mut acc) {
+        if let Some(abs_off) = inline_offset_of_by_id(node, target_id, local_offset, &mut acc) {
             let flat = collect_flat_text(node);
             return Some(caret_point_in_box(
                 &flat, &node.inline_runs, &node.line_cache,
@@ -457,44 +454,37 @@ fn find_and_measure(
     }
 
     for child in &node.children {
-        if let Some(pt) = find_and_measure(child, box_ptr, local_offset, scroll_x, scroll_y) {
+        if let Some(pt) = find_and_measure(child, target_id, local_offset, scroll_x, scroll_y) {
             return Some(pt);
         }
     }
     None
 }
 
-/// Walk inline content of `node` in document order, accumulating text byte-lengths.
-/// When `target` is found, return `acc + local_offset` (absolute offset within the
-/// containing block's flat text).  Returns `None` if `target` is not in this subtree.
-fn inline_offset_of(
+/// Like inline_offset_of but matches by node_id instead of pointer.
+fn inline_offset_of_by_id(
     node:         &HtmlBox,
-    target:       *const HtmlBox,
+    target_id:    u32,
     local_offset: usize,
     acc:          &mut usize,
 ) -> Option<usize> {
-    if std::ptr::eq(node as *const HtmlBox, target) {
+    if node.node_id == target_id {
         return Some(*acc + local_offset);
     }
-    // Atomic inline-blocks have their own layout — don't look inside them
     if matches!(node.style.display,
                 Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
         return None;
     }
     if matches!(node.style.display, Display::None) { return None; }
-
     if node.is_text_node() {
         *acc += node.text.len();
         return None;
     }
-
-    // Inline element's own text (set directly on the element, not via child #text)
     if !node.text.is_empty() {
         *acc += node.text.len();
     }
-
     for child in &node.children {
-        if let Some(r) = inline_offset_of(child, target, local_offset, acc) {
+        if let Some(r) = inline_offset_of_by_id(child, target_id, local_offset, acc) {
             return Some(r);
         }
     }
@@ -524,19 +514,19 @@ fn caret_point_in_box(
     (0.0, 0.0)
 }
 
-/// Find the deepest box at a document-space point.
-pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> *const HtmlBox {
-    deepest_box_at(root, doc_pt, button).unwrap_or(root as *const HtmlBox)
+/// Find the deepest box at a document-space point. Returns node_id.
+pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> u32 {
+    deepest_box_at(root, doc_pt, button).unwrap_or(root.node_id)
 }
 
-fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<*const HtmlBox> {
+fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<u32> {
     if matches!(node.style.display, Display::None) { return None; }
     let (px, py) = (pt.0 + node.scroll_left, pt.1 + node.scroll_top);
     for child in node.children.iter().rev() {
         let m = &child.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
             if let Some(r) = deepest_box_at(child, (px, py), _button) { return Some(r); }
-            return Some(child as *const HtmlBox);
+            return Some(child.node_id);
         }
     }
     None
@@ -546,28 +536,52 @@ fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<*const 
 pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<String> {
     // 1. Try hitting text content (inline runs)
     if let Some(hit) = hit_test_impl(root, doc_pt, button) {
-        let node = unsafe { &*hit.box_ptr };
-        // Find which run was hit
-        for run in &node.inline_runs {
-            if hit.local_offset >= run.text_offset && hit.local_offset < run.text_offset + run.length {
-                if !run.style.href.is_empty() {
-                    return Some(run.style.href.clone());
+        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+            if node.node_id == id { return Some(node); }
+            for child in &node.children {
+                if let Some(f) = find_node(child, id) { return Some(f); }
+            }
+            None
+        }
+        if let Some(node) = find_node(root, hit.node_id) {
+            for run in &node.inline_runs {
+                if hit.local_offset >= run.text_offset && hit.local_offset < run.text_offset + run.length {
+                    if !run.style.href.is_empty() {
+                        return Some(run.style.href.clone());
+                    }
                 }
             }
         }
     }
 
     // 2. Fallback: find the deepest box and search up for 'href' attribute
-    let box_ptr = hit_test_box_at(root, doc_pt, button);
-    if box_ptr.is_null() { return None; }
-    find_href_up(root, box_ptr)
+    let target_id = hit_test_box_at(root, doc_pt, button);
+    if target_id == 0 { return None; }
+    find_href_up_by_id(root, target_id)
 }
 
-fn find_href_up(root: &HtmlBox, target: *const HtmlBox) -> Option<String> {
+fn find_href_up_by_id(root: &HtmlBox, target_id: u32) -> Option<String> {
+    fn walk(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool {
+        path.push(node.node_id);
+        if node.node_id == target_id { return true; }
+        for child in &node.children {
+            if walk(child, target_id, path) { return true; }
+        }
+        path.pop();
+        false
+    }
     let mut path = Vec::new();
-    if collect_path(root, target, &mut path) {
-        for &node_ptr in path.iter().rev() {
-            let node = unsafe { &*node_ptr };
+    if !walk(root, target_id, &mut path) { return None; }
+    // Walk path in reverse (target → root) looking for href
+    for &nid in path.iter().rev() {
+        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+            if node.node_id == id { return Some(node); }
+            for child in &node.children {
+                if let Some(f) = find_node(child, id) { return Some(f); }
+            }
+            None
+        }
+        if let Some(node) = find_node(root, nid) {
             if let Some(href) = node.attributes.get("href") {
                 if !href.is_empty() { return Some(href.clone()); }
             }
@@ -576,16 +590,3 @@ fn find_href_up(root: &HtmlBox, target: *const HtmlBox) -> Option<String> {
     None
 }
 
-fn collect_path(
-    node:   &HtmlBox,
-    target: *const HtmlBox,
-    path:   &mut Vec<*const HtmlBox>,
-) -> bool {
-    path.push(node as *const HtmlBox);
-    if std::ptr::eq(node as *const HtmlBox, target) { return true; }
-    for child in &node.children {
-        if collect_path(child, target, path) { return true; }
-    }
-    path.pop();
-    false
-}

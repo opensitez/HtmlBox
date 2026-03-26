@@ -390,8 +390,8 @@ fn enter_creates_new_line_scenario(
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     // The caret box must still be set and have lines.
-    let caret_ptr = doc.editor.caret_box.expect("caret_box lost after Enter");
-    let caret_node = unsafe { &*caret_ptr };
+    let caret_id = doc.editor.caret_box.expect("caret_box lost after Enter");
+    let caret_node = doc.get_box_by_id(caret_id).expect("caret box not found in tree");
     assert!(!caret_node.line_cache.is_empty(),
         "caret box '{}' has no lines after Enter + relayout", caret_node.tag);
 
@@ -401,7 +401,8 @@ fn enter_creates_new_line_scenario(
 
     // Re-locate the caret box (pointer unchanged, layout has been refreshed).
     let caret_local = doc.editor.caret_local;
-    let caret_node = unsafe { &*doc.editor.caret_box.expect("caret_box lost after insert") };
+    let caret_id2 = doc.editor.caret_box.expect("caret_box lost after insert");
+    let caret_node = doc.get_box_by_id(caret_id2).expect("caret box not found in tree");
     assert!(!caret_node.line_cache.is_empty(),
         "caret box has no lines after inserting 'X'");
 

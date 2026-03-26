@@ -492,9 +492,7 @@ impl Document {
 
     /// Get the bounding rect of a node (border box in document coordinates).
     pub fn dom_get_bounding_rect(&self, id: u32) -> Option<Rect> {
-        let node = crate::types::find_by_node_id(&self.root, id);
-        if node.is_null() { return None; }
-        Some(unsafe { &*node }.border_rect)
+        self.get_box_by_id(id).map(|node| node.border_rect)
     }
 
     /// Get the offset width (border box width).

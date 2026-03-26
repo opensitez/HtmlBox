@@ -59,9 +59,15 @@ pub fn build_display_list_full(
     let mut fixed_ids = Vec::new();
     collect_fixed_elements(root, &mut fixed_ids);
     for fid in fixed_ids {
-        let ptr = crate::types::find_by_node_id(root, fid);
-        if !ptr.is_null() {
-            build_for_box(unsafe { &*ptr }, &mut list, &fixed_ctx);
+        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+            if node.node_id == id { return Some(node); }
+            for child in &node.children {
+                if let Some(found) = find_node(child, id) { return Some(found); }
+            }
+            None
+        }
+        if let Some(node) = find_node(root, fid) {
+            build_for_box(node, &mut list, &fixed_ctx);
         }
     }
 

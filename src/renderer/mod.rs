@@ -220,9 +220,10 @@ impl Renderer {
                     evt.doc_pos    = doc_pt;
                     evt.delta_x    = dx;
                     evt.delta_y    = dy;
-                    evt.target = crate::layout::hit_test::point_to_hit(&doc.root, doc_pt, 0)
-                        .map(|h| h.box_ptr)
-                        .unwrap_or(std::ptr::null());
+                    let hit_id = crate::layout::hit_test::point_to_hit(&doc.root, doc_pt, 0)
+                        .map(|h| h.node_id)
+                        .unwrap_or(0);
+                    evt.target = hit_id;
                     let events = doc.events.clone();
                     events.dispatch(&doc.root, evt);
                     // dx/dy are in browser-event convention (positive = scroll right/down).
@@ -369,9 +370,10 @@ impl Renderer {
     pub fn cursor_icon(&self, doc: &crate::types::Document) -> CSSCursor {
         let hovered_id = doc.hovered_box;
         if hovered_id == 0 { return CSSCursor::Default; }
-        let ptr = crate::types::find_by_node_id(&doc.root, hovered_id);
-        if ptr.is_null() { return CSSCursor::Default; }
-        let node = unsafe { &*ptr };
+        let node = match doc.get_box_by_id(hovered_id) {
+            Some(n) => n,
+            None => return CSSCursor::Default,
+        };
         // Explicit CSS cursor property
         if node.style.cursor != CSSCursor::Auto {
             return node.style.cursor;
@@ -510,19 +512,18 @@ impl Renderer {
 
         // Select dropdown
         if doc.open_select != 0 {
-            let sel_ptr = crate::types::find_by_node_id(&doc.root, doc.open_select);
-            if !sel_ptr.is_null() {
+            if let Some(sel_node) = doc.get_box_by_id(doc.open_select) {
                 self.scale = scale * zoom;
-                self.draw_select_dropdown(unsafe { &*sel_ptr }, pixmap, doc.scroll_x, doc.scroll_y);
+                self.draw_select_dropdown(sel_node, pixmap, doc.scroll_x, doc.scroll_y);
             }
         }
 
         // Caret
         if doc.editor.caret_visible {
-            if let Some((caret_box_ptr, caret_local)) = doc.editor.caret_info() {
-                if crate::dom::is_in_contenteditable(&doc.root, caret_box_ptr) {
+            if let Some((caret_id, caret_local)) = doc.editor.caret_info() {
+                if crate::dom::is_in_contenteditable_by_id(&doc.root, caret_id) {
                     self.scale = scale * zoom;
-                    self.draw_caret(&doc.root, pixmap, doc.scroll_x, doc.scroll_y, caret_box_ptr, caret_local);
+                    self.draw_caret(&doc.root, pixmap, doc.scroll_x, doc.scroll_y, caret_id, caret_local);
                 }
             }
         }
@@ -3141,10 +3142,10 @@ impl Renderer {
         pixmap:       &mut Pixmap,
         sx:           f32,
         sy:           f32,
-        caret_box_ptr: *const HtmlBox,
+        caret_node_id: u32,
         caret_local:  usize,
     ) {
-        self.draw_caret_walk(root, pixmap, sx, sy, caret_box_ptr, caret_local);
+        self.draw_caret_walk(root, pixmap, sx, sy, caret_node_id, caret_local);
     }
 
     fn draw_caret_walk(
@@ -3153,10 +3154,10 @@ impl Renderer {
         pixmap:        &mut Pixmap,
         sx:            f32,
         sy:            f32,
-        caret_box_ptr: *const HtmlBox,
+        caret_node_id: u32,
         caret_local:   usize,
     ) -> bool {
-        if std::ptr::eq(node as *const HtmlBox, caret_box_ptr) {
+        if node.node_id == caret_node_id {
             // Found the box; find its line
             let flat    = collect_flat_text(node);
             let font_px = node.style.font_size_px(16.0, 16.0);
@@ -3213,7 +3214,7 @@ impl Renderer {
         }
 
         for child in &node.children {
-            if self.draw_caret_walk(child, pixmap, sx, sy, caret_box_ptr, caret_local) {
+            if self.draw_caret_walk(child, pixmap, sx, sy, caret_node_id, caret_local) {
                 return true;
             }
         }
