@@ -79,8 +79,8 @@ fn layout_adv_min_height_enforced() {
         b.tag == "div" && b.style.min_height == CssLength::Px(200.0)
     });
     assert!(div.is_some(), "div with min-height: 200px not found");
-    assert!(div.unwrap().content_rect.h >= 200.0,
-        "min-height should enforce h >= 200, got {}", div.unwrap().content_rect.h);
+    assert!(div.unwrap().layout.content_rect.h >= 200.0,
+        "min-height should enforce h >= 200, got {}", div.unwrap().layout.content_rect.h);
 }
 
 #[test]
@@ -95,8 +95,8 @@ fn layout_adv_max_height_enforced() {
         b.tag == "div" && b.style.max_height != CssLength::None
     });
     assert!(div.is_some(), "div with max-height not found");
-    assert!(div.unwrap().content_rect.h <= 50.0,
-        "max-height should cap h <= 50, got {}", div.unwrap().content_rect.h);
+    assert!(div.unwrap().layout.content_rect.h <= 50.0,
+        "max-height should cap h <= 50, got {}", div.unwrap().layout.content_rect.h);
 }
 
 // ============================================================
@@ -116,7 +116,7 @@ fn layout_adv_margin_collapsing_positive() {
     assert!(divs.len() >= 2, "Expected at least 2 divs");
     let a = divs[0];
     let b = divs[1];
-    let content_gap = b.content_rect.y - (a.content_rect.y + a.content_rect.h);
+    let content_gap = b.layout.content_rect.y - (a.layout.content_rect.y + a.layout.content_rect.h);
     // With margin collapsing: gap = max(30, 20) = 30, not 50
     assert!(content_gap < 45.0,
         "Collapsed margin should be ~30 not 50, got gap={}", content_gap);
@@ -135,7 +135,7 @@ fn layout_adv_margin_collapsing_equal() {
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
-    let content_gap = b.content_rect.y - (a.content_rect.y + a.content_rect.h);
+    let content_gap = b.layout.content_rect.y - (a.layout.content_rect.y + a.layout.content_rect.h);
     // Should collapse to ~20, not 40
     assert!(content_gap < 35.0,
         "Equal margins should collapse to ~20, got gap={}", content_gap);

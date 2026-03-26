@@ -132,9 +132,10 @@ fn main() {
             had_css = true;
         }
     }
+    // Always resolve variables and re-cascade (even for inline-only CSS)
+    doc.stylesheet.resolve_variables_for_viewport(width, max_h);
+    if !inspect.is_empty() { doc.stylesheet.inspect_mode = true; }
     if had_css {
-        doc.stylesheet.resolve_variables_for_viewport(width, max_h);
-        if !inspect.is_empty() { doc.stylesheet.inspect_mode = true; }
         apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, max_h, 0, false);
     }
 
@@ -213,7 +214,7 @@ fn main() {
                                     b.image_data   = Some(raw.clone());
                                     b.image_width  = iw;
                                     b.image_height = ih;
-                                    b.layout_dirty = true;
+                                    b.layout.layout_dirty = true;
                                 }
                             }
                         }
@@ -231,7 +232,7 @@ fn main() {
 
     // ── Render to pixmap ──────────────────────────────────────────────────────
 
-    let doc_h    = (doc.root.margin_rect.h.ceil() as u32).max(1);
+    let doc_h    = (doc.root.layout.margin_rect.h.ceil() as u32).max(1);
     let render_h = doc_h.min(max_h as u32).max(1);
     let phys_w   = (width  * scale) as u32;
     let phys_h   = (render_h as f32 * scale) as u32;
@@ -354,24 +355,24 @@ fn dump_box(depth: usize, node: &HtmlBox) {
         format!(" img:{}×{}", node.image_width, node.image_height)
     } else { String::new() };
     // Padding rect (only show if different from content rect)
-    let pad_str = if node.padding_rect.w != node.content_rect.w || node.padding_rect.h != node.content_rect.h {
+    let pad_str = if node.layout.padding_rect.w != node.layout.content_rect.w || node.layout.padding_rect.h != node.layout.content_rect.h {
         format!(" p=[{:.0},{:.0} {:.0}×{:.0}]",
-            node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h)
+            node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h)
     } else { String::new() };
 
     println!(
         "{}{}{}{} [{:?}{}{}{}] c=[{:.0},{:.0} {:.0}×{:.0}]{} m=[{:.0},{:.0} {:.0}×{:.0}]{}{}{}{}{}{}",
         indent, tag, id, cls,
         node.style.display, flex_dir_str, float_str, pos_str,
-        node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h,
+        node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h,
         pad_str,
-        node.margin_rect.x,  node.margin_rect.y,  node.margin_rect.w,  node.margin_rect.h,
+        node.layout.margin_rect.x,  node.layout.margin_rect.y,  node.layout.margin_rect.w,  node.layout.margin_rect.h,
         font_sz, bg_str, color_str, overflow_str, img_str, text_preview,
     );
 
     // Dump line cache if present
-    if !node.line_cache.is_empty() {
-        for (li, line) in node.line_cache.iter().enumerate() {
+    if !node.layout.line_cache.is_empty() {
+        for (li, line) in node.layout.line_cache.iter().enumerate() {
             let segs: String = line.visual_segments.iter()
                 .map(|s| format!("(x{:.0} w{:.0})", s.x, s.width))
                 .collect::<Vec<_>>().join(" ");
@@ -455,9 +456,9 @@ fn inspect_print(node: &HtmlBox) {
     let cls = node.attributes.get("class").map(|v| format!(".{}", v.split_whitespace().collect::<Vec<_>>().join("."))).unwrap_or_default();
     println!("  <{}{}{}> ", node.tag, id, cls);
     println!("  ── Box Model ──");
-    println!("    content:  ({:.1}, {:.1}) {:.1} × {:.1}", node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h);
-    println!("    padding:  ({:.1}, {:.1}) {:.1} × {:.1}", node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h);
-    println!("    margin:   ({:.1}, {:.1}) {:.1} × {:.1}", node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h);
+    println!("    content:  ({:.1}, {:.1}) {:.1} × {:.1}", node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h);
+    println!("    padding:  ({:.1}, {:.1}) {:.1} × {:.1}", node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h);
+    println!("    margin:   ({:.1}, {:.1}) {:.1} × {:.1}", node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h);
     println!("  ── Computed Style ──");
     println!("    display:        {:?}", s.display);
     println!("    position:       {:?}", s.position);
@@ -490,11 +491,11 @@ fn inspect_print(node: &HtmlBox) {
     }
     // Margins/padding resolved
     println!("    margin:         {:.1} {:.1} {:.1} {:.1} (T R B L)",
-        node.resolved_margin_top, node.resolved_margin_right, node.resolved_margin_bottom, node.resolved_margin_left);
+        node.layout.resolved_margin_top, node.layout.resolved_margin_right, node.layout.resolved_margin_bottom, node.layout.resolved_margin_left);
     println!("    padding:        {:.1} {:.1} {:.1} {:.1} (T R B L)",
-        node.resolved_pad_top, node.resolved_pad_right, node.resolved_pad_bottom, node.resolved_pad_left);
+        node.layout.resolved_pad_top, node.layout.resolved_pad_right, node.layout.resolved_pad_bottom, node.layout.resolved_pad_left);
     println!("    border-width:   {:.1} {:.1} {:.1} {:.1} (T R B L)",
-        node.resolved_border_top, node.resolved_border_right, node.resolved_border_bottom, node.resolved_border_left);
+        node.layout.resolved_border_top, node.layout.resolved_border_right, node.layout.resolved_border_bottom, node.layout.resolved_border_left);
     if node.image_data.is_some() {
         println!("    image:          {}×{}", node.image_width, node.image_height);
     }
@@ -522,8 +523,8 @@ fn inspect_print(node: &HtmlBox) {
                 .unwrap_or_default();
             println!("    <{}{}{}> {:?} ({:.0}×{:.0}) @ ({:.0},{:.0})",
                 child.tag, cid, ccls, child.style.display,
-                child.content_rect.w, child.content_rect.h,
-                child.content_rect.x, child.content_rect.y);
+                child.layout.content_rect.w, child.layout.content_rect.h,
+                child.layout.content_rect.x, child.layout.content_rect.y);
         }
     }
     println!();
@@ -549,6 +550,19 @@ fn cached_fetch_bytes(url: &str, no_cache: bool, cache_dir: &str) -> Result<Vec<
         if let Ok(data) = std::fs::read(&path) {
             eprintln!("    [cache] {url}");
             return Ok(data);
+        }
+        // Legacy fallback for old broken URL cache keys
+        if let Some(scheme_end) = url.find("://") {
+            let after = &url[scheme_end + 3..];
+            if let Some(slash) = after.find('/') {
+                let old_url = format!("{}/.{}", &url[..scheme_end + 3], &after[slash..]);
+                let old_path = url_cache_path(&old_url, cache_dir);
+                if let Ok(data) = std::fs::read(&old_path) {
+                    eprintln!("    [cache-migrated] {url}");
+                    let _ = std::fs::write(&path, &data);
+                    return Ok(data);
+                }
+            }
         }
     }
     let data = fetch_bytes(url)?;
@@ -633,23 +647,5 @@ fn normalize_url(s: String) -> String {
 }
 
 fn resolve_url(base: &str, href: &str) -> String {
-    if href.is_empty()                           { return base.to_string(); }
-    if href.starts_with("data:")                 { return href.to_string(); }
-    if href.starts_with("http://") || href.starts_with("https://") { return href.to_string(); }
-    if href.starts_with("//") {
-        let scheme = if base.starts_with("https") { "https:" } else { "http:" };
-        return format!("{scheme}{href}");
-    }
-    let origin = if let Some(p) = base.find("://") {
-        let rest  = &base[p + 3..];
-        let slash = rest.find('/').map(|i| p + 3 + i).unwrap_or(base.len());
-        &base[..slash]
-    } else { "" };
-    if href.starts_with('/') {
-        return format!("{origin}{href}");
-    }
-    let dir = if let Some(i) = base.rfind('/') {
-        if &base[..i] == "https:" || &base[..i] == "http:" { base } else { &base[..i + 1] }
-    } else { base };
-    format!("{dir}{href}")
+    rhtmledit::resolve_url(href, base)
 }

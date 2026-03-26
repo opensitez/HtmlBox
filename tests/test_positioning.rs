@@ -65,8 +65,8 @@ fn relative_offset() {
     });
     assert!(b.is_some());
     let b = b.unwrap();
-    assert!(b.content_rect.x >= 30.0);
-    assert!(b.content_rect.y >= 20.0);
+    assert!(b.layout.content_rect.x >= 30.0);
+    assert!(b.layout.content_rect.y >= 20.0);
 }
 
 // ============================================================
@@ -85,7 +85,7 @@ fn absolute_removes_from_flow() {
     });
     assert!(flow.is_some());
     // Flow box at y~0 (absolute child doesn't push it down)
-    assert!(flow.unwrap().content_rect.y < 30.0);
+    assert!(flow.unwrap().layout.content_rect.y < 30.0);
 }
 
 // ============================================================
@@ -240,10 +240,10 @@ fn absolute_shrink_to_fit_top_right() {
     assert!(abs_box.is_some(), "absolute box not found");
     let abs_box = abs_box.unwrap();
     // Width should be shrunk to content — well under half the container width (300px)
-    assert!(abs_box.border_rect.w < 200.0,
-        "expected shrink-to-fit width < 200, got {}", abs_box.border_rect.w);
+    assert!(abs_box.layout.border_rect.w < 200.0,
+        "expected shrink-to-fit width < 200, got {}", abs_box.layout.border_rect.w);
     // Right edge of border rect should be near the container right (600 - 10 = 590)
-    let right_edge = abs_box.border_rect.x + abs_box.border_rect.w;
+    let right_edge = abs_box.layout.border_rect.x + abs_box.layout.border_rect.w;
     assert!(right_edge > 500.0 && right_edge <= 605.0,
         "right edge = {right_edge}");
 }
@@ -260,11 +260,11 @@ fn absolute_shrink_to_fit_top_left() {
     });
     assert!(abs_box.is_some(), "absolute box not found");
     let abs_box = abs_box.unwrap();
-    assert!(abs_box.border_rect.w < 200.0,
-        "expected shrink-to-fit width < 200, got {}", abs_box.border_rect.w);
+    assert!(abs_box.layout.border_rect.w < 200.0,
+        "expected shrink-to-fit width < 200, got {}", abs_box.layout.border_rect.w);
     // Left edge of border rect should be near 10px
-    assert!(abs_box.border_rect.x >= 10.0 && abs_box.border_rect.x < 30.0,
-        "left edge = {}", abs_box.border_rect.x);
+    assert!(abs_box.layout.border_rect.x >= 10.0 && abs_box.layout.border_rect.x < 30.0,
+        "left edge = {}", abs_box.layout.border_rect.x);
 }
 
 #[test]
@@ -279,8 +279,8 @@ fn absolute_explicit_width_not_shrunk() {
     });
     assert!(abs_box.is_some(), "absolute box not found");
     let abs_box = abs_box.unwrap();
-    assert!((abs_box.content_rect.w - 300.0).abs() < 2.0,
-        "explicit width should be 300, got {}", abs_box.content_rect.w);
+    assert!((abs_box.layout.content_rect.w - 300.0).abs() < 2.0,
+        "explicit width should be 300, got {}", abs_box.layout.content_rect.w);
 }
 
 #[test]
@@ -296,8 +296,8 @@ fn absolute_both_sides_stretches() {
     assert!(abs_box.is_some(), "absolute box not found");
     let abs_box = abs_box.unwrap();
     // Content width = 600 - 20 - 20 = 560
-    assert!(abs_box.content_rect.w > 500.0,
-        "expected stretched width > 500, got {}", abs_box.content_rect.w);
+    assert!(abs_box.layout.content_rect.w > 500.0,
+        "expected stretched width > 500, got {}", abs_box.layout.content_rect.w);
 }
 
 #[test]

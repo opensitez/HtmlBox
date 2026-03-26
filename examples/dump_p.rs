@@ -6,12 +6,12 @@ fn traverse(node: &rhtmledit::HtmlBox, depth: usize) {
     if node.tag == "p" {
         println!("[EX] p tag display={:?} text='{}'", node.style.display, node.text_content());
         if node.text_content().contains("Inline image") {
-            println!("  line_cache.len = {}", node.line_cache.len());
-            for (i, line) in node.line_cache.iter().enumerate() {
+            println!("  line_cache.len = {}", node.layout.line_cache.len());
+            for (i, line) in node.layout.line_cache.iter().enumerate() {
                 println!("   line[{}] y={} w={} h={} ascent={} descent={}", i, line.y, line.width, line.height, line.ascent, line.descent);
             }
             for child in &node.children {
-                println!("  child tag={} display={:?} margin_rect={:?}", child.tag, child.style.display, child.margin_rect);
+                println!("  child tag={} display={:?} margin_rect={:?}", child.tag, child.style.display, child.layout.margin_rect);
             }
         }
     }
@@ -51,10 +51,10 @@ fn main() {
             }
         }
         if found && node.tag == "div" {
-            println!("[HERO] found hero container: tag={} display={:?} content_rect={:?} border_rect={:?} margin_rect={:?}", node.tag, node.style.display, node.content_rect, node.border_rect, node.margin_rect);
+            println!("[HERO] found hero container: tag={} display={:?} content_rect={:?} border_rect={:?} margin_rect={:?}", node.tag, node.style.display, node.layout.content_rect, node.layout.border_rect, node.layout.margin_rect);
             for (i, ch) in node.children.iter().enumerate() {
                 println!(" [HERO] child[{}] tag={} display={:?} margin_rect={:?} border_rect={:?} content_rect={:?} style.position={:?} style.top={:?} style.left={:?} style.right={:?} style.bottom={:?}",
-                         i, ch.tag, ch.style.display, ch.margin_rect, ch.border_rect, ch.content_rect, ch.style.position, ch.style.top, ch.style.left, ch.style.right, ch.style.bottom);
+                         i, ch.tag, ch.style.display, ch.layout.margin_rect, ch.layout.border_rect, ch.layout.content_rect, ch.style.position, ch.style.top, ch.style.left, ch.style.right, ch.style.bottom);
             }
         }
         for ch in &node.children { dump_hero(ch); }

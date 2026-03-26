@@ -496,7 +496,7 @@ fn bdo_element_unicode_bidi_override() {
     });
     // Also check inline runs of any box for the override
     fn walk_runs(root: &HtmlBox) -> bool {
-        if root.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Override) {
+        if root.layout.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Override) {
             return true;
         }
         root.children.iter().any(walk_runs)
@@ -514,7 +514,7 @@ fn bdi_element_unicode_bidi_isolate() {
         b.style.unicode_bidi == UnicodeBidi::Isolate
     });
     fn walk_runs(root: &HtmlBox) -> bool {
-        if root.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Isolate) {
+        if root.layout.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Isolate) {
             return true;
         }
         root.children.iter().any(walk_runs)

@@ -77,8 +77,8 @@ fn scroll_height_set_when_overflow_scroll() {
     );
     let div = find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    assert!(div.scroll_height > div.content_rect.h,
-        "scroll_height ({}) should exceed content_rect.h ({})", div.scroll_height, div.content_rect.h);
+    assert!(div.layout.scroll_height > div.layout.content_rect.h,
+        "scroll_height ({}) should exceed content_rect.h ({})", div.layout.scroll_height, div.layout.content_rect.h);
 }
 
 #[test]
@@ -90,9 +90,9 @@ fn scroll_height_zero_when_no_overflow() {
     let div = find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
     // Without overflow:scroll/auto, scroll_height mirrors content_rect.h.
-    assert!(div.scroll_height <= div.content_rect.h + 1.0,
-        "scroll_height ({}) should not exceed content height ({})", div.scroll_height, div.content_rect.h);
-    assert_eq!(div.scroll_top, 0.0);
+    assert!(div.layout.scroll_height <= div.layout.content_rect.h + 1.0,
+        "scroll_height ({}) should not exceed content height ({})", div.layout.scroll_height, div.layout.content_rect.h);
+    assert_eq!(div.layout.scroll_top, 0.0);
 }
 
 // ── process_wheel_event: viewport scroll fallback ────────────────────────────
@@ -152,8 +152,8 @@ fn wheel_scrolls_div_not_viewport() {
     let div = find_box(&doc.root,
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    assert!(div.scroll_top > 0.0,
-        "div scroll_top should increase after wheel event, got {}", div.scroll_top);
+    assert!(div.layout.scroll_top > 0.0,
+        "div scroll_top should increase after wheel event, got {}", div.layout.scroll_top);
 }
 
 #[test]
@@ -173,9 +173,9 @@ fn wheel_div_scroll_clamped_to_max() {
     let div = find_box(&doc.root,
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    let max = (div.scroll_height - div.content_rect.h).max(0.0);
-    assert!(div.scroll_top <= max + 0.5,
-        "scroll_top ({}) must not exceed max ({})", div.scroll_top, max);
+    let max = (div.layout.scroll_height - div.layout.content_rect.h).max(0.0);
+    assert!(div.layout.scroll_top <= max + 0.5,
+        "scroll_top ({}) must not exceed max ({})", div.layout.scroll_top, max);
 }
 
 #[test]
@@ -194,8 +194,8 @@ fn wheel_div_scroll_clamped_to_zero() {
     let div = find_box(&doc.root,
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    assert_eq!(div.scroll_top, 0.0,
-        "scroll_top must not go negative, got {}", div.scroll_top);
+    assert_eq!(div.layout.scroll_top, 0.0,
+        "scroll_top must not go negative, got {}", div.layout.scroll_top);
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn wheel_outside_div_scrolls_viewport() {
     let div = find_box(&doc.root,
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    assert_eq!(div.scroll_top, 0.0,
+    assert_eq!(div.layout.scroll_top, 0.0,
         "div outside cursor should not scroll");
 
     // The viewport should have scrolled.
@@ -245,7 +245,7 @@ fn wheel_over_overflow_hidden_falls_through_to_viewport() {
     let div = find_box(&doc.root,
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
-    assert_eq!(div.scroll_top, 0.0,
+    assert_eq!(div.layout.scroll_top, 0.0,
         "overflow:hidden div should not scroll");
     assert!(doc.scroll_y > 0.0,
         "viewport should receive the scroll instead");
@@ -279,9 +279,9 @@ fn wheel_scrolls_innermost_div() {
         &|b| b.attributes.get("id").map(|s| s == "outer").unwrap_or(false))
         .expect("outer div");
 
-    assert!(inner.scroll_top > 0.0,
-        "inner div should scroll, got {}", inner.scroll_top);
-    assert_eq!(outer.scroll_top, 0.0,
+    assert!(inner.layout.scroll_top > 0.0,
+        "inner div should scroll, got {}", inner.layout.scroll_top);
+    assert_eq!(outer.layout.scroll_top, 0.0,
         "outer div should not scroll when inner handles wheel");
 }
 
@@ -320,7 +320,7 @@ fn scroll_top_preserved_after_relayout() {
         let div = find_box(&doc.root,
             &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
             .expect("box div");
-        div.scroll_top
+        div.layout.scroll_top
     };
     assert!(scroll_before > 0.0, "scroll_top should be > 0 after scrolling down, got {}", scroll_before);
 
@@ -331,7 +331,7 @@ fn scroll_top_preserved_after_relayout() {
         &|b| b.attributes.get("id").map(|s| s == "box").unwrap_or(false))
         .expect("box div");
     // scroll_top should be re-clamped but not zeroed if content still overflows.
-    assert!(div.scroll_top <= div.scroll_height - div.content_rect.h + 0.5,
+    assert!(div.layout.scroll_top <= div.layout.scroll_height - div.layout.content_rect.h + 0.5,
         "scroll_top should be clamped after relayout");
 }
 

@@ -50,8 +50,8 @@ fn max_height_percent_no_clamp_to_zero() {
     assert!(child.is_some(), "child box not found");
     let child = child.unwrap();
     // height should be 200px, not clamped to 0 by max-height:100%
-    assert!(child.content_rect.h >= 199.0,
-        "height={} should be ~200, not clamped to 0 by max-height:100%", child.content_rect.h);
+    assert!(child.layout.content_rect.h >= 199.0,
+        "height={} should be ~200, not clamped to 0 by max-height:100%", child.layout.content_rect.h);
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn max_height_percent_does_not_clamp_when_parent_auto() {
     let child = child.unwrap();
     // Percentage max-height resolves against 0 containing height → treated as none
     // so height stays 300px (not clamped to 0)
-    assert!(child.content_rect.h >= 299.0,
-        "height={} should be ~300 (percentage max-height treated as none)", child.content_rect.h);
+    assert!(child.layout.content_rect.h >= 299.0,
+        "height={} should be ~300 (percentage max-height treated as none)", child.layout.content_rect.h);
 }
 
 #[test]
@@ -84,8 +84,8 @@ fn max_height_px_zero_still_works() {
     let child = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "child"));
     assert!(child.is_some());
     let child = child.unwrap();
-    assert!(child.content_rect.h < 1.0,
-        "height={} should be 0 with max-height:0px", child.content_rect.h);
+    assert!(child.layout.content_rect.h < 1.0,
+        "height={} should be 0 with max-height:0px", child.layout.content_rect.h);
 }
 
 // ============================================================
@@ -108,8 +108,8 @@ fn inline_block_shrink_to_fit_in_block_context() {
     assert!(ib.is_some(), "inline-block box not found");
     let ib = ib.unwrap();
     // Should shrink to ~200px content width, not 800px
-    assert!(ib.content_rect.w < 400.0,
-        "inline-block width={} should shrink to ~200, not fill 800px container", ib.content_rect.w);
+    assert!(ib.layout.content_rect.w < 400.0,
+        "inline-block width={} should shrink to ~200, not fill 800px container", ib.layout.content_rect.w);
 }
 
 // ============================================================
@@ -134,14 +134,14 @@ fn inline_block_horizontal_flow_in_mixed_content() {
     let c = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "c")).unwrap();
 
     // A, B, C should be on the same row (same y position)
-    assert!((a.content_rect.y - b.content_rect.y).abs() < 2.0,
-        "A.y={} and B.y={} should be on the same row", a.content_rect.y, b.content_rect.y);
-    assert!((b.content_rect.y - c.content_rect.y).abs() < 2.0,
-        "B.y={} and C.y={} should be on the same row", b.content_rect.y, c.content_rect.y);
+    assert!((a.layout.content_rect.y - b.layout.content_rect.y).abs() < 2.0,
+        "A.y={} and B.y={} should be on the same row", a.layout.content_rect.y, b.layout.content_rect.y);
+    assert!((b.layout.content_rect.y - c.layout.content_rect.y).abs() < 2.0,
+        "B.y={} and C.y={} should be on the same row", b.layout.content_rect.y, c.layout.content_rect.y);
 
     // B should be to the right of A
-    assert!(b.content_rect.x > a.content_rect.x + 100.0,
-        "B.x={} should be to the right of A.x={}", b.content_rect.x, a.content_rect.x);
+    assert!(b.layout.content_rect.x > a.layout.content_rect.x + 100.0,
+        "B.x={} should be to the right of A.x={}", b.layout.content_rect.x, a.layout.content_rect.x);
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn inline_block_wraps_to_next_line() {
     let b = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "b")).unwrap();
 
     // B should be below A (wrapped to next line)
-    assert!(b.content_rect.y > a.content_rect.y + 20.0,
-        "B.y={} should be below A.y={} (wrapped)", b.content_rect.y, a.content_rect.y);
+    assert!(b.layout.content_rect.y > a.layout.content_rect.y + 20.0,
+        "B.y={} should be below A.y={} (wrapped)", b.layout.content_rect.y, a.layout.content_rect.y);
 }
 
 #[test]
@@ -174,13 +174,13 @@ fn inline_block_flow_block_child_below() {
         800.0,
     );
     let ib_boxes = find_all_boxes(&doc.root, &|b| b.style.display == Display::InlineBlock
-        && b.content_rect.w > 100.0);
+        && b.layout.content_rect.w > 100.0);
     let blk = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "blk")).unwrap();
 
     if let Some(ib) = ib_boxes.first() {
-        assert!(blk.content_rect.y >= ib.content_rect.y + ib.content_rect.h - 2.0,
+        assert!(blk.layout.content_rect.y >= ib.layout.content_rect.y + ib.layout.content_rect.h - 2.0,
             "block child y={} should be below inline-block bottom={}",
-            blk.content_rect.y, ib.content_rect.y + ib.content_rect.h);
+            blk.layout.content_rect.y, ib.layout.content_rect.y + ib.layout.content_rect.h);
     }
 }
 
@@ -205,8 +205,8 @@ fn intrinsic_width_not_inflated_by_centering() {
     assert!(ib.is_some());
     let ib = ib.unwrap();
     // Should be close to 150px, not inflated to 400+ by centering
-    assert!(ib.content_rect.w < 300.0,
-        "inline-block width={} should be ~150px, not inflated by text-align:center", ib.content_rect.w);
+    assert!(ib.layout.content_rect.w < 300.0,
+        "inline-block width={} should be ~150px, not inflated by text-align:center", ib.layout.content_rect.w);
 }
 
 // ============================================================
@@ -223,7 +223,7 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
-            node.layout_dirty = true;
+            node.layout.layout_dirty = true;
         }
         for child in &mut node.children {
             set_image_dims(child, w, h);
@@ -237,10 +237,10 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
     assert!(img.is_some(), "img box not found");
     let img = img.unwrap();
     // height=40, natural 1250×200 → width should be 40*1250/200 = 250
-    assert!(img.content_rect.w > 200.0 && img.content_rect.w < 300.0,
-        "img width={} should be ~250 (aspect ratio from 1250×200)", img.content_rect.w);
-    assert!((img.content_rect.h - 40.0).abs() < 5.0,
-        "img height={} should be ~40", img.content_rect.h);
+    assert!(img.layout.content_rect.w > 200.0 && img.layout.content_rect.w < 300.0,
+        "img width={} should be ~250 (aspect ratio from 1250×200)", img.layout.content_rect.w);
+    assert!((img.layout.content_rect.h - 40.0).abs() < 5.0,
+        "img height={} should be ~40", img.layout.content_rect.h);
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn img_height_auto_width_specified_sets_aspect_ratio() {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
-            node.layout_dirty = true;
+            node.layout.layout_dirty = true;
         }
         for child in &mut node.children {
             set_image_dims(child, w, h);
@@ -265,10 +265,10 @@ fn img_height_auto_width_specified_sets_aspect_ratio() {
     assert!(img.is_some());
     let img = img.unwrap();
     // width=200, natural 400×200 → height should be 200*200/400 = 100
-    assert!((img.content_rect.w - 200.0).abs() < 5.0,
-        "img width={} should be ~200", img.content_rect.w);
-    assert!(img.content_rect.h > 80.0 && img.content_rect.h < 120.0,
-        "img height={} should be ~100 (aspect ratio from 400×200)", img.content_rect.h);
+    assert!((img.layout.content_rect.w - 200.0).abs() < 5.0,
+        "img width={} should be ~200", img.layout.content_rect.w);
+    assert!(img.layout.content_rect.h > 80.0 && img.layout.content_rect.h < 120.0,
+        "img height={} should be ~100 (aspect ratio from 400×200)", img.layout.content_rect.h);
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn img_both_auto_uses_natural_size() {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
-            node.layout_dirty = true;
+            node.layout.layout_dirty = true;
         }
         for child in &mut node.children {
             set_image_dims(child, w, h);
@@ -292,10 +292,10 @@ fn img_both_auto_uses_natural_size() {
     let img = find_box(&doc.root, &|b| b.tag == "img");
     assert!(img.is_some());
     let img = img.unwrap();
-    assert!((img.content_rect.w - 320.0).abs() < 5.0,
-        "img width={} should be ~320", img.content_rect.w);
-    assert!((img.content_rect.h - 240.0).abs() < 5.0,
-        "img height={} should be ~240", img.content_rect.h);
+    assert!((img.layout.content_rect.w - 320.0).abs() < 5.0,
+        "img width={} should be ~320", img.layout.content_rect.w);
+    assert!((img.layout.content_rect.h - 240.0).abs() < 5.0,
+        "img height={} should be ~240", img.layout.content_rect.h);
 }
 
 // ============================================================
@@ -344,9 +344,9 @@ fn floated_widget_margin_bottom_applied() {
     let w2 = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "w2")).unwrap();
     // The visual gap is between border rects (margin_rect includes the margin itself).
     // w2's border_rect top should be at least 30px below w1's border_rect bottom.
-    let visual_gap = w2.border_rect.y - (w1.border_rect.y + w1.border_rect.h);
-    eprintln!("w1 border_rect: y={} h={} bottom={}", w1.border_rect.y, w1.border_rect.h, w1.border_rect.y + w1.border_rect.h);
-    eprintln!("w2 border_rect: y={} h={}", w2.border_rect.y, w2.border_rect.h);
+    let visual_gap = w2.layout.border_rect.y - (w1.layout.border_rect.y + w1.layout.border_rect.h);
+    eprintln!("w1 border_rect: y={} h={} bottom={}", w1.layout.border_rect.y, w1.layout.border_rect.h, w1.layout.border_rect.y + w1.layout.border_rect.h);
+    eprintln!("w2 border_rect: y={} h={}", w2.layout.border_rect.y, w2.layout.border_rect.h);
     eprintln!("visual_gap: {}", visual_gap);
     assert!(visual_gap >= 28.0,
         "visual_gap={} between floated widgets should be >= 28px (margin-bottom:30px)", visual_gap);
@@ -372,18 +372,18 @@ fn article_meta_inline_block_no_overlap() {
     let title = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "title")).unwrap();
     let meta = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "meta")).unwrap();
     let content = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "content")).unwrap();
-    eprintln!("title: y={} h={} bottom={}", title.border_rect.y, title.border_rect.h,
-              title.border_rect.y + title.border_rect.h);
-    eprintln!("meta:  y={} h={} bottom={}", meta.border_rect.y, meta.border_rect.h,
-              meta.border_rect.y + meta.border_rect.h);
-    eprintln!("content: y={} h={}", content.border_rect.y, content.border_rect.h);
+    eprintln!("title: y={} h={} bottom={}", title.layout.border_rect.y, title.layout.border_rect.h,
+              title.layout.border_rect.y + title.layout.border_rect.h);
+    eprintln!("meta:  y={} h={} bottom={}", meta.layout.border_rect.y, meta.layout.border_rect.h,
+              meta.layout.border_rect.y + meta.layout.border_rect.h);
+    eprintln!("content: y={} h={}", content.layout.border_rect.y, content.layout.border_rect.h);
     // Meta should be below title
-    assert!(meta.border_rect.y >= title.border_rect.y + title.border_rect.h - 1.0,
+    assert!(meta.layout.border_rect.y >= title.layout.border_rect.y + title.layout.border_rect.h - 1.0,
         "meta should be below title");
     // Content should be below meta
-    assert!(content.border_rect.y >= meta.border_rect.y + meta.border_rect.h - 1.0,
+    assert!(content.layout.border_rect.y >= meta.layout.border_rect.y + meta.layout.border_rect.h - 1.0,
         "content (y={}) should be below meta (bottom={})",
-        content.border_rect.y, meta.border_rect.y + meta.border_rect.h);
+        content.layout.border_rect.y, meta.layout.border_rect.y + meta.layout.border_rect.h);
 }
 
 #[test]
@@ -418,11 +418,11 @@ fn post_margin_bottom_creates_gap() {
     );
     let p1 = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "p1")).unwrap();
     let p2 = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "p2")).unwrap();
-    let gap = p2.border_rect.y - (p1.border_rect.y + p1.border_rect.h);
-    eprintln!("p1 border bottom: {}", p1.border_rect.y + p1.border_rect.h);
-    eprintln!("p2 border top: {}", p2.border_rect.y);
+    let gap = p2.layout.border_rect.y - (p1.layout.border_rect.y + p1.layout.border_rect.h);
+    eprintln!("p1 border bottom: {}", p1.layout.border_rect.y + p1.layout.border_rect.h);
+    eprintln!("p2 border top: {}", p2.layout.border_rect.y);
     eprintln!("gap: {}", gap);
-    eprintln!("p1 resolved_margin_bottom: {}", p1.resolved_margin_bottom);
+    eprintln!("p1 resolved_margin_bottom: {}", p1.layout.resolved_margin_bottom);
     assert!(gap >= 18.0, "gap={} should be >= 18px (margin-bottom:20px)", gap);
 }
 
@@ -451,17 +451,17 @@ fn osnews_article_structure_no_overlap() {
     let title = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "title")).unwrap();
     let meta = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "meta")).unwrap();
     let content = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "content")).unwrap();
-    eprintln!("title: y={:.1} h={:.1} bottom={:.1}", title.border_rect.y, title.border_rect.h,
-              title.border_rect.y + title.border_rect.h);
-    eprintln!("meta:  y={:.1} h={:.1} bottom={:.1} display={:?}", meta.border_rect.y, meta.border_rect.h,
-              meta.border_rect.y + meta.border_rect.h, meta.style.display);
-    eprintln!("content: y={:.1} h={:.1}", content.border_rect.y, content.border_rect.h);
+    eprintln!("title: y={:.1} h={:.1} bottom={:.1}", title.layout.border_rect.y, title.layout.border_rect.h,
+              title.layout.border_rect.y + title.layout.border_rect.h);
+    eprintln!("meta:  y={:.1} h={:.1} bottom={:.1} display={:?}", meta.layout.border_rect.y, meta.layout.border_rect.h,
+              meta.layout.border_rect.y + meta.layout.border_rect.h, meta.style.display);
+    eprintln!("content: y={:.1} h={:.1}", content.layout.border_rect.y, content.layout.border_rect.h);
     // title text-shadow should exist
     let title_link = find_box(title, &|b| b.tag == "a").unwrap();
     eprintln!("title link text_shadow: {:?}", title_link.style.text_shadow);
     // No overlapping
-    assert!(meta.border_rect.y >= title.border_rect.y + title.border_rect.h - 1.0,
-        "meta (y={:.1}) overlaps title (bottom={:.1})", meta.border_rect.y, title.border_rect.y + title.border_rect.h);
-    assert!(content.border_rect.y >= meta.border_rect.y + meta.border_rect.h - 1.0,
-        "content (y={:.1}) overlaps meta (bottom={:.1})", content.border_rect.y, meta.border_rect.y + meta.border_rect.h);
+    assert!(meta.layout.border_rect.y >= title.layout.border_rect.y + title.layout.border_rect.h - 1.0,
+        "meta (y={:.1}) overlaps title (bottom={:.1})", meta.layout.border_rect.y, title.layout.border_rect.y + title.layout.border_rect.h);
+    assert!(content.layout.border_rect.y >= meta.layout.border_rect.y + meta.layout.border_rect.h - 1.0,
+        "content (y={:.1}) overlaps meta (bottom={:.1})", content.layout.border_rect.y, meta.layout.border_rect.y + meta.layout.border_rect.h);
 }

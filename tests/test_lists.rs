@@ -149,7 +149,7 @@ fn list_items_stacked() {
     walk_boxes(&doc.root, &mut items, &|b| b.tag == "li");
     assert!(items.len() >= 2);
     // Second item below first
-    assert!(items[1].content_rect.y > items[0].content_rect.y);
+    assert!(items[1].layout.content_rect.y > items[0].layout.content_rect.y);
 }
 
 // ============================================================
@@ -194,7 +194,7 @@ fn unordered_list_render_equivalent() {
     assert!(items.len() >= 3, "expected at least 3 li elements");
     // All items should have non-zero height after layout
     for item in &items {
-        assert!(item.content_rect.h >= 0.0, "li should have non-negative height");
+        assert!(item.layout.content_rect.h >= 0.0, "li should have non-negative height");
     }
 }
 
@@ -208,7 +208,7 @@ fn ordered_list_render_equivalent() {
     assert!(items.len() >= 3, "expected at least 3 ol li elements");
     // Items should be stacked vertically (second below first)
     if items.len() >= 2 {
-        assert!(items[1].content_rect.y >= items[0].content_rect.y,
+        assert!(items[1].layout.content_rect.y >= items[0].layout.content_rect.y,
             "second item should be at or below first");
     }
 }

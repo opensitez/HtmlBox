@@ -394,7 +394,7 @@ impl ApplicationHandler for App {
             // Find canvas rect first, then update dot
             let (canvas_x, canvas_y) = {
                 let canvas = dom::query_selector_mut(root, "#pointer-canvas");
-                canvas.map(|c| (c.border_rect.x, c.border_rect.y)).unwrap_or((0.0, 0.0))
+                canvas.map(|c| (c.layout.border_rect.x, c.layout.border_rect.y)).unwrap_or((0.0, 0.0))
             };
             let rel_x = (cx - canvas_x - 7.0).max(0.0);
             let rel_y = (cy - canvas_y - 7.0).max(0.0);

@@ -114,12 +114,12 @@ fn outline_does_not_affect_layout() {
     let doc = load_html(
         "<div style=\"width: 200px; outline: 5px solid red;\">Outlined</div>", 800.0);
     let b = find_box(&doc.root, &|b| {
-        b.tag == "div" && b.content_rect.w >= 199.0 && b.content_rect.w <= 201.0
+        b.tag == "div" && b.layout.content_rect.w >= 199.0 && b.layout.content_rect.w <= 201.0
     });
     assert!(b.is_some());
     // Outline should not increase the border box dimensions
     let bx = b.unwrap();
-    assert!(bx.border_rect.w >= 199.0 && bx.border_rect.w <= 201.0);
+    assert!(bx.layout.border_rect.w >= 199.0 && bx.layout.border_rect.w <= 201.0);
 }
 
 // ============================================================

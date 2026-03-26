@@ -43,7 +43,7 @@ fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
 }
 
 fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
-    editor.caret_box  = Some(element as *const HtmlBox);
+    editor.caret_box  = Some(element.node_id);
     editor.collapse_to(offset);
 }
 

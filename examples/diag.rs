@@ -19,10 +19,10 @@ fn main() {
     println!("Boxes with column-count: {}", cols_boxes.len());
     for b in &cols_boxes {
         println!("  tag={} col_count={:?} w={:.1} h={:.1}",
-            b.tag, b.style.column_count, b.padding_rect.w, b.padding_rect.h);
+            b.tag, b.style.column_count, b.layout.padding_rect.w, b.layout.padding_rect.h);
         for (i, ch) in b.children.iter().enumerate().take(5) {
             println!("    child[{}] tag={} x={:.1} y={:.1} w={:.1} h={:.1}",
-                i, ch.tag, ch.content_rect.x, ch.content_rect.y, ch.content_rect.w, ch.content_rect.h);
+                i, ch.tag, ch.layout.content_rect.x, ch.layout.content_rect.y, ch.layout.content_rect.w, ch.layout.content_rect.h);
         }
     }
 
@@ -34,7 +34,7 @@ fn main() {
         println!("  tag={} class={:?} w={:.1} h={:.1} aspect={:?} border_radius={:?}",
             b.tag,
             b.attributes.get("class"),
-            b.padding_rect.w, b.padding_rect.h,
+            b.layout.padding_rect.w, b.layout.padding_rect.h,
             b.style.aspect_ratio,
             b.style.border_radius,
         );

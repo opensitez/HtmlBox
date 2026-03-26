@@ -463,10 +463,10 @@ fn grid_two_column_layout() {
     let a = &grid.children[0];
     let b = &grid.children[1];
     // Should be side by side
-    assert!(b.margin_rect.x > a.margin_rect.x);
+    assert!(b.layout.margin_rect.x > a.layout.margin_rect.x);
     // Each roughly 400px
-    assert!(a.margin_rect.w > 350.0);
-    assert!(b.margin_rect.w > 350.0);
+    assert!(a.layout.margin_rect.w > 350.0);
+    assert!(b.layout.margin_rect.w > 350.0);
 }
 
 #[test]
@@ -481,9 +481,9 @@ fn grid_three_column_equal() {
     let b = &grid.children[1];
     let c = &grid.children[2];
     // Each ~300px
-    assert!(a.margin_rect.w > 250.0 && a.margin_rect.w < 350.0);
-    assert!(b.margin_rect.w > 250.0 && b.margin_rect.w < 350.0);
-    assert!(c.margin_rect.w > 250.0 && c.margin_rect.w < 350.0);
+    assert!(a.layout.margin_rect.w > 250.0 && a.layout.margin_rect.w < 350.0);
+    assert!(b.layout.margin_rect.w > 250.0 && b.layout.margin_rect.w < 350.0);
+    assert!(c.layout.margin_rect.w > 250.0 && c.layout.margin_rect.w < 350.0);
 }
 
 #[test]
@@ -497,9 +497,9 @@ fn grid_fixed_plus_fr() {
     let fixed = &grid.children[0];
     let flex = &grid.children[1];
     // Fixed ~200px
-    assert!(fixed.margin_rect.w > 190.0 && fixed.margin_rect.w < 210.0);
+    assert!(fixed.layout.margin_rect.w > 190.0 && fixed.layout.margin_rect.w < 210.0);
     // Flex gets remainder ~400px
-    assert!(flex.margin_rect.w > 350.0);
+    assert!(flex.layout.margin_rect.w > 350.0);
 }
 
 #[test]
@@ -513,9 +513,9 @@ fn grid_two_by_two() {
     let a = &grid.children[0];
     let c = &grid.children[2];
     // A and C should be in different rows
-    assert!(c.margin_rect.y > a.margin_rect.y);
+    assert!(c.layout.margin_rect.y > a.layout.margin_rect.y);
     // Same column
-    assert!((a.margin_rect.x - c.margin_rect.x).abs() < 5.0);
+    assert!((a.layout.margin_rect.x - c.layout.margin_rect.x).abs() < 5.0);
 }
 
 #[test]
@@ -527,7 +527,7 @@ fn grid_gap_property() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let a = &grid.children[0];
     let b = &grid.children[1];
-    let gap = b.margin_rect.x - (a.margin_rect.x + a.margin_rect.w);
+    let gap = b.layout.margin_rect.x - (a.layout.margin_rect.x + a.layout.margin_rect.w);
     assert!(gap > 15.0 && gap < 25.0);
 }
 
@@ -544,10 +544,10 @@ fn grid_row_and_column_gap() {
     let b = &grid.children[1];
     let c = &grid.children[2];
     // Column gap ~10px
-    let col_gap = b.margin_rect.x - (a.margin_rect.x + a.margin_rect.w);
+    let col_gap = b.layout.margin_rect.x - (a.layout.margin_rect.x + a.layout.margin_rect.w);
     assert!(col_gap >= 8.0 && col_gap <= 12.0);
     // Row gap ~20px
-    let row_gap = c.margin_rect.y - (a.margin_rect.y + a.margin_rect.h);
+    let row_gap = c.layout.margin_rect.y - (a.layout.margin_rect.y + a.layout.margin_rect.h);
     assert!(row_gap >= 18.0 && row_gap <= 22.0);
 }
 
@@ -564,7 +564,7 @@ fn grid_column_start_end_layout() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let wide = &grid.children[0];
     // Spans columns 2-3, so ~400px
-    assert!(wide.margin_rect.w > 350.0);
+    assert!(wide.layout.margin_rect.w > 350.0);
 }
 
 // ============================================================
@@ -582,9 +582,9 @@ fn grid_template_rows_layout() {
     let a = &grid.children[0];
     let b = &grid.children[1];
     // First row ~50px
-    assert!(a.margin_rect.h >= 45.0 && a.margin_rect.h <= 55.0);
+    assert!(a.layout.margin_rect.h >= 45.0 && a.layout.margin_rect.h <= 55.0);
     // Second row ~100px
-    assert!(b.margin_rect.h >= 95.0 && b.margin_rect.h <= 105.0);
+    assert!(b.layout.margin_rect.h >= 95.0 && b.layout.margin_rect.h <= 105.0);
 }
 
 // ============================================================
@@ -605,10 +605,10 @@ fn grid_area_layout() {
     let left = &grid.children[1];
     let right = &grid.children[2];
     // Header should span full width
-    assert!(header.margin_rect.w > 500.0);
+    assert!(header.layout.margin_rect.w > 500.0);
     // Left and Right in same row, below header
-    assert!(left.margin_rect.y > header.margin_rect.y);
-    assert!((left.margin_rect.y - right.margin_rect.y).abs() < 5.0);
+    assert!(left.layout.margin_rect.y > header.layout.margin_rect.y);
+    assert!((left.layout.margin_rect.y - right.layout.margin_rect.y).abs() < 5.0);
 }
 
 #[test]
@@ -629,12 +629,12 @@ fn grid_template_areas_complex() {
     let main = &grid.children[2];
     let footer = &grid.children[3];
     // Header spans full width
-    assert!(header.margin_rect.w > 500.0);
+    assert!(header.layout.margin_rect.w > 500.0);
     // Sidebar narrower than main
-    assert!(sidebar.margin_rect.w < main.margin_rect.w);
+    assert!(sidebar.layout.margin_rect.w < main.layout.margin_rect.w);
     // Footer below sidebar and main
-    assert!(footer.margin_rect.y > sidebar.margin_rect.y);
-    assert!(footer.margin_rect.y > main.margin_rect.y);
+    assert!(footer.layout.margin_rect.y > sidebar.layout.margin_rect.y);
+    assert!(footer.layout.margin_rect.y > main.layout.margin_rect.y);
 }
 
 // ============================================================
@@ -650,8 +650,8 @@ fn grid_percent_columns_layout() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let a = &grid.children[0];
     let b = &grid.children[1];
-    assert!(a.margin_rect.w >= 195.0 && a.margin_rect.w <= 205.0);
-    assert!(b.margin_rect.w >= 195.0 && b.margin_rect.w <= 205.0);
+    assert!(a.layout.margin_rect.w >= 195.0 && a.layout.margin_rect.w <= 205.0);
+    assert!(b.layout.margin_rect.w >= 195.0 && b.layout.margin_rect.w <= 205.0);
 }
 
 #[test]
@@ -663,7 +663,7 @@ fn grid_mixed_percent_and_fr() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let a = &grid.children[0];
     // 30% of 400 = 120
-    assert!(a.margin_rect.w >= 115.0 && a.margin_rect.w <= 125.0);
+    assert!(a.layout.margin_rect.w >= 115.0 && a.layout.margin_rect.w <= 125.0);
 }
 
 // ============================================================
@@ -681,7 +681,7 @@ fn grid_auto_fill_repeat_layout() {
     let a = &grid.children[0];
     let d = &grid.children[3];
     // All 4 on same row
-    assert!((a.margin_rect.y - d.margin_rect.y).abs() < 5.0);
+    assert!((a.layout.margin_rect.y - d.layout.margin_rect.y).abs() < 5.0);
 }
 
 #[test]
@@ -694,7 +694,7 @@ fn grid_auto_fill_repeat_overflow() {
     let a = &grid.children[0];
     let c = &grid.children[2];
     // C wraps to next row
-    assert!(c.margin_rect.y > a.margin_rect.y);
+    assert!(c.layout.margin_rect.y > a.layout.margin_rect.y);
 }
 
 // ============================================================
@@ -710,7 +710,7 @@ fn grid_min_content_layout() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     // The fr column should get most space
     let b = &grid.children[1];
-    assert!(b.margin_rect.w > 200.0);
+    assert!(b.layout.margin_rect.w > 200.0);
 }
 
 // ============================================================
@@ -725,7 +725,7 @@ fn grid_minmax_row_height() {
          </div>", 200.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let child = &grid.children[0];
-    assert!(child.margin_rect.h >= 50.0);
+    assert!(child.layout.margin_rect.h >= 50.0);
 }
 
 // ============================================================
@@ -742,8 +742,8 @@ fn grid_justify_items_center_layout() {
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
         // Centered in 800px column
-        assert!(child.margin_rect.x > 200.0);
-        assert!(child.margin_rect.x < 400.0);
+        assert!(child.layout.margin_rect.x > 200.0);
+        assert!(child.layout.margin_rect.x < 400.0);
     }
 }
 
@@ -756,7 +756,7 @@ fn grid_justify_items_end_layout() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
-        assert!(child.margin_rect.x > 500.0);
+        assert!(child.layout.margin_rect.x > 500.0);
     }
 }
 
@@ -769,7 +769,7 @@ fn grid_justify_self_override() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
-        assert!(child.margin_rect.x > 500.0);
+        assert!(child.layout.margin_rect.x > 500.0);
     }
 }
 
@@ -787,7 +787,7 @@ fn grid_align_items_center() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
-        assert!(child.margin_rect.y > 50.0);
+        assert!(child.layout.margin_rect.y > 50.0);
     }
 }
 
@@ -801,7 +801,7 @@ fn grid_align_self_end() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
-        let bottom = child.margin_rect.y + child.margin_rect.h;
+        let bottom = child.layout.margin_rect.y + child.layout.margin_rect.h;
         assert!(bottom >= 195.0);
     }
 }
@@ -819,8 +819,8 @@ fn grid_justify_content_center() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let a = &grid.children[0];
-        assert!(a.content_rect.x > 150.0);
-        assert!(a.content_rect.x < 250.0);
+        assert!(a.layout.content_rect.x > 150.0);
+        assert!(a.layout.content_rect.x < 250.0);
     }
 }
 
@@ -834,8 +834,8 @@ fn grid_justify_content_space_between() {
     if grid.children.len() >= 2 {
         let a = &grid.children[0];
         let b = &grid.children[1];
-        assert!(a.content_rect.x < 50.0);
-        assert!(b.content_rect.x > 500.0);
+        assert!(a.layout.content_rect.x < 50.0);
+        assert!(b.layout.content_rect.x > 500.0);
     }
 }
 
@@ -849,8 +849,8 @@ fn grid_space_evenly_justify_content() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let a = &grid.children[0];
     let b = &grid.children[1];
-    assert!(a.margin_rect.x > 25.0);
-    assert!(b.margin_rect.x > a.margin_rect.x + a.margin_rect.w);
+    assert!(a.layout.margin_rect.x > 25.0);
+    assert!(b.layout.margin_rect.x > a.layout.margin_rect.x + a.layout.margin_rect.w);
 }
 
 #[test]
@@ -874,7 +874,7 @@ fn grid_align_content_space_between() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let a = &grid.children[0];
     let b = &grid.children[1];
-    assert!(b.margin_rect.y > a.margin_rect.h + 10.0);
+    assert!(b.layout.margin_rect.y > a.layout.margin_rect.h + 10.0);
 }
 
 // ============================================================
@@ -891,8 +891,8 @@ fn grid_place_items_center() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     if grid.children.len() >= 1 {
         let child = &grid.children[0];
-        assert!(child.margin_rect.x > 200.0);
-        assert!(child.margin_rect.y > 50.0);
+        assert!(child.layout.margin_rect.x > 200.0);
+        assert!(child.layout.margin_rect.y > 50.0);
     }
 }
 
@@ -904,8 +904,8 @@ fn grid_place_self_center() {
          </div>", 400.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let x = &grid.children[0];
-    assert!(x.margin_rect.x > 50.0);
-    assert!(x.margin_rect.y > 20.0);
+    assert!(x.layout.margin_rect.x > 50.0);
+    assert!(x.layout.margin_rect.y > 20.0);
 }
 
 // ============================================================
@@ -925,11 +925,11 @@ fn grid_auto_flow_column_layout() {
         let b = &grid.children[1];
         let c = &grid.children[2];
         // A and B in same column
-        assert!((a.content_rect.x - b.content_rect.x).abs() < 5.0);
+        assert!((a.layout.content_rect.x - b.layout.content_rect.x).abs() < 5.0);
         // B below A
-        assert!(b.content_rect.y > a.content_rect.y);
+        assert!(b.layout.content_rect.y > a.layout.content_rect.y);
         // C in next column
-        assert!(c.content_rect.x > a.content_rect.x);
+        assert!(c.layout.content_rect.x > a.layout.content_rect.x);
     }
 }
 
@@ -951,8 +951,8 @@ fn grid_dense_packing_fills_gaps() {
         let a = &grid.children[0];
         let c = &grid.children[2];
         // With dense, C fills gap at row 0 col 2
-        assert!((c.content_rect.y - a.content_rect.y).abs() < 5.0);
-        assert!(c.content_rect.x > a.content_rect.x);
+        assert!((c.layout.content_rect.y - a.layout.content_rect.y).abs() < 5.0);
+        assert!(c.layout.content_rect.x > a.layout.content_rect.x);
     }
 }
 
@@ -970,7 +970,7 @@ fn grid_sparse_packing_leaves_gaps() {
         let b = &grid.children[1];
         let c = &grid.children[2];
         // Without dense, C goes to same row as B
-        assert!((c.content_rect.y - b.content_rect.y).abs() < 5.0);
+        assert!((c.layout.content_rect.y - b.layout.content_rect.y).abs() < 5.0);
     }
 }
 
@@ -987,9 +987,9 @@ fn grid_explicit_items_dont_overlap_auto() {
         let a = &grid.children[0];
         let expl = &grid.children[1];
         let c = &grid.children[2];
-        assert!(a.content_rect.y < c.content_rect.y);
-        assert!((a.content_rect.x - c.content_rect.x).abs() < 5.0);
-        assert!(expl.content_rect.x > a.content_rect.x);
+        assert!(a.layout.content_rect.y < c.layout.content_rect.y);
+        assert!((a.layout.content_rect.x - c.layout.content_rect.x).abs() < 5.0);
+        assert!(expl.layout.content_rect.x > a.layout.content_rect.x);
     }
 }
 
@@ -1007,7 +1007,7 @@ fn grid_order_property() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let dom_first = &grid.children[0]; // order: 2
     let dom_second = &grid.children[1]; // order: 1
-    assert!(dom_second.margin_rect.x < dom_first.margin_rect.x);
+    assert!(dom_second.layout.margin_rect.x < dom_first.layout.margin_rect.x);
 }
 
 #[test]
@@ -1021,7 +1021,7 @@ fn grid_order_default_zero() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let b = &grid.children[1]; // order: -1
     let a = &grid.children[0]; // order: 0
-    assert!(b.margin_rect.x < a.margin_rect.x);
+    assert!(b.layout.margin_rect.x < a.layout.margin_rect.x);
 }
 
 // ============================================================
@@ -1036,7 +1036,7 @@ fn grid_auto_rows_layout() {
          </div>", 400.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let b = &grid.children[1];
-    assert!(b.margin_rect.h >= 80.0);
+    assert!(b.layout.margin_rect.h >= 80.0);
 }
 
 // ============================================================
@@ -1067,8 +1067,8 @@ fn grid_col_span_with_auto_place() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let wide = &grid.children[0];
     let b = &grid.children[1];
-    assert!(wide.margin_rect.w > 350.0);
-    assert!(b.margin_rect.w < 250.0);
+    assert!(wide.layout.margin_rect.w > 350.0);
+    assert!(b.layout.margin_rect.w < 250.0);
 }
 
 #[test]
@@ -1081,7 +1081,7 @@ fn grid_row_span_with_explicit() {
          </div>", 400.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let tall = &grid.children[0];
-    assert!(tall.margin_rect.h >= 100.0);
+    assert!(tall.layout.margin_rect.h >= 100.0);
 }
 
 // ============================================================
@@ -1099,7 +1099,7 @@ fn grid_auto_flow_column_dense_layout() {
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
     let tall = &grid.children[0];
     let b = &grid.children[1];
-    assert!(b.margin_rect.x > tall.margin_rect.x);
+    assert!(b.layout.margin_rect.x > tall.layout.margin_rect.x);
 }
 
 #[test]
@@ -1124,7 +1124,7 @@ fn grid_cell_stretch_border_box() {
 </div></body></html>"#, 900.0);
     let grid = find_grid(&doc.root).unwrap();
     let cell = grid.children.iter().find(|c| c.tag == "div").unwrap();
-    let h_no_bb = cell.padding_rect.h;
+    let h_no_bb = cell.layout.padding_rect.h;
 
     // With box-sizing: border-box globally (as in demo.html via * { box-sizing: border-box })
     let doc = load_html(r#"<html><head><style>* { box-sizing: border-box; }</style></head><body>
@@ -1135,7 +1135,7 @@ fn grid_cell_stretch_border_box() {
 </div></body></html>"#, 900.0);
     let grid = find_grid(&doc.root).unwrap();
     let cell = grid.children.iter().find(|c| c.tag == "div").unwrap();
-    let h_bb = cell.padding_rect.h;
+    let h_bb = cell.layout.padding_rect.h;
 
     // Both should produce the same cell height — border-box shouldn't shrink cells to padding-only
     assert!((h_bb - h_no_bb).abs() < 1.0,

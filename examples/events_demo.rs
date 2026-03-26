@@ -46,6 +46,8 @@ struct App {
     mouse_pos: (f32, f32),
     drag:     DragState,
     mouse_down: bool,
+    /// Ghost overlay position during drag (logical coords), drawn after display list.
+    ghost_pos: Option<(f32, f32)>,
 }
 
 impl ApplicationHandler for App {
@@ -63,18 +65,30 @@ impl ApplicationHandler for App {
         // Card selection on click (only fires when not dragging — handled below)
         doc.events.add(".card", HtmlEventType::Click, Box::new(|evt| {
             let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let target_mut = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
+            let cur_id = evt.current_target;
             // Deselect all cards first
             deselect_all(root);
-            // Select this card
-            dom::add_class(target_mut, "card-selected");
-            if let Some(id) = target_mut.attributes.get("id") {
-                let title = get_text_of_class(target_mut, "card-title");
+            // Select this card via node_id lookup
+            if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
+                dom::add_class(target_mut, "card-selected");
+            }
+            // Re-lookup for id/title (borrow ended)
+            let (title, id_str) = {
+                let target = dom::find_box_mut(root, cur_id);
+                match target {
+                    Some(t) => {
+                        let title = get_text_of_class(t, "card-title");
+                        let id = t.attributes.get("id").cloned().unwrap_or_default();
+                        (title, id)
+                    }
+                    None => return,
+                }
+            };
+            if !id_str.is_empty() {
                 if let Some(info) = dom::query_selector_mut(root, "#selected-info") {
-                    dom::set_text_content(info, &format!("{} ({})", title, id));
+                    dom::set_text_content(info, &format!("{} ({})", title, id_str));
                 }
             }
-            let _ = root;
         }));
 
         self.doc      = Some(doc);
@@ -95,7 +109,7 @@ impl ApplicationHandler for App {
                 platform.resize(size.width, size.height);
                 self.width = platform.logical_width();
                 if let Some(doc) = self.doc.as_mut() {
-                    LayoutEngine::new().layout(doc, self.width);
+                    self.renderer.layout_engine().layout(doc, self.width);
                 }
                 window.request_redraw();
             }
@@ -125,10 +139,11 @@ impl ApplicationHandler for App {
                     if !self.drag.active && (dx * dx + dy * dy).sqrt() > 5.0 {
                         // Cross drag threshold — start the drag
                         self.drag.active = true;
+                        eprintln!("[DRAG] threshold crossed, starting drag of {}", self.drag.source_id);
                         if let Some(doc) = self.doc.as_mut() {
                             drag_start(doc, &self.drag.source_id, &self.drag.source_title);
-                            doc.recascade();
-                            LayoutEngine::new().layout(doc, self.width);
+                            doc.style_dirty = true;
+                            self.renderer.layout_engine().layout(doc, self.width);
                         }
                     }
 
@@ -141,25 +156,15 @@ impl ApplicationHandler for App {
                             let new_target = find_target_body(&doc.root, mx, doc_y);
 
                             if new_target != self.drag.target_body {
-                                // Update column highlights — needs full re-cascade+layout
                                 update_drop_highlights(doc, &new_target);
                                 self.drag.target_body = new_target;
-                                doc.recascade();
-                                LayoutEngine::new().layout(doc, self.width);
+                                doc.style_dirty = true;
+                                self.renderer.layout_engine().layout(doc, self.width);
                             }
 
-                            // Update ghost position by directly patching the box rects —
-                            // avoids a full document re-layout on every mouse move.
-                            let gx = mx + 12.0;
-                            let gy = doc_y + 8.0;
-                            if let Some(ghost) = dom::query_selector_mut(&mut doc.root, "#drag-ghost") {
-                                let w = ghost.border_rect.w;
-                                let h = ghost.border_rect.h;
-                                ghost.border_rect  = rhtmledit::Rect::new(gx, gy, w, h);
-                                ghost.padding_rect = ghost.border_rect;
-                                ghost.content_rect = ghost.border_rect;
-                                ghost.margin_rect  = ghost.border_rect;
-                            }
+                            // Just store the ghost position — we'll draw it as an
+                            // overlay in RedrawRequested, no display list rebuild needed.
+                            self.ghost_pos = Some((mx + 12.0, doc_y + 8.0));
                         }
                         window.request_redraw();
                     }
@@ -183,11 +188,13 @@ impl ApplicationHandler for App {
                             let doc_pt = (mx, my + doc.scroll_y);
                             // Check if we pressed on a card
                             let card_id = hit_card_id(&doc.root, doc_pt);
+                            eprintln!("[DRAG] pressed at {:?} scroll_y={} card_id={:?}", doc_pt, doc.scroll_y, card_id);
                             if let Some(id) = card_id {
                                 let title = {
                                     let card = dom::query_selector(&doc.root, &format!("#{}", id));
                                     card.map(|c| get_text_of_class(c, "card-title")).unwrap_or_default()
                                 };
+                                eprintln!("[DRAG] source={} title={}", id, title);
                                 self.drag = DragState {
                                     source_id: id,
                                     source_title: title,
@@ -198,7 +205,7 @@ impl ApplicationHandler for App {
                             } else {
                                 // Clicked outside a card — clear selection
                                 if doc.process_mouse_event(HtmlEventType::MouseDown, doc_pt, 0) {
-                                    LayoutEngine::new().layout(doc, self.width);
+                                    self.renderer.layout_engine().layout(doc, self.width);
                                     window.request_redraw();
                                 }
                             }
@@ -207,27 +214,33 @@ impl ApplicationHandler for App {
 
                     (ElementState::Released, MouseButton::Left) => {
                         self.mouse_down = false;
+                        eprintln!("[DRAG] released, active={} has_source={} target={:?}", self.drag.active, self.drag.has_source(), self.drag.target_body);
                         if self.drag.active {
                             // Complete the drop
                             if let Some(doc) = self.doc.as_mut() {
                                 let dropped = if let Some(ref body_id) = self.drag.target_body.clone() {
+                                    eprintln!("[DRAG] dropping {} onto {}", self.drag.source_id, body_id);
                                     drop_card(doc, &self.drag.source_id, body_id)
                                 } else {
+                                    eprintln!("[DRAG] no target body, cancelling");
                                     false
                                 };
                                 drag_end(doc, &self.drag.source_id, dropped);
-                                doc.recascade();
-                                LayoutEngine::new().layout(doc, self.width);
+                                doc.style_dirty = true;
+                                self.renderer.layout_engine().layout(doc, self.width);
                                 window.request_redraw();
                             }
                             self.drag = DragState::idle();
+                            self.ghost_pos = None;
                         } else if self.drag.has_source() {
                             // Short press = click — fire click event on the card
                             self.drag = DragState::idle();
+                            self.ghost_pos = None;
                             if let Some(doc) = self.doc.as_mut() {
                                 let doc_pt = (mx, my + doc.scroll_y);
                                 if doc.process_mouse_event(HtmlEventType::Click, doc_pt, 0) {
-                                    LayoutEngine::new().layout(doc, self.width);
+                                    doc.style_dirty = true;
+                                    self.renderer.layout_engine().layout(doc, self.width);
                                     window.request_redraw();
                                 }
                             }
@@ -238,7 +251,7 @@ impl ApplicationHandler for App {
                         if let Some(doc) = self.doc.as_mut() {
                             let doc_pt = (mx, my + doc.scroll_y);
                             if doc.process_mouse_event(HtmlEventType::ContextMenu, doc_pt, 2) {
-                                LayoutEngine::new().layout(doc, self.width);
+                                self.renderer.layout_engine().layout(doc, self.width);
                                 window.request_redraw();
                             }
                         }
@@ -258,7 +271,7 @@ impl ApplicationHandler for App {
                         _ => 0,
                     };
                     if kc != 0 && doc.process_key_event(HtmlEventType::KeyDown, kc, None, false, false, false, false) {
-                        LayoutEngine::new().layout(doc, self.width);
+                        self.renderer.layout_engine().layout(doc, self.width);
                         window.request_redraw();
                     }
                 }
@@ -266,8 +279,58 @@ impl ApplicationHandler for App {
 
             WindowEvent::RedrawRequested => {
                 if let Some(doc) = self.doc.as_mut() {
+                    let ghost_pos = self.ghost_pos;
                     let renderer = &mut self.renderer;
-                    platform.render(|scale, pixmap| { renderer.render(doc, pixmap, scale); });
+                    platform.render(|scale, pixmap| {
+                        renderer.render(doc, pixmap, scale);
+                        // Draw ghost overlay directly on pixmap — no display list rebuild
+                        if let Some((gx, gy)) = ghost_pos {
+                            if let Some(ghost) = dom::query_selector(&doc.root, "#drag-ghost") {
+                                let w = ghost.layout.border_rect.w;
+                                let h = ghost.layout.border_rect.h;
+                                let sx = doc.scroll_x;
+                                let sy = doc.scroll_y;
+                                let px = ((gx - sx) * scale) as i32;
+                                let py = ((gy - sy) * scale) as i32;
+                                let pw = (w * scale) as i32;
+                                let ph = (h * scale) as i32;
+                                let pix_w = pixmap.width() as i32;
+                                let pix_h = pixmap.height() as i32;
+                                // Semi-transparent card background
+                                let pixels = pixmap.pixels_mut();
+                                for dy in 0..ph {
+                                    let y = py + dy;
+                                    if y < 0 || y >= pix_h { continue; }
+                                    for dx in 0..pw {
+                                        let x = px + dx;
+                                        if x < 0 || x >= pix_w { continue; }
+                                        let idx = (y * pix_w + x) as usize;
+                                        if idx < pixels.len() {
+                                            // Blend: 80% opacity dark card
+                                            let dst = pixels[idx];
+                                            let a = 200u32;
+                                            let ia = 255 - a;
+                                            let r = (30 * a / 255 + dst.red() as u32 * ia / 255) as u8;
+                                            let g = (36 * a / 255 + dst.green() as u32 * ia / 255) as u8;
+                                            let b = (42 * a / 255 + dst.blue() as u32 * ia / 255) as u8;
+                                            let na = (a + dst.alpha() as u32 * ia / 255) as u8;
+                                            if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, na) {
+                                                pixels[idx] = p;
+                                            }
+                                        }
+                                    }
+                                }
+                                // Draw ghost title text
+                                if let Some(title) = dom::query_selector(&doc.root, "#ghost-title") {
+                                    let text = dom::get_text_content(title);
+                                    if !text.is_empty() {
+                                        // Title rendered by the display list at ghost's layout position;
+                                        // the overlay rect is enough visual feedback for now.
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
             }
 
@@ -282,49 +345,63 @@ impl ApplicationHandler for App {
 fn hit_card_id(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
     use rhtmledit::layout::hit_test::point_to_hit;
     let hit = point_to_hit(root, doc_pt, 0)?;
-    // Walk from hit box up through ancestors to find one with class "card"
-    find_card_ancestor(root, hit.box_ptr)
+    fn find_node<'a>(node: &'a HtmlBox, id: u32) -> Option<&'a HtmlBox> {
+        if node.node_id == id { return Some(node); }
+        for c in &node.children { if let Some(f) = find_node(c, id) { return Some(f); } }
+        None
+    }
+    let hit_node = find_node(root, hit.node_id);
+    eprintln!("[HIT] node_id={} tag={} class={} rect={:?}",
+        hit.node_id,
+        hit_node.map(|n| n.tag.as_str()).unwrap_or("?"),
+        hit_node.and_then(|n| n.attributes.get("class")).map(|s| s.as_str()).unwrap_or(""),
+        hit_node.map(|n| (n.layout.border_rect.x, n.layout.border_rect.y, n.layout.border_rect.w, n.layout.border_rect.h)),
+    );
+    let result = find_card_ancestor(root, hit.node_id);
+    eprintln!("[HIT] card_ancestor={:?}", result);
+    result
 }
 
-/// Recursively search for the HtmlBox matching `ptr` and return its card ancestor id.
-fn find_card_ancestor(node: &HtmlBox, target: *const HtmlBox) -> Option<String> {
-    // Check if this node matches the target
-    if std::ptr::eq(node as *const HtmlBox, target) {
-        if dom::has_class(node, "card") {
-            return node.attributes.get("id").cloned();
+/// Recursively search for the node matching `target_id` and return its nearest
+/// card ancestor's id. Walks the tree depth-first; when the target is found,
+/// propagates a sentinel upward so ancestor nodes can check if they are a card.
+fn find_card_ancestor(root: &HtmlBox, target_id: u32) -> Option<String> {
+    /// Returns `Some(card_id)` if target_id is found in this subtree and an
+    /// ancestor with class "card" exists. Returns `Some("")` as a sentinel
+    /// meaning "found the target but no card ancestor yet".
+    fn walk(node: &HtmlBox, target_id: u32) -> Option<String> {
+        if node.node_id == target_id {
+            // Found the target — check if this node itself is a card
+            if dom::has_class(node, "card") {
+                return node.attributes.get("id").cloned().or(Some(String::new()));
+            }
+            // Signal "found" so ancestors can check themselves
+            return Some(String::new());
         }
-    }
-    for child in &node.children {
-        if let Some(id) = find_card_in_subtree(child, target) {
-            return Some(id);
+        for child in &node.children {
+            if let Some(id) = walk(child, target_id) {
+                if !id.is_empty() {
+                    // Already found a card — propagate the id
+                    return Some(id);
+                }
+                // Child subtree contains target but no card yet — check this node
+                if dom::has_class(node, "card") {
+                    return node.attributes.get("id").cloned().or(Some(String::new()));
+                }
+                // Keep propagating the sentinel
+                return Some(String::new());
+            }
         }
+        None
     }
-    None
-}
-
-/// Returns the card id if `target` is found within `node`'s subtree.
-/// Propagates the nearest ancestor `.card` id upward.
-fn find_card_in_subtree(node: &HtmlBox, target: *const HtmlBox) -> Option<String> {
-    let is_target = std::ptr::eq(node as *const HtmlBox, target);
-    // Check children first
-    let child_result = node.children.iter().find_map(|c| find_card_in_subtree(c, target));
-
-    if is_target || child_result.is_some() {
-        // This node is on the path to the target — if it's a card, return its id
-        if dom::has_class(node, "card") {
-            return node.attributes.get("id").cloned();
-        }
-        // Otherwise propagate upward
-        return child_result;
-    }
-    None
+    walk(root, target_id).filter(|id| !id.is_empty())
 }
 
 /// Find which column body id contains the point `(mx, doc_y)`.
 fn find_target_body(root: &HtmlBox, mx: f32, doc_y: f32) -> Option<String> {
     for &(_, body_id) in COLS {
         if let Some(body) = dom::query_selector(root, &format!("#{}", body_id)) {
-            let r = body.border_rect;
+            let r = body.layout.border_rect;
             // Use column x-range but full vertical extent of body
             if mx >= r.x && mx < r.x + r.w && doc_y >= r.y && doc_y < r.y + r.h {
                 return Some(body_id.to_string());
@@ -334,7 +411,7 @@ fn find_target_body(root: &HtmlBox, mx: f32, doc_y: f32) -> Option<String> {
     // Fallback: match by column header area too (use col-* instead of body-*)
     for &(col_id, body_id) in COLS {
         if let Some(col) = dom::query_selector(root, &format!("#{}", col_id)) {
-            let r = col.border_rect;
+            let r = col.layout.border_rect;
             if mx >= r.x && mx < r.x + r.w && doc_y >= r.y && doc_y < r.y + r.h {
                 return Some(body_id.to_string());
             }
@@ -425,18 +502,18 @@ fn drop_card(doc: &mut Document, card_id: &str, target_body_id: &str) -> bool {
         return false;
     }
 
-    // Remove card from source body
+    // Remove card from source body by node_id
     let card = {
         let src_body = match dom::query_selector_mut(root, &format!("#{}", src_body_id)) {
             Some(b) => b, None => return false,
         };
-        let card_ptr = match src_body.children.iter()
+        let card_node_id = match src_body.children.iter()
             .find(|c| c.attributes.get("id").map(|s| s.as_str()) == Some(card_id))
-            .map(|c| c as *const HtmlBox)
+            .map(|c| c.node_id)
         {
-            Some(p) => p, None => return false,
+            Some(id) => id, None => return false,
         };
-        match dom::remove_child(src_body, card_ptr) {
+        match dom::remove_child_by_id(src_body, card_node_id) {
             Some(c) => c, None => return false,
         }
     };
@@ -444,9 +521,9 @@ fn drop_card(doc: &mut Document, card_id: &str, target_body_id: &str) -> bool {
     // Append to target body after the placeholder (first child)
     match dom::query_selector_mut(root, &format!("#{}", target_body_id)) {
         Some(target_body) => {
-            let placeholder_ptr = target_body.children.first().map(|c| c as *const HtmlBox);
-            if let Some(ph_ptr) = placeholder_ptr {
-                dom::insert_after(target_body, ph_ptr, card);
+            let placeholder_id = target_body.children.first().map(|c| c.node_id);
+            if let Some(ph_id) = placeholder_id {
+                dom::insert_after_by_id(target_body, ph_id, card);
             } else {
                 dom::append_child(target_body, card);
             }
@@ -524,6 +601,7 @@ fn main() {
         mouse_pos: (0.0, 0.0),
         drag: DragState::idle(),
         mouse_down: false,
+        ghost_pos: None,
     };
     event_loop.run_app(&mut app).unwrap();
 }

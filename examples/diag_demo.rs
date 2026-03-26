@@ -23,21 +23,21 @@ fn dump_box_tree(node: &HtmlBox, depth: usize) {
         indent,
         tag,
         disp_str,
-        node.content_rect.x,
-        node.content_rect.y,
-        node.content_rect.w,
-        node.content_rect.h,
-        node.margin_rect.x,
-        node.margin_rect.y,
-        node.margin_rect.w,
-        node.margin_rect.h
+        node.layout.content_rect.x,
+        node.layout.content_rect.y,
+        node.layout.content_rect.w,
+        node.layout.content_rect.h,
+        node.layout.margin_rect.x,
+        node.layout.margin_rect.y,
+        node.layout.margin_rect.w,
+        node.layout.margin_rect.h
     );
 
-    if !node.line_cache.is_empty() {
-        print!("{}  lines={}[", indent, node.line_cache.len());
-        for (i, line) in node.line_cache.iter().enumerate() {
+    if !node.layout.line_cache.is_empty() {
+        print!("{}  lines={}[", indent, node.layout.line_cache.len());
+        for (i, line) in node.layout.line_cache.iter().enumerate() {
             print!("LINE({:.0},{:.0} {:.0}x{:.0})", line.x, line.y, line.width, line.height);
-            if i + 1 < node.line_cache.len() {
+            if i + 1 < node.layout.line_cache.len() {
                 print!(", ");
             }
         }

@@ -92,8 +92,8 @@ fn display_inline_block_layout_dimensions() {
     });
     assert!(ib.is_some());
     let ib = ib.unwrap();
-    assert_eq!(ib.content_rect.w, 100.0);
-    assert_eq!(ib.content_rect.h, 50.0);
+    assert_eq!(ib.layout.content_rect.w, 100.0);
+    assert_eq!(ib.layout.content_rect.h, 50.0);
 }
 
 #[test]
@@ -109,10 +109,10 @@ fn display_inline_block_with_margin() {
     });
     assert!(ib.is_some());
     let ib = ib.unwrap();
-    assert_eq!(ib.resolved_margin_left, 10.0);
-    assert_eq!(ib.resolved_margin_right, 10.0);
-    assert_eq!(ib.resolved_margin_top, 10.0);
-    assert_eq!(ib.resolved_margin_bottom, 10.0);
+    assert_eq!(ib.layout.resolved_margin_left, 10.0);
+    assert_eq!(ib.layout.resolved_margin_right, 10.0);
+    assert_eq!(ib.layout.resolved_margin_top, 10.0);
+    assert_eq!(ib.layout.resolved_margin_bottom, 10.0);
 }
 
 #[test]
@@ -128,8 +128,8 @@ fn display_inline_block_with_padding() {
     });
     assert!(ib.is_some());
     let ib = ib.unwrap();
-    assert_eq!(ib.resolved_pad_left, 5.0);
-    assert_eq!(ib.resolved_pad_right, 5.0);
+    assert_eq!(ib.layout.resolved_pad_left, 5.0);
+    assert_eq!(ib.layout.resolved_pad_right, 5.0);
 }
 
 #[test]
@@ -152,9 +152,9 @@ fn display_inline_block_multiple_same_line() {
     let a = a.unwrap();
     let bx = bx.unwrap();
     // B should be to the right of A
-    assert!(bx.content_rect.x > a.content_rect.x);
+    assert!(bx.layout.content_rect.x > a.layout.content_rect.x);
     // Same Y (same line)
-    assert_eq!(bx.content_rect.y, a.content_rect.y);
+    assert_eq!(bx.layout.content_rect.y, a.layout.content_rect.y);
 }
 
 // ============================================================
@@ -217,8 +217,8 @@ fn display_flow_root_establishes_bfc() {
     });
     assert!(fr.is_some(), "flow-root div not found");
     // flow-root should expand to contain the float (at least 49px tall)
-    assert!(fr.unwrap().content_rect.h >= 49.0,
-        "flow-root should contain float, height was {}", fr.unwrap().content_rect.h);
+    assert!(fr.unwrap().layout.content_rect.h >= 49.0,
+        "flow-root should contain float, height was {}", fr.unwrap().layout.content_rect.h);
 }
 
 #[test]
@@ -241,8 +241,8 @@ fn display_flow_root_no_margin_collapse() {
     assert!(fr.is_some(), "flow-root not found");
     assert!(inner.is_some(), "inner not found");
     // The flow-root should be tall enough to contain inner + its margin (30 + 10 = 40)
-    assert!(fr.unwrap().content_rect.h >= 40.0,
-        "flow-root height should be >= 40, got {}", fr.unwrap().content_rect.h);
+    assert!(fr.unwrap().layout.content_rect.h >= 40.0,
+        "flow-root height should be >= 40, got {}", fr.unwrap().layout.content_rect.h);
 }
 
 // ============================================================
@@ -307,7 +307,7 @@ fn display_ruby_multiple_pairs() {
     assert!(b1.is_some(), "b1 not found");
     assert!(b2.is_some(), "b2 not found");
     // b2 should be to the right of (or at least not identical to) b1
-    assert!(b2.unwrap().content_rect.x >= b1.unwrap().content_rect.x);
+    assert!(b2.unwrap().layout.content_rect.x >= b1.unwrap().layout.content_rect.x);
 }
 
 // ============================================================
@@ -328,8 +328,8 @@ fn display_inline_block_same_line_as_text() {
     });
     assert!(ib.is_some(), "inline-block span not found");
     // Its Y should be near the top — same line as "Hello" (< 60px)
-    assert!(ib.unwrap().content_rect.y < 60.0,
-        "inline-block should be on first line, y={}", ib.unwrap().content_rect.y);
+    assert!(ib.unwrap().layout.content_rect.y < 60.0,
+        "inline-block should be on first line, y={}", ib.unwrap().layout.content_rect.y);
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn display_inline_block_layout_stable_on_relayout() {
             b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
         });
         assert!(ib.is_some(), "ib not found after first layout");
-        (ib.unwrap().content_rect.y, ib.unwrap().content_rect.h)
+        (ib.unwrap().layout.content_rect.y, ib.unwrap().layout.content_rect.h)
     };
     // Re-layout
     engine.layout(&mut doc, 400.0);
@@ -357,7 +357,7 @@ fn display_inline_block_layout_stable_on_relayout() {
             b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
         });
         assert!(ib.is_some(), "ib not found after second layout");
-        (ib.unwrap().content_rect.y, ib.unwrap().content_rect.h)
+        (ib.unwrap().layout.content_rect.y, ib.unwrap().layout.content_rect.h)
     };
     assert_eq!(y1, y2, "Y position should be stable across re-layout");
     assert_eq!(h1, h2, "height should be stable across re-layout");

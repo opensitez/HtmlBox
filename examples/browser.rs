@@ -503,7 +503,7 @@ impl BrowserApp {
                                 if resolve_url(&base, s) == src {
                                     b.image_data  = Some(rgba.clone());
                                     b.image_width = w; b.image_height = h;
-                                    b.layout_dirty = true;
+                                    b.layout.layout_dirty = true;
                                 }
                             }
                         }
@@ -652,7 +652,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
         let Some(doc) = &self.chrome_doc else { return ChromeHit::None };
         let pt_in = |id: &str| -> bool {
             if let Some(b) = dom::query_selector(&doc.root, &format!("#{id}")) {
-                let r = &b.border_rect;
+                let r = &b.layout.border_rect;
                 x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
             } else { false }
         };
@@ -923,7 +923,7 @@ impl BrowserApp {
                         eprintln!("[hover] changed → relayout, hovered={}", tag);
                         let mut eng = self.renderer.layout_engine();
                         eng.viewport_h = ch;
-                        eng.layout(doc, pw);
+                        eng.layout_no_cascade(doc, pw);
                     }
                     return true;
                 }
@@ -1064,7 +1064,9 @@ impl BrowserApp {
                             let hit_ptr = {
                                 if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                                     let doc_pt = (sx + doc.scroll_x, csy + doc.scroll_y);
-                                    point_to_hit(&doc.root, doc_pt, 2).map(|h| h.box_ptr)
+                                    point_to_hit(&doc.root, doc_pt, 2).map(|h| {
+                                        rhtmledit::types::find_by_node_id(&doc.root, h.node_id)
+                                    }).filter(|p| !p.is_null())
                                 } else { None }
                             };
                             if let Some(ptr) = hit_ptr {
@@ -1518,7 +1520,7 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
                         "<div class='dom-node'><span class='tag'>{}</span><span class='id'>{}</span><span class='cls'>{}</span> \
                          <span style='color:#666'>{:?} {:.0}x{:.0}</span></div>",
                         escape_html(&child.tag), escape_html(&cid), escape_html(&ccls),
-                        child.style.display, child.content_rect.w, child.content_rect.h
+                        child.style.display, child.layout.content_rect.w, child.layout.content_rect.h
                     ));
                 }
                 html.push_str("</div>");
@@ -1526,19 +1528,19 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
         }
         2 => {
             // ── Box Model tab ──
-            let c = &node.content_rect;
-            let mt = node.resolved_margin_top;
-            let mr = node.resolved_margin_right;
-            let mb = node.resolved_margin_bottom;
-            let ml = node.resolved_margin_left;
-            let bt = node.resolved_border_top;
-            let bbr = node.resolved_border_right;
-            let bb = node.resolved_border_bottom;
-            let bbl = node.resolved_border_left;
-            let pt = node.resolved_pad_top;
-            let pr = node.resolved_pad_right;
-            let pb = node.resolved_pad_bottom;
-            let pll = node.resolved_pad_left;
+            let c = &node.layout.content_rect;
+            let mt = node.layout.resolved_margin_top;
+            let mr = node.layout.resolved_margin_right;
+            let mb = node.layout.resolved_margin_bottom;
+            let ml = node.layout.resolved_margin_left;
+            let bt = node.layout.resolved_border_top;
+            let bbr = node.layout.resolved_border_right;
+            let bb = node.layout.resolved_border_bottom;
+            let bbl = node.layout.resolved_border_left;
+            let pt = node.layout.resolved_pad_top;
+            let pr = node.layout.resolved_pad_right;
+            let pb = node.layout.resolved_pad_bottom;
+            let pll = node.layout.resolved_pad_left;
             html.push_str(&format!(
                 "<div class='box-model'>\
                  <div class='bm-margin'>\
@@ -1563,7 +1565,7 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
             }
             html.push_str(&format!(
                 "<div style='color:#666;font-size:10px;text-align:center'>position: ({:.0}, {:.0}) size: {:.0} x {:.0}</div>",
-                c.x, c.y, node.margin_rect.w, node.margin_rect.h
+                c.x, c.y, node.layout.margin_rect.w, node.layout.margin_rect.h
             ));
         }
         _ => {}
@@ -1609,40 +1611,21 @@ fn normalize_url(s: String) -> String {
 /// Propagate layout_dirty upward: if any descendant is dirty, mark the parent dirty too.
 /// Returns true if this node or any descendant is dirty.
 fn propagate_dirty(node: &mut rhtmledit::HtmlBox) -> bool {
-    let mut any_dirty = node.layout_dirty;
+    let mut any_dirty = node.layout.layout_dirty;
     for child in &mut node.children {
         if propagate_dirty(child) {
             any_dirty = true;
         }
     }
     if any_dirty {
-        node.layout_dirty = true;
+        node.layout.layout_dirty = true;
     }
     any_dirty
 }
 
 /// Resolve a (possibly relative) `href` against a `base` URL.
 fn resolve_url(base: &str, href: &str) -> String {
-    if href.is_empty() { return base.to_string(); }
-    if href.starts_with("http://") || href.starts_with("https://") { return href.to_string(); }
-    if href.starts_with("//") {
-        let scheme = if base.starts_with("https") { "https:" } else { "http:" };
-        return format!("{scheme}{href}");
-    }
-    // Find scheme + authority
-    let origin = if let Some(p) = base.find("://") {
-        let rest = &base[p+3..];
-        let slash = rest.find('/').map(|i| p+3+i).unwrap_or(base.len());
-        &base[..slash]
-    } else { "" };
-    if href.starts_with('/') {
-        return format!("{origin}{href}");
-    }
-    // Relative to current directory
-    let dir = if let Some(i) = base.rfind('/') {
-        if &base[..i] == "https:" || &base[..i] == "http:" { &base } else { &base[..i+1] }
-    } else { base };
-    format!("{dir}{href}")
+    rhtmledit::resolve_url(href, base)
 }
 
 fn shared_client() -> &'static reqwest::blocking::Client {
@@ -1772,6 +1755,21 @@ fn cached_fetch_bytes(url: &str, cache_dir: &str) -> Result<Vec<u8>, String> {
     if let Ok(data) = std::fs::read(&path) {
         eprintln!("[browser]   [cache] {url}");
         return Ok(data);
+    }
+    // Legacy fallback: old resolve_url produced broken URLs like "https://./assets/..."
+    // Try looking up the old-style URL in cache to avoid re-fetching everything.
+    if let Some(scheme_end) = url.find("://") {
+        let after = &url[scheme_end + 3..];
+        if let Some(slash) = after.find('/') {
+            let old_url = format!("{}/.{}", &url[..scheme_end + 3], &after[slash..]);
+            let old_path = url_cache_path(&old_url, cache_dir);
+            if let Ok(data) = std::fs::read(&old_path) {
+                eprintln!("[browser]   [cache-migrated] {url}");
+                // Re-save under correct URL key
+                let _ = std::fs::write(&path, &data);
+                return Ok(data);
+            }
+        }
     }
     let data = fetch_bytes(url)?;
     let _ = std::fs::create_dir_all(cache_dir);

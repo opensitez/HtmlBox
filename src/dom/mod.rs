@@ -382,8 +382,6 @@ pub fn add_class(b: &mut HtmlBox, cls: &str) {
         entry.push(' ');
         entry.push_str(cls);
     }
-    b.cascade_dirty = true;
-    mark_layout_dirty(b);
 }
 
 /// Remove a CSS class from a box.
@@ -392,8 +390,6 @@ pub fn remove_class(b: &mut HtmlBox, cls: &str) {
         let new: Vec<&str> = val.split_whitespace().filter(|&c| c != cls).collect();
         *val = new.join(" ");
     }
-    b.cascade_dirty = true;
-    mark_layout_dirty(b);
 }
 
 /// Toggle a CSS class on a box.

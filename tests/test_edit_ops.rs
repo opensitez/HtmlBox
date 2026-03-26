@@ -26,7 +26,7 @@ fn parse_and_layout(html: &str) -> rhtmledit::types::Document {
 /// # Safety
 /// The pointer must remain valid (no tree mutation) until the next editor call.
 fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
-    editor.caret_box  = Some(element as *const HtmlBox);
+    editor.caret_box  = Some(element.node_id);
     editor.collapse_to(offset);
 }
 
@@ -378,10 +378,10 @@ fn toggle_bullet_wraps_and_caret_moves_to_li() {
     doc.editor.toggle_bullet_list(&mut doc.root);
 
     // Caret box should now point inside the <li>
-    if let Some(caret_ptr) = doc.editor.caret_box {
+    if let Some(caret_id) = doc.editor.caret_box {
         let li = query_selector(&doc.root, "li").unwrap();
         assert!(
-            std::ptr::eq(caret_ptr, li as *const HtmlBox),
+            caret_id == li.node_id,
             "caret should be on the <li>"
         );
     } else {
@@ -670,7 +670,7 @@ fn toggle_bold_on_range_after_layout() {
     let p = query_selector_mut(&mut doc.root, "p").unwrap();
     let range = TextRange { start: 0, end: 5 };
     toggle_bold(p, &range);
-    assert!(p.inline_runs.iter().any(|r| r.style.font_weight.is_bold()));
+    assert!(p.layout.inline_runs.iter().any(|r| r.style.font_weight.is_bold()));
 }
 
 // ── 11. Space then text in table cell and grid div ────────────────────────────
@@ -818,20 +818,20 @@ fn absolute_child_gets_nonzero_layout() {
     // the containing block — meaning its border_rect.x and border_rect.y
     // should be non-zero and match the top/left offsets.
     assert!(
-        abs.border_rect.x > 0.0 || abs.border_rect.y > 0.0,
+        abs.layout.border_rect.x > 0.0 || abs.layout.border_rect.y > 0.0,
         "absolute child must have non-zero position after layout; got border_rect={:?}",
-        abs.border_rect
+        abs.layout.border_rect
     );
     // top: 10px, left: 20px — y should be >= 10, x >= 20 (plus any outer margins/padding)
     assert!(
-        abs.border_rect.y >= 9.0,
+        abs.layout.border_rect.y >= 9.0,
         "absolute child top should be ~10px; got y={}",
-        abs.border_rect.y
+        abs.layout.border_rect.y
     );
     assert!(
-        abs.border_rect.x >= 19.0,
+        abs.layout.border_rect.x >= 19.0,
         "absolute child left should be ~20px; got x={}",
-        abs.border_rect.x
+        abs.layout.border_rect.x
     );
 }
 

@@ -75,13 +75,13 @@ fn box_model_margin_auto_center() {
     );
     // Find div with width ≈ 200
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 200.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
     let div = div.unwrap();
     // Centered: x ≈ (800 - 200) / 2 = 300 (accounting for body UA margin)
-    assert!(div.content_rect.x > 250.0 && div.content_rect.x < 350.0,
-        "centered div should be near x=300, got x={}", div.content_rect.x);
+    assert!(div.layout.content_rect.x > 250.0 && div.layout.content_rect.x < 350.0,
+        "centered div should be near x=300, got x={}", div.layout.content_rect.x);
 }
 
 #[test]
@@ -91,12 +91,12 @@ fn box_model_margin_auto_left_only() {
         800.0,
     );
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 200.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
     // margin-left:auto pushes element to the right (x > 500)
-    assert!(div.unwrap().content_rect.x > 500.0,
-        "margin-left:auto should push div right, got x={}", div.unwrap().content_rect.x);
+    assert!(div.unwrap().layout.content_rect.x > 500.0,
+        "margin-left:auto should push div right, got x={}", div.unwrap().layout.content_rect.x);
 }
 
 #[test]
@@ -106,12 +106,12 @@ fn box_model_margin_auto_does_not_affect_defaults() {
         800.0,
     );
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 200.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
     // Without auto margins, div is at the left (small x, allowing body margin ~8px)
-    assert!(div.unwrap().content_rect.x < 50.0,
-        "div without auto margin should be near left, got x={}", div.unwrap().content_rect.x);
+    assert!(div.unwrap().layout.content_rect.x < 50.0,
+        "div without auto margin should be near left, got x={}", div.unwrap().layout.content_rect.x);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn box_model_margin_percent() {
     });
     assert!(div.is_some(), "div with percent margin not found");
     // 10% of 800 = 80px margin-left; resolved_margin_left should be ~80
-    let ml = div.unwrap().resolved_margin_left;
+    let ml = div.unwrap().layout.resolved_margin_left;
     assert!(ml >= 70.0 && ml <= 90.0,
         "10% margin-left on 800px viewport should resolve to ~80px, got {}", ml);
 }
@@ -172,13 +172,13 @@ fn box_model_padding_affects_layout() {
         800.0,
     );
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 200.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 200 not found");
     let div = div.unwrap();
     // paddingRect.w = content (200) + padding-left (20) + padding-right (20) = 240
-    assert!(div.padding_rect.w >= 235.0 && div.padding_rect.w <= 245.0,
-        "padding_rect.w should be ~240, got {}", div.padding_rect.w);
+    assert!(div.layout.padding_rect.w >= 235.0 && div.layout.padding_rect.w <= 245.0,
+        "padding_rect.w should be ~240, got {}", div.layout.padding_rect.w);
 }
 
 // ============================================================
@@ -229,13 +229,13 @@ fn box_model_border_affects_layout() {
         800.0,
     );
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 200.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 200 not found");
     let div = div.unwrap();
     // border_rect.w = content (200) + border-left (5) + border-right (5) = 210
-    assert!(div.border_rect.w >= 205.0 && div.border_rect.w <= 215.0,
-        "border_rect.w should be ~210, got {}", div.border_rect.w);
+    assert!(div.layout.border_rect.w >= 205.0 && div.layout.border_rect.w <= 215.0,
+        "border_rect.w should be ~210, got {}", div.layout.border_rect.w);
 }
 
 // ============================================================
@@ -253,11 +253,11 @@ fn box_model_content_box_default() {
     });
     assert!(div.is_some(), "content-box div not found");
     let div = div.unwrap();
-    assert!((div.content_rect.w - 200.0).abs() < 2.0,
-        "content_rect.w should be 200, got {}", div.content_rect.w);
+    assert!((div.layout.content_rect.w - 200.0).abs() < 2.0,
+        "content_rect.w should be 200, got {}", div.layout.content_rect.w);
     // borderRect = 200 + 40 (padding) + 10 (border) = 250
-    assert!(div.border_rect.w >= 245.0 && div.border_rect.w <= 255.0,
-        "border_rect.w should be ~250, got {}", div.border_rect.w);
+    assert!(div.layout.border_rect.w >= 245.0 && div.layout.border_rect.w <= 255.0,
+        "border_rect.w should be ~250, got {}", div.layout.border_rect.w);
 }
 
 #[test]
@@ -272,11 +272,11 @@ fn box_model_border_box_sizing() {
     assert!(div.is_some(), "border-box div not found");
     let div = div.unwrap();
     // border_rect.w should be 200
-    assert!(div.border_rect.w >= 195.0 && div.border_rect.w <= 205.0,
-        "border_rect.w should be ~200 with border-box, got {}", div.border_rect.w);
+    assert!(div.layout.border_rect.w >= 195.0 && div.layout.border_rect.w <= 205.0,
+        "border_rect.w should be ~200 with border-box, got {}", div.layout.border_rect.w);
     // content_rect.w = 200 - 40 (padding) - 10 (border) = 150
-    assert!(div.content_rect.w >= 145.0 && div.content_rect.w <= 155.0,
-        "content_rect.w should be ~150 with border-box, got {}", div.content_rect.w);
+    assert!(div.layout.content_rect.w >= 145.0 && div.layout.content_rect.w <= 155.0,
+        "content_rect.w should be ~150 with border-box, got {}", div.layout.content_rect.w);
 }
 
 // ============================================================
@@ -287,7 +287,7 @@ fn box_model_border_box_sizing() {
 fn box_model_explicit_width() {
     let doc = parse_and_layout("<div style='width: 300px;'>Fixed</div>", 800.0);
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.w - 300.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.w - 300.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 300 not found");
 }
@@ -296,7 +296,7 @@ fn box_model_explicit_width() {
 fn box_model_percentage_width() {
     let doc = parse_and_layout("<div style='width: 50%;'>Half</div>", 800.0);
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && b.content_rect.w > 350.0 && b.content_rect.w < 450.0
+        b.tag == "div" && b.layout.content_rect.w > 350.0 && b.layout.content_rect.w < 450.0
     });
     assert!(div.is_some(), "div with width ≈ 50% of 800 not found");
 }
@@ -305,7 +305,7 @@ fn box_model_percentage_width() {
 fn box_model_auto_width_fills_container() {
     let doc = parse_and_layout("<div>Full width</div>", 800.0);
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && b.content_rect.w > 700.0
+        b.tag == "div" && b.layout.content_rect.w > 700.0
     });
     assert!(div.is_some(), "div should fill container (w > 700)");
 }
@@ -320,7 +320,7 @@ fn box_model_min_width() {
         b.tag == "div" && b.style.min_width == CssLength::Px(200.0)
     });
     assert!(div.is_some(), "div with min-width: 200px not found");
-    assert!(div.unwrap().content_rect.w >= 200.0,
+    assert!(div.unwrap().layout.content_rect.w >= 200.0,
         "div with min-width: 200px should be at least 200 wide");
 }
 
@@ -334,7 +334,7 @@ fn box_model_max_width() {
         b.tag == "div" && b.style.max_width != CssLength::None
     });
     assert!(div.is_some(), "div with max-width not found");
-    assert!(div.unwrap().content_rect.w <= 305.0,
+    assert!(div.unwrap().layout.content_rect.w <= 305.0,
         "div with max-width: 300px should be at most ~305 wide");
 }
 
@@ -345,7 +345,7 @@ fn box_model_explicit_height() {
         800.0,
     );
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && (b.content_rect.h - 100.0).abs() < 2.0
+        b.tag == "div" && (b.layout.content_rect.h - 100.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with height ≈ 100px not found");
 }
@@ -443,6 +443,6 @@ fn box_model_display_none() {
     let hidden = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::None);
     assert!(hidden.is_some(), "display:none div should be in tree");
     let hidden = hidden.unwrap();
-    assert_eq!(hidden.content_rect.w, 0.0, "display:none box should have zero width");
-    assert_eq!(hidden.content_rect.h, 0.0, "display:none box should have zero height");
+    assert_eq!(hidden.layout.content_rect.w, 0.0, "display:none box should have zero width");
+    assert_eq!(hidden.layout.content_rect.h, 0.0, "display:none box should have zero height");
 }

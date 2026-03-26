@@ -57,9 +57,9 @@ fn sticky_stays_in_flow() {
     // Sibling must start below the sticky header (not overlapping from y=0)
     let h = header.unwrap();
     let s = sibling.unwrap();
-    assert!(s.content_rect.y >= h.content_rect.y + h.content_rect.h - 1.0,
+    assert!(s.layout.content_rect.y >= h.layout.content_rect.y + h.layout.content_rect.h - 1.0,
         "sibling y={} should be at or below sticky bottom={}",
-        s.content_rect.y, h.content_rect.y + h.content_rect.h);
+        s.layout.content_rect.y, h.layout.content_rect.y + h.layout.content_rect.h);
 }
 
 // ============================================================
@@ -100,7 +100,7 @@ fn aspect_ratio_drives_height() {
     let b = find_box(&doc.root, &|b| b.style.aspect_ratio.is_some());
     assert!(b.is_some(), "box with aspect-ratio not found");
     let b = b.unwrap();
-    let h = b.content_rect.h;
+    let h = b.layout.content_rect.h;
     // Allow a small tolerance (padding/border may not be present here)
     assert!((h - 100.0).abs() < 5.0, "height={} should be ~100 for 200px width and ratio 2", h);
 }
@@ -114,8 +114,8 @@ fn aspect_ratio_square() {
     let b = find_box(&doc.root, &|b| b.style.aspect_ratio == Some(1.0));
     assert!(b.is_some());
     let b = b.unwrap();
-    assert!((b.content_rect.h - b.content_rect.w).abs() < 2.0,
-        "w={} h={}", b.content_rect.w, b.content_rect.h);
+    assert!((b.layout.content_rect.h - b.layout.content_rect.w).abs() < 2.0,
+        "w={} h={}", b.layout.content_rect.w, b.layout.content_rect.h);
 }
 
 // ============================================================
@@ -164,9 +164,9 @@ fn multi_column_children_spread_horizontally() {
     assert_eq!(ps.len(), 3, "should have 3 <p> children");
 
     // Each <p> should be in a different horizontal column (non-overlapping x positions)
-    let x0 = ps[0].content_rect.x;
-    let x1 = ps[1].content_rect.x;
-    let x2 = ps[2].content_rect.x;
+    let x0 = ps[0].layout.content_rect.x;
+    let x1 = ps[1].layout.content_rect.x;
+    let x2 = ps[2].layout.content_rect.x;
     assert!(x1 > x0 + 10.0, "col1 x={} should be right of col0 x={}", x1, x0);
     assert!(x2 > x1 + 10.0, "col2 x={} should be right of col1 x={}", x2, x1);
 }
@@ -188,14 +188,14 @@ fn multi_column_two_cols_stack_vertically() {
     let ps: Vec<&HtmlBox> = container.children.iter().filter(|c| c.tag == "p").collect();
     assert_eq!(ps.len(), 4);
     // A and B are both in column 0 (same x)
-    assert!((ps[0].content_rect.x - ps[1].content_rect.x).abs() < 2.0,
+    assert!((ps[0].layout.content_rect.x - ps[1].layout.content_rect.x).abs() < 2.0,
         "A and B should be in the same column");
     // C is in column 1 (x further right than A)
-    assert!(ps[2].content_rect.x > ps[0].content_rect.x + 10.0,
-        "C x={} should be in col 1 (right of A x={})", ps[2].content_rect.x, ps[0].content_rect.x);
+    assert!(ps[2].layout.content_rect.x > ps[0].layout.content_rect.x + 10.0,
+        "C x={} should be in col 1 (right of A x={})", ps[2].layout.content_rect.x, ps[0].layout.content_rect.x);
     // B is below A (stacked in col 0)
-    assert!(ps[1].content_rect.y > ps[0].content_rect.y,
-        "B y={} should be below A y={}", ps[1].content_rect.y, ps[0].content_rect.y);
+    assert!(ps[1].layout.content_rect.y > ps[0].layout.content_rect.y,
+        "B y={} should be below A y={}", ps[1].layout.content_rect.y, ps[0].layout.content_rect.y);
 }
 
 // ============================================================
@@ -379,8 +379,8 @@ fn br_between_block_containers_creates_vertical_gap() {
     let row2 = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "row2").unwrap_or(false))
         .expect("row2 not found");
 
-    let row1_bottom = row1.border_rect.y + row1.border_rect.h;
-    let row2_top    = row2.border_rect.y;
+    let row1_bottom = row1.layout.border_rect.y + row1.layout.border_rect.h;
+    let row2_top    = row2.layout.border_rect.y;
     let gap = row2_top - row1_bottom;
 
     // The <br> should contribute at least font_px * 1.2 (default 16px * 1.2 = 19.2px)
@@ -395,6 +395,6 @@ fn br_in_block_has_nonzero_height() {
     let doc = load_html(html, 800.0);
 
     let br = find_box(&doc.root, &|b| b.tag == "br").expect("br not found");
-    assert!(br.margin_rect.h > 0.0,
-        "br in block context must have nonzero height, got {}", br.margin_rect.h);
+    assert!(br.layout.margin_rect.h > 0.0,
+        "br in block context must have nonzero height, got {}", br.layout.margin_rect.h);
 }

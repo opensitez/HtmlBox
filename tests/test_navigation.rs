@@ -13,7 +13,7 @@ fn layout(html: &str, width: f32) -> Document {
 fn nav_offset_to_point_basic() {
     let doc = layout("<p>Hello</p>", 800.0);
     // offset 0 in the root box
-    let pt = offset_to_point(&doc.root, &doc.root as *const HtmlBox, 0, 0.0, 0.0);
+    let pt = offset_to_point(&doc.root, doc.root.node_id, 0, 0.0, 0.0);
     assert!(pt.is_some());
     let (x, y) = pt.unwrap();
     assert!(x >= 0.0);
@@ -39,7 +39,7 @@ fn nav_hit_test_distinct_offsets() {
     let hit_a = point_to_hit(&doc.root, (5.0, 30.0), 0).unwrap();
     let hit_b = point_to_hit(&doc.root, (5.0, 150.0), 0).unwrap();
 
-    assert!(hit_a.box_ptr != hit_b.box_ptr || hit_a.local_offset != hit_b.local_offset);
+    assert!(hit_a.node_id != hit_b.node_id || hit_a.local_offset != hit_b.local_offset);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn nav_caret_x_roundtrip() {
     let doc = layout("<p>Hello World</p>", 800.0);
     // Hit roughly in the middle of "Hello"
     let hit = point_to_hit(&doc.root, (20.0, 5.0), 0).unwrap();
-    let pt = offset_to_point(&doc.root, hit.box_ptr, hit.local_offset, 0.0, 0.0).unwrap();
+    let pt = offset_to_point(&doc.root, hit.node_id, hit.local_offset, 0.0, 0.0).unwrap();
     
     // X should be close to 20.0
     assert!((pt.0 - 20.0).abs() < 20.0);
@@ -67,8 +67,8 @@ fn nav_wrapped_text_multiple_lines() {
     let hit_start = point_to_hit(&doc.root, (5.0, 5.0), 0).unwrap();
     let hit_end   = point_to_hit(&doc.root, (5.0, 100.0), 0).unwrap();
 
-    let pt_start = offset_to_point(&doc.root, hit_start.box_ptr, hit_start.local_offset, 0.0, 0.0).unwrap();
-    let pt_end   = offset_to_point(&doc.root, hit_end.box_ptr, hit_end.local_offset, 0.0, 0.0).unwrap();
+    let pt_start = offset_to_point(&doc.root, hit_start.node_id, hit_start.local_offset, 0.0, 0.0).unwrap();
+    let pt_end   = offset_to_point(&doc.root, hit_end.node_id, hit_end.local_offset, 0.0, 0.0).unwrap();
 
     assert!(pt_end.1 > pt_start.1 + 20.0);
 }
@@ -81,8 +81,8 @@ fn nav_table_hit_test() {
     let hit_a = point_to_hit(&doc.root, (10.0, 10.0), 0).unwrap();
     let hit_b = point_to_hit(&doc.root, (500.0, 10.0), 0).unwrap();
     
-    let pt_a = offset_to_point(&doc.root, hit_a.box_ptr, hit_a.local_offset, 0.0, 0.0).unwrap();
-    let pt_b = offset_to_point(&doc.root, hit_b.box_ptr, hit_b.local_offset, 0.0, 0.0).unwrap();
+    let pt_a = offset_to_point(&doc.root, hit_a.node_id, hit_a.local_offset, 0.0, 0.0).unwrap();
+    let pt_b = offset_to_point(&doc.root, hit_b.node_id, hit_b.local_offset, 0.0, 0.0).unwrap();
     
     assert!((pt_a.1 - pt_b.1).abs() < 5.0);
     assert!(pt_b.0 > pt_a.0);
@@ -228,9 +228,9 @@ fn nav_multiple_paragraphs_have_increasing_y() {
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
-    let pt_a = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 1, 0.0, 0.0);
-    let pt_b = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 1, 0.0, 0.0);
-    let pt_c = offset_to_point(&doc.root, paras[2] as *const HtmlBox, 1, 0.0, 0.0);
+    let pt_a = offset_to_point(&doc.root, paras[0].node_id, 1, 0.0, 0.0);
+    let pt_b = offset_to_point(&doc.root, paras[1].node_id, 1, 0.0, 0.0);
+    let pt_c = offset_to_point(&doc.root, paras[2].node_id, 1, 0.0, 0.0);
 
     // All should be Some and Y should increase
     assert!(pt_a.is_some(), "paragraph A has no point");
@@ -250,8 +250,8 @@ fn nav_heading_and_paragraph_ordering() {
     let h1 = query_selector(&doc.root, "h1").unwrap();
     let p  = query_selector(&doc.root, "p").unwrap();
 
-    let pt_h1 = offset_to_point(&doc.root, h1 as *const HtmlBox, 0, 0.0, 0.0);
-    let pt_p  = offset_to_point(&doc.root, p  as *const HtmlBox, 0, 0.0, 0.0);
+    let pt_h1 = offset_to_point(&doc.root, h1.node_id, 0, 0.0, 0.0);
+    let pt_p  = offset_to_point(&doc.root, p .node_id, 0, 0.0, 0.0);
 
     assert!(pt_h1.is_some());
     assert!(pt_p.is_some());
@@ -288,8 +288,8 @@ fn nav_click_returns_distinct_offsets_per_box() {
     let local_after = p_text.find("After").unwrap_or(0);
     let local_here  = p_text.find("here").unwrap_or(0);
 
-    let pt_after = offset_to_point(&doc.root, last_p as *const HtmlBox, local_after, 0.0, 0.0);
-    let pt_here  = offset_to_point(&doc.root, last_p as *const HtmlBox, local_here,  0.0, 0.0);
+    let pt_after = offset_to_point(&doc.root, last_p.node_id, local_after, 0.0, 0.0);
+    let pt_here  = offset_to_point(&doc.root, last_p.node_id, local_here,  0.0, 0.0);
 
     assert!(pt_after.is_some());
     assert!(pt_here.is_some());
@@ -310,7 +310,7 @@ fn nav_click_returns_distinct_offsets_per_box() {
     let ha = hit_after.unwrap();
     let hh = hit_here.unwrap();
     assert!(
-        ha.box_ptr != hh.box_ptr || ha.local_offset != hh.local_offset,
+        ha.node_id != hh.node_id || ha.local_offset != hh.local_offset,
         "Expected distinct hit results for 'After' and 'here'"
     );
 
@@ -336,9 +336,9 @@ fn nav_click_on_each_paragraph_returns_distinct_offsets() {
     let pb = find_para("BBB").expect("BBB paragraph not found");
     let pc = find_para("CCC").expect("CCC paragraph not found");
 
-    let pt_a = offset_to_point(&doc.root, pa as *const HtmlBox, 1, 0.0, 0.0).unwrap();
-    let pt_b = offset_to_point(&doc.root, pb as *const HtmlBox, 1, 0.0, 0.0).unwrap();
-    let pt_c = offset_to_point(&doc.root, pc as *const HtmlBox, 1, 0.0, 0.0).unwrap();
+    let pt_a = offset_to_point(&doc.root, pa.node_id, 1, 0.0, 0.0).unwrap();
+    let pt_b = offset_to_point(&doc.root, pb.node_id, 1, 0.0, 0.0).unwrap();
+    let pt_c = offset_to_point(&doc.root, pc.node_id, 1, 0.0, 0.0).unwrap();
 
     // Different Y positions
     assert!(pt_a.1 != pt_b.1, "A and B should have different Y");
@@ -354,9 +354,9 @@ fn nav_click_on_each_paragraph_returns_distinct_offsets() {
     assert!(hit_c.is_some());
 
     // Each click should hit a distinct box (different paragraphs)
-    let ba = hit_a.unwrap().box_ptr;
-    let bb = hit_b.unwrap().box_ptr;
-    let bc = hit_c.unwrap().box_ptr;
+    let ba = hit_a.unwrap().node_id;
+    let bb = hit_b.unwrap().node_id;
+    let bc = hit_c.unwrap().node_id;
     assert!(ba != bb, "A and B clicks should hit different boxes");
     assert!(bb != bc, "B and C clicks should hit different boxes");
 }
@@ -373,11 +373,11 @@ fn nav_wrapped_text_line_ordering() {
         query_selector(&doc.root, "p").unwrap()
     };
     // First character
-    let pt_start = offset_to_point(&doc.root, p as *const HtmlBox, 0, 0.0, 0.0);
+    let pt_start = offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0);
     // A later character (well into the text, past likely wrapping)
     let text_len = p.text_content().len();
     let late_offset = (text_len * 3 / 4).min(text_len);
-    let pt_late  = offset_to_point(&doc.root, p as *const HtmlBox, late_offset, 0.0, 0.0);
+    let pt_late  = offset_to_point(&doc.root, p.node_id, late_offset, 0.0, 0.0);
 
     assert!(pt_start.is_some());
     assert!(pt_late.is_some());
@@ -411,8 +411,8 @@ fn nav_flex_items_at_different_x() {
     let ib = divs.iter().find(|d| d.text_content().trim() == "Item B").copied();
 
     if let (Some(ia), Some(ib)) = (ia, ib) {
-        let pt_a = offset_to_point(&doc.root, ia as *const HtmlBox, 0, 0.0, 0.0);
-        let pt_b = offset_to_point(&doc.root, ib as *const HtmlBox, 0, 0.0, 0.0);
+        let pt_a = offset_to_point(&doc.root, ia.node_id, 0, 0.0, 0.0);
+        let pt_b = offset_to_point(&doc.root, ib.node_id, 0, 0.0, 0.0);
         if let (Some(pa), Some(pb)) = (pt_a, pt_b) {
             // Flex row: items should be at roughly the same Y
             assert!((pa.1 - pb.1).abs() < 5.0, "flex items should have similar Y");
@@ -429,9 +429,9 @@ fn nav_list_items_at_increasing_y() {
     let items = query_selector_all(&doc.root, "li");
     assert!(items.len() >= 3, "expected at least 3 list items");
 
-    let pt1 = offset_to_point(&doc.root, items[0] as *const HtmlBox, 0, 0.0, 0.0);
-    let pt2 = offset_to_point(&doc.root, items[1] as *const HtmlBox, 0, 0.0, 0.0);
-    let pt3 = offset_to_point(&doc.root, items[2] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt1 = offset_to_point(&doc.root, items[0].node_id, 0, 0.0, 0.0);
+    let pt2 = offset_to_point(&doc.root, items[1].node_id, 0, 0.0, 0.0);
+    let pt3 = offset_to_point(&doc.root, items[2].node_id, 0, 0.0, 0.0);
 
     if let (Some(p1), Some(p2), Some(p3)) = (pt1, pt2, pt3) {
         assert!(p2.1 >= p1.1, "Item 2 should be at or below Item 1");
@@ -458,7 +458,7 @@ fn nav_empty_document_no_hit() {
     // point_to_hit on an empty doc must not panic
     let _hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
     // offset_to_point at offset 0 on an empty root must not panic
-    let _pt = offset_to_point(&doc.root, &doc.root as *const HtmlBox, 0, 0.0, 0.0);
+    let _pt = offset_to_point(&doc.root, doc.root.node_id, 0, 0.0, 0.0);
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn nav_single_char_document_hittable() {
     let doc = layout("<p>X</p>", 800.0);
     let hit = point_to_hit(&doc.root, (5.0, 5.0), 0);
     assert!(hit.is_some(), "single-char document should produce a hit result");
-    let pt = offset_to_point(&doc.root, &doc.root as *const HtmlBox, 0, 0.0, 0.0);
+    let pt = offset_to_point(&doc.root, doc.root.node_id, 0, 0.0, 0.0);
     assert!(pt.is_some());
 }
 
@@ -481,9 +481,9 @@ fn nav_multiple_blocks_in_div_increasing_y() {
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
-    let pt1 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0);
-    let pt2 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0);
-    let pt3 = offset_to_point(&doc.root, paras[2] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt1 = offset_to_point(&doc.root, paras[0].node_id, 0, 0.0, 0.0);
+    let pt2 = offset_to_point(&doc.root, paras[1].node_id, 0, 0.0, 0.0);
+    let pt3 = offset_to_point(&doc.root, paras[2].node_id, 0, 0.0, 0.0);
 
     if let (Some(p1), Some(p2), Some(p3)) = (pt1, pt2, pt3) {
         assert!(p2.1 >= p1.1, "Para 2 should be at or below Para 1");
@@ -509,7 +509,7 @@ fn nav_all_lines_distinct_global_offsets() {
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
     let pts: Vec<_> = paras.iter()
-        .filter_map(|p| offset_to_point(&doc.root, *p as *const HtmlBox, 0, 0.0, 0.0))
+        .filter_map(|p| offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0))
         .collect();
     assert!(pts.len() >= 3, "all paragraphs must have layout points");
 
@@ -563,7 +563,7 @@ fn nav_click_on_deeply_nested_blockquote_last_line() {
     let text = last.text_content();
     assert!(text.contains("Vertical"), "last item should contain 'Vertical'");
 
-    let pt = offset_to_point(&doc.root, last as *const HtmlBox, 0, 0.0, 0.0);
+    let pt = offset_to_point(&doc.root, last.node_id, 0, 0.0, 0.0);
     assert!(pt.is_some(), "last list item must have a layout point");
 
     // Clicking at the point must return a hit
@@ -589,8 +589,8 @@ fn nav_click_on_two_words_same_line_distinct_offsets() {
     let pos_vert = p_text.find("Vertical").unwrap_or(0);
     let pos_sep  = p_text.find("separators").unwrap_or(9);
 
-    let pt_vert = offset_to_point(&doc.root, p as *const HtmlBox, pos_vert, 0.0, 0.0);
-    let pt_sep  = offset_to_point(&doc.root, p as *const HtmlBox, pos_sep,  0.0, 0.0);
+    let pt_vert = offset_to_point(&doc.root, p.node_id, pos_vert, 0.0, 0.0);
+    let pt_sep  = offset_to_point(&doc.root, p.node_id, pos_sep,  0.0, 0.0);
 
     assert!(pt_vert.is_some());
     assert!(pt_sep.is_some());
@@ -607,7 +607,7 @@ fn nav_click_on_two_words_same_line_distinct_offsets() {
 
     if let (Some(hv), Some(hs)) = (hit_v, hit_s) {
         assert!(
-            hv.local_offset != hs.local_offset || hv.box_ptr != hs.box_ptr,
+            hv.local_offset != hs.local_offset || hv.node_id != hs.node_id,
             "clicking at different X must yield different offsets"
         );
         assert!(hv.local_offset < hs.local_offset, "'Vertical' offset must be less than 'separators'");
@@ -629,8 +629,8 @@ fn nav_collect_lines_basic_equivalent() {
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 2, "expected at least 2 paragraphs");
     // Both paragraphs must have a layout point
-    let pt0 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0);
-    let pt1 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0);
+    let pt0 = offset_to_point(&doc.root, paras[0].node_id, 0, 0.0, 0.0);
+    let pt1 = offset_to_point(&doc.root, paras[1].node_id, 0, 0.0, 0.0);
     assert!(pt0.is_some(), "first paragraph should have a layout point");
     assert!(pt1.is_some(), "second paragraph should have a layout point");
 }
@@ -644,15 +644,15 @@ fn nav_find_line_for_offset_equivalent() {
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 2);
 
-    let pt0 = offset_to_point(&doc.root, paras[0] as *const HtmlBox, 0, 0.0, 0.0).unwrap();
-    let pt1 = offset_to_point(&doc.root, paras[1] as *const HtmlBox, 0, 0.0, 0.0).unwrap();
+    let pt0 = offset_to_point(&doc.root, paras[0].node_id, 0, 0.0, 0.0).unwrap();
+    let pt1 = offset_to_point(&doc.root, paras[1].node_id, 0, 0.0, 0.0).unwrap();
 
     let hit0 = point_to_hit(&doc.root, (pt0.0, pt0.1 + 2.0), 0);
     let hit1 = point_to_hit(&doc.root, (pt1.0, pt1.1 + 2.0), 0);
     assert!(hit0.is_some());
     assert!(hit1.is_some());
     // Different paragraphs → different boxes
-    assert_ne!(hit0.unwrap().box_ptr, hit1.unwrap().box_ptr,
+    assert_ne!(hit0.unwrap().node_id, hit1.unwrap().node_id,
         "clicking on different paragraphs must hit different boxes");
 }
 
@@ -664,7 +664,7 @@ fn nav_lines_sorted_by_y_equivalent() {
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3);
     let pts: Vec<_> = paras.iter()
-        .filter_map(|p| offset_to_point(&doc.root, *p as *const HtmlBox, 0, 0.0, 0.0))
+        .filter_map(|p| offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0))
         .collect();
     assert!(pts.len() >= 3, "all paragraphs must have layout points");
     for i in 1..pts.len() {
@@ -697,8 +697,8 @@ fn nav_wrapped_text_multiple_lines_equivalent() {
     let p = query_selector(&doc.root, "p").unwrap();
     let text_len = p.text_content().len();
 
-    let pt_start = offset_to_point(&doc.root, p as *const HtmlBox, 0, 0.0, 0.0);
-    let pt_late  = offset_to_point(&doc.root, p as *const HtmlBox,
+    let pt_start = offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0);
+    let pt_late  = offset_to_point(&doc.root, p.node_id,
                                    (text_len * 3 / 4).min(text_len), 0.0, 0.0);
     assert!(pt_start.is_some());
     assert!(pt_late.is_some());

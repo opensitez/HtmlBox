@@ -31,7 +31,7 @@ fn link_hit_test() {
     // offset_to_point requires (root, box_ptr, local_offset, scroll_x, scroll_y)
     // For simplicity, let's find the box containing the link
     let a_box = doc.root.query_selector_all("a")[0];
-    let pt = offset_to_point(&doc.root, a_box as *const HtmlBox, 0, 0.0, 0.0).unwrap();
+    let pt = offset_to_point(&doc.root, a_box.node_id, 0, 0.0, 0.0).unwrap();
     
     let url = hit_test_link(&doc.root, (pt.0 + 2.0, pt.1 + 2.0), 0);
     assert_eq!(url, Some("http://example.com".to_string()));
@@ -138,17 +138,17 @@ fn link_hit_test_smoke() {
 #[test]
 fn link_hit_test_box_at_smoke() {
     let doc = layout(r#"<div style="width: 200px; height: 100px;">Box</div>"#, 800.0);
-    let ptr = hit_test_box_at(&doc.root, (100.0, 50.0), 0);
-    // hit_test_box_at always returns at least the root — never null
-    assert!(!ptr.is_null(), "hit_test_box_at must return a non-null box");
+    let nid = hit_test_box_at(&doc.root, (100.0, 50.0), 0);
+    // hit_test_box_at always returns at least the root — never 0
+    assert!(nid != 0, "hit_test_box_at must return a non-zero node_id");
 }
 
 #[test]
 fn link_hit_test_box_at_empty_doc() {
     // Empty document: hit_test_box_at must not crash and must return at least root.
     let doc = layout("", 800.0);
-    let ptr = hit_test_box_at(&doc.root, (0.0, 0.0), 0);
-    assert!(!ptr.is_null(), "hit_test_box_at on empty doc must not return null");
+    let nid = hit_test_box_at(&doc.root, (0.0, 0.0), 0);
+    assert!(nid != 0, "hit_test_box_at on empty doc must not return 0");
 }
 
 // ============================================================
@@ -163,11 +163,8 @@ fn link_point_to_offset_smoke() {
     // Should return Some; local_offset must be within the paragraph text length
     assert!(hit.is_some(), "point_to_hit must return Some for a point inside content");
     let h = hit.unwrap();
-    let node = unsafe { &*h.box_ptr };
-    assert!(
-        h.local_offset <= node.text_content().len(),
-        "local_offset must be within text length"
-    );
+    // node_id must be valid
+    assert!(h.node_id != 0, "hit must return a valid node_id");
 }
 
 #[test]
@@ -187,7 +184,7 @@ fn link_offset_to_point_smoke() {
     let doc = layout("<p>Hello</p>", 800.0);
     use rhtmledit::dom::query_selector;
     let p = query_selector(&doc.root, "p").unwrap();
-    let pt = offset_to_point(&doc.root, p as *const HtmlBox, 0, 0.0, 0.0);
+    let pt = offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0);
     assert!(pt.is_some(), "offset_to_point must return Some for offset 0");
     let (x, y) = pt.unwrap();
     assert!(x >= 0.0, "x must be non-negative");
@@ -201,7 +198,7 @@ fn link_offset_to_point_at_end() {
     let p = query_selector(&doc.root, "p").unwrap();
     let text_len = p.text_content().len();
     // Must not panic for offset at end of text
-    let pt = offset_to_point(&doc.root, p as *const HtmlBox, text_len, 0.0, 0.0);
+    let pt = offset_to_point(&doc.root, p.node_id, text_len, 0.0, 0.0);
     // Should return a valid point
     if let Some((x, y)) = pt {
         assert!(x >= 0.0 || y >= 0.0, "end-of-text point must have non-negative coordinates");

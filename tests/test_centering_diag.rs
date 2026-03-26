@@ -22,15 +22,15 @@ fn badge_align_center_no_stretch() {
     assert_eq!(parent.style.align_items, AlignItems::Center, "align-items should be Center");
     
     let badge = find_box(&doc.root, &|b| b.get_attr("id") == Some("badge")).unwrap();
-    println!("badge: br={:?} cr={:?}", badge.border_rect, badge.content_rect);
+    println!("badge: br={:?} cr={:?}", badge.layout.border_rect, badge.layout.content_rect);
     println!("badge height style: is_auto={}", badge.style.height.is_auto());
     
-    if !badge.line_cache.is_empty() {
-        let line = &badge.line_cache[0];
-        let offset = line.x - badge.content_rect.x;
-        let expected = (badge.content_rect.w - line.width) / 2.0;
+    if !badge.layout.line_cache.is_empty() {
+        let line = &badge.layout.line_cache[0];
+        let offset = line.x - badge.layout.content_rect.x;
+        let expected = (badge.layout.content_rect.w - line.width) / 2.0;
         println!("badge line offset={:.4} expected={:.4} text_w={:.4} content_w={:.4}", 
-            offset, expected, line.width, badge.content_rect.w);
+            offset, expected, line.width, badge.layout.content_rect.w);
         assert!((offset - expected).abs() < 2.0, 
             "centering offset={:.4} but expected={:.4}", offset, expected);
     }

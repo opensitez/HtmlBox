@@ -35,8 +35,8 @@ fn dump(root: &HtmlBox, depth: usize) {
     let indent = "  ".repeat(depth);
     eprintln!("{}{} pos={:?} c=({:.0},{:.0} {:.0}x{:.0}) m=({:.0},{:.0} {:.0}x{:.0})",
         indent, root.tag, root.style.position,
-        root.content_rect.x, root.content_rect.y, root.content_rect.w, root.content_rect.h,
-        root.margin_rect.x, root.margin_rect.y, root.margin_rect.w, root.margin_rect.h,
+        root.layout.content_rect.x, root.layout.content_rect.y, root.layout.content_rect.w, root.layout.content_rect.h,
+        root.layout.margin_rect.x, root.layout.margin_rect.y, root.layout.margin_rect.w, root.layout.margin_rect.h,
     );
     for c in &root.children { dump(c, depth+1); }
 }
@@ -63,9 +63,9 @@ fn abs_child_of_relative_parent_not_at_viewport_origin() {
     // The span must NOT be at y≈0 (viewport origin). The relative div is after
     // a 100px spacer so the span should be near y≈100.
     assert!(
-        span.margin_rect.y > 50.0,
+        span.layout.margin_rect.y > 50.0,
         "abs span y={} should be > 50 (inside its relative parent below the spacer), not at viewport top",
-        span.margin_rect.y
+        span.layout.margin_rect.y
     );
 }
 
@@ -85,15 +85,15 @@ fn abs_with_top0_left0_relative_to_parent() {
     let span = span.unwrap();
     // left:0 inside div with margin-left:150 → x ≈ 150+body_margin ≈ 158
     assert!(
-        span.content_rect.x >= 140.0 && span.content_rect.x <= 180.0,
+        span.layout.content_rect.x >= 140.0 && span.layout.content_rect.x <= 180.0,
         "abs x={} expected ~158 (parent left edge + body margin)",
-        span.content_rect.x
+        span.layout.content_rect.x
     );
     // top:0 inside div after 200px spacer → y ≈ 200 minus absorbed margins
     assert!(
-        span.content_rect.y >= 180.0 && span.content_rect.y <= 220.0,
+        span.layout.content_rect.y >= 180.0 && span.layout.content_rect.y <= 220.0,
         "abs y={} expected ~200 (parent top edge)",
-        span.content_rect.y
+        span.layout.content_rect.y
     );
 }
 
@@ -116,9 +116,9 @@ fn abs_skips_static_ancestors_to_positioned() {
     let span = span.unwrap();
     // left:10 is relative to the relative div at x≈60, so span.x ≈ 70
     assert!(
-        span.content_rect.x > 50.0,
+        span.layout.content_rect.x > 50.0,
         "abs span x={} should be > 50 (relative to positioned grandparent, not viewport)",
-        span.content_rect.x
+        span.layout.content_rect.x
     );
 }
 
@@ -138,9 +138,9 @@ fn abs_no_positioned_ancestor_uses_viewport() {
     assert!(span.is_some());
     let span = span.unwrap();
     assert!(
-        span.content_rect.x < 20.0 && span.content_rect.y < 20.0,
+        span.layout.content_rect.x < 20.0 && span.layout.content_rect.y < 20.0,
         "abs with no positioned ancestor should be at viewport origin, got ({},{})",
-        span.content_rect.x, span.content_rect.y
+        span.layout.content_rect.x, span.layout.content_rect.y
     );
 }
 
@@ -159,9 +159,9 @@ fn block_inside_inline_link_has_nonzero_height() {
     assert!(strong.is_some(), "strong not found");
     let strong = strong.unwrap();
     assert!(
-        strong.margin_rect.h > 0.0,
+        strong.layout.margin_rect.h > 0.0,
         "strong inside <a> has zero height: margin_rect={:?}",
-        strong.margin_rect
+        strong.layout.margin_rect
     );
 }
 
@@ -175,7 +175,7 @@ fn inline_span_with_block_child_nonzero() {
     let strong = find(&doc.root, &|b| b.tag == "strong");
     assert!(strong.is_some());
     assert!(
-        strong.unwrap().margin_rect.h > 0.0,
+        strong.unwrap().layout.margin_rect.h > 0.0,
         "block strong inside inline span has zero height"
     );
 }
@@ -193,7 +193,7 @@ fn inline_with_block_child_text_visible() {
     let wrap = find_attr(&doc.root, "id", "wrap");
     assert!(wrap.is_some());
     assert!(
-        wrap.unwrap().margin_rect.h > 10.0,
+        wrap.unwrap().layout.margin_rect.h > 10.0,
         "wrapper div has zero/tiny height when inline contains block child"
     );
 }
@@ -210,9 +210,9 @@ fn radio_input_has_nonzero_height() {
     assert!(input.is_some(), "input not found");
     let input = input.unwrap();
     assert!(
-        input.margin_rect.h > 0.0,
+        input.layout.margin_rect.h > 0.0,
         "radio input has zero height: margin_rect={:?}",
-        input.margin_rect
+        input.layout.margin_rect
     );
 }
 
@@ -225,7 +225,7 @@ fn checkbox_input_has_nonzero_height() {
     let input = find(&doc.root, &|b| b.tag == "input");
     assert!(input.is_some());
     assert!(
-        input.unwrap().margin_rect.h > 0.0,
+        input.unwrap().layout.margin_rect.h > 0.0,
         "checkbox input has zero height"
     );
 }
@@ -239,7 +239,7 @@ fn text_input_has_nonzero_height() {
     let input = find(&doc.root, &|b| b.tag == "input");
     assert!(input.is_some());
     assert!(
-        input.unwrap().margin_rect.h > 0.0,
+        input.unwrap().layout.margin_rect.h > 0.0,
         "text input has zero height"
     );
 }
@@ -254,7 +254,7 @@ fn label_with_radio_has_nonzero_height() {
     let label = find(&doc.root, &|b| b.tag == "label");
     assert!(label.is_some());
     assert!(
-        label.unwrap().margin_rect.h > 0.0,
+        label.unwrap().layout.margin_rect.h > 0.0,
         "label with radio input has zero height"
     );
 }
@@ -279,13 +279,13 @@ fn float_negative_margin_left_nonzero_margin_width() {
     assert!(rail.is_some(), "rail div not found");
     let rail = rail.unwrap();
     assert!(
-        rail.margin_rect.w > 0.0,
+        rail.layout.margin_rect.w > 0.0,
         "float with margin-left:-320px has margin_rect.w=0, expected 320"
     );
     assert!(
-        (rail.margin_rect.w - 320.0).abs() < 5.0,
+        (rail.layout.margin_rect.w - 320.0).abs() < 5.0,
         "float margin_rect.w={} expected 320",
-        rail.margin_rect.w
+        rail.layout.margin_rect.w
     );
 }
 
@@ -304,9 +304,9 @@ fn float_negative_margin_container_wraps_both_columns() {
     // The container should be at least as tall as the tallest float (150px)
     // when cleared (overflow:hidden triggers block formatting context).
     assert!(
-        wrap.unwrap().margin_rect.h >= 100.0,
+        wrap.unwrap().layout.margin_rect.h >= 100.0,
         "container height={} expected >= 100",
-        wrap.unwrap().margin_rect.h
+        wrap.unwrap().layout.margin_rect.h
     );
 }
 
@@ -331,15 +331,15 @@ fn float_negative_margin_rail_positioned_at_right() {
     // so border_rect.x ≈ 480-320 = 160 (+ body margin = ~168).
     // The margin_rect must have the correct width = 320 (not 0).
     assert!(
-        rail.margin_rect.w >= 300.0,
+        rail.layout.margin_rect.w >= 300.0,
         "rail margin_rect.w={} expected ~320",
-        rail.margin_rect.w
+        rail.layout.margin_rect.w
     );
     // The border/content should be between 0 and 480 (it overlaps main).
     assert!(
-        rail.content_rect.x >= 0.0 && rail.content_rect.x < 480.0,
+        rail.layout.content_rect.x >= 0.0 && rail.layout.content_rect.x < 480.0,
         "rail content_rect.x={} expected in [0, 480) (overlapping main due to negative margin)",
-        rail.content_rect.x
+        rail.layout.content_rect.x
     );
 }
 
@@ -359,13 +359,13 @@ fn fixed_nav_at_viewport_top() {
     assert!(nav.is_some(), "fixed nav not found");
     let nav = nav.unwrap();
     assert!(
-        nav.content_rect.y < 20.0,
+        nav.layout.content_rect.y < 20.0,
         "fixed nav y={} should be near 0 (viewport top)",
-        nav.content_rect.y
+        nav.layout.content_rect.y
     );
     assert!(
-        nav.content_rect.x < 20.0,
+        nav.layout.content_rect.x < 20.0,
         "fixed nav x={} should be near 0 (viewport left)",
-        nav.content_rect.x
+        nav.layout.content_rect.x
     );
 }

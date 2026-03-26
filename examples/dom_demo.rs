@@ -188,8 +188,8 @@ impl App {
             let msg = format!("{}  {}", ts_str, ev);
             if let Some(feed) = dom::query_selector_mut(&mut doc.root, "#activity-feed") {
                 while feed.children.len() >= 10 {
-                    if let Some(first) = dom::get_first_child(feed).map(|c| c as *const _) {
-                        dom::remove_child(feed, first);
+                    if let Some(first_id) = dom::get_first_child(feed).map(|c| c.node_id) {
+                        dom::remove_child_by_id(feed, first_id);
                     } else { break; }
                 }
                 let mut item = dom::create_element("div");
@@ -201,8 +201,8 @@ impl App {
 
         if let Some(alerts) = dom::query_selector_mut(&mut doc.root, "#alerts") {
             if alerts.children.len() > 5 {
-                if let Some(first) = dom::get_first_child(alerts).map(|c| c as *const _) {
-                    dom::remove_child(alerts, first);
+                if let Some(first_id) = dom::get_first_child(alerts).map(|c| c.node_id) {
+                    dom::remove_child_by_id(alerts, first_id);
                 }
             }
         }
@@ -231,10 +231,11 @@ impl App {
             let doc_pos = evt.doc_pos;
             let btn_ptr = evt.target;
             let cur_ptr = evt.current_target;
-            let btn_text = dom::get_text_content(unsafe { &*cur_ptr }).trim().to_string();
-            let id = unsafe { (&*cur_ptr).attributes.get("id").cloned().unwrap_or_default() };
-            let cls = unsafe { (&*cur_ptr).attributes.get("class").cloned().unwrap_or_default() };
-            eprintln!("[DOM_DBG] click button ptr={:?} current_target={:?} id='{}' class='{}' btn_text='{}' doc_pos={:?} button={}", btn_ptr, cur_ptr, id, cls, btn_text, doc_pos, evt.button);
+            let cur_node = unsafe { &*rhtmledit::types::find_by_node_id(&*evt.root, cur_ptr) };
+            let btn_text = dom::get_text_content(cur_node).trim().to_string();
+            let id = cur_node.attributes.get("id").cloned().unwrap_or_default();
+            let cls = cur_node.attributes.get("class").cloned().unwrap_or_default();
+            eprintln!("[DOM_DBG] click button target={} current_target={} id='{}' class='{}' btn_text='{}' doc_pos={:?} button={}", btn_ptr, cur_ptr, id, cls, btn_text, doc_pos, evt.button);
             let mut st = state.write().unwrap();
 
             if btn_text.contains("Dark") {
@@ -292,8 +293,8 @@ impl App {
                 let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                  if let Some(alerts) = dom::query_selector_mut(root, "#alerts") {
                      while !alerts.children.is_empty() {
-                         let f = dom::get_first_child(alerts).map(|c| c as *const _).unwrap();
-                         dom::remove_child(alerts, f);
+                         let fid = dom::get_first_child(alerts).map(|c| c.node_id).unwrap();
+                         dom::remove_child_by_id(alerts, fid);
                      }
                      eprintln!("[DOM_DBG] alerts cleared");
                     // layout will be done by caller after event processing
@@ -302,8 +303,8 @@ impl App {
                 let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                  if let Some(feed) = dom::query_selector_mut(root, "#activity-feed") {
                      while !feed.children.is_empty() {
-                         let f = dom::get_first_child(feed).map(|c| c as *const _).unwrap();
-                         dom::remove_child(feed, f);
+                         let fid = dom::get_first_child(feed).map(|c| c.node_id).unwrap();
+                         dom::remove_child_by_id(feed, fid);
                      }
                      eprintln!("[DOM_DBG] feed cleared");
                      // layout will be done by caller after event processing

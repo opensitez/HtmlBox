@@ -91,8 +91,8 @@ fn layout_produces_rects() {
     let doc = load_html(
         "<table><tr><td>A</td><td>B</td></tr></table>", 800.0);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    assert!(table.content_rect.w > 0.0);
-    assert!(table.content_rect.h > 0.0);
+    assert!(table.layout.content_rect.w > 0.0);
+    assert!(table.layout.content_rect.h > 0.0);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn cells_have_dimensions() {
     let doc = load_html(
         "<table><tr><td>Cell A</td><td>Cell B</td></tr></table>", 800.0);
     let count = count_boxes(&doc.root, &|b| {
-        b.tag == "td" && b.content_rect.w > 0.0 && b.content_rect.h > 0.0
+        b.tag == "td" && b.layout.content_rect.w > 0.0 && b.layout.content_rect.h > 0.0
     });
     assert_eq!(count, 2);
 }
@@ -112,7 +112,7 @@ fn cells_side_by_side() {
     let mut cells = Vec::new();
     walk_boxes(&doc.root, &mut cells, &|b| b.tag == "td");
     assert_eq!(cells.len(), 2);
-    assert!(cells[1].content_rect.x > cells[0].content_rect.x);
+    assert!(cells[1].layout.content_rect.x > cells[0].layout.content_rect.x);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn rows_stacked() {
     let mut rows = Vec::new();
     walk_boxes(&doc.root, &mut rows, &|b| b.tag == "tr");
     assert_eq!(rows.len(), 2);
-    assert!(rows[1].content_rect.y > rows[0].content_rect.y);
+    assert!(rows[1].layout.content_rect.y > rows[0].layout.content_rect.y);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn explicit_width() {
     let doc = load_html(
         "<table style=\"width: 600px;\"><tr><td>A</td><td>B</td></tr></table>", 800.0);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    assert!(table.content_rect.w >= 590.0 && table.content_rect.w <= 610.0);
+    assert!(table.layout.content_rect.w >= 590.0 && table.layout.content_rect.w <= 610.0);
 }
 
 // ============================================================
@@ -146,7 +146,7 @@ fn thead_tbody_tfoot() {
          <tfoot><tr><td>Footer</td></tr></tfoot>\
          </table>", 800.0);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    assert!(table.content_rect.h > 0.0);
+    assert!(table.layout.content_rect.h > 0.0);
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn tbody_rows_stacked() {
     let mut rows = Vec::new();
     walk_boxes(&doc.root, &mut rows, &|b| b.tag == "tr");
     assert_eq!(rows.len(), 2);
-    assert!(rows[1].content_rect.y > rows[0].content_rect.y);
+    assert!(rows[1].layout.content_rect.y > rows[0].layout.content_rect.y);
 }
 
 // ============================================================
@@ -201,8 +201,8 @@ fn border_collapse_layout() {
          </table>", 800.0);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
     assert!(table.style.border_collapse);
-    assert!(table.content_rect.w > 0.0);
-    assert!(table.content_rect.h > 0.0);
+    assert!(table.layout.content_rect.w > 0.0);
+    assert!(table.layout.content_rect.h > 0.0);
 }
 
 // ============================================================
@@ -230,7 +230,7 @@ fn caption_side_top() {
     let row = find_box(&doc.root, &|b| b.style.display == Display::TableRow);
     assert!(caption.is_some());
     assert!(row.is_some());
-    assert!(caption.unwrap().margin_rect.y < row.unwrap().content_rect.y);
+    assert!(caption.unwrap().layout.margin_rect.y < row.unwrap().layout.content_rect.y);
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn caption_side_bottom() {
     let row = find_box(&doc.root, &|b| b.style.display == Display::TableRow);
     assert!(caption.is_some());
     assert!(row.is_some());
-    assert!(caption.unwrap().margin_rect.y > row.unwrap().content_rect.y);
+    assert!(caption.unwrap().layout.margin_rect.y > row.unwrap().layout.content_rect.y);
 }
 
 // ============================================================
@@ -264,7 +264,7 @@ fn tfoot_rendered_after_tbody() {
     let tbody_row = find_box(tbody.unwrap(), &|b| b.style.display == Display::TableRow);
     assert!(tfoot_row.is_some());
     assert!(tbody_row.is_some());
-    assert!(tbody_row.unwrap().content_rect.y < tfoot_row.unwrap().content_rect.y);
+    assert!(tbody_row.unwrap().layout.content_rect.y < tfoot_row.unwrap().layout.content_rect.y);
 }
 
 // ============================================================
@@ -339,12 +339,12 @@ fn colspan_widens_cells() {
         b.tag == "td"
             && b.attributes.get("colspan").map(|v| v == "1").unwrap_or(true)
             && !b.attributes.contains_key("colspan")
-            && b.content_rect.w > 0.0
+            && b.layout.content_rect.w > 0.0
     });
     if let Some(normal) = normal {
-        assert!(wide.padding_rect.w > normal.padding_rect.w,
+        assert!(wide.layout.padding_rect.w > normal.layout.padding_rect.w,
             "colspan cell ({}) should be wider than normal cell ({})",
-            wide.padding_rect.w, normal.padding_rect.w);
+            wide.layout.padding_rect.w, normal.layout.padding_rect.w);
     }
 }
 
@@ -362,11 +362,11 @@ fn rowspan_layout() {
     let mut rows = Vec::new();
     walk_boxes(&doc.root, &mut rows, &|b| b.tag == "tr");
     assert_eq!(rows.len(), 2);
-    let total_row_height = rows[0].content_rect.h + rows[1].content_rect.h;
+    let total_row_height = rows[0].layout.content_rect.h + rows[1].layout.content_rect.h;
     let tall = tall.unwrap();
-    assert!(tall.padding_rect.h >= total_row_height - 2.0,
+    assert!(tall.layout.padding_rect.h >= total_row_height - 2.0,
         "tall cell height {} should span both rows ({})",
-        tall.padding_rect.h, total_row_height);
+        tall.layout.padding_rect.h, total_row_height);
 }
 
 #[test]
@@ -453,8 +453,8 @@ fn content_based_sizing() {
     let mut cells = Vec::new();
     walk_boxes(&doc.root, &mut cells, &|b| b.tag == "td");
     assert_eq!(cells.len(), 2);
-    assert!(cells[0].content_rect.w > 0.0);
-    assert!(cells[1].content_rect.w > 0.0);
+    assert!(cells[0].layout.content_rect.w > 0.0);
+    assert!(cells[1].layout.content_rect.w > 0.0);
 }
 
 #[test]
@@ -469,10 +469,10 @@ fn explicit_cell_width() {
     let mut cells = Vec::new();
     walk_boxes(&doc.root, &mut cells, &|b| b.tag == "td");
     assert_eq!(cells.len(), 2);
-    assert!(cells[0].padding_rect.w >= 180.0,
-        "fixed cell paddingRect.w {} should be >= 180", cells[0].padding_rect.w);
-    assert!(cells[0].padding_rect.w <= 220.0,
-        "fixed cell paddingRect.w {} should be <= 220", cells[0].padding_rect.w);
+    assert!(cells[0].layout.padding_rect.w >= 180.0,
+        "fixed cell paddingRect.w {} should be >= 180", cells[0].layout.padding_rect.w);
+    assert!(cells[0].layout.padding_rect.w <= 220.0,
+        "fixed cell paddingRect.w {} should be <= 220", cells[0].layout.padding_rect.w);
 }
 
 // ============================================================
@@ -520,10 +520,10 @@ fn colspan_and_rowspan() {
         b.tag == "td"
             && !b.attributes.contains_key("colspan")
             && !b.attributes.contains_key("rowspan")
-            && b.padding_rect.w > 0.0
+            && b.layout.padding_rect.w > 0.0
     });
     if let Some(normal) = normal {
-        assert!(wide.unwrap().padding_rect.w > normal.padding_rect.w,
+        assert!(wide.unwrap().layout.padding_rect.w > normal.layout.padding_rect.w,
             "colspan cell should be wider than normal cell");
     }
 }
@@ -565,7 +565,7 @@ fn table_layout_fixed_equal_columns() {
     let mut cells = Vec::new();
     walk_boxes(&doc.root, &mut cells, &|b| b.tag == "td");
     assert_eq!(cells.len(), 2);
-    let diff = (cells[0].padding_rect.w - cells[1].padding_rect.w).abs();
+    let diff = (cells[0].layout.padding_rect.w - cells[1].layout.padding_rect.w).abs();
     assert!(diff <= 2.0,
         "fixed-layout equal columns should differ by <= 2px, got {}", diff);
 }
@@ -579,11 +579,11 @@ fn table_layout_fixed_respects_explicit() {
     let mut cells = Vec::new();
     walk_boxes(&doc.root, &mut cells, &|b| b.tag == "td");
     assert_eq!(cells.len(), 2);
-    assert!(cells[0].padding_rect.w >= 190.0,
-        "fixed-width cell should be >= 190, got {}", cells[0].padding_rect.w);
-    assert!(cells[0].padding_rect.w <= 210.0,
-        "fixed-width cell should be <= 210, got {}", cells[0].padding_rect.w);
-    assert!(cells[1].padding_rect.w > cells[0].padding_rect.w,
+    assert!(cells[0].layout.padding_rect.w >= 190.0,
+        "fixed-width cell should be >= 190, got {}", cells[0].layout.padding_rect.w);
+    assert!(cells[0].layout.padding_rect.w <= 210.0,
+        "fixed-width cell should be <= 210, got {}", cells[0].layout.padding_rect.w);
+    assert!(cells[1].layout.padding_rect.w > cells[0].layout.padding_rect.w,
         "auto cell should be wider than fixed cell");
 }
 
@@ -645,7 +645,7 @@ fn empty_cells_hide_not_in_collapse() {
     // The table must still have positive dimensions (layout didn't break)
     let table = find_box(&doc.root, &|b| b.tag == "table");
     assert!(table.is_some());
-    assert!(table.unwrap().content_rect.w > 0.0,
+    assert!(table.unwrap().layout.content_rect.w > 0.0,
         "table with collapse+empty-cells:hide should still have positive width");
 }
 
@@ -661,7 +661,7 @@ fn border_collapse_spacing_zero() {
     let cells = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableCell);
     assert!(cells.len() >= 2);
     // In collapse mode, cells should be adjacent (gap <= 0)
-    let gap = cells[1].padding_rect.x - (cells[0].padding_rect.x + cells[0].padding_rect.w);
+    let gap = cells[1].layout.padding_rect.x - (cells[0].layout.padding_rect.x + cells[0].layout.padding_rect.w);
     assert!(gap <= 0.0,
         "cells in collapse mode should be adjacent, got gap={}", gap);
 }
@@ -747,9 +747,9 @@ fn tfoot_at_end_in_source() {
          </table>", 400.0);
     let rows = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableRow);
     assert!(rows.len() >= 3, "expected at least 3 rows");
-    assert!(rows[0].content_rect.y < rows[1].content_rect.y,
+    assert!(rows[0].layout.content_rect.y < rows[1].layout.content_rect.y,
         "first row must be above second");
-    assert!(rows[1].content_rect.y < rows[2].content_rect.y,
+    assert!(rows[1].layout.content_rect.y < rows[2].layout.content_rect.y,
         "second row must be above third");
 }
 
@@ -774,9 +774,9 @@ fn thead_tbody_tfoot_order() {
     assert!(thead_row.is_some());
     assert!(tbody_row.is_some());
     assert!(tfoot_row.is_some());
-    assert!(thead_row.unwrap().content_rect.y < tbody_row.unwrap().content_rect.y,
+    assert!(thead_row.unwrap().layout.content_rect.y < tbody_row.unwrap().layout.content_rect.y,
         "thead must be above tbody");
-    assert!(tbody_row.unwrap().content_rect.y < tfoot_row.unwrap().content_rect.y,
+    assert!(tbody_row.unwrap().layout.content_rect.y < tfoot_row.unwrap().layout.content_rect.y,
         "tbody must be above tfoot");
 }
 
@@ -793,7 +793,7 @@ fn col_width_attribute() {
          </table>", 400.0);
     let cells = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableCell);
     assert!(cells.len() >= 2);
-    let col1w = cells[0].padding_rect.w;
+    let col1w = cells[0].layout.padding_rect.w;
     assert!(col1w >= 95.0 && col1w <= 105.0,
         "col width=100 should be close to 100px, got {}", col1w);
 }
@@ -807,7 +807,7 @@ fn col_width_css() {
          </table>", 400.0);
     let cells = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableCell);
     assert!(cells.len() >= 2);
-    let col1w = cells[0].padding_rect.w;
+    let col1w = cells[0].layout.padding_rect.w;
     assert!(col1w >= 145.0 && col1w <= 155.0,
         "col style width=150px should be close to 150px, got {}", col1w);
 }
@@ -822,8 +822,8 @@ fn colgroup_with_cols() {
     let cells = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableCell);
     assert!(cells.len() >= 2);
     // Both cells should have positive width (basic layout sanity check)
-    assert!(cells[0].padding_rect.w > 0.0,
-        "first cell should have positive width, got {}", cells[0].padding_rect.w);
+    assert!(cells[0].layout.padding_rect.w > 0.0,
+        "first cell should have positive width, got {}", cells[0].layout.padding_rect.w);
 }
 
 #[test]
@@ -836,7 +836,7 @@ fn col_width_percent() {
     let cells = find_all_boxes(&doc.root, &|b| b.style.display == Display::TableCell);
     assert!(cells.len() >= 2);
     // 50% of available space should be > 150px
-    let col1w = cells[0].padding_rect.w;
+    let col1w = cells[0].layout.padding_rect.w;
     assert!(col1w > 150.0,
         "50% column should be > 150px, got {}", col1w);
 }

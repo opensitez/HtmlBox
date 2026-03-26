@@ -384,7 +384,7 @@ fn percentage_width_treated_as_auto_in_intrinsic() {
         </div>
     "#, 800.0);
     let link = find_box(&doc.root, &|b| b.tag == "a").unwrap();
-    assert!(link.content_rect.w > 0.0, "width: 100% in intrinsic context should not be 0");
+    assert!(link.layout.content_rect.w > 0.0, "width: 100% in intrinsic context should not be 0");
 }
 
 // ============================================================
@@ -402,8 +402,8 @@ fn calc_subtraction_works() {
     // Body has 8px margin on each side, so containing block = 800 - 16 = 784
     // calc(100% - 40px) = 784 - 40 = 744
     if let Some(d) = div {
-        assert!((d.content_rect.w - 744.0).abs() < 2.0,
-            "calc(100% - 40px) at vw=800 should be ~744, got {}", d.content_rect.w);
+        assert!((d.layout.content_rect.w - 744.0).abs() < 2.0,
+            "calc(100% - 40px) at vw=800 should be ~744, got {}", d.layout.content_rect.w);
     }
 }
 
@@ -418,8 +418,8 @@ fn calc_multiple_subtractions() {
     // Body has 8px margin on each side, so containing block = 800 - 16 = 784
     // calc(100% - 40px - 60px) = 784 - 100 = 684
     if let Some(d) = div {
-        assert!((d.content_rect.w - 684.0).abs() < 2.0,
-            "calc(100% - 40px - 60px) at vw=800 should be ~684, got {}", d.content_rect.w);
+        assert!((d.layout.content_rect.w - 684.0).abs() < 2.0,
+            "calc(100% - 40px - 60px) at vw=800 should be ~684, got {}", d.layout.content_rect.w);
     }
 }
 
@@ -440,7 +440,7 @@ fn flex_item_does_not_shrink_below_content() {
         b.tag == "span" && !b.text.is_empty()
     });
     for span in &spans {
-        assert!(span.content_rect.w > 0.0,
+        assert!(span.layout.content_rect.w > 0.0,
             "flex item '{}' should not have 0 width", span.text);
     }
 }
@@ -480,7 +480,7 @@ fn flex_item_min_width_auto_prevents_text_at_zero() {
         b.attributes.get("class").map(|c| c == "nav-item").unwrap_or(false)
     });
     for item in &items {
-        assert!(item.content_rect.w > 0.0,
+        assert!(item.layout.content_rect.w > 0.0,
             "flex nav item should not collapse to 0 width");
     }
 }
@@ -519,7 +519,7 @@ fn grid_before_counter_in_fixed_column() {
         // The content span should have reasonable width (not 0, not full container)
         let content_span = item.children.iter().find(|c| c.tag == "span");
         if let Some(span) = content_span {
-            assert!(span.content_rect.w > 30.0,
+            assert!(span.layout.content_rect.w > 30.0,
                 "content in auto column should be wider than 30px");
         }
     }
@@ -676,8 +676,8 @@ fn img_width_height_attributes() {
     let h = pic.style.height.resolve(16.0, 600.0, 16.0);
     assert!((w - 200.0).abs() < 1.0, "img width should be 200px from attribute, got {w}");
     assert!((h - 150.0).abs() < 1.0, "img height should be 150px from attribute, got {h}");
-    assert_eq!(pic.content_rect.w, 200.0, "img content_rect.w should be 200");
-    assert_eq!(pic.content_rect.h, 150.0, "img content_rect.h should be 150");
+    assert_eq!(pic.layout.content_rect.w, 200.0, "img content_rect.w should be 200");
+    assert_eq!(pic.layout.content_rect.h, 150.0, "img content_rect.h should be 150");
 }
 
 #[test]
@@ -693,8 +693,8 @@ fn img_width_height_inside_float() {
         </body></html>
     "#, 800.0, 600.0);
     let pic = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "pic2")).unwrap();
-    assert!(pic.content_rect.w > 0.0, "img inside float should have non-zero width, got {}", pic.content_rect.w);
-    assert!(pic.content_rect.h > 0.0, "img inside float should have non-zero height, got {}", pic.content_rect.h);
+    assert!(pic.layout.content_rect.w > 0.0, "img inside float should have non-zero width, got {}", pic.layout.content_rect.w);
+    assert!(pic.layout.content_rect.h > 0.0, "img inside float should have non-zero height, got {}", pic.layout.content_rect.h);
 }
 
 #[test]
@@ -707,7 +707,7 @@ fn img_inside_span_a_float() {
         </body></html>
     "##, 800.0, 600.0);
     let t1 = find_box(&doc1.root, &|b| b.attributes.get("id").map_or(false, |v| v == "t1")).unwrap();
-    assert!(t1.content_rect.w > 0.0, "t1: img in a in float should have width, got {}", t1.content_rect.w);
+    assert!(t1.layout.content_rect.w > 0.0, "t1: img in a in float should have width, got {}", t1.layout.content_rect.w);
 
     // Test 2: img inside span > a inside float
     let doc2 = load_html_vp(r##"
@@ -716,7 +716,7 @@ fn img_inside_span_a_float() {
         </body></html>
     "##, 800.0, 600.0);
     let t2 = find_box(&doc2.root, &|b| b.attributes.get("id").map_or(false, |v| v == "t2")).unwrap();
-    assert!(t2.content_rect.w > 0.0, "t2: img in span>a in float should have width, got {}", t2.content_rect.w);
+    assert!(t2.layout.content_rect.w > 0.0, "t2: img in span>a in float should have width, got {}", t2.layout.content_rect.w);
 
     // Test 3: img inside div > span > a inside float
     let doc3 = load_html_vp(r##"
@@ -725,7 +725,7 @@ fn img_inside_span_a_float() {
         </body></html>
     "##, 800.0, 600.0);
     let t3 = find_box(&doc3.root, &|b| b.attributes.get("id").map_or(false, |v| v == "t3")).unwrap();
-    assert!(t3.content_rect.w > 0.0, "t3: img in div>span>a in float should have width, got {}", t3.content_rect.w);
+    assert!(t3.layout.content_rect.w > 0.0, "t3: img in div>span>a in float should have width, got {}", t3.layout.content_rect.w);
 }
 
 #[test]

@@ -364,7 +364,7 @@ fn cascade_sibling_margins_collapse() {
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
-    let gap = b.content_rect.y - (a.content_rect.y + a.content_rect.h);
+    let gap = b.layout.content_rect.y - (a.layout.content_rect.y + a.layout.content_rect.h);
     // collapsed = max(20, 30) = 30, not sum (50)
     assert!(gap <= 35.0, "gap {gap} should be <= 35 (collapsed)");
     assert!(gap < 45.0, "gap {gap} should be < 45 (not stacked)");
@@ -381,7 +381,7 @@ fn cascade_sibling_negative_margins_collapse() {
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
-    let gap = b.content_rect.y - (a.content_rect.y + a.content_rect.h);
+    let gap = b.layout.content_rect.y - (a.layout.content_rect.y + a.layout.content_rect.h);
     assert!(gap < 0.0, "gap {gap} should be negative (overlap)");
     assert!(gap >= -25.0);
 }
@@ -397,7 +397,7 @@ fn cascade_sibling_mixed_margins_collapse() {
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
-    let gap = b.content_rect.y - (a.content_rect.y + a.content_rect.h);
+    let gap = b.layout.content_rect.y - (a.layout.content_rect.y + a.layout.content_rect.h);
     // collapsed = 30 + (-10) = 20
     assert!(gap >= 15.0 && gap <= 25.0, "gap {gap} should be ~20");
 }
@@ -417,9 +417,9 @@ fn cascade_parent_first_child_top_collapse() {
     let parent = divs[0];
     let child = divs[1];
     // Child's content_rect.y should be at top of parent content area (margin absorbed)
-    assert_eq!(child.content_rect.y, 0.0);
+    assert_eq!(child.layout.content_rect.y, 0.0);
     // Parent's collapsed margin = max(10, 40) = 40
-    assert!(parent.collapsed_margin_top >= 35.0);
+    assert!(parent.layout.collapsed_margin_top >= 35.0);
 }
 
 #[test]
@@ -433,8 +433,8 @@ fn cascade_parent_first_child_blocked_by_padding() {
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
-    assert!(child.content_rect.y >= 35.0);
-    assert!(parent.collapsed_margin_top <= 15.0);
+    assert!(child.layout.content_rect.y >= 35.0);
+    assert!(parent.layout.collapsed_margin_top <= 15.0);
 }
 
 #[test]
@@ -447,7 +447,7 @@ fn cascade_parent_first_child_blocked_by_border() {
     let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(divs.len() >= 2);
     let child = divs[1];
-    assert!(child.content_rect.y >= 35.0);
+    assert!(child.layout.content_rect.y >= 35.0);
 }
 
 // ============================================================
@@ -465,7 +465,7 @@ fn cascade_parent_last_child_bottom_collapse() {
     let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(!divs.is_empty());
     let parent = divs[0];
-    assert!(parent.collapsed_margin_bottom >= 35.0);
+    assert!(parent.layout.collapsed_margin_bottom >= 35.0);
 }
 
 // ============================================================
@@ -483,8 +483,8 @@ fn cascade_overflow_hidden_blocks_collapsing() {
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
-    assert!(child.content_rect.y >= 35.0);
-    assert!(parent.collapsed_margin_top <= 15.0);
+    assert!(child.layout.content_rect.y >= 35.0);
+    assert!(parent.layout.collapsed_margin_top <= 15.0);
 }
 
 // ============================================================
@@ -501,8 +501,8 @@ fn cascade_empty_block_margins_collapse() {
     let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(!divs.is_empty());
     let empty = divs[0];
-    assert!(empty.collapsed_margin_top >= 25.0);
-    assert_eq!(empty.collapsed_margin_bottom, 0.0);
+    assert!(empty.layout.collapsed_margin_top >= 25.0);
+    assert_eq!(empty.layout.collapsed_margin_bottom, 0.0);
 }
 
 #[test]
@@ -515,8 +515,8 @@ fn cascade_empty_block_with_border_not_empty() {
     let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(d.is_some());
     let d = d.unwrap();
-    assert!(d.collapsed_margin_top >= 15.0 && d.collapsed_margin_top <= 25.0);
-    assert!(d.collapsed_margin_bottom >= 25.0);
+    assert!(d.layout.collapsed_margin_top >= 15.0 && d.layout.collapsed_margin_top <= 25.0);
+    assert!(d.layout.collapsed_margin_bottom >= 25.0);
 }
 
 // ============================================================
@@ -550,7 +550,7 @@ fn cascade_grandchild_margin_pass_through() {
     let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(!divs.is_empty());
     let outer = divs[0];
-    assert!(outer.collapsed_margin_top >= 45.0);
+    assert!(outer.layout.collapsed_margin_top >= 45.0);
 }
 
 // ============================================================
@@ -645,7 +645,7 @@ fn cascade_link_gets_ua_blue() {
     let doc = parse_and_layout("<a href=\"http://example.com\">link</a>", 800.0);
     let mut found_blue = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(0, 0, 238) {
                 found_blue = true;
             }
@@ -663,7 +663,7 @@ fn cascade_author_style_overrides_ua() {
     );
     let mut found_red = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(255, 0, 0) {
                 found_red = true;
             }
@@ -682,7 +682,7 @@ fn cascade_link_color_beats_body_color() {
     let mut found_link_run = false;
     let mut not_body_color = true;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() {
                 found_link_run = true;
                 // Should NOT be the body's inherited color
@@ -705,7 +705,7 @@ fn cascade_inline_style_on_link_beats_ua() {
     );
     let mut found = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(255, 255, 255) {
                 found = true;
             }
@@ -728,7 +728,7 @@ fn cascade_span_class_styled() {
     );
     let mut found_green = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(0, 128, 0) {
                 found_green = true;
             }
@@ -743,7 +743,7 @@ fn cascade_em_gets_css_italic() {
     let doc = parse_and_layout("<p>normal <em>italic</em> normal</p>", 800.0);
     let mut found_italic = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic {
                 found_italic = true;
             }
@@ -758,7 +758,7 @@ fn cascade_strong_gets_css_bold() {
     let doc = parse_and_layout("<p>normal <strong>bold</strong> normal</p>", 800.0);
     let mut found_bold = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 found_bold = true;
             }
@@ -777,7 +777,7 @@ fn cascade_inline_class_specificity() {
     );
     let mut found_blue = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(0, 0, 255) {
                 found_blue = true;
             }
@@ -792,7 +792,7 @@ fn cascade_nested_inline_elements() {
     let doc = parse_and_layout("<p><a href=\"http://test.com\"><em>linked italic</em></a></p>", 800.0);
     let mut found_linked_italic = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.font_style == FontStyle::Italic {
                 found_linked_italic = true;
             }
@@ -812,10 +812,10 @@ fn cascade_h1_run_gets_bold_font() {
     let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
     assert!(h1.is_some(), "h1 not found");
     let h1 = h1.unwrap();
-    assert!(!h1.inline_runs.is_empty(), "h1 should have inline runs");
-    assert!(h1.inline_runs[0].style.font_weight.is_bold(), "h1 run should be bold");
+    assert!(!h1.layout.inline_runs.is_empty(), "h1 should have inline runs");
+    assert!(h1.layout.inline_runs[0].style.font_weight.is_bold(), "h1 run should be bold");
     // h1 font-size is 2em = 32px (default 16px * 2)
-    let font_px = match h1.inline_runs[0].style.font_size {
+    let font_px = match h1.layout.inline_runs[0].style.font_size {
         CssLength::Px(px) => px,
         _ => 0.0,
     };
@@ -828,9 +828,9 @@ fn cascade_h2_run_gets_bold_font() {
     let h2 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h2");
     assert!(h2.is_some(), "h2 not found");
     let h2 = h2.unwrap();
-    assert!(!h2.inline_runs.is_empty(), "h2 should have inline runs");
-    assert!(h2.inline_runs[0].style.font_weight.is_bold(), "h2 run should be bold");
-    let font_px = match h2.inline_runs[0].style.font_size {
+    assert!(!h2.layout.inline_runs.is_empty(), "h2 should have inline runs");
+    assert!(h2.layout.inline_runs[0].style.font_weight.is_bold(), "h2 run should be bold");
+    let font_px = match h2.layout.inline_runs[0].style.font_size {
         CssLength::Px(px) => px,
         _ => 0.0,
     };
@@ -843,8 +843,8 @@ fn cascade_pre_run_gets_monospace() {
     let pre = find_box(&doc.root, &|b: &HtmlBox| b.tag == "pre");
     assert!(pre.is_some(), "pre not found");
     let pre = pre.unwrap();
-    assert!(!pre.inline_runs.is_empty(), "pre should have inline runs");
-    assert_eq!(pre.inline_runs[0].style.font_family, "monospace");
+    assert!(!pre.layout.inline_runs.is_empty(), "pre should have inline runs");
+    assert_eq!(pre.layout.inline_runs[0].style.font_family, "monospace");
 }
 
 #[test]
@@ -854,8 +854,8 @@ fn cascade_block_run_inherits_color() {
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some(), "p not found");
     let p = p.unwrap();
-    assert!(!p.inline_runs.is_empty(), "p should have inline runs");
-    assert_eq!(p.inline_runs[0].style.color, Color::rgb(255, 0, 0));
+    assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
+    assert_eq!(p.layout.inline_runs[0].style.color, Color::rgb(255, 0, 0));
 }
 
 #[test]
@@ -865,8 +865,8 @@ fn cascade_body_text_color_inherits_to_runs() {
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some(), "p not found");
     let p = p.unwrap();
-    assert!(!p.inline_runs.is_empty(), "p should have inline runs");
-    assert_eq!(p.inline_runs[0].style.color, Color::rgb(0x2c, 0x3e, 0x50));
+    assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
+    assert_eq!(p.layout.inline_runs[0].style.color, Color::rgb(0x2c, 0x3e, 0x50));
 }
 
 // ============================================================
@@ -878,7 +878,7 @@ fn cascade_inline_span_color_in_flattened_run() {
     let doc = parse_and_layout("<p>a <span style=\"color: red;\">b</span> c</p>", 800.0);
     let mut found_red = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(255, 0, 0) {
                 found_red = true;
             }
@@ -892,7 +892,7 @@ fn cascade_bold_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <b>bold</b> c</p>", 800.0);
     let mut found_bold = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 found_bold = true;
             }
@@ -906,7 +906,7 @@ fn cascade_italic_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <i>ital</i> c</p>", 800.0);
     let mut found_italic = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic {
                 found_italic = true;
             }
@@ -920,7 +920,7 @@ fn cascade_underline_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <u>under</u> c</p>", 800.0);
     let mut found_underline = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.text_decoration.underline {
                 found_underline = true;
             }
@@ -934,7 +934,7 @@ fn cascade_strike_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <s>strike</s> c</p>", 800.0);
     let mut found_strike = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.text_decoration.strikethrough {
                 found_strike = true;
             }
@@ -948,7 +948,7 @@ fn cascade_code_tag_run_gets_monospace() {
     let doc = parse_and_layout("<p>a <code>mono</code> c</p>", 800.0);
     let mut found_mono = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_family == "monospace" {
                 found_mono = true;
             }
@@ -983,7 +983,7 @@ fn cascade_link_run_gets_url_and_blue() {
     let doc = parse_and_layout("<p><a href=\"http://x\">link</a></p>", 800.0);
     let mut found = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() {
                 assert_eq!(run.style.color, Color::rgb(0, 0, 238), "link should be UA blue");
                 assert!(run.style.text_decoration.underline, "link should be underlined");
@@ -1004,7 +1004,7 @@ fn cascade_bold_does_not_prevent_font_size_inheritance() {
     let doc = parse_and_layout("<div style=\"font-size: 20px;\"><p><b>big bold</b></p></div>", 800.0);
     let mut found = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 let px = match run.style.font_size { CssLength::Px(px) => px, _ => 0.0 };
                 if (px - 20.0).abs() < 1.0 { found = true; }
@@ -1020,7 +1020,7 @@ fn cascade_italic_does_not_prevent_font_family_inheritance() {
     let doc = parse_and_layout("<pre><i>mono italic</i></pre>", 800.0);
     let mut found = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic && run.style.font_family == "monospace" {
                 found = true;
             }
@@ -1035,7 +1035,7 @@ fn cascade_monospace_does_not_prevent_bold_inheritance() {
     let doc = parse_and_layout("<p><b><code>x</code></b></p>", 800.0);
     let mut found = false;
     walk_boxes(&doc.root, &mut |b: &HtmlBox| {
-        for run in &b.inline_runs {
+        for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() && run.style.font_family == "monospace" {
                 found = true;
             }
@@ -1079,8 +1079,8 @@ fn cascade_th_run_is_bold() {
     let th = find_box(&doc.root, &|b: &HtmlBox| b.tag == "th");
     assert!(th.is_some(), "th not found");
     let th = th.unwrap();
-    assert!(!th.inline_runs.is_empty(), "th should have inline runs");
-    assert!(th.inline_runs[0].style.font_weight.is_bold(), "th run should be bold");
+    assert!(!th.layout.inline_runs.is_empty(), "th should have inline runs");
+    assert!(th.layout.inline_runs[0].style.font_weight.is_bold(), "th run should be bold");
 }
 
 #[test]
@@ -1135,7 +1135,7 @@ fn cascade_inline_block_blocks_collapsing() {
     let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
     assert!(!divs.is_empty(), "should find divs");
     let parent = divs[0];
-    assert!(parent.collapsed_margin_top <= 15.0, "inline-block should not collapse margin through BFC");
+    assert!(parent.layout.collapsed_margin_top <= 15.0, "inline-block should not collapse margin through BFC");
 }
 
 #[test]
@@ -1155,7 +1155,7 @@ fn cascade_float_before_first_child_blocks_collapse() {
     assert!(parent.is_some(), "outer non-float div not found");
     let parent = parent.unwrap();
     // Float breaks collapsing — parent keeps its own 10px, not child's 40px
-    assert!(parent.collapsed_margin_top <= 15.0, "float should block margin collapsing");
+    assert!(parent.layout.collapsed_margin_top <= 15.0, "float should block margin collapsing");
 }
 
 #[test]
@@ -1168,7 +1168,7 @@ fn cascade_heading_margins_collapse_with_siblings() {
     assert!(h4.is_some(), "h4 not found");
     let h3 = h3.unwrap();
     let h4 = h4.unwrap();
-    let gap = h4.content_rect.y - (h3.content_rect.y + h3.content_rect.h);
+    let gap = h4.layout.content_rect.y - (h3.layout.content_rect.y + h3.layout.content_rect.h);
     // Gap should be > 0 (some margin between headings)
     assert!(gap > 0.0, "there should be a gap between h3 and h4, got {gap}");
 }
@@ -1196,14 +1196,14 @@ fn pseudo_element_webkit_scrollbar_not_applied_to_elements() {
         900.0,
     );
     // The root (html/body) should be viewport-wide, not 6px
-    assert!(doc.root.content_rect.w > 100.0,
+    assert!(doc.root.layout.content_rect.w > 100.0,
         "root unexpectedly narrow ({}) — ::-webkit-scrollbar leaked to real elements",
-        doc.root.content_rect.w);
+        doc.root.layout.content_rect.w);
     let body = find_box(&doc.root, &|b: &HtmlBox| b.tag == "body");
     assert!(body.is_some(), "body not found");
-    assert!(body.unwrap().content_rect.w > 100.0,
+    assert!(body.unwrap().layout.content_rect.w > 100.0,
         "body width {} — ::-webkit-scrollbar leaked to body",
-        body.unwrap().content_rect.w);
+        body.unwrap().layout.content_rect.w);
 }
 
 #[test]
@@ -1238,7 +1238,7 @@ fn vh_resolves_to_viewport_height() {
     );
     let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
     assert!(b.is_some(), "box not found");
-    let h = b.unwrap().border_rect.h;
+    let h = b.unwrap().layout.border_rect.h;
     assert!((h - 600.0).abs() < 2.0,
         "height:100vh should be 600px (viewport_h=600), got {h}");
 }
@@ -1251,7 +1251,7 @@ fn vw_resolves_to_viewport_width() {
     );
     let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
     assert!(b.is_some(), "box not found");
-    let w = b.unwrap().border_rect.w;
+    let w = b.unwrap().layout.border_rect.w;
     assert!((w - 400.0).abs() < 2.0,
         "width:50vw should be 400px (viewport_w=800), got {w}");
 }
@@ -1268,7 +1268,7 @@ fn vh_on_flex_item_resolves_correctly() {
     );
     let app = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "app").unwrap_or(false));
     assert!(app.is_some(), "app not found");
-    let h = app.unwrap().border_rect.h;
+    let h = app.unwrap().layout.border_rect.h;
     assert!(h > 700.0,
         "#app with flex:1 in 100vh body should fill ~800px, got {h}");
 }
@@ -1293,8 +1293,8 @@ fn three_column_flex_layout_with_vh() {
     let main    = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "main").unwrap_or(false));
     assert!(sidebar.is_some(), "sidebar not found");
     assert!(main.is_some(), "main not found");
-    let sw = sidebar.unwrap().border_rect.w;
-    let mw = main.unwrap().border_rect.w;
+    let sw = sidebar.unwrap().layout.border_rect.w;
+    let mw = main.unwrap().layout.border_rect.w;
     assert!((sw - 200.0).abs() < 2.0, "sidebar width should be 200px, got {sw}");
     assert!((mw - 700.0).abs() < 2.0, "main should fill remaining 700px, got {mw}");
 }

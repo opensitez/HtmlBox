@@ -190,7 +190,7 @@ impl EngineState {
 
     fn render_screenshot(&mut self, path: &str) -> String {
         let t0 = Instant::now();
-        let doc_h = (self.doc.root.margin_rect.h.ceil() as u32).max(1);
+        let doc_h = (self.doc.root.layout.margin_rect.h.ceil() as u32).max(1);
         let render_h = doc_h.min(self.max_h as u32).max(1);
         let phys_w = (self.width * self.scale) as u32;
         let phys_h = (render_h as f32 * self.scale) as u32;
@@ -227,10 +227,12 @@ impl EngineState {
         let hit = rhtmledit::point_to_hit(&self.doc.root, pt, 0);
         match hit {
             Some(h) => {
-                let node = unsafe { &*h.box_ptr };
+                let node_ptr = rhtmledit::types::find_by_node_id(&self.doc.root, h.node_id);
+                if node_ptr.is_null() { return format!(r#"{{"ok":true,"hit":null}}"#); }
+                let node = unsafe { &*node_ptr };
                 let tag = &node.tag;
-                let id = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
-                let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
+                let id: &str = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
+                let cls: &str = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
                 format!(r#"{{"ok":true,"hit":{{"tag":{},"id":{},"class":{},"x":{:.0},"y":{:.0}}}}}"#,
                     json_escape(tag), json_escape(id), json_escape(cls), x, y)
             }
@@ -247,9 +249,11 @@ impl EngineState {
         let hit = rhtmledit::point_to_hit(&self.doc.root, pt, 0);
         match hit {
             Some(h) => {
-                let node = unsafe { &*h.box_ptr };
+                let node_ptr = rhtmledit::types::find_by_node_id(&self.doc.root, h.node_id);
+                if node_ptr.is_null() { return format!(r#"{{"ok":true,"changed":{},"hit":null}}"#, changed); }
+                let node = unsafe { &*node_ptr };
                 let tag = &node.tag;
-                let id = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
+                let id: &str = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
                 format!(r#"{{"ok":true,"changed":{},"tag":{},"id":{}}}"#,
                     changed, json_escape(tag), json_escape(id))
             }
@@ -303,7 +307,7 @@ impl EngineState {
         let mut elements = Vec::new();
         Document::walk_all(&self.doc.root, &mut |node| {
             if node.tag == "#text" { return; }
-            let cr = &node.content_rect;
+            let cr = &node.layout.content_rect;
             if cr.w <= 0.0 || cr.h <= 0.0 { return; }
             let bottom = cr.y + cr.h;
             if bottom < sy || cr.y > sy + vh { return; }
@@ -333,7 +337,7 @@ impl EngineState {
         Document::walk_all(&self.doc.root, &mut |node| {
             if target_y.is_some() { return; }
             if matches_query(node, selector) {
-                target_y = Some(node.content_rect.y);
+                target_y = Some(node.layout.content_rect.y);
             }
         });
         match target_y {
@@ -361,7 +365,7 @@ impl EngineState {
         Document::walk_all(&self.doc.root, &mut |node| {
             if result.is_some() { return; }
             if matches_query(node, selector) {
-                let r = &node.content_rect;
+                let r = &node.layout.content_rect;
                 result = Some((r.x + r.w / 2.0, r.y + r.h / 2.0));
             }
         });
@@ -374,7 +378,7 @@ impl EngineState {
             if matches_query(node, selector) {
                 let id = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
                 let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
-                let r = &node.content_rect;
+                let r = &node.layout.content_rect;
                 results.push(format!(
                     r#"{{"tag":{},"id":{},"class":{},"x":{:.0},"y":{:.0},"w":{:.0},"h":{:.0}}}"#,
                     json_escape(&node.tag), json_escape(id), json_escape(cls),
@@ -436,7 +440,7 @@ impl EngineState {
             if matches_query(node, selector) {
                 let mut nodes = Vec::new();
                 subtree_dump(node, 0, &mut nodes);
-                let container = &node.content_rect;
+                let container = &node.layout.content_rect;
                 // Build response with container info + all descendants
                 parts.push(format!(
                     r#"{{"container":{{"tag":{},"id":{},"class":{},"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1},"right":{:.1},"bottom":{:.1}}},"descendants":[{}]}}"#,
@@ -488,7 +492,7 @@ impl EngineState {
         Document::walk_all_mut(&mut self.doc.root, &mut |node| {
             if matches_query(node, selector) {
                 rhtmledit::css::apply_property(&mut node.style, prop, value);
-                node.layout_dirty = true;
+                node.layout.layout_dirty = true;
                 count += 1;
             }
         });
@@ -544,7 +548,7 @@ impl EngineState {
 
     fn do_highlight(&mut self, selector: &str, path: &str) -> String {
         // First render the page normally
-        let doc_h = (self.doc.root.margin_rect.h.ceil() as u32).max(1);
+        let doc_h = (self.doc.root.layout.margin_rect.h.ceil() as u32).max(1);
         let render_h = doc_h.min(self.max_h as u32).max(1);
         let phys_w = (self.width * self.scale) as u32;
         let phys_h = (render_h as f32 * self.scale) as u32;
@@ -562,7 +566,7 @@ impl EngineState {
         Document::walk_all(&self.doc.root, &mut |node| {
             if matches_query(node, selector) {
                 rhtmledit::draw_inspect_overlay(node, &mut pixmap, 0.0, 0.0, self.scale);
-                let cr = &node.content_rect;
+                let cr = &node.layout.content_rect;
                 rects.push(format!(r#"[{:.0},{:.0},{:.0},{:.0}]"#, cr.x, cr.y, cr.w, cr.h));
                 count += 1;
             }
@@ -600,7 +604,7 @@ impl EngineState {
                     let cls = p.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
                     format!(r#"{{"tag":{},"id":{},"class":{},"x":{:.0},"y":{:.0},"w":{:.0},"h":{:.0}}}"#,
                         json_escape(&p.tag), json_escape(id), json_escape(cls),
-                        p.content_rect.x, p.content_rect.y, p.content_rect.w, p.content_rect.h)
+                        p.layout.content_rect.x, p.layout.content_rect.y, p.layout.content_rect.w, p.layout.content_rect.h)
                 }).collect();
                 results.push(format!("[{}]", chain.join(",")));
             }
@@ -645,7 +649,7 @@ impl EngineState {
         }
 
         // Benchmark render
-        let doc_h = (self.doc.root.margin_rect.h.ceil() as u32).max(1);
+        let doc_h = (self.doc.root.layout.margin_rect.h.ceil() as u32).max(1);
         let render_h = doc_h.min(self.max_h as u32).max(1);
         let phys_w = (self.width * self.scale) as u32;
         let phys_h = (render_h as f32 * self.scale) as u32;
@@ -1025,6 +1029,9 @@ impl EngineState {
         timing.stats.push(("css_rules".to_string(), rule_count as u64));
         timing.stats.push(("html_bytes".to_string(), html.len() as u64));
 
+        // Load background images and mask images
+        rhtmledit::html::load_background_images(&mut self.doc.root, &self.url);
+
         // Fetch images
         if !self.no_images {
             timed!(timing, "fetch_images", {
@@ -1089,7 +1096,7 @@ impl EngineState {
                                     b.image_data = Some(raw.clone());
                                     b.image_width = iw;
                                     b.image_height = ih;
-                                    b.layout_dirty = true;
+                                    b.layout.layout_dirty = true;
                                 }
                             }
                         }
@@ -1187,20 +1194,20 @@ fn get_css_property(node: &HtmlBox, prop: &str) -> String {
         "border-spacing" => format!("{:?} {:?}", s.border_spacing_h, s.border_spacing_v),
         // Resolved values from layout
         "resolved-padding" => format!("{:.1} {:.1} {:.1} {:.1}",
-            node.resolved_pad_top, node.resolved_pad_right, node.resolved_pad_bottom, node.resolved_pad_left),
+            node.layout.resolved_pad_top, node.layout.resolved_pad_right, node.layout.resolved_pad_bottom, node.layout.resolved_pad_left),
         "resolved-margin" => format!("{:.1} {:.1} {:.1} {:.1}",
-            node.resolved_margin_top, node.resolved_margin_right, node.resolved_margin_bottom, node.resolved_margin_left),
+            node.layout.resolved_margin_top, node.layout.resolved_margin_right, node.layout.resolved_margin_bottom, node.layout.resolved_margin_left),
         "resolved-border" => format!("{:.1} {:.1} {:.1} {:.1}",
-            node.resolved_border_top, node.resolved_border_right, node.resolved_border_bottom, node.resolved_border_left),
+            node.layout.resolved_border_top, node.layout.resolved_border_right, node.layout.resolved_border_bottom, node.layout.resolved_border_left),
         "content-rect" => format!("{:.1},{:.1} {:.1}x{:.1}",
-            node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h),
+            node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h),
         "padding-rect" => format!("{:.1},{:.1} {:.1}x{:.1}",
-            node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h),
+            node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h),
         "margin-rect" => format!("{:.1},{:.1} {:.1}x{:.1}",
-            node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h),
+            node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h),
         "border-rect" => format!("{:.1},{:.1} {:.1}x{:.1}",
-            node.border_rect.x, node.border_rect.y, node.border_rect.w, node.border_rect.h),
-        "line-count" => format!("{}", node.line_cache.len()),
+            node.layout.border_rect.x, node.layout.border_rect.y, node.layout.border_rect.w, node.layout.border_rect.h),
+        "line-count" => format!("{}", node.layout.line_cache.len()),
         "gradient-type" => format!("{:?}", s.gradient_type),
         "gradient-angle" => format!("{:.1}", s.gradient_angle),
         "gradient-stops" => {
@@ -1214,6 +1221,15 @@ fn get_css_property(node: &HtmlBox, prop: &str) -> String {
             else if s.gradient_type != rhtmledit::types::GradientType::None {
                 format!("{:?} angle={:.0} stops={}", s.gradient_type, s.gradient_angle, s.gradient_stops.len())
             } else { "none".to_string() }
+        }
+        "list-style-type" => format!("{:?}", s.list_style_type),
+        "mask-image" => {
+            if !s.mask_image_url.is_empty() { s.mask_image_url.clone() } else { "none".to_string() }
+        }
+        "mask-image-loaded" => {
+            if node.mask_image_data.is_some() {
+                format!("yes ({}x{})", node.mask_image_width, node.mask_image_height)
+            } else { "no".to_string() }
         }
         _ => format!("(unknown property: {})", prop),
     }
@@ -1237,21 +1253,21 @@ fn deep_inspect_json(node: &HtmlBox) -> String {
 
     // Box model
     let _ = write!(buf, r#","content":{{"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1}}}"#,
-        node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h);
+        node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h);
     let _ = write!(buf, r#","padding":{{"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1}}}"#,
-        node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h);
+        node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h);
     let _ = write!(buf, r#","margin":{{"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1}}}"#,
-        node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h);
+        node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h);
     let _ = write!(buf, r#","border_rect":{{"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1}}}"#,
-        node.border_rect.x, node.border_rect.y, node.border_rect.w, node.border_rect.h);
+        node.layout.border_rect.x, node.layout.border_rect.y, node.layout.border_rect.w, node.layout.border_rect.h);
 
     // Resolved box values
     let _ = write!(buf, r#","resolved_padding":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_pad_top, node.resolved_pad_right, node.resolved_pad_bottom, node.resolved_pad_left);
+        node.layout.resolved_pad_top, node.layout.resolved_pad_right, node.layout.resolved_pad_bottom, node.layout.resolved_pad_left);
     let _ = write!(buf, r#","resolved_margin":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_margin_top, node.resolved_margin_right, node.resolved_margin_bottom, node.resolved_margin_left);
+        node.layout.resolved_margin_top, node.layout.resolved_margin_right, node.layout.resolved_margin_bottom, node.layout.resolved_margin_left);
     let _ = write!(buf, r#","resolved_border":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_border_top, node.resolved_border_right, node.resolved_border_bottom, node.resolved_border_left);
+        node.layout.resolved_border_top, node.layout.resolved_border_right, node.layout.resolved_border_bottom, node.layout.resolved_border_left);
 
     // Key CSS properties
     let _ = write!(buf, r#","display":{},"position":{},"vertical_align":{}"#,
@@ -1278,8 +1294,8 @@ fn deep_inspect_json(node: &HtmlBox) -> String {
         s.border_collapse);
 
     // Line cache
-    if !node.line_cache.is_empty() {
-        let lines: Vec<String> = node.line_cache.iter().map(|line| {
+    if !node.layout.line_cache.is_empty() {
+        let lines: Vec<String> = node.layout.line_cache.iter().map(|line| {
             format!(r#"{{"x":{:.1},"y":{:.1},"w":{:.1},"h":{:.1},"chars":{}}}"#,
                 line.x, line.y, line.width, line.height, line.char_x.len())
         }).collect();
@@ -1293,7 +1309,7 @@ fn deep_inspect_json(node: &HtmlBox) -> String {
         format!(r#"{{"tag":{},"id":{},"class":{},"display":{},"c":[{:.0},{:.0},{:.0},{:.0}]}}"#,
             json_escape(&c.tag), json_escape(cid), json_escape(ccls),
             json_escape(&format!("{:?}", c.style.display)),
-            c.content_rect.x, c.content_rect.y, c.content_rect.w, c.content_rect.h)
+            c.layout.content_rect.x, c.layout.content_rect.y, c.layout.content_rect.w, c.layout.content_rect.h)
     }).collect();
     let _ = write!(buf, r#","children":[{}]"#, children.join(","));
 
@@ -1302,7 +1318,7 @@ fn deep_inspect_json(node: &HtmlBox) -> String {
         let preview: String = c.text.chars().take(80).collect();
         format!(r#"{{"text":{},"c":[{:.0},{:.0},{:.0},{:.0}]}}"#,
             json_escape(preview.trim()),
-            c.content_rect.x, c.content_rect.y, c.content_rect.w, c.content_rect.h)
+            c.layout.content_rect.x, c.layout.content_rect.y, c.layout.content_rect.w, c.layout.content_rect.h)
     }).collect();
     if !text_children.is_empty() {
         let _ = write!(buf, r#","text_nodes":[{}]"#, text_children.join(","));
@@ -1317,9 +1333,9 @@ fn subtree_dump(node: &HtmlBox, depth: u32, out: &mut Vec<String>) {
     if matches!(node.style.display, Display::None) { return; }
     let id = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
     let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
-    let cr = &node.content_rect;
-    let mr = &node.margin_rect;
-    let pr = &node.padding_rect;
+    let cr = &node.layout.content_rect;
+    let mr = &node.layout.margin_rect;
+    let pr = &node.layout.padding_rect;
     let s = &node.style;
 
     let mut buf = String::with_capacity(512);
@@ -1350,14 +1366,14 @@ fn subtree_dump(node: &HtmlBox, depth: u32, out: &mut Vec<String>) {
 
     // Resolved spacing
     let _ = write!(buf, r#","resolved_padding":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_pad_top, node.resolved_pad_right,
-        node.resolved_pad_bottom, node.resolved_pad_left);
+        node.layout.resolved_pad_top, node.layout.resolved_pad_right,
+        node.layout.resolved_pad_bottom, node.layout.resolved_pad_left);
     let _ = write!(buf, r#","resolved_margin":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_margin_top, node.resolved_margin_right,
-        node.resolved_margin_bottom, node.resolved_margin_left);
+        node.layout.resolved_margin_top, node.layout.resolved_margin_right,
+        node.layout.resolved_margin_bottom, node.layout.resolved_margin_left);
     let _ = write!(buf, r#","resolved_border":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_border_top, node.resolved_border_right,
-        node.resolved_border_bottom, node.resolved_border_left);
+        node.layout.resolved_border_top, node.layout.resolved_border_right,
+        node.layout.resolved_border_bottom, node.layout.resolved_border_left);
 
     // CSS width/height
     let _ = write!(buf, r#","css_width":{},"css_height":{}"#,
@@ -1374,8 +1390,8 @@ fn subtree_dump(node: &HtmlBox, depth: u32, out: &mut Vec<String>) {
     }
 
     // Line cache (text layout lines)
-    if !node.line_cache.is_empty() {
-        let lines: Vec<String> = node.line_cache.iter().map(|ln| {
+    if !node.layout.line_cache.is_empty() {
+        let lines: Vec<String> = node.layout.line_cache.iter().map(|ln| {
             format!(r#"[{:.1},{:.1},{:.1},{:.1}]"#, ln.x, ln.y, ln.width, ln.height)
         }).collect();
         let _ = write!(buf, r#","lines":[{}]"#, lines.join(","));
@@ -1417,18 +1433,18 @@ fn computed_json(node: &HtmlBox) -> String {
 
     // Box model (resolved values from layout)
     let _ = write!(buf, r#","box":{{"content":[{:.1},{:.1},{:.1},{:.1}],"padding":[{:.1},{:.1},{:.1},{:.1}],"margin":[{:.1},{:.1},{:.1},{:.1}],"border":[{:.1},{:.1},{:.1},{:.1}]}}"#,
-        node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h,
-        node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h,
-        node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h,
-        node.border_rect.x, node.border_rect.y, node.border_rect.w, node.border_rect.h);
+        node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h,
+        node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h,
+        node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h,
+        node.layout.border_rect.x, node.layout.border_rect.y, node.layout.border_rect.w, node.layout.border_rect.h);
 
     // Resolved spacing
     let _ = write!(buf, r#","resolved_padding":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_pad_top, node.resolved_pad_right, node.resolved_pad_bottom, node.resolved_pad_left);
+        node.layout.resolved_pad_top, node.layout.resolved_pad_right, node.layout.resolved_pad_bottom, node.layout.resolved_pad_left);
     let _ = write!(buf, r#","resolved_margin":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_margin_top, node.resolved_margin_right, node.resolved_margin_bottom, node.resolved_margin_left);
+        node.layout.resolved_margin_top, node.layout.resolved_margin_right, node.layout.resolved_margin_bottom, node.layout.resolved_margin_left);
     let _ = write!(buf, r#","resolved_border":[{:.1},{:.1},{:.1},{:.1}]"#,
-        node.resolved_border_top, node.resolved_border_right, node.resolved_border_bottom, node.resolved_border_left);
+        node.layout.resolved_border_top, node.layout.resolved_border_right, node.layout.resolved_border_bottom, node.layout.resolved_border_left);
 
     // All computed CSS properties
     let bg = s.background_color;
@@ -1557,7 +1573,7 @@ fn computed_json(node: &HtmlBox) -> String {
     let _ = write!(buf, r#","matched_rules":{}"#, node.matched_rules.len());
 
     // Line cache
-    let _ = write!(buf, r#","line_count":{}"#, node.line_cache.len());
+    let _ = write!(buf, r#","line_count":{}"#, node.layout.line_cache.len());
 
     buf.push('}');
     buf
@@ -1598,16 +1614,16 @@ fn inspect_json(node: &HtmlBox) -> String {
             r#""children":{}}}"#,
         ),
         json_escape(&node.tag), json_escape(id), json_escape(cls),
-        node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h,
-        node.padding_rect.x, node.padding_rect.y, node.padding_rect.w, node.padding_rect.h,
-        node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h,
+        node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h,
+        node.layout.padding_rect.x, node.layout.padding_rect.y, node.layout.padding_rect.w, node.layout.padding_rect.h,
+        node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h,
         json_escape(&format!("{:?}", s.display)),
         json_escape(&format!("{:?}", s.position)),
         s.font_size_px(16.0, 16.0), json_escape(&color_str),
         json_escape(&bg_str),
-        node.resolved_margin_top, node.resolved_margin_right, node.resolved_margin_bottom, node.resolved_margin_left,
-        node.resolved_pad_top, node.resolved_pad_right, node.resolved_pad_bottom, node.resolved_pad_left,
-        node.resolved_border_top, node.resolved_border_right, node.resolved_border_bottom, node.resolved_border_left,
+        node.layout.resolved_margin_top, node.layout.resolved_margin_right, node.layout.resolved_margin_bottom, node.layout.resolved_margin_left,
+        node.layout.resolved_pad_top, node.layout.resolved_pad_right, node.layout.resolved_pad_bottom, node.layout.resolved_pad_left,
+        node.layout.resolved_border_top, node.layout.resolved_border_right, node.layout.resolved_border_bottom, node.layout.resolved_border_left,
         node.children.iter().filter(|c| c.tag != "#text").count(),
     )
 }
@@ -1630,8 +1646,8 @@ fn dump_box_to_string(depth: usize, node: &HtmlBox, buf: &mut String) {
     let _ = writeln!(buf, "{}{}{}{} [{:?}] c=[{:.0},{:.0} {:.0}x{:.0}] m=[{:.0},{:.0} {:.0}x{:.0}]{}",
         indent, tag, id, cls,
         node.style.display,
-        node.content_rect.x, node.content_rect.y, node.content_rect.w, node.content_rect.h,
-        node.margin_rect.x, node.margin_rect.y, node.margin_rect.w, node.margin_rect.h,
+        node.layout.content_rect.x, node.layout.content_rect.y, node.layout.content_rect.w, node.layout.content_rect.h,
+        node.layout.margin_rect.x, node.layout.margin_rect.y, node.layout.margin_rect.w, node.layout.margin_rect.h,
         text_preview,
     );
     for child in &node.children {
@@ -1754,6 +1770,7 @@ impl ApplicationHandler for DebugApp {
                     .arg(format!("--window-size={w},{h}"))
                     .arg("--disable-extensions")
                     .arg("--disable-gpu")
+                    .arg("--disable-javascript")
                     .arg("--no-first-run")
                     .arg("--no-default-browser-check")
                     .arg(format!("--user-data-dir=/tmp/debugserver-chrome-{port}"))
@@ -1954,6 +1971,7 @@ fn main() {
         eprintln!("  --stdin      Read commands from stdin (implies --headless)");
         eprintln!("  --port <n>   TCP port (default: 9222)");
         eprintln!("  --chrome     Open Chrome side-by-side for comparison");
+        eprintln!("  --headless   Run without a window");
         std::process::exit(1);
     }
 
@@ -2171,25 +2189,7 @@ fn normalize_url(s: String) -> String {
 }
 
 fn resolve_url(base: &str, href: &str) -> String {
-    if href.is_empty()                           { return base.to_string(); }
-    if href.starts_with("data:")                 { return href.to_string(); }
-    if href.starts_with("http://") || href.starts_with("https://") { return href.to_string(); }
-    if href.starts_with("//") {
-        let scheme = if base.starts_with("https") { "https:" } else { "http:" };
-        return format!("{scheme}{href}");
-    }
-    let origin = if let Some(p) = base.find("://") {
-        let rest  = &base[p + 3..];
-        let slash = rest.find('/').map(|i| p + 3 + i).unwrap_or(base.len());
-        &base[..slash]
-    } else { "" };
-    if href.starts_with('/') {
-        return format!("{origin}{href}");
-    }
-    let dir = if let Some(i) = base.rfind('/') {
-        if &base[..i] == "https:" || &base[..i] == "http:" { base } else { &base[..i + 1] }
-    } else { base };
-    format!("{dir}{href}")
+    rhtmledit::resolve_url(href, base)
 }
 
 fn url_cache_path(url: &str, cache_dir: &str) -> PathBuf {
@@ -2222,6 +2222,18 @@ fn cached_fetch_bytes(url: &str, no_cache: bool, cache_dir: &str) -> Result<Vec<
     if !no_cache {
         if let Ok(data) = std::fs::read(&path) {
             return Ok(data);
+        }
+        // Legacy fallback for old broken URL cache keys
+        if let Some(scheme_end) = url.find("://") {
+            let after = &url[scheme_end + 3..];
+            if let Some(slash) = after.find('/') {
+                let old_url = format!("{}/.{}", &url[..scheme_end + 3], &after[slash..]);
+                let old_path = url_cache_path(&old_url, cache_dir);
+                if let Ok(data) = std::fs::read(&old_path) {
+                    let _ = std::fs::write(&path, &data); // migrate
+                    return Ok(data);
+                }
+            }
         }
     }
     let data = fetch_bytes(url)?;

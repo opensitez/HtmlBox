@@ -54,13 +54,13 @@ fn flex_three_cards_equal_sizing() {
         .filter(|c| c.style.display != Display::None && c.tag != "#text")
         .collect();
     assert_eq!(cards.len(), 3, "expected 3 flex cards");
-    let w0 = cards[0].border_rect.w;
-    let w1 = cards[1].border_rect.w;
-    let w2 = cards[2].border_rect.w;
+    let w0 = cards[0].layout.border_rect.w;
+    let w1 = cards[1].layout.border_rect.w;
+    let w2 = cards[2].layout.border_rect.w;
     eprintln!("Card widths after re-layout: {:.1} {:.1} {:.1}", w0, w1, w2);
-    eprintln!("Card 0 line widths: {:?}", cards[0].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
-    eprintln!("Card 1 line widths: {:?}", cards[1].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
-    eprintln!("Card 2 line widths: {:?}", cards[2].line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    eprintln!("Card 0 line widths: {:?}", cards[0].layout.line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    eprintln!("Card 1 line widths: {:?}", cards[1].layout.line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
+    eprintln!("Card 2 line widths: {:?}", cards[2].layout.line_cache.iter().map(|l| l.width).collect::<Vec<_>>());
     let max_w = w0.max(w1).max(w2);
     let min_w = w0.min(w1).min(w2);
     assert!(min_w > 0.0, "cards should have positive width");
@@ -220,7 +220,7 @@ fn flex_basic_row_layout() {
         .collect();
     assert_eq!(items.len(), 2);
     // Items should be side by side
-    assert!(items[1].content_rect.x > items[0].content_rect.x);
+    assert!(items[1].layout.content_rect.x > items[0].layout.content_rect.x);
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn flex_grow_distribution() {
         .collect();
     if items.len() >= 2 {
         // B should be roughly twice the width of A
-        assert!(items[1].content_rect.w > items[0].content_rect.w);
+        assert!(items[1].layout.content_rect.w > items[0].layout.content_rect.w);
     }
 }
 
@@ -260,7 +260,7 @@ fn flex_column_layout() {
         .collect();
     if items.len() >= 2 {
         // Items should be stacked vertically
-        assert!(items[1].content_rect.y > items[0].content_rect.y);
+        assert!(items[1].layout.content_rect.y > items[0].layout.content_rect.y);
     }
 }
 
@@ -275,10 +275,10 @@ fn flex_gap_between_items() {
     assert!(flex.is_some());
     let flex = flex.unwrap();
     let items: Vec<&HtmlBox> = flex.children.iter()
-        .filter(|c| c.content_rect.w > 95.0 && c.content_rect.w < 105.0)
+        .filter(|c| c.layout.content_rect.w > 95.0 && c.layout.content_rect.w < 105.0)
         .collect();
     if items.len() >= 2 {
-        let gap_actual = items[1].content_rect.x - (items[0].content_rect.x + items[0].content_rect.w);
+        let gap_actual = items[1].layout.content_rect.x - (items[0].layout.content_rect.x + items[0].layout.content_rect.w);
         assert!(gap_actual >= 15.0 && gap_actual <= 25.0,
             "gap_actual = {gap_actual}");
     }
@@ -415,10 +415,10 @@ fn flex_margin_auto_main_axis() {
         .collect();
     if items.len() >= 2 {
         // B should be pushed far to the right
-        assert!(items[1].content_rect.x > 500.0,
-            "B.x = {}", items[1].content_rect.x);
+        assert!(items[1].layout.content_rect.x > 500.0,
+            "B.x = {}", items[1].layout.content_rect.x);
         // A should remain at the left
-        assert!(items[0].content_rect.x < 150.0);
+        assert!(items[0].layout.content_rect.x < 150.0);
     }
 }
 
@@ -455,8 +455,8 @@ fn flex_row_reverse_layout() {
         .collect();
     if items.len() >= 2 {
         // In row-reverse, A should be to the right of B
-        assert!(items[0].content_rect.x > items[1].content_rect.x,
-            "A.x={} B.x={}", items[0].content_rect.x, items[1].content_rect.x);
+        assert!(items[0].layout.content_rect.x > items[1].layout.content_rect.x,
+            "A.x={} B.x={}", items[0].layout.content_rect.x, items[1].layout.content_rect.x);
     }
 }
 
@@ -481,7 +481,7 @@ fn flex_wrap_second_line_below() {
         .collect();
     if items.len() >= 2 {
         // B should wrap to second line (below A)
-        assert!(items[1].content_rect.y > items[0].content_rect.y);
+        assert!(items[1].layout.content_rect.y > items[0].layout.content_rect.y);
     }
 }
 
@@ -504,9 +504,9 @@ fn flex_shrink_layout() {
         .collect();
     if items.len() >= 2 {
         // Both items should shrink to fit 300px
-        assert!(items[0].content_rect.w < 200.0);
-        assert!(items[1].content_rect.w < 200.0);
-        let total = items[0].margin_rect.w + items[1].margin_rect.w;
+        assert!(items[0].layout.content_rect.w < 200.0);
+        assert!(items[1].layout.content_rect.w < 200.0);
+        let total = items[0].layout.margin_rect.w + items[1].layout.margin_rect.w;
         assert!(total <= 310.0, "total = {total}");
     }
 }
@@ -569,9 +569,9 @@ fn flex_align_content_space_evenly_layout() {
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
-        assert!(items[0].margin_rect.y > 50.0,
-            "A.y = {}", items[0].margin_rect.y);
-        assert!(items[1].margin_rect.y > items[0].margin_rect.y + items[0].margin_rect.h);
+        assert!(items[0].layout.margin_rect.y > 50.0,
+            "A.y = {}", items[0].layout.margin_rect.y);
+        assert!(items[1].layout.margin_rect.y > items[0].layout.margin_rect.y + items[0].layout.margin_rect.h);
     }
 }
 
@@ -594,8 +594,8 @@ fn flex_column_stretch_width() {
         .collect();
     if !items.is_empty() {
         // A should stretch to ~300px width
-        assert!(items[0].margin_rect.w >= 295.0,
-            "A.w = {}", items[0].margin_rect.w);
+        assert!(items[0].layout.margin_rect.w >= 295.0,
+            "A.w = {}", items[0].layout.margin_rect.w);
     }
 }
 
@@ -698,8 +698,8 @@ fn flex_wrap_reverse_layout() {
         .collect();
     if items.len() >= 2 {
         // In wrap-reverse, first line is at bottom, second at top
-        assert!(items[0].margin_rect.y > items[1].margin_rect.y,
-            "A.y={} B.y={}", items[0].margin_rect.y, items[1].margin_rect.y);
+        assert!(items[0].layout.margin_rect.y > items[1].layout.margin_rect.y,
+            "A.y={} B.y={}", items[0].layout.margin_rect.y, items[1].layout.margin_rect.y);
     }
 }
 
@@ -718,8 +718,8 @@ fn flex_wrap_with_grow() {
         .collect();
     if !items.is_empty() {
         // Each item wraps to its own line and grows to fill 300px
-        assert!(items[0].margin_rect.w >= 295.0,
-            "A.w = {}", items[0].margin_rect.w);
+        assert!(items[0].layout.margin_rect.w >= 295.0,
+            "A.w = {}", items[0].layout.margin_rect.w);
     }
 }
 
@@ -741,8 +741,8 @@ fn flex_column_reverse_layout() {
         .collect();
     if items.len() >= 2 {
         // In column-reverse, A (first in DOM) should be below B
-        assert!(items[0].margin_rect.y > items[1].margin_rect.y,
-            "A.y={} B.y={}", items[0].margin_rect.y, items[1].margin_rect.y);
+        assert!(items[0].layout.margin_rect.y > items[1].layout.margin_rect.y,
+            "A.y={} B.y={}", items[0].layout.margin_rect.y, items[1].layout.margin_rect.y);
     }
 }
 
@@ -761,8 +761,8 @@ fn flex_column_with_explicit_height() {
         .collect();
     if !items.is_empty() {
         // Centered in 300px with 50px height: should be around y=125
-        assert!(items[0].margin_rect.y > 100.0 && items[0].margin_rect.y < 150.0,
-            "A.y = {}", items[0].margin_rect.y);
+        assert!(items[0].layout.margin_rect.y > 100.0 && items[0].layout.margin_rect.y < 150.0,
+            "A.y = {}", items[0].layout.margin_rect.y);
     }
 }
 
@@ -784,8 +784,8 @@ fn flex_min_width_constraint() {
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
-        assert!(items[0].margin_rect.w >= 150.0,
-            "A.w = {}", items[0].margin_rect.w);
+        assert!(items[0].layout.margin_rect.w >= 150.0,
+            "A.w = {}", items[0].layout.margin_rect.w);
     }
 }
 
@@ -803,8 +803,8 @@ fn flex_max_width_constraint() {
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
-        assert!(items[0].margin_rect.w <= 105.0,
-            "A.w = {}", items[0].margin_rect.w);
+        assert!(items[0].layout.margin_rect.w <= 105.0,
+            "A.w = {}", items[0].layout.margin_rect.w);
     }
 }
 
@@ -827,7 +827,7 @@ fn flex_justify_content_center_single() {
     if !items.is_empty() {
         // Body has 8px left margin (UA stylesheet); flex content_x = 8.
         // Centered: 8 + (400-100)/2 = 158
-        let x = items[0].margin_rect.x;
+        let x = items[0].layout.margin_rect.x;
         assert!(x >= 153.0 && x <= 163.0, "A.x = {}", x);
     }
 }
@@ -853,10 +853,10 @@ fn flex_space_around_layout() {
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
-        assert!(items[0].margin_rect.x > 30.0,
-            "A.x = {}", items[0].margin_rect.x);
-        assert!(items[1].margin_rect.x > 200.0,
-            "B.x = {}", items[1].margin_rect.x);
+        assert!(items[0].layout.margin_rect.x > 30.0,
+            "A.x = {}", items[0].layout.margin_rect.x);
+        assert!(items[1].layout.margin_rect.x > 200.0,
+            "B.x = {}", items[1].layout.margin_rect.x);
     }
 }
 
@@ -874,10 +874,10 @@ fn flex_space_evenly_layout() {
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
-        assert!(items[0].margin_rect.x > 50.0,
-            "A.x = {}", items[0].margin_rect.x);
-        assert!(items[1].margin_rect.x > 200.0,
-            "B.x = {}", items[1].margin_rect.x);
+        assert!(items[0].layout.margin_rect.x > 50.0,
+            "A.x = {}", items[0].layout.margin_rect.x);
+        assert!(items[1].layout.margin_rect.x > 200.0,
+            "B.x = {}", items[1].layout.margin_rect.x);
     }
 }
 
@@ -899,8 +899,8 @@ fn flex_cross_auto_margin_center() {
         .collect();
     if !items.is_empty() {
         // Should be centered vertically: (200-50)/2 = 75
-        assert!(items[0].margin_rect.y > 60.0 && items[0].margin_rect.y < 90.0,
-            "A.y = {}", items[0].margin_rect.y);
+        assert!(items[0].layout.margin_rect.y > 60.0 && items[0].layout.margin_rect.y < 90.0,
+            "A.y = {}", items[0].layout.margin_rect.y);
     }
 }
 
@@ -936,10 +936,10 @@ fn flex_different_grow_ratios() {
         .collect();
     if items.len() >= 3 {
         // B (grow:2) should be wider than A (grow:1)
-        assert!(items[1].margin_rect.w > items[0].margin_rect.w + 50.0,
-            "B.w={} A.w={}", items[1].margin_rect.w, items[0].margin_rect.w);
-        assert!(items[0].margin_rect.w > 50.0);
-        assert!(items[2].margin_rect.w > 50.0);
+        assert!(items[1].layout.margin_rect.w > items[0].layout.margin_rect.w + 50.0,
+            "B.w={} A.w={}", items[1].layout.margin_rect.w, items[0].layout.margin_rect.w);
+        assert!(items[0].layout.margin_rect.w > 50.0);
+        assert!(items[2].layout.margin_rect.w > 50.0);
     }
 }
 
@@ -958,10 +958,10 @@ fn flex_shrink_with_flex_basis() {
         .collect();
     if items.len() >= 2 {
         // Each should shrink from 150 to ~100
-        assert!(items[0].margin_rect.w < 140.0,
-            "A.w = {}", items[0].margin_rect.w);
-        assert!(items[1].margin_rect.w < 140.0,
-            "B.w = {}", items[1].margin_rect.w);
+        assert!(items[0].layout.margin_rect.w < 140.0,
+            "A.w = {}", items[0].layout.margin_rect.w);
+        assert!(items[1].layout.margin_rect.w < 140.0,
+            "B.w = {}", items[1].layout.margin_rect.w);
     }
 }
 
@@ -989,13 +989,13 @@ fn flex_auto_width_items_shrink_to_content() {
     let b = b.unwrap();
     let c = c.unwrap();
     // All three items should fit on the same line (same Y)
-    assert_eq!(a.margin_rect.y, b.margin_rect.y,
-        "a and b should be on the same line: a.y={} b.y={}", a.margin_rect.y, b.margin_rect.y);
-    assert_eq!(b.margin_rect.y, c.margin_rect.y,
-        "b and c should be on the same line: b.y={} c.y={}", b.margin_rect.y, c.margin_rect.y);
+    assert_eq!(a.layout.margin_rect.y, b.layout.margin_rect.y,
+        "a and b should be on the same line: a.y={} b.y={}", a.layout.margin_rect.y, b.layout.margin_rect.y);
+    assert_eq!(b.layout.margin_rect.y, c.layout.margin_rect.y,
+        "b and c should be on the same line: b.y={} c.y={}", b.layout.margin_rect.y, c.layout.margin_rect.y);
     // Each item should be much narrower than the container
-    assert!(a.margin_rect.w < 200.0,
-        "auto-width flex item should shrink to content, got w={}", a.margin_rect.w);
+    assert!(a.layout.margin_rect.w < 200.0,
+        "auto-width flex item should shrink to content, got w={}", a.layout.margin_rect.w);
 }
 
 #[test]
@@ -1015,7 +1015,7 @@ fn flex_auto_width_wrap_only_when_needed() {
     let i7 = find_box(&doc.root, &|b| b.get_attr("id") == Some("i7"));
     assert!(i1.is_some() && i7.is_some());
     // First and last item should be on the same row (same Y)
-    assert_eq!(i1.unwrap().margin_rect.y, i7.unwrap().margin_rect.y,
+    assert_eq!(i1.unwrap().layout.margin_rect.y, i7.unwrap().layout.margin_rect.y,
         "all 7 small items should fit on one line");
 }
 
@@ -1031,7 +1031,7 @@ fn flex_auto_width_wraps_when_truly_too_wide() {
     let b = find_box(&doc.root, &|b| b.get_attr("id") == Some("b"));
     assert!(a.is_some() && b.is_some());
     // 150 + 150 > 200, so second item wraps
-    assert!(b.unwrap().margin_rect.y > a.unwrap().margin_rect.y,
+    assert!(b.unwrap().layout.margin_rect.y > a.unwrap().layout.margin_rect.y,
         "items that exceed container width should wrap to next line");
 }
 
@@ -1052,11 +1052,11 @@ fn flex_toolbar_all_buttons_on_one_line() {
         </div>"#, 900.0);
     let b1 = find_box(&doc.root, &|b| b.get_attr("id") == Some("b1")).unwrap();
     let b7 = find_box(&doc.root, &|b| b.get_attr("id") == Some("b7")).unwrap();
-    assert_eq!(b1.margin_rect.y, b7.margin_rect.y,
-        "all toolbar buttons should be on one line: b1.y={} b7.y={}", b1.margin_rect.y, b7.margin_rect.y);
+    assert_eq!(b1.layout.margin_rect.y, b7.layout.margin_rect.y,
+        "all toolbar buttons should be on one line: b1.y={} b7.y={}", b1.layout.margin_rect.y, b7.layout.margin_rect.y);
     // Each button should be well under 200px wide
-    assert!(b1.margin_rect.w < 200.0,
-        "button should shrink to content width, got {}", b1.margin_rect.w);
+    assert!(b1.layout.margin_rect.w < 200.0,
+        "button should shrink to content width, got {}", b1.layout.margin_rect.w);
 }
 
 // ============================================================
@@ -1079,11 +1079,11 @@ fn button_text_node_renders_as_flex_child() {
     let doc = load_html("<button>Hello</button>", 800.0);
     let btn = find_box(&doc.root, &|b| b.tag == "button").unwrap();
     // The button should have non-zero width/height from its text content
-    assert!(btn.border_rect.w > 0.0, "button should have non-zero width");
-    assert!(btn.border_rect.h > 0.0, "button should have non-zero height");
+    assert!(btn.layout.border_rect.w > 0.0, "button should have non-zero width");
+    assert!(btn.layout.border_rect.h > 0.0, "button should have non-zero height");
     // Width should be shrunk to text (much less than viewport)
-    assert!(btn.border_rect.w < 200.0,
-        "button should shrink to text content, got w={}", btn.border_rect.w);
+    assert!(btn.layout.border_rect.w < 200.0,
+        "button should shrink to text content, got w={}", btn.layout.border_rect.w);
 }
 
 #[test]
@@ -1094,13 +1094,13 @@ fn button_text_node_stays_on_one_line() {
         800.0);
     let btn = find_box(&doc.root, &|b| b.tag == "button").unwrap();
     // A button with "Compact Label" at 16px should be wider than ~60px and under 250px
-    assert!(btn.border_rect.w > 30.0,
-        "button too narrow, text likely wrapped: w={}", btn.border_rect.w);
-    assert!(btn.border_rect.w < 250.0,
-        "button unexpectedly wide: w={}", btn.border_rect.w);
+    assert!(btn.layout.border_rect.w > 30.0,
+        "button too narrow, text likely wrapped: w={}", btn.layout.border_rect.w);
+    assert!(btn.layout.border_rect.w < 250.0,
+        "button unexpectedly wide: w={}", btn.layout.border_rect.w);
     // Height must match the explicit 30px
-    assert!((btn.border_rect.h - 30.0).abs() < 2.0,
-        "button height should be ~30px, got {}", btn.border_rect.h);
+    assert!((btn.layout.border_rect.h - 30.0).abs() < 2.0,
+        "button height should be ~30px, got {}", btn.layout.border_rect.h);
 }
 
 #[test]
@@ -1111,10 +1111,10 @@ fn button_emoji_text_stays_on_one_line() {
         800.0);
     let btn = find_box(&doc.root, &|b| b.tag == "button").unwrap();
     // Button should be wider than just the emoji (>20px) but narrow (<200px)
-    assert!(btn.border_rect.w > 20.0,
-        "button too narrow (emoji+text likely clipped): w={}", btn.border_rect.w);
-    assert!(btn.border_rect.w < 200.0,
-        "button unexpectedly wide: w={}", btn.border_rect.w);
+    assert!(btn.layout.border_rect.w > 20.0,
+        "button too narrow (emoji+text likely clipped): w={}", btn.layout.border_rect.w);
+    assert!(btn.layout.border_rect.w < 200.0,
+        "button unexpectedly wide: w={}", btn.layout.border_rect.w);
 }
 
 #[test]
@@ -1129,9 +1129,9 @@ fn buttons_with_emoji_all_on_one_line_in_toolbar() {
         </div>"#, 1000.0);
     let b1 = find_box(&doc.root, &|b| b.get_attr("id") == Some("b1")).unwrap();
     let b4 = find_box(&doc.root, &|b| b.get_attr("id") == Some("b4")).unwrap();
-    assert_eq!(b1.border_rect.y, b4.border_rect.y,
-        "all emoji buttons should be on the same line: b1.y={} b4.y={}", b1.border_rect.y, b4.border_rect.y);
+    assert_eq!(b1.layout.border_rect.y, b4.layout.border_rect.y,
+        "all emoji buttons should be on the same line: b1.y={} b4.y={}", b1.layout.border_rect.y, b4.layout.border_rect.y);
     // Each button must be narrow (text fits on one line)
-    assert!(b1.border_rect.w < 150.0,
-        "button too wide (text wrapped?): w={}", b1.border_rect.w);
+    assert!(b1.layout.border_rect.w < 150.0,
+        "button too wide (text wrapped?): w={}", b1.layout.border_rect.w);
 }

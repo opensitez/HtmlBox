@@ -599,10 +599,9 @@ fn dom_get_next_and_previous_sibling() {
     assert!(!div.is_empty());
     let parent = div[0];
     let b = query_selector(parent, "#b").unwrap();
-    let b_ptr = b as *const HtmlBox;
 
-    let next = get_next_sibling(parent, b_ptr);
-    let prev = get_prev_sibling(parent, b_ptr);
+    let next = get_next_sibling(parent, b.node_id);
+    let prev = get_prev_sibling(parent, b.node_id);
     assert!(next.is_some());
     assert!(prev.is_some());
     assert_eq!(get_attribute(next.unwrap(), "id"), Some("c"));
@@ -616,8 +615,7 @@ fn dom_get_next_sibling_last() {
     assert!(!div.is_empty());
     let parent = div[0];
     let a = query_selector(parent, "#a").unwrap();
-    let a_ptr = a as *const HtmlBox;
-    assert!(get_next_sibling(parent, a_ptr).is_none());
+    assert!(get_next_sibling(parent, a.node_id).is_none());
 }
 
 #[test]
@@ -627,8 +625,7 @@ fn dom_get_prev_sibling_first() {
     assert!(!div.is_empty());
     let parent = div[0];
     let a = query_selector(parent, "#a").unwrap();
-    let a_ptr = a as *const HtmlBox;
-    assert!(get_prev_sibling(parent, a_ptr).is_none());
+    assert!(get_prev_sibling(parent, a.node_id).is_none());
 }
 
 // ============================================================
@@ -778,8 +775,8 @@ fn dom_get_bounding_rect_returns_rect() {
     let doc = rhtmledit::load_html(r#"<div><p id="t">Box</p></div>"#, 800.0);
     let t = query_selector(&doc.root, "#t").unwrap();
     // width and height should be non-negative (may be 0 without font metrics)
-    assert!(t.border_rect.w >= 0.0);
-    assert!(t.border_rect.h >= 0.0);
+    assert!(t.layout.border_rect.w >= 0.0);
+    assert!(t.layout.border_rect.h >= 0.0);
 }
 
 // ============================================================
@@ -1072,8 +1069,8 @@ fn dom_html_event_mouse_button() {
 #[test]
 fn dom_html_event_drag_fields() {
     let evt = HtmlEvent::new(HtmlEventType::DragStart);
-    assert!(evt.drag_source.is_null());
-    assert!(evt.related_target.is_null());
+    assert!(evt.drag_source == 0);
+    assert!(evt.related_target == 0);
 }
 
 #[test]
@@ -1191,8 +1188,8 @@ fn dom_is_visible_null_box() {
 #[test]
 fn dom_get_element_parent() {
     let mut doc = parse(r#"<div id="parent"><p id="child">Text</p></div>"#);
-    let child_ptr = query_selector(&doc.root, "#child").unwrap() as *const HtmlBox;
-    let parent = find_parent_mut(&mut doc.root, child_ptr);
+    let child_id = query_selector(&doc.root, "#child").unwrap().node_id;
+    let parent = find_parent_mut_by_id(&mut doc.root, child_id);
     assert!(parent.is_some());
     assert_eq!(get_attribute(parent.unwrap(), "id"), Some("parent"));
 }
@@ -1337,8 +1334,8 @@ fn dom_get_bounding_rect_absolute_coords() {
     let inner = query_selector(&doc.root, "#inner").unwrap();
     // With padding the element should be offset from the top-left origin.
     // We just verify the rect dimensions are non-negative (layout ran).
-    assert!(inner.border_rect.w >= 0.0);
-    assert!(inner.border_rect.h >= 0.0);
+    assert!(inner.layout.border_rect.w >= 0.0);
+    assert!(inner.layout.border_rect.h >= 0.0);
 }
 
 #[test]
@@ -1349,8 +1346,8 @@ fn dom_get_bounding_rect_nested_elements() {
     );
     let deep = query_selector(&doc.root, "#deep").unwrap();
     // Rect dimensions should be non-negative.
-    assert!(deep.border_rect.w >= 0.0);
-    assert!(deep.border_rect.h >= 0.0);
+    assert!(deep.layout.border_rect.w >= 0.0);
+    assert!(deep.layout.border_rect.h >= 0.0);
 }
 
 // ============================================================

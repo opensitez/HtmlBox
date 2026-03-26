@@ -82,12 +82,12 @@ fn ce_sibling_boxes_are_independent() {
 fn ce_toggle_bold_turns_on() {
     let mut b = HtmlBox::new("p");
     b.text = "Hello World".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 11, style: ComputedStyle::default() },
     ];
     let range = TextRange { start: 0, end: 11 };
     toggle_bold(&mut b, &range);
-    assert!(b.inline_runs[0].style.font_weight.is_bold(), "should be bold after toggle");
+    assert!(b.layout.inline_runs[0].style.font_weight.is_bold(), "should be bold after toggle");
 }
 
 #[test]
@@ -96,12 +96,12 @@ fn ce_toggle_bold_turns_off_when_all_bold() {
     b.text = "Hello".to_string();
     let mut style = ComputedStyle::default();
     style.font_weight = FontWeight::Bold;
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5, style },
     ];
     let range = TextRange { start: 0, end: 5 };
     toggle_bold(&mut b, &range);
-    assert!(!b.inline_runs[0].style.font_weight.is_bold(), "should be normal after un-toggle");
+    assert!(!b.layout.inline_runs[0].style.font_weight.is_bold(), "should be normal after un-toggle");
 }
 
 #[test]
@@ -109,15 +109,15 @@ fn ce_toggle_bold_partial_range() {
     // Only the overlapping run should be affected
     let mut b = HtmlBox::new("p");
     b.text = "Hello World".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() }, // "Hello"
         InlineRun { text_offset: 6, length: 5,  style: ComputedStyle::default() }, // "World"
     ];
     // Toggle bold on "World" only
     let range = TextRange { start: 6, end: 11 };
     toggle_bold(&mut b, &range);
-    assert!(!b.inline_runs[0].style.font_weight.is_bold(), "Hello run should remain normal");
-    assert!(b.inline_runs[1].style.font_weight.is_bold(), "World run should be bold");
+    assert!(!b.layout.inline_runs[0].style.font_weight.is_bold(), "Hello run should remain normal");
+    assert!(b.layout.inline_runs[1].style.font_weight.is_bold(), "World run should be bold");
 }
 
 // ============================================================
@@ -128,12 +128,12 @@ fn ce_toggle_bold_partial_range() {
 fn ce_toggle_italic_turns_on() {
     let mut b = HtmlBox::new("p");
     b.text = "Test".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style: ComputedStyle::default() },
     ];
     let range = TextRange { start: 0, end: 4 };
     toggle_italic(&mut b, &range);
-    assert_eq!(b.inline_runs[0].style.font_style, FontStyle::Italic);
+    assert_eq!(b.layout.inline_runs[0].style.font_style, FontStyle::Italic);
 }
 
 #[test]
@@ -142,12 +142,12 @@ fn ce_toggle_italic_turns_off() {
     b.text = "Test".to_string();
     let mut style = ComputedStyle::default();
     style.font_style = FontStyle::Italic;
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style },
     ];
     let range = TextRange { start: 0, end: 4 };
     toggle_italic(&mut b, &range);
-    assert_eq!(b.inline_runs[0].style.font_style, FontStyle::Normal);
+    assert_eq!(b.layout.inline_runs[0].style.font_style, FontStyle::Normal);
 }
 
 // ============================================================
@@ -158,12 +158,12 @@ fn ce_toggle_italic_turns_off() {
 fn ce_toggle_underline_turns_on() {
     let mut b = HtmlBox::new("p");
     b.text = "Test".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style: ComputedStyle::default() },
     ];
     let range = TextRange { start: 0, end: 4 };
     toggle_underline(&mut b, &range);
-    assert!(b.inline_runs[0].style.text_decoration.underline, "underline should be on");
+    assert!(b.layout.inline_runs[0].style.text_decoration.underline, "underline should be on");
 }
 
 #[test]
@@ -172,12 +172,12 @@ fn ce_toggle_underline_turns_off() {
     b.text = "Test".to_string();
     let mut style = ComputedStyle::default();
     style.text_decoration.underline = true;
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style },
     ];
     let range = TextRange { start: 0, end: 4 };
     toggle_underline(&mut b, &range);
-    assert!(!b.inline_runs[0].style.text_decoration.underline, "underline should be off");
+    assert!(!b.layout.inline_runs[0].style.text_decoration.underline, "underline should be off");
 }
 
 // ============================================================
@@ -188,19 +188,19 @@ fn ce_toggle_underline_turns_off() {
 fn ce_set_font_size() {
     let mut b = HtmlBox::new("p");
     b.text = "Hello".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5, style: ComputedStyle::default() },
     ];
     let range = TextRange { start: 0, end: 5 };
     set_font_size(&mut b, &range, 24.0);
-    assert_eq!(b.inline_runs[0].style.font_size, CssLength::Px(24.0));
+    assert_eq!(b.layout.inline_runs[0].style.font_size, CssLength::Px(24.0));
 }
 
 #[test]
 fn ce_set_font_size_partial() {
     let mut b = HtmlBox::new("p");
     b.text = "Hello World".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() },
         InlineRun { text_offset: 6, length: 5,  style: ComputedStyle::default() },
     ];
@@ -208,9 +208,9 @@ fn ce_set_font_size_partial() {
     let range = TextRange { start: 6, end: 11 };
     set_font_size(&mut b, &range, 18.0);
     // "Hello" run should be unchanged (default font size)
-    assert!(!matches!(b.inline_runs[0].style.font_size, CssLength::Px(v) if (v - 18.0).abs() < 0.1),
+    assert!(!matches!(b.layout.inline_runs[0].style.font_size, CssLength::Px(v) if (v - 18.0).abs() < 0.1),
         "Hello run should not have size 18");
-    assert_eq!(b.inline_runs[1].style.font_size, CssLength::Px(18.0));
+    assert_eq!(b.layout.inline_runs[1].style.font_size, CssLength::Px(18.0));
 }
 
 // ============================================================
@@ -221,27 +221,27 @@ fn ce_set_font_size_partial() {
 fn ce_set_text_color() {
     let mut b = HtmlBox::new("p");
     b.text = "Hello".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5, style: ComputedStyle::default() },
     ];
     let range = TextRange { start: 0, end: 5 };
     set_text_color(&mut b, &range, Color::rgb(255, 0, 0));
-    assert_eq!(b.inline_runs[0].style.color, Color::rgb(255, 0, 0));
+    assert_eq!(b.layout.inline_runs[0].style.color, Color::rgb(255, 0, 0));
 }
 
 #[test]
 fn ce_set_text_color_partial() {
     let mut b = HtmlBox::new("p");
     b.text = "Hello World".to_string();
-    b.inline_runs = vec![
+    b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() },
         InlineRun { text_offset: 6, length: 5,  style: ComputedStyle::default() },
     ];
     // Color only "World" blue
     let range = TextRange { start: 6, end: 11 };
     set_text_color(&mut b, &range, Color::rgb(0, 0, 255));
-    assert_eq!(b.inline_runs[0].style.color, Color::BLACK, "Hello should remain black");
-    assert_eq!(b.inline_runs[1].style.color, Color::rgb(0, 0, 255));
+    assert_eq!(b.layout.inline_runs[0].style.color, Color::BLACK, "Hello should remain black");
+    assert_eq!(b.layout.inline_runs[1].style.color, Color::rgb(0, 0, 255));
 }
 
 // ============================================================
@@ -287,7 +287,7 @@ fn parse_and_layout(html: &str) -> rhtmledit::types::Document {
 }
 
 fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
-    editor.caret_box   = Some(element as *const HtmlBox);
+    editor.caret_box   = Some(element.node_id);
     editor.collapse_to(offset);
 }
 

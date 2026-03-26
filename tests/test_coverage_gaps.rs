@@ -57,19 +57,19 @@ fn cell_blocks_multiple_block_children_stack() {
 
     // Each subsequent child's contentRect must not overlap the previous
     for i in 1..blocks.len() {
-        let prev_bottom = blocks[i - 1].content_rect.y + blocks[i - 1].content_rect.h;
+        let prev_bottom = blocks[i - 1].layout.content_rect.y + blocks[i - 1].layout.content_rect.h;
         assert!(
-            blocks[i].content_rect.y >= prev_bottom,
+            blocks[i].layout.content_rect.y >= prev_bottom,
             "block {} overlaps block {} ({} < {})",
-            i, i - 1, blocks[i].content_rect.y, prev_bottom
+            i, i - 1, blocks[i].layout.content_rect.y, prev_bottom
         );
     }
 
     // All 4 rects of each child must be consistently offset
     for b in &blocks {
-        assert!(b.border_rect.y >= b.margin_rect.y);
-        assert!(b.padding_rect.y >= b.border_rect.y);
-        assert!(b.content_rect.y >= b.padding_rect.y);
+        assert!(b.layout.border_rect.y >= b.layout.margin_rect.y);
+        assert!(b.layout.padding_rect.y >= b.layout.border_rect.y);
+        assert!(b.layout.content_rect.y >= b.layout.padding_rect.y);
     }
 }
 
@@ -93,12 +93,12 @@ fn cell_blocks_block_child_with_margin_padding() {
     assert!(div.is_some());
     let div = div.unwrap();
 
-    assert!(div.margin_rect.w >= div.border_rect.w);
-    assert!(div.border_rect.w >= div.padding_rect.w);
-    assert!(div.padding_rect.w >= div.content_rect.w);
-    assert!(div.margin_rect.h >= div.border_rect.h);
-    assert!(div.content_rect.x >= div.padding_rect.x);
-    assert!(div.content_rect.y >= div.padding_rect.y);
+    assert!(div.layout.margin_rect.w >= div.layout.border_rect.w);
+    assert!(div.layout.border_rect.w >= div.layout.padding_rect.w);
+    assert!(div.layout.padding_rect.w >= div.layout.content_rect.w);
+    assert!(div.layout.margin_rect.h >= div.layout.border_rect.h);
+    assert!(div.layout.content_rect.x >= div.layout.padding_rect.x);
+    assert!(div.layout.content_rect.y >= div.layout.padding_rect.y);
 }
 
 // ============================================================
@@ -125,8 +125,8 @@ fn cell_blocks_block_child_with_border_no_overlap() {
     let div = div.unwrap();
     let hr = hr.unwrap();
 
-    let div_bottom = div.content_rect.y + div.content_rect.h;
-    assert!(hr.content_rect.y >= div_bottom);
+    let div_bottom = div.layout.content_rect.y + div.layout.content_rect.h;
+    assert!(hr.layout.content_rect.y >= div_bottom);
 }
 
 // ============================================================
@@ -151,7 +151,7 @@ fn cell_blocks_nested_blocks_in_cell() {
 
     let p = find_box(div, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some());
-    assert!(p.unwrap().content_rect.h > 0.0);
+    assert!(p.unwrap().layout.content_rect.h > 0.0);
 }
 
 // ============================================================
@@ -179,7 +179,7 @@ fn cell_blocks_nested_table_with_hr_in_outer_cell() {
 
     let hr = find_box(outer_td, &|b: &HtmlBox| b.tag == "hr").unwrap();
     let inner_table = find_box(outer_td, &|b: &HtmlBox| b.tag == "table").unwrap();
-    assert!(hr.content_rect.y >= inner_table.content_rect.y + inner_table.content_rect.h);
+    assert!(hr.layout.content_rect.y >= inner_table.layout.content_rect.y + inner_table.layout.content_rect.h);
 }
 
 // ============================================================
@@ -203,16 +203,16 @@ fn cell_blocks_rect_consistency_after_offset() {
     assert!(divs.len() >= 2);
 
     for d in &divs {
-        assert!(d.border_rect.x <= d.padding_rect.x);
-        assert!(d.border_rect.y <= d.padding_rect.y);
-        assert!(d.padding_rect.x <= d.content_rect.x);
-        assert!(d.padding_rect.y <= d.content_rect.y);
-        assert!(d.margin_rect.x <= d.border_rect.x);
-        assert!(d.margin_rect.y <= d.border_rect.y);
+        assert!(d.layout.border_rect.x <= d.layout.padding_rect.x);
+        assert!(d.layout.border_rect.y <= d.layout.padding_rect.y);
+        assert!(d.layout.padding_rect.x <= d.layout.content_rect.x);
+        assert!(d.layout.padding_rect.y <= d.layout.content_rect.y);
+        assert!(d.layout.margin_rect.x <= d.layout.border_rect.x);
+        assert!(d.layout.margin_rect.y <= d.layout.border_rect.y);
     }
 
     // Second div must be below first div
-    assert!(divs[1].content_rect.y >= divs[0].content_rect.y + divs[0].content_rect.h);
+    assert!(divs[1].layout.content_rect.y >= divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
 }
 
 // ============================================================
@@ -224,7 +224,7 @@ fn br_line_break_br_at_start() {
     let doc = parse_and_layout("<p><br>Text</p>", 800.0);
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some());
-    assert!(p.unwrap().line_cache.len() >= 2, "BR at start should produce at least 2 lines");
+    assert!(p.unwrap().layout.line_cache.len() >= 2, "BR at start should produce at least 2 lines");
 }
 
 // ============================================================
@@ -236,7 +236,7 @@ fn br_line_break_br_at_end() {
     let doc = parse_and_layout("<p>Text<br></p>", 800.0);
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some());
-    assert!(p.unwrap().line_cache.len() >= 2, "BR at end should produce at least 2 lines");
+    assert!(p.unwrap().layout.line_cache.len() >= 2, "BR at end should produce at least 2 lines");
 }
 
 // ============================================================
@@ -248,7 +248,7 @@ fn br_line_break_multiple_brs() {
     let doc = parse_and_layout("<p>A<br><br><br>B</p>", 800.0);
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some());
-    assert!(p.unwrap().line_cache.len() >= 4, "A<br><br><br>B should produce 4 lines");
+    assert!(p.unwrap().layout.line_cache.len() >= 4, "A<br><br><br>B should produce 4 lines");
 }
 
 // ============================================================
@@ -263,7 +263,7 @@ fn br_line_break_br_breaks_before_width_fill() {
     );
     // Text is in #text child nodes, not in div.text — find the div by line_cache
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && b.line_cache.len() >= 2
+        b.tag == "div" && b.layout.line_cache.len() >= 2
     });
     assert!(div.is_some(), "expected div with >= 2 lines");
 }
@@ -286,7 +286,7 @@ fn cell_blocks_display_none_child_skipped() {
 
     let hr = find_box(td.unwrap(), &|b: &HtmlBox| b.tag == "hr");
     assert!(hr.is_some());
-    assert!(hr.unwrap().content_rect.y < 30.0);
+    assert!(hr.unwrap().layout.content_rect.y < 30.0);
 }
 
 // ============================================================
@@ -313,8 +313,8 @@ fn cell_padding_with_block_children() {
     let hr = hr.unwrap();
 
     // div is inside td which has 20px padding — absolute y will be > 0
-    assert!(div.content_rect.y >= 0.0);
-    assert!(hr.content_rect.y >= div.content_rect.y + div.content_rect.h);
+    assert!(div.layout.content_rect.y >= 0.0);
+    assert!(hr.layout.content_rect.y >= div.layout.content_rect.y + div.layout.content_rect.h);
 }
 
 // ============================================================
@@ -336,7 +336,7 @@ fn cell_blocks_border_collapse_with_hr() {
 
     let hr = find_box(td, &|b: &HtmlBox| b.tag == "hr").unwrap();
     let p = find_box(td, &|b: &HtmlBox| b.tag == "p").unwrap();
-    assert!(hr.content_rect.y >= p.content_rect.y + p.content_rect.h);
+    assert!(hr.layout.content_rect.y >= p.layout.content_rect.y + p.layout.content_rect.h);
 }
 
 // ============================================================
@@ -365,10 +365,10 @@ fn cell_blocks_colspan_cell_with_block_children() {
 
     let hr = hr.unwrap();
     let p = p.unwrap();
-    assert!(hr.content_rect.y >= p.content_rect.y + p.content_rect.h,
+    assert!(hr.layout.content_rect.y >= p.layout.content_rect.y + p.layout.content_rect.h,
         "hr ({}) should be below p ({}+{})",
-        hr.content_rect.y, p.content_rect.y, p.content_rect.h);
-    assert!(hr.content_rect.w > 0.0, "hr should have positive width");
+        hr.layout.content_rect.y, p.layout.content_rect.y, p.layout.content_rect.h);
+    assert!(hr.layout.content_rect.w > 0.0, "hr should have positive width");
 }
 
 // ============================================================
@@ -396,7 +396,7 @@ fn cell_blocks_rowspan_cell_with_block_children() {
     assert!(div.is_some());
     let hr = hr.unwrap();
     let div = div.unwrap();
-    assert!(hr.content_rect.y >= div.content_rect.y + div.content_rect.h,
+    assert!(hr.layout.content_rect.y >= div.layout.content_rect.y + div.layout.content_rect.h,
         "hr should be below div in rowspan cell");
 }
 
@@ -413,7 +413,7 @@ fn br_line_break_br_followed_by_wrapping_text() {
     );
     // Find the div that has >= 3 lines (short + BR + wrapped lines)
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && b.line_cache.len() >= 3
+        b.tag == "div" && b.layout.line_cache.len() >= 3
     });
     assert!(div.is_some(), "expected div with >= 3 lines from BR + wrapping");
 }
@@ -431,7 +431,7 @@ fn br_line_break_br_zero_width_doesnt_affect_wrap() {
     // Should produce exactly 2 lines: "AAAA+BR" and "BB"
     // BR shouldn't cause AAAA to wrap when it fits on one line
     let div = find_box(&doc.root, &|b: &HtmlBox| {
-        b.tag == "div" && b.line_cache.len() >= 2
+        b.tag == "div" && b.layout.line_cache.len() >= 2
     });
     assert!(div.is_some(), "expected div with at least 2 lines from BR");
 }
@@ -446,7 +446,7 @@ fn br_line_break_br_inside_styled_span() {
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
     assert!(p.is_some(), "p element must exist");
     // Must not panic; line_cache should be >= 1 (at least one line)
-    assert!(p.unwrap().line_cache.len() >= 1,
+    assert!(p.unwrap().layout.line_cache.len() >= 1,
         "bold text with BR must produce at least 1 line");
 }
 
@@ -472,9 +472,9 @@ fn cell_valign_middle_with_block_children() {
     assert!(cell.is_some(), "cell with vertical-align:middle not found");
     let cell = cell.unwrap();
     // The cell's content area must be >= its padding area y (offset applied correctly)
-    assert!(cell.content_rect.y >= cell.padding_rect.y,
+    assert!(cell.layout.content_rect.y >= cell.layout.padding_rect.y,
         "contentRect.y ({}) should be >= paddingRect.y ({})",
-        cell.content_rect.y, cell.padding_rect.y);
+        cell.layout.content_rect.y, cell.layout.padding_rect.y);
 }
 
 // ============================================================
@@ -499,10 +499,10 @@ fn cell_valign_bottom_with_block_children() {
     assert!(cell.is_some(), "cell with vertical-align:bottom not found");
     let cell = cell.unwrap();
     // Cell's content area should be offset from padding top (vAlign shift > 0)
-    let resolved_pad_border_top = cell.resolved_pad_top + cell.resolved_border_top;
+    let resolved_pad_border_top = cell.layout.resolved_pad_top + cell.layout.resolved_border_top;
     assert!(
-        cell.content_rect.y > resolved_pad_border_top
-        || cell.content_rect.y >= cell.padding_rect.y,
+        cell.layout.content_rect.y > resolved_pad_border_top
+        || cell.layout.content_rect.y >= cell.layout.padding_rect.y,
         "bottom-aligned cell should shift content down"
     );
 }
@@ -533,8 +533,8 @@ fn cell_valign_top_with_block_children() {
     let first_child = td.children.iter()
         .find(|ch| ch.style.display != Display::None);
     if let Some(child) = first_child {
-        assert!(child.content_rect.y < 30.0,
-            "top-aligned first child y ({}) should be < 30", child.content_rect.y);
+        assert!(child.layout.content_rect.y < 30.0,
+            "top-aligned first child y ({}) should be < 30", child.layout.content_rect.y);
     }
 }
 
@@ -562,9 +562,9 @@ fn cell_padding_with_block_children_layout() {
     let hr = hr.unwrap();
 
     // div is first child in padded cell — absolute y >= 0
-    assert!(div.content_rect.y >= 0.0);
+    assert!(div.layout.content_rect.y >= 0.0);
     // hr must be below div
-    assert!(hr.content_rect.y >= div.content_rect.y + div.content_rect.h,
+    assert!(hr.layout.content_rect.y >= div.layout.content_rect.y + div.layout.content_rect.h,
         "hr ({}) should be below div ({}+{})",
-        hr.content_rect.y, div.content_rect.y, div.content_rect.h);
+        hr.layout.content_rect.y, div.layout.content_rect.y, div.layout.content_rect.h);
 }

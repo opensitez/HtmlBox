@@ -98,10 +98,10 @@ fn float_left_positioned() {
         r#"<div style="float: left; width: 100px;">Float</div>
         <div>Content beside float</div>"#, 800.0);
     let float_box = find_box(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 95.0 && b.content_rect.w < 105.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 95.0 && b.layout.content_rect.w < 105.0
     });
     assert!(float_box.is_some());
-    assert!(float_box.unwrap().content_rect.x < 10.0);
+    assert!(float_box.unwrap().layout.content_rect.x < 10.0);
 }
 
 #[test]
@@ -110,11 +110,11 @@ fn float_right_positioned() {
         r#"<div style="float: right; width: 100px;">Right</div>
         <div>Content</div>"#, 800.0);
     let float_box = find_box(&doc.root, &|b| {
-        b.style.float == Float::Right && b.content_rect.w > 95.0 && b.content_rect.w < 105.0
+        b.style.float == Float::Right && b.layout.content_rect.w > 95.0 && b.layout.content_rect.w < 105.0
     });
     assert!(float_box.is_some());
-    assert!(float_box.unwrap().content_rect.x > 600.0,
-        "x = {}", float_box.unwrap().content_rect.x);
+    assert!(float_box.unwrap().layout.content_rect.x > 600.0,
+        "x = {}", float_box.unwrap().layout.content_rect.x);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn float_two_column() {
         r#"<div style="float: left; width: 30%;">Col1</div>
         <div style="float: left; width: 30%;">Col2</div>"#, 800.0);
     let count = count_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 200.0 && b.content_rect.w < 280.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 200.0 && b.layout.content_rect.w < 280.0
     });
     assert_eq!(count, 2);
 }
@@ -144,11 +144,11 @@ fn float_do_not_overlap() {
         r#"<div style="float: left; width: 200px;">Left</div>
         <div style="float: left; width: 200px;">Right</div>"#, 800.0);
     let floats = find_all_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 195.0 && b.content_rect.w < 205.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 195.0 && b.layout.content_rect.w < 205.0
     });
     assert_eq!(floats.len(), 2);
     // Second float should be to the right of first
-    assert!(floats[1].content_rect.x >= floats[0].content_rect.x + 200.0);
+    assert!(floats[1].layout.content_rect.x >= floats[0].layout.content_rect.x + 200.0);
 }
 
 #[test]
@@ -162,8 +162,8 @@ fn float_clear_left_pushes_down() {
     assert!(float_box.is_some());
     let cleared = cleared.unwrap();
     let float_box = float_box.unwrap();
-    assert!(cleared.content_rect.y >= float_box.margin_rect.bottom(),
-        "cleared.y={} float.bottom={}", cleared.content_rect.y, float_box.margin_rect.bottom());
+    assert!(cleared.layout.content_rect.y >= float_box.layout.margin_rect.bottom(),
+        "cleared.y={} float.bottom={}", cleared.layout.content_rect.y, float_box.layout.margin_rect.bottom());
 }
 
 #[test]
@@ -178,12 +178,12 @@ fn float_clear_both() {
     let mut max_bottom: f32 = 0.0;
     walk_boxes(&doc.root, &mut |b| {
         if b.style.float != Float::None {
-            let bot = b.margin_rect.bottom();
+            let bot = b.layout.margin_rect.bottom();
             if bot > max_bottom { max_bottom = bot; }
         }
     });
-    assert!(cleared.content_rect.y >= max_bottom,
-        "cleared.y={} max_bottom={}", cleared.content_rect.y, max_bottom);
+    assert!(cleared.layout.content_rect.y >= max_bottom,
+        "cleared.y={} max_bottom={}", cleared.layout.content_rect.y, max_bottom);
 }
 
 #[test]
@@ -193,8 +193,8 @@ fn float_percent_width() {
     let b = find_box(&doc.root, &|b| b.style.float == Float::Left);
     assert!(b.is_some());
     let b = b.unwrap();
-    assert!(b.content_rect.w > 350.0 && b.content_rect.w < 450.0,
-        "w = {}", b.content_rect.w);
+    assert!(b.layout.content_rect.w > 350.0 && b.layout.content_rect.w < 450.0,
+        "w = {}", b.layout.content_rect.w);
 }
 
 // ============================================================
@@ -206,11 +206,11 @@ fn float_with_margin() {
     let doc = parse_and_layout(
         r#"<div style="float: left; width: 200px; margin: 10px;">Margined float</div>"#, 800.0);
     let b = find_box(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 195.0 && b.content_rect.w < 205.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 195.0 && b.layout.content_rect.w < 205.0
     });
     assert!(b.is_some());
     let b = b.unwrap();
-    assert!(b.margin_rect.w >= 220.0, "margin_rect.w = {}", b.margin_rect.w);
+    assert!(b.layout.margin_rect.w >= 220.0, "margin_rect.w = {}", b.layout.margin_rect.w);
 }
 
 // ============================================================
@@ -226,8 +226,8 @@ fn float_shrink_to_fit_auto_width() {
         </div>"#, 800.0);
     let float_box = find_box(&doc.root, &|b| b.style.float == Float::Right);
     assert!(float_box.is_some());
-    assert!(float_box.unwrap().content_rect.w < 400.0,
-        "w = {}", float_box.unwrap().content_rect.w);
+    assert!(float_box.unwrap().layout.content_rect.w < 400.0,
+        "w = {}", float_box.unwrap().layout.content_rect.w);
 }
 
 #[test]
@@ -239,9 +239,9 @@ fn float_shrink_to_fit_with_padding() {
     let float_box = find_box(&doc.root, &|b| b.style.float == Float::Left);
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
-    assert!(float_box.content_rect.w < 400.0);
-    assert!(float_box.margin_rect.w >= float_box.content_rect.w + 40.0,
-        "margin.w={} content.w={}", float_box.margin_rect.w, float_box.content_rect.w);
+    assert!(float_box.layout.content_rect.w < 400.0);
+    assert!(float_box.layout.margin_rect.w >= float_box.layout.content_rect.w + 40.0,
+        "margin.w={} content.w={}", float_box.layout.margin_rect.w, float_box.layout.content_rect.w);
 }
 
 #[test]
@@ -253,8 +253,8 @@ fn float_shrink_to_fit_with_child_block() {
     let float_box = find_box(&doc.root, &|b| b.style.float == Float::Left);
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
-    assert!(float_box.content_rect.w <= 200.0, "w = {}", float_box.content_rect.w);
-    assert!(float_box.content_rect.w >= 150.0, "w = {}", float_box.content_rect.w);
+    assert!(float_box.layout.content_rect.w <= 200.0, "w = {}", float_box.layout.content_rect.w);
+    assert!(float_box.layout.content_rect.w >= 150.0, "w = {}", float_box.layout.content_rect.w);
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn float_shrink_to_fit_does_not_shrink_explicit_width() {
             <div style="float: left; width: 500px;">Small text</div>
         </div>"#, 800.0);
     let float_box = find_box(&doc.root, &|b| {
-        b.style.float == Float::Left && (b.content_rect.w - 500.0).abs() < 1.0
+        b.style.float == Float::Left && (b.layout.content_rect.w - 500.0).abs() < 1.0
     });
     assert!(float_box.is_some());
 }
@@ -281,15 +281,15 @@ fn float_two_half_width_fit_on_one_line() {
             <div style="float: left; width: 50%;">Right half</div>
         </div>"#, 800.0);
     let floats = find_all_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 300.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 300.0
     });
     assert_eq!(floats.len(), 2);
-    assert!(floats[0].content_rect.w >= 380.0 && floats[0].content_rect.w <= 420.0);
-    assert!(floats[1].content_rect.w >= 380.0 && floats[1].content_rect.w <= 420.0);
+    assert!(floats[0].layout.content_rect.w >= 380.0 && floats[0].layout.content_rect.w <= 420.0);
+    assert!(floats[1].layout.content_rect.w >= 380.0 && floats[1].layout.content_rect.w <= 420.0);
     // Same line
-    assert_eq!(floats[0].content_rect.y, floats[1].content_rect.y);
+    assert_eq!(floats[0].layout.content_rect.y, floats[1].layout.content_rect.y);
     // Second to the right
-    assert!(floats[1].content_rect.x >= floats[0].content_rect.x + 380.0);
+    assert!(floats[1].layout.content_rect.x >= floats[0].layout.content_rect.x + 380.0);
 }
 
 #[test]
@@ -300,17 +300,17 @@ fn float_two_half_width_left_and_right() {
             <div style="float: right; width: 50%;">Right</div>
         </div>"#, 800.0);
     let left = find_box(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 300.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 300.0
     });
     let right = find_box(&doc.root, &|b| {
-        b.style.float == Float::Right && b.content_rect.w > 300.0
+        b.style.float == Float::Right && b.layout.content_rect.w > 300.0
     });
     assert!(left.is_some());
     assert!(right.is_some());
     let left = left.unwrap();
     let right = right.unwrap();
-    assert_eq!(left.content_rect.y, right.content_rect.y);
-    assert!(right.content_rect.x >= left.content_rect.x + 380.0);
+    assert_eq!(left.layout.content_rect.y, right.layout.content_rect.y);
+    assert!(right.layout.content_rect.x >= left.layout.content_rect.x + 380.0);
 }
 
 #[test]
@@ -322,12 +322,12 @@ fn float_three_third_width_fit() {
             <div style="float: left; width: 33.33%;">C</div>
         </div>"#, 900.0);
     let floats = find_all_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 250.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 250.0
     });
     assert_eq!(floats.len(), 3);
     // All on same line
-    assert_eq!(floats[0].content_rect.y, floats[1].content_rect.y);
-    assert_eq!(floats[1].content_rect.y, floats[2].content_rect.y);
+    assert_eq!(floats[0].layout.content_rect.y, floats[1].layout.content_rect.y);
+    assert_eq!(floats[1].layout.content_rect.y, floats[2].layout.content_rect.y);
 }
 
 #[test]
@@ -338,11 +338,11 @@ fn float_two_exceeding_100_percent_wrap() {
             <div style="float: left; width: 60%;">Wide B</div>
         </div>"#, 800.0);
     let floats = find_all_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && b.content_rect.w > 400.0
+        b.style.float == Float::Left && b.layout.content_rect.w > 400.0
     });
     assert_eq!(floats.len(), 2);
     // Second float should be below the first
-    assert!(floats[1].content_rect.y > floats[0].content_rect.y);
+    assert!(floats[1].layout.content_rect.y > floats[0].layout.content_rect.y);
 }
 
 // ============================================================
@@ -356,11 +356,11 @@ fn float_right_aligned_to_right_edge() {
             <div style="float: right; width: 100px;">R</div>
         </div>"#, 600.0);
     let float_box = find_box(&doc.root, &|b| {
-        b.style.float == Float::Right && (b.content_rect.w - 100.0).abs() < 1.0
+        b.style.float == Float::Right && (b.layout.content_rect.w - 100.0).abs() < 1.0
     });
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
-    let right_edge = float_box.content_rect.x + float_box.content_rect.w;
+    let right_edge = float_box.layout.content_rect.x + float_box.layout.content_rect.w;
     // Body has 8px left margin (UA stylesheet); outer div content starts at x=8.
     // Float right edge = 8 + 600 = 608.
     assert!(right_edge >= 604.0 && right_edge <= 612.0,
@@ -376,9 +376,9 @@ fn float_shrink_to_fit_right() {
     let float_box = find_box(&doc.root, &|b| b.style.float == Float::Right);
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
-    assert!(float_box.content_rect.w < 300.0);
-    assert!(float_box.content_rect.x > 300.0,
-        "x = {}", float_box.content_rect.x);
+    assert!(float_box.layout.content_rect.w < 300.0);
+    assert!(float_box.layout.content_rect.x > 300.0,
+        "x = {}", float_box.layout.content_rect.x);
 }
 
 // ============================================================
@@ -396,9 +396,9 @@ fn float_dashboard_stat_card_with_float_right() {
     let float_box = find_box(&doc.root, &|b| b.style.float == Float::Right);
     assert!(float_box.is_some());
     let float_box = float_box.unwrap();
-    assert!(float_box.content_rect.w < 100.0);
-    assert!(float_box.content_rect.x > 100.0,
-        "x = {}", float_box.content_rect.x);
+    assert!(float_box.layout.content_rect.w < 100.0);
+    assert!(float_box.layout.content_rect.x > 100.0,
+        "x = {}", float_box.layout.content_rect.x);
 }
 
 // ============================================================
@@ -418,17 +418,17 @@ fn float_sidebar_layout() {
     );
     // Sidebar float should exist on the left
     let sidebar = find_box(&doc.root, &|b| {
-        b.style.float == Float::Left && (b.content_rect.w - 200.0).abs() < 1.0
+        b.style.float == Float::Left && (b.layout.content_rect.w - 200.0).abs() < 1.0
     });
     assert!(sidebar.is_some(), "expected left-float sidebar");
-    assert!(sidebar.unwrap().content_rect.x < 10.0, "sidebar should be at left edge");
+    assert!(sidebar.unwrap().layout.content_rect.x < 10.0, "sidebar should be at left edge");
 
     // Footer cleared below the sidebar
     let footer = find_box(&doc.root, &|b| b.style.clear == Clear::Both);
     assert!(footer.is_some(), "expected clear:both footer");
-    assert!(footer.unwrap().content_rect.y >= 300.0,
+    assert!(footer.unwrap().layout.content_rect.y >= 300.0,
         "footer should be below 300px sidebar; y={}",
-        footer.unwrap().content_rect.y);
+        footer.unwrap().layout.content_rect.y);
 }
 
 #[test]
@@ -447,17 +447,17 @@ fn float_wrapping_floats() {
         800.0,
     );
     let floats = find_all_boxes(&doc.root, &|b| {
-        b.style.float == Float::Left && (b.content_rect.w - 250.0).abs() < 1.0
+        b.style.float == Float::Left && (b.layout.content_rect.w - 250.0).abs() < 1.0
     });
     assert_eq!(floats.len(), 4, "expected 4 floated divs");
     // A, B, C all fit on row 1 (750px < 800px). D (fourth) wraps.
     // The first three should be on the same line (same Y).
-    let y0 = floats[0].content_rect.y;
-    let y1 = floats[1].content_rect.y;
-    let y2 = floats[2].content_rect.y;
+    let y0 = floats[0].layout.content_rect.y;
+    let y1 = floats[1].layout.content_rect.y;
+    let y2 = floats[2].layout.content_rect.y;
     assert_eq!(y0, y1, "A and B should be on the same line");
     assert_eq!(y1, y2, "B and C should be on the same line");
     // D should be on a lower line
-    let y3 = floats[3].content_rect.y;
+    let y3 = floats[3].layout.content_rect.y;
     assert!(y3 >= y0, "D must be at or below A (y0={y0} y3={y3})");
 }

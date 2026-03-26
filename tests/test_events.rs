@@ -37,7 +37,7 @@ fn event_dispatch_bubbling() {
     
     let child_box = query_selector(&doc.root, "#child").unwrap();
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
-    evt.target = child_box as *const HtmlBox;
+    evt.target = child_box.node_id;
     
     listeners.dispatch(&doc.root, evt);
     
@@ -62,7 +62,7 @@ fn event_stop_propagation() {
     
     let child_box = query_selector(&doc.root, "#child").unwrap();
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
-    evt.target = child_box as *const HtmlBox;
+    evt.target = child_box.node_id;
     
     listeners.dispatch(&doc.root, evt);
     
@@ -80,7 +80,7 @@ fn event_prevent_default() {
     
     let x_box = query_selector(&doc.root, "#x").unwrap();
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
-    evt.target = x_box as *const HtmlBox;
+    evt.target = x_box.node_id;
     
     let prevented = listeners.dispatch(&doc.root, evt);
     assert!(prevented);
@@ -103,7 +103,7 @@ fn event_selector_matching() {
     
     for d in divs {
         let mut evt = HtmlEvent::new(HtmlEventType::Click);
-        evt.target = d as *const HtmlBox;
+        evt.target = d.node_id;
         listeners.dispatch(&doc.root, evt);
     }
     
@@ -462,7 +462,7 @@ fn wheel_event_dispatch() {
 
     let scroll_box = query_selector(&doc.root, "#scroll-area").unwrap();
     let mut evt = HtmlEvent::new(HtmlEventType::Wheel);
-    evt.target = scroll_box as *const HtmlBox;
+    evt.target = scroll_box.node_id;
     doc.events.dispatch(&doc.root, evt);
 
     assert_eq!(wheel_count.load(Ordering::SeqCst), 1, "Wheel event should fire once");

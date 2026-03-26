@@ -846,12 +846,12 @@ fn child_combinator_margin_right_applied() {
     let no  = find_by_id(&doc.root, "no").expect("no");
     // yes: margin-right:320 on content inside wrap.has-rail → content_w = 800-320 = 480
     assert!(
-        (yes.content_rect.w - 480.0).abs() < 5.0,
-        ".wrap.has-rail > .content should have width ~480 (800-320), got {}", yes.content_rect.w
+        (yes.layout.content_rect.w - 480.0).abs() < 5.0,
+        ".wrap.has-rail > .content should have width ~480 (800-320), got {}", yes.layout.content_rect.w
     );
     assert!(
-        (no.content_rect.w - 800.0).abs() < 5.0,
-        ".wrap > .content (no .has-rail) should have full width ~800, got {}", no.content_rect.w
+        (no.layout.content_rect.w - 800.0).abs() < 5.0,
+        ".wrap > .content (no .has-rail) should have full width ~800, got {}", no.layout.content_rect.w
     );
 }
 
