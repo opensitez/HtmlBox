@@ -304,6 +304,27 @@ pub fn set_image_on_node(node: &mut HtmlBox, data: Vec<u8>, w: u32, h: u32) {
     node.image_height = h;
 }
 
+/// Set decoded image (raster or SVG) on an img node.
+/// SVGs are stored as markup for deferred rasterization at the correct display size.
+pub fn set_decoded_image_on_node(node: &mut HtmlBox, decoded: DecodedImage) {
+    match decoded {
+        DecodedImage::Raster(data, w, h) => {
+            node.image_data   = Some(data);
+            node.image_width  = w;
+            node.image_height = h;
+        }
+        DecodedImage::Svg(markup, iw, ih) => {
+            // Store SVG for paint-time rasterization at the layout-determined size
+            node.svg_markup    = Some(markup);
+            node.svg_viewbox_w = iw;
+            node.svg_viewbox_h = ih;
+            // Set intrinsic dimensions so layout can compute aspect ratio
+            node.image_width   = iw.ceil() as u32;
+            node.image_height  = ih.ceil() as u32;
+        }
+    }
+}
+
 /// Try to load an image from a file path or data URL.
 /// Returns (rgba_bytes, width, height) or None on failure.
 pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>, u32, u32)> {
@@ -398,7 +419,13 @@ fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     Some((vec![0u8; 4], wi, hi))
 }
 
-pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+/// Result of decoding image bytes: either rasterized RGBA or SVG markup to rasterize later.
+pub enum DecodedImage {
+    Raster(Vec<u8>, u32, u32),
+    Svg(String, f32, f32), // markup, intrinsic_w, intrinsic_h
+}
+
+pub fn decode_image_bytes_ex(bytes: &[u8]) -> Option<DecodedImage> {
     use image::ImageReader;
     use std::io::Cursor;
     // Try raster formats first (PNG, JPEG, etc.)
@@ -406,16 +433,37 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         if let Ok(img) = reader.decode() {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            return Some((rgba.into_raw(), w, h));
+            return Some(DecodedImage::Raster(rgba.into_raw(), w, h));
         }
     }
-    // Try SVG via resvg
+    // SVG: return the markup for deferred rasterization at paint time
     if let Ok(svg_str) = std::str::from_utf8(bytes) {
-        if svg_str.trim_start().starts_with('<') {
-            return rasterize_svg_intrinsic(svg_str);
+        let trimmed = svg_str.trim_start();
+        if trimmed.starts_with('<') && (trimmed.contains("<svg") || trimmed.starts_with("<?xml")) {
+            let (iw, ih) = svg_intrinsic_size(svg_str);
+            return Some(DecodedImage::Svg(svg_str.to_string(), iw, ih));
         }
     }
     None
+}
+
+/// Extract intrinsic dimensions from SVG markup without rasterizing.
+fn svg_intrinsic_size(svg: &str) -> (f32, f32) {
+    use resvg::usvg;
+    let opt = usvg::Options::default();
+    if let Ok(tree) = usvg::Tree::from_str(svg, &opt) {
+        let size = tree.size();
+        (size.width(), size.height())
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    match decode_image_bytes_ex(bytes)? {
+        DecodedImage::Raster(data, w, h) => Some((data, w, h)),
+        DecodedImage::Svg(svg, _, _) => rasterize_svg_intrinsic(&svg),
+    }
 }
 
 /// Minimal base64 decoder (no external dependency needed for this).
@@ -1221,6 +1269,12 @@ impl HtmlParser {
 
                     // <img> handling
                     if tag == "img" {
+                        // If srcset is present, pick the best URL and override src
+                        if let Some(srcset) = node.attributes.get("srcset").cloned() {
+                            if let Some(best) = parse_srcset_url(&srcset) {
+                                node.attributes.insert("src".to_string(), best);
+                            }
+                        }
                         if let Some(src) = node.attributes.get("src").cloned() {
                             let resolved = resolve_url(&src, &self.base_url);
                             let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
@@ -1532,6 +1586,12 @@ impl HtmlParser {
         apply_presentational_attrs(&mut node);
 
         if tag == "img" {
+            // If srcset is present, pick the best URL from it and override src
+            if let Some(srcset) = node.attributes.get("srcset").cloned() {
+                if let Some(best) = parse_srcset_url(&srcset) {
+                    node.attributes.insert("src".to_string(), best);
+                }
+            }
             if let Some(src) = node.attributes.get("src").cloned() {
                 let resolved = resolve_url(&src, &self.base_url);
                 let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
@@ -1634,17 +1694,68 @@ fn collapse_whitespace(s: &str) -> String {
 
 /// Parse a `srcset` attribute value and return the first URL.
 /// `srcset` may contain entries like `url 320w, url 640w` or just `url`.
+/// Parse a `srcset` attribute and return the best URL.
+/// For `w` descriptors, picks the largest available (we render at high quality).
+/// For `x` descriptors, picks the 1x version (or closest).
+/// Falls back to the last (typically largest) entry.
 fn parse_srcset_url(srcset: &str) -> Option<String> {
-    let entry = srcset.split(',').next()?.trim();
-    let url = entry.split_whitespace().next()?;
-    if url.is_empty() { return None; }
-    Some(url.to_string())
+    let mut best_url: Option<String> = None;
+    let mut best_w: f32 = 0.0;
+    let mut best_x: f32 = 0.0;
+    let mut has_w = false;
+    let mut has_x = false;
+
+    for entry in srcset.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() { continue; }
+        let mut parts = entry.split_whitespace();
+        let url = match parts.next() {
+            Some(u) if !u.is_empty() => u,
+            _ => continue,
+        };
+        if let Some(descriptor) = parts.next() {
+            if let Some(w_str) = descriptor.strip_suffix('w') {
+                has_w = true;
+                if let Ok(w) = w_str.parse::<f32>() {
+                    if w > best_w {
+                        best_w = w;
+                        best_url = Some(url.to_string());
+                    }
+                }
+            } else if let Some(x_str) = descriptor.strip_suffix('x') {
+                has_x = true;
+                if let Ok(x) = x_str.parse::<f32>() {
+                    // Prefer 1x, but take largest if no 1x
+                    if (x - 1.0).abs() < (best_x - 1.0).abs() || best_url.is_none() {
+                        best_x = x;
+                        best_url = Some(url.to_string());
+                    }
+                }
+            }
+        } else {
+            // No descriptor — this is the default candidate
+            if !has_w && !has_x {
+                best_url = Some(url.to_string());
+            }
+        }
+    }
+
+    // If we had w descriptors but all were webp (skipped), fall back to first parseable
+    if best_url.is_none() {
+        let entry = srcset.split(',').next()?.trim();
+        let url = entry.split_whitespace().next()?;
+        if !url.is_empty() { return Some(url.to_string()); }
+    }
+
+    best_url
 }
 
 /// Resolve the best `<source>` for a `<picture>` element and set it on the child `<img>`.
 fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f32) {
     // Find the best matching <source>
     let mut best_url: Option<String> = None;
+    let mut best_width: Option<String> = None;
+    let mut best_height: Option<String> = None;
     for child in &picture.children {
         if child.tag != "source" { continue; }
         // Skip image/webp — our image decoder may not support it
@@ -1657,28 +1768,41 @@ fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f3
                 if !crate::css::evaluate_media(media, vw, vh) {
                     continue;
                 }
-            } else {
-                // Viewport unknown — skip sources with media queries,
-                // prefer unconditional sources
-                continue;
             }
+            // When viewport is unknown (vw==0), still try sources with media
+            // queries — better to show the higher-res image than the tiny fallback.
+            // The post-pass with real viewport will correct if needed.
         }
         // Extract URL from srcset
         if let Some(srcset) = child.attributes.get("srcset") {
             if let Some(url) = parse_srcset_url(srcset) {
                 best_url = Some(url);
+                best_width = child.attributes.get("width").cloned();
+                best_height = child.attributes.get("height").cloned();
                 break; // First matching source wins
             }
         }
     }
 
     if let Some(url) = best_url {
-        // Find the child <img> and set its src
+        // Find the child <img> and set its src + dimensions from the source
         for child in &mut picture.children {
             if child.tag == "img" {
                 let resolved = resolve_url(&url, base_url);
                 child.attributes.insert("src".to_string(), url);
                 child.attributes.insert("_resolved_src".to_string(), resolved);
+                // Transfer width/height from the matched <source> so the image
+                // is sized correctly (the <source> often has larger dimensions
+                // than the fallback <img>).
+                if let Some(ref w) = best_width {
+                    child.attributes.insert("width".to_string(), w.clone());
+                    // Also set CSS style so layout picks it up after cascade
+                    crate::css::apply_property(&mut child.style, "width", &format!("{}px", w));
+                }
+                if let Some(ref h) = best_height {
+                    child.attributes.insert("height".to_string(), h.clone());
+                    crate::css::apply_property(&mut child.style, "height", &format!("{}px", h));
+                }
                 break;
             }
         }

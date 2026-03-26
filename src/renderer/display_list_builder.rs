@@ -680,8 +680,8 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
                     data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
                 });
             }
-        } else if node.tag == "svg" {
-            // Inline SVG: rasterize from svg_markup on demand
+        } else if node.tag == "svg" || (node.tag == "img" && node.svg_markup.is_some()) {
+            // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
             if let Some(ref markup) = node.svg_markup {
                 let cr = node.content_rect;
                 if cr.w > 0.0 && cr.h > 0.0 {

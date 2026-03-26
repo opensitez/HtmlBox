@@ -2039,7 +2039,7 @@ pub struct Document {
     // ── Async image loading ─────────────────────────────────────────────────
     /// Receiver for images arriving from background fetch threads.
     /// Each message is (node_path, decoded_rgba, width, height).
-    pub pending_images: Option<std::sync::mpsc::Receiver<(Vec<usize>, Vec<u8>, u32, u32)>>,
+    pub pending_images: Option<std::sync::mpsc::Receiver<(Vec<usize>, crate::html::DecodedImage)>>,
     /// Number of image fetches still in flight.
     pub images_in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -2104,9 +2104,9 @@ impl Document {
             None => return false,
         };
         let mut loaded_any = false;
-        while let Ok((path, data, w, h)) = rx.try_recv() {
+        while let Ok((path, decoded)) = rx.try_recv() {
             if let Some(node) = find_node_by_path_mut(&mut self.root, &path) {
-                crate::html::set_image_on_node(node, data, w, h);
+                crate::html::set_decoded_image_on_node(node, decoded);
                 loaded_any = true;
             }
         }

@@ -655,11 +655,26 @@ pub fn get_text_content(b: &HtmlBox) -> String {
     b.text_content()
 }
 
-/// Replace all children with a single text node and set `b.text`.
+/// Replace all children with a single `#text` child containing the given text.
 pub fn set_text_content(b: &mut HtmlBox, text: &str) {
+    // If there's already exactly one #text child, just update its text in place.
+    if b.children.len() == 1 && b.children[0].tag == "#text" {
+        b.children[0].text = text.to_string();
+        b.children[0].line_cache.clear();
+        b.line_cache.clear();
+        return;
+    }
     b.children.clear();
     b.inline_runs.clear();
-    b.text = text.to_string();
+    b.line_cache.clear();
+    let mut tn = HtmlBox::new("#text");
+    tn.text = text.to_string();
+    // Inherit style from parent so text rendering picks up font/color.
+    tn.style = b.style.clone();
+    tn.style.hover_style = None;
+    tn.style.active_style = None;
+    tn.style.visited_style = None;
+    b.children.push(tn);
 }
 
 // ─── Editing: toggle formatting on selection ──────────────────────────────────

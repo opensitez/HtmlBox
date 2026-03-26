@@ -185,7 +185,7 @@ fn start_async_image_fetches(doc: &mut types::Document) {
     collect_remote_images(&doc.root, &mut Vec::new(), &mut pending);
     if pending.is_empty() { return; }
 
-    let (tx, rx) = std::sync::mpsc::channel::<(Vec<usize>, Vec<u8>, u32, u32)>();
+    let (tx, rx) = std::sync::mpsc::channel::<(Vec<usize>, html::DecodedImage)>();
     let in_flight = doc.images_in_flight.clone();
     in_flight.store(pending.len(), std::sync::atomic::Ordering::SeqCst);
 
@@ -198,9 +198,9 @@ fn start_async_image_fetches(doc: &mut types::Document) {
                 .header("Sec-Fetch-Dest", "image")
                 .send().ok()
                 .and_then(|r| r.bytes().ok())
-                .and_then(|bytes| html::decode_image_bytes(&bytes));
-            if let Some((data, w, h)) = result {
-                let _ = sender.send((path, data, w, h));
+                .and_then(|bytes| html::decode_image_bytes_ex(&bytes));
+            if let Some(decoded) = result {
+                let _ = sender.send((path, decoded));
             }
             counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
