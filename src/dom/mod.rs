@@ -382,6 +382,8 @@ pub fn add_class(b: &mut HtmlBox, cls: &str) {
         entry.push(' ');
         entry.push_str(cls);
     }
+    b.cascade_dirty = true;
+    mark_layout_dirty(b);
 }
 
 /// Remove a CSS class from a box.
@@ -390,6 +392,8 @@ pub fn remove_class(b: &mut HtmlBox, cls: &str) {
         let new: Vec<&str> = val.split_whitespace().filter(|&c| c != cls).collect();
         *val = new.join(" ");
     }
+    b.cascade_dirty = true;
+    mark_layout_dirty(b);
 }
 
 /// Toggle a CSS class on a box.
@@ -726,15 +730,15 @@ pub fn create_element(tag: &str) -> HtmlBox {
 /// Mark a node as needing re-layout. Call after any mutation that changes
 /// geometry (text content, style, children added/removed).
 pub fn mark_layout_dirty(node: &mut HtmlBox) {
-    node.layout_dirty = true;
-    node.line_cache.clear();
+    node.layout.layout_dirty = true;
+    node.layout.line_cache.clear();
 }
 
 /// Mark a node as dirty AND propagate `has_dirty_descendant` up from a child
 /// to the root. Call on the root after marking a descendant dirty.
 pub fn propagate_dirty_to_root(root: &mut HtmlBox, target_id: u32) -> bool {
     if root.node_id == target_id {
-        root.layout_dirty = true;
+        root.layout.layout_dirty = true;
         return true;
     }
     for child in &mut root.children {
@@ -758,14 +762,14 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
     // If there's already exactly one #text child, just update its text in place.
     if b.children.len() == 1 && b.children[0].tag == "#text" {
         b.children[0].text = text.to_string();
-        b.children[0].line_cache.clear();
-        b.line_cache.clear();
+        b.children[0].layout.line_cache.clear();
+        b.layout.line_cache.clear();
         mark_layout_dirty(b);
         return;
     }
     b.children.clear();
-    b.inline_runs.clear();
-    b.line_cache.clear();
+    b.layout.inline_runs.clear();
+    b.layout.line_cache.clear();
     let mut tn = HtmlBox::new("#text");
     tn.text = text.to_string();
     // Inherit style from parent so text rendering picks up font/color.
@@ -787,11 +791,11 @@ pub struct TextRange {
 
 /// Toggle `font-weight: bold` on the inline runs that overlap `range`.
 pub fn toggle_bold(b: &mut HtmlBox, range: &TextRange) {
-    let was_bold = b.inline_runs.iter()
+    let was_bold = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_weight.is_bold());
 
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_weight = if was_bold { FontWeight::Normal } else { FontWeight::Bold };
         }
@@ -800,11 +804,11 @@ pub fn toggle_bold(b: &mut HtmlBox, range: &TextRange) {
 
 /// Toggle `font-style: italic` on the inline runs that overlap `range`.
 pub fn toggle_italic(b: &mut HtmlBox, range: &TextRange) {
-    let was_italic = b.inline_runs.iter()
+    let was_italic = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_style == FontStyle::Italic);
 
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_style =
                 if was_italic { FontStyle::Normal } else { FontStyle::Italic };
@@ -814,11 +818,11 @@ pub fn toggle_italic(b: &mut HtmlBox, range: &TextRange) {
 
 /// Toggle `text-decoration: underline` on overlapping runs.
 pub fn toggle_underline(b: &mut HtmlBox, range: &TextRange) {
-    let was_underline = b.inline_runs.iter()
+    let was_underline = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.underline);
 
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.text_decoration.underline = !was_underline;
         }
@@ -827,11 +831,11 @@ pub fn toggle_underline(b: &mut HtmlBox, range: &TextRange) {
 
 /// Toggle `text-decoration: line-through` on overlapping runs.
 pub fn toggle_strikethrough(b: &mut HtmlBox, range: &TextRange) {
-    let was = b.inline_runs.iter()
+    let was = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.strikethrough);
 
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.text_decoration.strikethrough = !was;
         }
@@ -840,7 +844,7 @@ pub fn toggle_strikethrough(b: &mut HtmlBox, range: &TextRange) {
 
 /// Set font size (in px) on overlapping runs.
 pub fn set_font_size(b: &mut HtmlBox, range: &TextRange, size_px: f32) {
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_size = CssLength::Px(size_px);
         }
@@ -849,7 +853,7 @@ pub fn set_font_size(b: &mut HtmlBox, range: &TextRange, size_px: f32) {
 
 /// Set font family on overlapping runs.
 pub fn set_font_family(b: &mut HtmlBox, range: &TextRange, family: &str) {
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_family = family.to_string();
         }
@@ -858,7 +862,7 @@ pub fn set_font_family(b: &mut HtmlBox, range: &TextRange, family: &str) {
 
 /// Set text color on overlapping runs.
 pub fn set_text_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.color = color;
         }
@@ -867,7 +871,7 @@ pub fn set_text_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
 
 /// Set background color on overlapping runs.
 pub fn set_bg_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
-    for run in &mut b.inline_runs {
+    for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.background_color = color;
         }
@@ -1201,7 +1205,7 @@ impl Editor {
                     self.collapse_to(self.caret_local);
                 }
             }
-            container.layout_dirty = true;
+            container.layout.layout_dirty = true;
         }
     }
 
@@ -1213,13 +1217,13 @@ impl Editor {
                 let e = self.sel_end;
                 delete_range_full(node, s, e);
                 self.collapse_to(s);
-                node.layout_dirty = true;
+                node.layout.layout_dirty = true;
             } else if self.caret_local > 0 {
                 let flat = crate::layout::inline_layout::collect_flat_text(node);
                 let new_off = prev_char_boundary(&flat, self.caret_local);
                 delete_range_full(node, new_off, self.caret_local);
                 self.collapse_to(new_off);
-                node.layout_dirty = true;
+                node.layout.layout_dirty = true;
             }
         }
     }
@@ -1232,14 +1236,14 @@ impl Editor {
                 let e = self.sel_end;
                 delete_range_full(node, s, e);
                 self.collapse_to(s);
-                node.layout_dirty = true;
+                node.layout.layout_dirty = true;
             } else {
                 let flat = crate::layout::inline_layout::collect_flat_text(node);
                 if self.caret_local < flat.len() {
                     let next_off = next_char_boundary(&flat, self.caret_local);
                     delete_range_full(node, self.caret_local, next_off);
                     self.collapse_to(self.caret_local);
-                    node.layout_dirty = true;
+                    node.layout.layout_dirty = true;
                 }
             }
         }
@@ -1298,15 +1302,15 @@ impl Editor {
                 let new_tag = if is_block_tag(&block_tag) { block_tag.as_str() } else { "p" };
                 let mut new_block = HtmlBox::new(new_tag);
                 apply_property(&mut new_block.style, "display", "block");
-                new_block.layout_dirty = true;
+                new_block.layout.layout_dirty = true;
                 if !after_text.is_empty() {
                     let mut tn = HtmlBox::new("#text");
                     tn.text = after_text;
                     new_block.children.push(tn);
                 }
-                parent.children[idx].layout_dirty = true;
+                parent.children[idx].layout.layout_dirty = true;
                 parent.children.insert(idx + 1, new_block);
-                parent.layout_dirty = true;
+                parent.layout.layout_dirty = true;
                 self.caret_box = Some(parent.children[idx + 1].node_id);
                 self.collapse_to(0);
             }
@@ -1338,7 +1342,7 @@ impl Editor {
                 Err(_) => {
                     // Caret is past end — append a <br> as last child of container
                     container.children.push(HtmlBox::new("br"));
-                    container.layout_dirty = true;
+                    container.layout.layout_dirty = true;
                     self.collapse_to(caret);
                     return;
                 }
@@ -1348,7 +1352,7 @@ impl Editor {
         // Walk the tree to find the leaf's parent and split.
         split_node_with_br(root, leaf_nid, local_off);
         // Mark the caret box dirty so layout re-runs on this subtree.
-        if let Some(b) = find_box_mut(root, caret_nid) { b.layout_dirty = true; }
+        if let Some(b) = find_box_mut(root, caret_nid) { b.layout.layout_dirty = true; }
         // Caret offset in flat text is unchanged (<br> is transparent to flat-text),
         // but we mark that the caret is now at the START of the next visual line so
         // that rendering and insertion prefer the node after the <br>.
@@ -1402,7 +1406,7 @@ impl Editor {
                     apply_property(&mut li.style, "display", "list-item");
                     li.text       = block.text;
                     li.children   = block.children;
-                    li.inline_runs = block.inline_runs;
+                    li.layout.inline_runs = block.layout.inline_runs;
                     let mut ul = HtmlBox::new("ul");
                     apply_property(&mut ul.style, "display", "block");
                     ul.children.push(li);

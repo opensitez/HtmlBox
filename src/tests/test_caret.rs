@@ -29,7 +29,7 @@ fn find_editable_box(root: &HtmlBox) -> Option<&HtmlBox> {
 
 /// Find any box that has a populated line_cache (inline content).
 fn find_box_with_lines(root: &HtmlBox) -> Option<&HtmlBox> {
-    if !root.line_cache.is_empty() { return Some(root); }
+    if !root.layout.line_cache.is_empty() { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box_with_lines(child) { return Some(b); }
     }
@@ -42,8 +42,8 @@ fn find_box_with_lines(root: &HtmlBox) -> Option<&HtmlBox> {
 fn char_x_populated_with_font_system() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    assert!(!node.line_cache.is_empty(), "no lines in editable box");
-    let line = &node.line_cache[0];
+    assert!(!node.layout.line_cache.is_empty(), "no lines in editable box");
+    let line = &node.layout.line_cache[0];
     assert!(!line.char_x.is_empty(),
         "char_x must be populated when layout uses a real font system");
 }
@@ -53,7 +53,7 @@ fn char_x_length_matches_text_plus_one() {
     // char_x has one entry per byte boundary + 1 for end-of-line
     let doc = load_with_fonts(r#"<p contenteditable="true">abc</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     // "abc" is 3 ASCII bytes → char_x length = 3+1 = 4 (or up to text_length+1)
     assert!(line.char_x.len() >= 4,
         "char_x should have text_length+1 entries, got {}", line.char_x.len());
@@ -63,7 +63,7 @@ fn char_x_length_matches_text_plus_one() {
 fn char_x_starts_at_zero() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello world</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     assert!(!line.char_x.is_empty());
     assert_eq!(line.char_x[0], 0.0, "first char_x entry must be 0 (relative to line.x)");
 }
@@ -72,7 +72,7 @@ fn char_x_starts_at_zero() {
 fn char_x_monotonically_increasing_ltr() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello world</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     for i in 1..line.char_x.len() {
         assert!(line.char_x[i] >= line.char_x[i - 1],
             "char_x[{}]={} < char_x[{}]={} — positions must be non-decreasing",
@@ -87,8 +87,8 @@ fn caret_at_start_is_line_x() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Test</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
-    let x = get_caret_x(&flat, &node.inline_runs, line, line.text_start);
+    let line = &node.layout.line_cache[0];
+    let x = get_caret_x(&flat, &node.layout.inline_runs, line, line.text_start);
     assert!((x - line.x).abs() < 0.5,
         "caret at start of line should equal line.x, got x={} line.x={}", x, line.x);
 }
@@ -98,13 +98,13 @@ fn caret_at_end_matches_line_width() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Test</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     let end_off = line.text_start + line.text_length;
     // Strip trailing newline if present
     let measure_end = if end_off > 0 && flat.as_bytes().get(end_off - 1) == Some(&b'\n') {
         end_off - 1
     } else { end_off };
-    let x_end = get_caret_x(&flat, &node.inline_runs, line, measure_end);
+    let x_end = get_caret_x(&flat, &node.layout.inline_runs, line, measure_end);
     // The caret at the end should be further right than at the start
     assert!(x_end > line.x, "caret at end should be past start of line");
 }
@@ -115,11 +115,11 @@ fn caret_positions_strictly_ordered_for_distinct_chars() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     let mut prev_x = -1.0f32;
     for i in 0..="Hello".len() {
         let off = line.text_start + i;
-        let x = get_caret_x(&flat, &node.inline_runs, line, off);
+        let x = get_caret_x(&flat, &node.layout.inline_runs, line, off);
         assert!(x >= prev_x,
             "caret x at offset {} ({}) must be >= previous x {}", i, x, prev_x);
         prev_x = x;
@@ -134,10 +134,10 @@ fn thin_char_l_has_nonzero_width() {
     let doc = load_with_fonts(r#"<p contenteditable="true">flex</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     // "flex": f=0, l=1, e=2, x=3
-    let x_before_l = get_caret_x(&flat, &node.inline_runs, line, line.text_start + 1);
-    let x_after_l  = get_caret_x(&flat, &node.inline_runs, line, line.text_start + 2);
+    let x_before_l = get_caret_x(&flat, &node.layout.inline_runs, line, line.text_start + 1);
+    let x_after_l  = get_caret_x(&flat, &node.layout.inline_runs, line, line.text_start + 2);
     assert!(x_after_l > x_before_l,
         "'l' must have positive width: before={} after={}", x_before_l, x_after_l);
 }
@@ -150,9 +150,9 @@ fn thin_char_l_is_narrower_than_m() {
     let width_of = |doc: &Document, idx: usize| {
         let node = find_editable_box(&doc.root).unwrap();
         let flat = collect_flat_text(node);
-        let line = &node.line_cache[0];
-        let x0 = get_caret_x(&flat, &node.inline_runs, line, line.text_start + idx);
-        let x1 = get_caret_x(&flat, &node.inline_runs, line, line.text_start + idx + 1);
+        let line = &node.layout.line_cache[0];
+        let x0 = get_caret_x(&flat, &node.layout.inline_runs, line, line.text_start + idx);
+        let x1 = get_caret_x(&flat, &node.layout.inline_runs, line, line.text_start + idx + 1);
         x1 - x0
     };
     let w_l = width_of(&doc_l, 1);
@@ -169,9 +169,9 @@ fn offset_from_x_at_line_start_returns_start() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     // Clicking before any text should return the start offset
-    let off = get_offset_from_x(&flat, &node.inline_runs, line, line.x - 5.0);
+    let off = get_offset_from_x(&flat, &node.layout.inline_runs, line, line.x - 5.0);
     assert_eq!(off, line.text_start,
         "click before line start should return text_start");
 }
@@ -183,22 +183,22 @@ fn offset_from_x_midpoint_selects_correct_char() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello world</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     if line.char_x.is_empty() { return; }
 
     let text_slice = &flat[line.text_start..line.text_start + line.text_length];
     let mut byte_off = line.text_start;
     for (_i, ch) in text_slice.char_indices() {
-        let x0 = get_caret_x(&flat, &node.inline_runs, line, byte_off);
+        let x0 = get_caret_x(&flat, &node.layout.inline_runs, line, byte_off);
         let next = byte_off + ch.len_utf8();
-        let x1 = get_caret_x(&flat, &node.inline_runs, line, next);
+        let x1 = get_caret_x(&flat, &node.layout.inline_runs, line, next);
         if (x1 - x0).abs() < 0.01 {
             byte_off = next;
             continue; // zero-width char, skip
         }
         // Click at midpoint of this character
         let mid_x = (x0 + x1) / 2.0 + 0.1; // slightly past midpoint → should give next boundary
-        let recovered = get_offset_from_x(&flat, &node.inline_runs, line, mid_x);
+        let recovered = get_offset_from_x(&flat, &node.layout.inline_runs, line, mid_x);
         assert!(recovered == byte_off || recovered == next,
             "midpoint click in char at offset {} (width {:.1}): recovered={} expected {} or {}",
             byte_off, x1 - x0, recovered, byte_off, next);
@@ -215,7 +215,7 @@ fn monospace_chars_equal_width() {
     // get_caret_x, which uses the width approximation (not font-exact).
     let doc = load_with_fonts(r#"<p contenteditable="true"><code>im</code></p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     if line.char_x.len() < 3 { return; } // skip if no font system
     let w_i = line.char_x[1] - line.char_x[0];
     let w_m = line.char_x[2] - line.char_x[1];
@@ -233,7 +233,7 @@ fn bold_text_wider_than_normal() {
     let line_width = |doc: &Document| {
         let node = find_editable_box(&doc.root).unwrap();
         let flat = collect_flat_text(node);
-        let line = &node.line_cache[0];
+        let line = &node.layout.line_cache[0];
         *line.char_x.last().unwrap_or(&0.0)
     };
     let w_normal = line_width(&doc_n);
@@ -251,14 +251,14 @@ fn caret_click_roundtrip_consistent() {
     let doc = load_with_fonts(r#"<p contenteditable="true">Hello world</p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
     let flat = collect_flat_text(node);
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
 
     let text_slice = &flat[line.text_start..line.text_start + line.text_length];
     let mut byte_off = line.text_start;
     for ch in text_slice.chars() {
-        let caret_x = get_caret_x(&flat, &node.inline_runs, line, byte_off);
+        let caret_x = get_caret_x(&flat, &node.layout.inline_runs, line, byte_off);
         // Clicking at the caret x should return this offset or the adjacent one.
-        let recovered = get_offset_from_x(&flat, &node.inline_runs, line, caret_x);
+        let recovered = get_offset_from_x(&flat, &node.layout.inline_runs, line, caret_x);
         let next = byte_off + ch.len_utf8();
         assert!(recovered == byte_off || recovered == next,
             "roundtrip failed at offset {}: caret_x={:.1}, recovered={}", byte_off, caret_x, recovered);
@@ -292,8 +292,8 @@ fn caret_click_roundtrip_flex_item() {
     for id in &["a", "b"] {
         let ptr = find_by_id(&doc.root, id).expect("flex item not found");
         let node = unsafe { &*ptr };
-        assert!(!node.line_cache.is_empty(), "flex item '{}' has no line_cache", id);
-        let line = &node.line_cache[0];
+        assert!(!node.layout.line_cache.is_empty(), "flex item '{}' has no line_cache", id);
+        let line = &node.layout.line_cache[0];
         // line.x must be non-negative (absolute document coordinate).
         assert!(line.x >= 0.0, "flex item '{}' line.x={} must be ≥ 0", id, line.x);
     }
@@ -302,15 +302,15 @@ fn caret_click_roundtrip_flex_item() {
     let ptr_b = find_by_id(&doc.root, "b").expect("flex item b");
     let node_b = unsafe { &*ptr_b };
     let flat = collect_flat_text(node_b);
-    let line = &node_b.line_cache[0];
+    let line = &node_b.layout.line_cache[0];
     let mid_x = line.x + line.width / 2.0;
-    let off = get_offset_from_x(&flat, &node_b.inline_runs, line, mid_x);
+    let off = get_offset_from_x(&flat, &node_b.layout.inline_runs, line, mid_x);
     // Offset must be within the line's text range.
     assert!(off >= line.text_start && off <= line.text_start + line.text_length,
         "offset {} out of range [{}, {}] for mid-click in flex item b",
         off, line.text_start, line.text_start + line.text_length);
     // Caret x for this offset must be <= mid_x + one char width.
-    let caret_x = get_caret_x(&flat, &node_b.inline_runs, line, off);
+    let caret_x = get_caret_x(&flat, &node_b.layout.inline_runs, line, off);
     assert!(caret_x <= mid_x + 20.0,
         "caret_x={:.1} is far past mid_x={:.1}", caret_x, mid_x);
 }
@@ -323,9 +323,9 @@ fn empty_paragraph_has_line_cache() {
     // caret can be positioned inside it (e.g. after pressing Enter).
     let doc = load_with_fonts(r#"<p contenteditable="true"></p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    assert!(!node.line_cache.is_empty(),
+    assert!(!node.layout.line_cache.is_empty(),
         "empty <p> must have a placeholder line for caret positioning");
-    let line = &node.line_cache[0];
+    let line = &node.layout.line_cache[0];
     assert!(line.height > 0.0, "placeholder line must have positive height");
 }
 
@@ -333,7 +333,7 @@ fn empty_paragraph_has_line_cache() {
 fn empty_paragraph_has_nonzero_height() {
     let doc = load_with_fonts(r#"<p contenteditable="true"></p>"#);
     let node = find_editable_box(&doc.root).expect("editable box");
-    assert!(node.border_rect.h > 0.0,
+    assert!(node.layout.border_rect.h > 0.0,
         "empty <p> must have non-zero height so it's visible and clickable");
 }
 
@@ -348,7 +348,7 @@ fn hr_unaffected_by_empty_block_fix() {
         None
     }
     let hr = find_hr(&doc.root).expect("<hr> not found");
-    assert!(hr.line_cache.is_empty(), "<hr> must NOT have a placeholder line_cache");
+    assert!(hr.layout.line_cache.is_empty(), "<hr> must NOT have a placeholder line_cache");
 }
 
 // ─── Enter key: caret moves to new line ──────────────────────────────────────
@@ -371,8 +371,8 @@ fn enter_creates_new_line_scenario(
     // Locate the editable box and find the click point (center of line 0).
     let (click_x, click_y, orig_line_y) = {
         let node = unsafe { &*find_edit_box(&doc.root).expect("editable box not found") };
-        assert!(!node.line_cache.is_empty(), "editable box has no lines after layout");
-        let line = &node.line_cache[0];
+        assert!(!node.layout.line_cache.is_empty(), "editable box has no lines after layout");
+        let line = &node.layout.line_cache[0];
         // Click in the middle of the text horizontally, vertically centered on line.
         let cx = line.x + line.width / 2.0;
         let cy = line.y + line.height / 2.0;
@@ -392,7 +392,7 @@ fn enter_creates_new_line_scenario(
     // The caret box must still be set and have lines.
     let caret_id = doc.editor.caret_box.expect("caret_box lost after Enter");
     let caret_node = doc.get_box_by_id(caret_id).expect("caret box not found in tree");
-    assert!(!caret_node.line_cache.is_empty(),
+    assert!(!caret_node.layout.line_cache.is_empty(),
         "caret box '{}' has no lines after Enter + relayout", caret_node.tag);
 
     // Type a character so we can see where it lands.
@@ -403,17 +403,17 @@ fn enter_creates_new_line_scenario(
     let caret_local = doc.editor.caret_local;
     let caret_id2 = doc.editor.caret_box.expect("caret_box lost after insert");
     let caret_node = doc.get_box_by_id(caret_id2).expect("caret box not found in tree");
-    assert!(!caret_node.line_cache.is_empty(),
+    assert!(!caret_node.layout.line_cache.is_empty(),
         "caret box has no lines after inserting 'X'");
 
     // Find the line that contains the caret (last line whose text_start ≤ caret_local).
     // For <p>-split: caret is in the new paragraph at line_cache[0].
     // For <br> in <td>: caret is after the <br>, so on the second line.
-    let inserted_line_y = caret_node.line_cache.iter()
+    let inserted_line_y = caret_node.layout.line_cache.iter()
         .filter(|l| l.text_start <= caret_local)
         .last()
         .map(|l| l.y)
-        .unwrap_or(caret_node.line_cache[0].y);
+        .unwrap_or(caret_node.layout.line_cache[0].y);
     (orig_line_y, inserted_line_y)
 }
 
@@ -482,7 +482,7 @@ fn enter_in_div_typed_char_goes_to_new_line() {
     // Locate the editable div and click in the middle of its text.
     let (click_x, click_y, _) = {
         let node = find_editable_box(&doc.root).expect("editable div");
-        let line = &node.line_cache[0];
+        let line = &node.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0, line.y)
     };
 
@@ -540,7 +540,7 @@ fn enter_in_cell_caret_renders_on_new_line() {
     let td_ptr = find_td(&doc.root).expect("<td>");
     let (click_x, click_y, line0_y) = {
         let td = unsafe { &*td_ptr };
-        let line = &td.line_cache[0];
+        let line = &td.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0, line.y)
     };
 
@@ -550,13 +550,13 @@ fn enter_in_cell_caret_renders_on_new_line() {
 
     // After relayout the <td> must have two lines.
     let td = unsafe { &*td_ptr };
-    assert!(td.line_cache.len() >= 2,
-        "<td> must have ≥ 2 lines after Enter (has {})", td.line_cache.len());
+    assert!(td.layout.line_cache.len() >= 2,
+        "<td> must have ≥ 2 lines after Enter (has {})", td.layout.line_cache.len());
 
     let caret_local = doc.editor.caret_local;
     // The renderer prefers the line where caret_local == line.text_start.
     // That must be line 1 (the second line), not line 0.
-    let preferred_line = td.line_cache.iter()
+    let preferred_line = td.layout.line_cache.iter()
         .filter(|l| l.text_start <= caret_local && caret_local <= l.text_start + l.text_length)
         .max_by_key(|l| if l.text_start == caret_local { 1usize } else { 0 })
         .expect("no matching line for caret_local");

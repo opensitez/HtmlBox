@@ -383,10 +383,10 @@ pub fn layout_table(
     );
     if let Some(ci) = caption_idx {
         engine.layout_box(&mut node.children[ci], table_width, content_x, content_y, font_px, root_font_px);
-        caption_h = node.children[ci].margin_rect.h;
+        caption_h = node.children[ci].layout.margin_rect.h;
         // Position at top for now; bottom case handled later
-        let (dx, dy) = (content_x - node.children[ci].margin_rect.x,
-                        content_y - node.children[ci].margin_rect.y);
+        let (dx, dy) = (content_x - node.children[ci].layout.margin_rect.x,
+                        content_y - node.children[ci].layout.margin_rect.y);
         shift_rects(&mut node.children[ci], dx, dy);
     }
 
@@ -430,9 +430,9 @@ pub fn layout_table(
                 let (content_h, pad_top, pad_bottom, border_top, border_bottom) = {
                     let row = row_ref(node, &row_refs[row_idx]);
                     let cell = &row.children[ci];
-                    (cell.content_rect.h,
-                     cell.resolved_pad_top, cell.resolved_pad_bottom,
-                     cell.resolved_border_top, cell.resolved_border_bottom)
+                    (cell.layout.content_rect.h,
+                     cell.layout.resolved_pad_top, cell.layout.resolved_pad_bottom,
+                     cell.layout.resolved_border_top, cell.layout.resolved_border_bottom)
                 };
                 let total_h = content_h + pad_top + pad_bottom + border_top + border_bottom;
 
@@ -455,9 +455,9 @@ pub fn layout_table(
                 let (content_h, pad_top, pad_bottom, border_top, border_bottom) = {
                     let row = row_ref(node, &row_refs[row_idx]);
                     let cell = &row.children[ci];
-                    (cell.content_rect.h,
-                     cell.resolved_pad_top, cell.resolved_pad_bottom,
-                     cell.resolved_border_top, cell.resolved_border_bottom)
+                    (cell.layout.content_rect.h,
+                     cell.layout.resolved_pad_top, cell.layout.resolved_pad_bottom,
+                     cell.layout.resolved_border_top, cell.layout.resolved_border_bottom)
                 };
                 let total_h = content_h + pad_top + pad_bottom + border_top + border_bottom;
                 let rs = slot.rowspan;
@@ -501,32 +501,32 @@ pub fn layout_table(
                 let cell = &row.children[ci];
 
                 // Compute natural content height
-                let cell_content_y = cell.content_rect.y;
+                let cell_content_y = cell.layout.content_rect.y;
                 let nat = {
                     let mut nh = 0.0f32;
-                    if let Some(last) = cell.line_cache.last() {
+                    if let Some(last) = cell.layout.line_cache.last() {
                         let bottom = last.y - cell_content_y + last.height;
                         if bottom > nh { nh = bottom; }
                     }
                     for ch in &cell.children {
                         if matches!(ch.style.display, Display::None) { continue; }
-                        let cb = ch.margin_rect.y + ch.margin_rect.h - cell_content_y;
+                        let cb = ch.layout.margin_rect.y + ch.layout.margin_rect.h - cell_content_y;
                         if cb > nh { nh = cb; }
                     }
-                    if nh <= 0.0 { nh = cell.content_rect.h; }
+                    if nh <= 0.0 { nh = cell.layout.content_rect.h; }
                     nh
                 };
 
-                let is_empty = cell.inline_runs.is_empty() && cell.children.is_empty();
+                let is_empty = cell.layout.inline_runs.is_empty() && cell.children.is_empty();
 
                 (nat,
                  cell.style.vertical_align,
                  cell.style.empty_cells_hide && is_empty,
                  cell.style.position,
-                 cell.border_rect.x,
-                 cell.border_rect.y,
-                 cell.resolved_pad_top,  cell.resolved_pad_bottom,
-                 cell.resolved_border_top, cell.resolved_border_bottom)
+                 cell.layout.border_rect.x,
+                 cell.layout.border_rect.y,
+                 cell.layout.resolved_pad_top,  cell.layout.resolved_pad_bottom,
+                 cell.layout.resolved_border_top, cell.layout.resolved_border_bottom)
             };
 
             // Vertical alignment offset
@@ -551,21 +551,21 @@ pub fn layout_table(
                 }
 
                 // Expand border/margin/padding rects to the allocated cell size
-                cell.border_rect.w = cell_w;
-                cell.border_rect.h = cell_h;
-                cell.margin_rect = cell.border_rect;
-                cell.padding_rect.w = cell_w - cell.resolved_border_left - cell.resolved_border_right;
-                cell.padding_rect.h = cell_h - cell.resolved_border_top - cell.resolved_border_bottom;
+                cell.layout.border_rect.w = cell_w;
+                cell.layout.border_rect.h = cell_h;
+                cell.layout.margin_rect = cell.layout.border_rect;
+                cell.layout.padding_rect.w = cell_w - cell.layout.resolved_border_left - cell.layout.resolved_border_right;
+                cell.layout.padding_rect.h = cell_h - cell.layout.resolved_border_top - cell.layout.resolved_border_bottom;
 
                 // Apply vertical alignment offset to content and children.
                 // Use absolute positioning from the padding top to avoid
                 // accumulating offsets across multiple layout passes.
                 if v_offset > 0.0 {
-                    let target_y = cell.padding_rect.y + pad_top + v_offset;
-                    let dy_align = target_y - cell.content_rect.y;
+                    let target_y = cell.layout.padding_rect.y + pad_top + v_offset;
+                    let dy_align = target_y - cell.layout.content_rect.y;
                     if dy_align.abs() > 0.01 {
-                        cell.content_rect.y = target_y;
-                        for ln in &mut cell.line_cache { ln.y += dy_align; }
+                        cell.layout.content_rect.y = target_y;
+                        for ln in &mut cell.layout.line_cache { ln.y += dy_align; }
                         shift_children_y(&mut cell.children, dy_align);
                     }
                 }
@@ -589,10 +589,10 @@ pub fn layout_table(
         // Position row box
         {
             let row = row_ref_mut(node, &row_refs[r]);
-            row.content_rect = Rect::new(content_x, y_cursor, table_width, row_h);
-            row.padding_rect = row.content_rect;
-            row.border_rect  = row.content_rect;
-            row.margin_rect  = row.content_rect;
+            row.layout.content_rect = Rect::new(content_x, y_cursor, table_width, row_h);
+            row.layout.padding_rect = row.layout.content_rect;
+            row.layout.border_rect  = row.layout.content_rect;
+            row.layout.margin_rect  = row.layout.content_rect;
             if matches!(row.style.position, Position::Relative | Position::Sticky) {
                 apply_relative_offset(row, row.style.font_size_px(font_px, root_font_px),
                                       table_width, root_font_px);
@@ -611,16 +611,16 @@ pub fn layout_table(
             let mut max_bottom = 0.0f32;
             for gc in &child.children {
                 if matches!(gc.style.display, Display::TableRow) {
-                    if gc.content_rect.y < min_y { min_y = gc.content_rect.y; }
-                    let b = gc.content_rect.y + gc.content_rect.h;
+                    if gc.layout.content_rect.y < min_y { min_y = gc.layout.content_rect.y; }
+                    let b = gc.layout.content_rect.y + gc.layout.content_rect.h;
                     if b > max_bottom { max_bottom = b; }
                 }
             }
             if min_y == f32::MAX { min_y = 0.0; }
-            child.content_rect = Rect::new(content_x, min_y, table_width, max_bottom - min_y);
-            child.padding_rect = child.content_rect;
-            child.border_rect  = child.content_rect;
-            child.margin_rect  = child.content_rect;
+            child.layout.content_rect = Rect::new(content_x, min_y, table_width, max_bottom - min_y);
+            child.layout.padding_rect = child.layout.content_rect;
+            child.layout.border_rect  = child.layout.content_rect;
+            child.layout.margin_rect  = child.layout.content_rect;
         }
     }
 
@@ -641,8 +641,8 @@ pub fn layout_table(
     // ── Position caption ──────────────────────────────────────────────────────
     if caption_at_bottom {
         if let Some(ci) = caption_idx {
-            let (dx, dy) = (content_x - node.children[ci].margin_rect.x,
-                            y_cursor - node.children[ci].margin_rect.y);
+            let (dx, dy) = (content_x - node.children[ci].layout.margin_rect.x,
+                            y_cursor - node.children[ci].layout.margin_rect.y);
             shift_rects(&mut node.children[ci], dx, dy);
             y_cursor += caption_h;
         }
@@ -658,7 +658,7 @@ pub fn layout_table(
 
     // Absolute children
     let containing_rect = if !matches!(node.style.position, Position::Static) {
-        node.padding_rect
+        node.layout.padding_rect
     } else {
         engine.pos_cb.get()
     };
@@ -667,9 +667,9 @@ pub fn layout_table(
     }
 
     // Tables establish BFC: no margin collapsing through them
-    node.collapsed_margin_top    = 0.0;
-    node.collapsed_margin_bottom = 0.0;
-    node.layout_dirty = false;
+    node.layout.collapsed_margin_top    = 0.0;
+    node.layout.collapsed_margin_bottom = 0.0;
+    node.layout.layout_dirty = false;
 
     result
 }
@@ -845,7 +845,7 @@ fn shift_children_y(children: &mut Vec<HtmlBox>, dy: f32) {
 }
 
 fn clear_dirty(node: &mut HtmlBox) {
-    node.layout_dirty = false;
+    node.layout.layout_dirty = false;
     for child in &mut node.children {
         clear_dirty(child);
     }
@@ -858,24 +858,24 @@ fn finish_table(
     content_w: f32, content_h: f32,
 ) -> f32 {
     let ch = rbox.content_height.unwrap_or(content_h).max(0.0);
-    node.content_rect = Rect::new(content_x, content_y, content_w, ch);
-    node.padding_rect = Rect::new(
+    node.layout.content_rect = Rect::new(content_x, content_y, content_w, ch);
+    node.layout.padding_rect = Rect::new(
         content_x - rbox.padding_left, content_y - rbox.padding_top,
         content_w + rbox.padding_left + rbox.padding_right,
         ch + rbox.padding_top + rbox.padding_bottom,
     );
-    node.border_rect = Rect::new(
-        node.padding_rect.x - rbox.border_left,
-        node.padding_rect.y - rbox.border_top,
-        node.padding_rect.w + rbox.border_left + rbox.border_right,
-        node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
+    node.layout.border_rect = Rect::new(
+        node.layout.padding_rect.x - rbox.border_left,
+        node.layout.padding_rect.y - rbox.border_top,
+        node.layout.padding_rect.w + rbox.border_left + rbox.border_right,
+        node.layout.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
-    node.margin_rect = Rect::new(
-        node.border_rect.x - rbox.margin_left,
-        node.border_rect.y - rbox.margin_top,
-        node.border_rect.w + rbox.margin_left + rbox.margin_right,
-        node.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
+    node.layout.margin_rect = Rect::new(
+        node.layout.border_rect.x - rbox.margin_left,
+        node.layout.border_rect.y - rbox.margin_top,
+        node.layout.border_rect.w + rbox.margin_left + rbox.margin_right,
+        node.layout.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
     );
-    node.baseline = content_y + ch;
-    node.margin_rect.h
+    node.layout.baseline = content_y + ch;
+    node.layout.margin_rect.h
 }

@@ -109,7 +109,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
 
     let sx = ctx.scroll_x;
     let sy = ctx.scroll_y;
-    let br = node.border_rect;
+    let br = node.layout.border_rect;
 
     // ── Viewport culling ─────────────────────────────────────────────────────
     if matches!(node.style.position, Position::Static | Position::Relative)
@@ -127,7 +127,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
         }
     }
 
-    let pr = node.padding_rect;
+    let pr = node.layout.padding_rect;
     let px = pr.x - sx;
     let py = pr.y - sy;
     let pw = pr.w;
@@ -489,10 +489,10 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // render_box calls draw_borders_masked with eff_sx, eff_sy
     {
         let bw = [
-            node.resolved_border_top,
-            node.resolved_border_right,
-            node.resolved_border_bottom,
-            node.resolved_border_left,
+            node.layout.resolved_border_top,
+            node.layout.resolved_border_right,
+            node.layout.resolved_border_bottom,
+            node.layout.resolved_border_left,
         ];
         if bw.iter().any(|&w| w > 0.0) {
             let bx = br.x - eff_sx;
@@ -563,8 +563,8 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     };
 
     // Per-element scroll: children are shifted by the element's scroll
-    let child_sx = eff_sx + node.scroll_left;
-    let child_sy = eff_sy + node.scroll_top;
+    let child_sx = eff_sx + node.layout.scroll_left;
+    let child_sy = eff_sy + node.layout.scroll_top;
 
     let child_ctx = BuildContext {
         scroll_x: child_sx,
@@ -589,8 +589,8 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── (j) ::before pseudo-element (inline text content) ────────────────────
-    if !node.style.before_content.is_empty() && !node.line_cache.is_empty() {
-        let first = &node.line_cache[0];
+    if !node.style.before_content.is_empty() && !node.layout.line_cache.is_empty() {
+        let first = &node.layout.line_cache[0];
         let tx = first.x - eff_sx;
         let ty = first.y - eff_sy;
         let ps = node
@@ -622,15 +622,15 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── (k) Inline text content (line_cache) ─────────────────────────────────
-    if !node.line_cache.is_empty() {
+    if !node.layout.line_cache.is_empty() {
         build_inline_text(
             node, eff_style, list, child_sx, child_sy, is_hovered, is_active,
         );
     }
 
     // ── (l) ::after pseudo-element ───────────────────────────────────────────
-    if !node.style.after_content.is_empty() && !node.line_cache.is_empty() {
-        let last = &node.line_cache[node.line_cache.len() - 1];
+    if !node.style.after_content.is_empty() && !node.layout.line_cache.is_empty() {
+        let last = &node.layout.line_cache[node.layout.line_cache.len() - 1];
         let tx = last.x - eff_sx + last.width;
         let ty = last.y - eff_sy;
         let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
@@ -658,13 +658,13 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── (m) List markers ─────────────────────────────────────────────────────
-    if node.style.display == Display::ListItem && !node.line_cache.is_empty() {
+    if node.style.display == Display::ListItem && !node.layout.line_cache.is_empty() {
         build_list_marker(node, list, eff_sx, eff_sy);
     }
 
     // ── (n) HR ───────────────────────────────────────────────────────────────
     if node.tag == "hr" {
-        let cr = node.border_rect;
+        let cr = node.layout.border_rect;
         let y_hr = cr.y + cr.h / 2.0 - eff_sy;
         list.push(PaintCmd::HorizontalRule {
             x1: cr.x - eff_sx,
@@ -680,7 +680,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     if node.tag == "img" || node.tag == "svg" {
         if let Some(ref data) = node.image_data {
             if node.image_width > 0 && node.image_height > 0 {
-                let cr = node.content_rect;
+                let cr = node.layout.content_rect;
                 list.push(PaintCmd::Image {
                     rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
                     data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
@@ -689,7 +689,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
         } else if node.tag == "svg" || (node.tag == "img" && node.svg_markup.is_some()) {
             // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
             if let Some(ref markup) = node.svg_markup {
-                let cr = node.content_rect;
+                let cr = node.layout.content_rect;
                 if cr.w > 0.0 && cr.h > 0.0 {
                     let raster_w = cr.w.round() as u32;
                     let raster_h = cr.h.round() as u32;
@@ -817,13 +817,13 @@ fn build_inline_text(
         node.style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto
     );
     if overflow_clips {
-        let ti = node.style.text_indent.resolve(fallback_font_px, node.content_rect.w, 16.0);
-        if ti < -(node.content_rect.w + 100.0) {
+        let ti = node.style.text_indent.resolve(fallback_font_px, node.layout.content_rect.w, 16.0);
+        if ti < -(node.layout.content_rect.w + 100.0) {
             return;
         }
     }
 
-    for line in &node.line_cache {
+    for line in &node.layout.line_cache {
         let line_start = floor_cb(&flat, line.text_start.min(flat.len()));
         let line_end =
             floor_cb(&flat, (line.text_start + line.text_length).min(flat.len()));
@@ -847,14 +847,14 @@ fn build_inline_text(
         }
         let mut chunks: Vec<Chunk> = Vec::new();
 
-        if !line.visual_segments.is_empty() && !node.inline_runs.is_empty() {
+        if !line.visual_segments.is_empty() && !node.layout.inline_runs.is_empty() {
             // BiDi: use visual segment order
             for vs in &line.visual_segments {
                 let seg_s = vs.logical_start;
                 let seg_e = vs.logical_start + vs.length;
                 let is_rtl = (vs.level & 1) != 0;
                 let mut seg_chunks: Vec<Chunk> = Vec::new();
-                for (ri, run) in node.inline_runs.iter().enumerate() {
+                for (ri, run) in node.layout.inline_runs.iter().enumerate() {
                     let rs = run.text_offset;
                     let re = rs + run.length;
                     let cs = seg_s.max(rs);
@@ -885,7 +885,7 @@ fn build_inline_text(
                 }
                 chunks.extend(seg_chunks);
             }
-        } else if node.inline_runs.is_empty() {
+        } else if node.layout.inline_runs.is_empty() {
             chunks.push(Chunk {
                 s: line_start,
                 e: line_end,
@@ -893,7 +893,7 @@ fn build_inline_text(
                 rtl: false,
             });
         } else {
-            for (ri, run) in node.inline_runs.iter().enumerate() {
+            for (ri, run) in node.layout.inline_runs.iter().enumerate() {
                 let cs = line_start.max(run.text_offset);
                 let ce = line_end.min(run.text_offset + run.length);
                 if cs < ce {
@@ -918,7 +918,7 @@ fn build_inline_text(
 
             let (run_style, run_font_px, run_letter_spc, _run_word_spc, _run_extra) =
                 if let Some(ri) = chunk.run_idx {
-                    let run = &node.inline_runs[ri];
+                    let run = &node.layout.inline_runs[ri];
                     let fp = run.style.font_size_px(16.0, 16.0).max(1.0);
                     let ls = run.style.letter_spacing.resolve(fp, 0.0, 16.0);
                     let ws = run.style.word_spacing.resolve(fp, 0.0, 16.0);
@@ -1116,7 +1116,7 @@ fn build_list_marker(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) {
     let font_px = ms
         .map(|s| s.font_size_px(16.0, 16.0))
         .unwrap_or_else(|| node.style.font_size_px(16.0, 16.0));
-    let first_line = match node.line_cache.first() {
+    let first_line = match node.layout.line_cache.first() {
         Some(l) => l,
         None => return,
     };
@@ -1292,7 +1292,7 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
         return;
     }
 
-    let cr = node.content_rect;
+    let cr = node.layout.content_rect;
     let font_px = node.style.font_size_px(16.0, 16.0).max(1.0);
     let value = if tag == "select" {
         // For select, get the text of the selected option (or first option)

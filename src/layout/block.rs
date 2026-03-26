@@ -39,7 +39,7 @@ fn can_collapse_top_with_first_child(node: &HtmlBox, rbox: &ResolvedBox) -> bool
     if establishes_bfc(&node.style) { return false; }
     if rbox.border_top > 0.0 { return false; }
     if rbox.padding_top > 0.0 { return false; }
-    if !node.line_cache.is_empty() { return false; }
+    if !node.layout.line_cache.is_empty() { return false; }
     true
 }
 
@@ -51,7 +51,7 @@ fn can_collapse_bottom_with_last_child(node: &HtmlBox, rbox: &ResolvedBox) -> bo
     if rbox.padding_bottom > 0.0 { return false; }
     if rbox.content_height.is_some() { return false; }
     if !node.style.min_height.is_auto() { return false; }
-    if !node.line_cache.is_empty() { return false; }
+    if !node.layout.line_cache.is_empty() { return false; }
     true
 }
 
@@ -60,7 +60,7 @@ fn can_collapse_bottom_with_last_child(node: &HtmlBox, rbox: &ResolvedBox) -> bo
 fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
     if rbox.border_top != 0.0 || rbox.border_bottom != 0.0 { return false; }
     if rbox.padding_top != 0.0 || rbox.padding_bottom != 0.0 { return false; }
-    if !node.line_cache.is_empty() { return false; }
+    if !node.layout.line_cache.is_empty() { return false; }
     if rbox.content_height.is_some() { return false; }
     if !node.style.min_height.is_auto() { return false; }
     // Has in-flow block children?
@@ -78,10 +78,10 @@ fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
 /// Compute the intrinsic (max-content) width of a box that was laid out at a
 /// larger containing width.  Mirrors C++ ComputeIntrinsicWidth.
 pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
-    let cached = node.cached_intrinsic_w.get();
+    let cached = node.layout.cached_intrinsic_w.get();
     if !cached.is_nan() { return cached; }
     let result = compute_intrinsic_width_inner(node);
-    node.cached_intrinsic_w.set(result);
+    node.layout.cached_intrinsic_w.set(result);
     result
 }
 
@@ -105,21 +105,21 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
             if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
             if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
             let child_w = compute_intrinsic_width(ch)
-                + ch.resolved_pad_left + ch.resolved_pad_right
-                + ch.resolved_border_left + ch.resolved_border_right
-                + ch.resolved_margin_left + ch.resolved_margin_right;
+                + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
+                + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
             total += child_w;
         }
         return if total > 0.0 { total + 1.0 } else { total };
     }
 
-    let origin = node.content_rect.x;
+    let origin = node.layout.content_rect.x;
     let mut w = 0.0f32;
     // Inline line widths — use line.width (raw content width) directly.
     // line.x includes the text-align offset (e.g. centred text shifts line.x right by
     // (avail_w − text_w) / 2), so line.x + line.width − origin would over-report the
     // intrinsic width for centred/right-aligned content.
-    for line in &node.line_cache {
+    for line in &node.layout.line_cache {
         if line.width > w { w = line.width; }
     }
     // In a flex/grid formatting context, children are positioned by flex/grid layout
@@ -134,23 +134,23 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
         // Inline-display children: measure text nodes and inline elements that were
         // laid out as standalone flex/grid items. Regular inline content is in line_cache.
         if !is_flex_or_grid && matches!(ch.style.display, Display::Inline) {
-            if ch.is_text_node() && !ch.line_cache.is_empty() {
+            if ch.is_text_node() && !ch.layout.line_cache.is_empty() {
                 // Text node flex child: its intrinsic width is its own line widths
                 let cw = compute_intrinsic_width(ch);
                 let total = cw
-                    + ch.resolved_pad_left + ch.resolved_pad_right
-                    + ch.resolved_border_left + ch.resolved_border_right
-                    + ch.resolved_margin_left + ch.resolved_margin_right;
+                    + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
+                    + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                    + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
                 if total > w { w = total; }
-            } else if !ch.is_text_node() && node.line_cache.is_empty() {
+            } else if !ch.is_text_node() && node.layout.line_cache.is_empty() {
                 // In a block context with mixed block/inline children, line_cache is
                 // empty so inline children aren't captured there.  Recurse to get
                 // their intrinsic width (e.g. <a> wrapping an <img width=200>).
                 let cw = compute_intrinsic_width(ch);
                 let total = cw
-                    + ch.resolved_pad_left + ch.resolved_pad_right
-                    + ch.resolved_border_left + ch.resolved_border_right
-                    + ch.resolved_margin_left + ch.resolved_margin_right;
+                    + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
+                    + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                    + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
                 if total > w { w = total; }
             }
             // When line_cache IS populated, non-text inline elements are already
@@ -162,7 +162,7 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
         // Floated children are positioned by the float algorithm (not stacked
         // vertically), so use their laid-out right edge for intrinsic width.
         if !matches!(ch.style.float, Float::None) {
-            let right = (ch.margin_rect.x - origin) + ch.margin_rect.w;
+            let right = (ch.layout.margin_rect.x - origin) + ch.layout.margin_rect.w;
             if right > w { w = right; }
             continue;
         }
@@ -177,9 +177,9 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
         if is_fluid_width_container {
             let child_content = compute_intrinsic_width(ch);
             let total = child_content
-                + ch.resolved_pad_left + ch.resolved_pad_right
-                + ch.resolved_border_left + ch.resolved_border_right
-                + ch.resolved_margin_left + ch.resolved_margin_right;
+                + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
+                + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
             if total > w { w = total; }
         } else {
             // Skip whitespace-only text nodes in flex/grid containers — they are not
@@ -194,7 +194,7 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
             // captured as Atomic items in the parent's line_cache widths.  Their
             // margin_rect.x includes text-align centering offsets which would inflate
             // the intrinsic width.  Skip them when line_cache is non-empty.
-            if !node.line_cache.is_empty()
+            if !node.layout.line_cache.is_empty()
                 && matches!(ch.style.display,
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
             {
@@ -206,13 +206,13 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
             let has_auto_h_margin = ch.style.margin_left.is_auto() || ch.style.margin_right.is_auto();
             let rw = if has_auto_h_margin {
                 // Content + padding + border + any non-auto margins.
-                ch.content_rect.w
-                    + ch.resolved_pad_left   + ch.resolved_pad_right
-                    + ch.resolved_border_left + ch.resolved_border_right
-                    + (if ch.style.margin_left.is_auto()  { 0.0 } else { ch.resolved_margin_left  })
-                    + (if ch.style.margin_right.is_auto() { 0.0 } else { ch.resolved_margin_right })
+                ch.layout.content_rect.w
+                    + ch.layout.resolved_pad_left   + ch.layout.resolved_pad_right
+                    + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                    + (if ch.style.margin_left.is_auto()  { 0.0 } else { ch.layout.resolved_margin_left  })
+                    + (if ch.style.margin_right.is_auto() { 0.0 } else { ch.layout.resolved_margin_right })
             } else {
-                (ch.margin_rect.x - origin) + ch.margin_rect.w
+                (ch.layout.margin_rect.x - origin) + ch.layout.margin_rect.w
             };
             if rw > w { w = rw; }
         }
@@ -258,44 +258,44 @@ pub fn build_box_rects(
     content_w: f32, content_h: f32,
     margin_left: f32, margin_right: f32,
 ) {
-    node.content_rect = Rect::new(content_x, content_y, content_w, content_h);
-    node.padding_rect = Rect::new(
+    node.layout.content_rect = Rect::new(content_x, content_y, content_w, content_h);
+    node.layout.padding_rect = Rect::new(
         content_x - rbox.padding_left, content_y - rbox.padding_top,
         content_w + rbox.padding_left + rbox.padding_right,
         content_h + rbox.padding_top  + rbox.padding_bottom,
     );
-    node.border_rect = Rect::new(
-        node.padding_rect.x - rbox.border_left,
-        node.padding_rect.y - rbox.border_top,
-        node.padding_rect.w + rbox.border_left + rbox.border_right,
-        node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
+    node.layout.border_rect = Rect::new(
+        node.layout.padding_rect.x - rbox.border_left,
+        node.layout.padding_rect.y - rbox.border_top,
+        node.layout.padding_rect.w + rbox.border_left + rbox.border_right,
+        node.layout.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
     // For the margin-rect width, negative margins can collapse it to zero or less.
     // Clamp to at least the border-box width so floats with negative margins
     // (e.g. float:left; width:320px; margin-left:-320px) occupy their visual width.
-    let mr_w = (node.border_rect.w + margin_left + margin_right).max(node.border_rect.w);
-    node.margin_rect = Rect::new(
-        node.border_rect.x - margin_left,
-        node.border_rect.y - rbox.margin_top,
+    let mr_w = (node.layout.border_rect.w + margin_left + margin_right).max(node.layout.border_rect.w);
+    node.layout.margin_rect = Rect::new(
+        node.layout.border_rect.x - margin_left,
+        node.layout.border_rect.y - rbox.margin_top,
         mr_w,
-        node.border_rect.h + rbox.margin_top + rbox.margin_bottom,
+        node.layout.border_rect.h + rbox.margin_top + rbox.margin_bottom,
     );
-    node.baseline = content_y + content_h;
+    node.layout.baseline = content_y + content_h;
 
     // Cache resolved values
-    node.resolved_margin_top    = rbox.margin_top;
-    node.resolved_margin_right  = rbox.margin_right;
-    node.resolved_margin_bottom = rbox.margin_bottom;
-    node.resolved_margin_left   = margin_left;
-    node.resolved_border_top    = rbox.border_top;
-    node.resolved_border_right  = rbox.border_right;
-    node.resolved_border_bottom = rbox.border_bottom;
-    node.resolved_border_left   = rbox.border_left;
-    node.resolved_pad_top       = rbox.padding_top;
-    node.resolved_pad_right     = rbox.padding_right;
-    node.resolved_pad_bottom    = rbox.padding_bottom;
-    node.resolved_pad_left      = rbox.padding_left;
-    node.resolved_content_width = content_w;
+    node.layout.resolved_margin_top    = rbox.margin_top;
+    node.layout.resolved_margin_right  = rbox.margin_right;
+    node.layout.resolved_margin_bottom = rbox.margin_bottom;
+    node.layout.resolved_margin_left   = margin_left;
+    node.layout.resolved_border_top    = rbox.border_top;
+    node.layout.resolved_border_right  = rbox.border_right;
+    node.layout.resolved_border_bottom = rbox.border_bottom;
+    node.layout.resolved_border_left   = rbox.border_left;
+    node.layout.resolved_pad_top       = rbox.padding_top;
+    node.layout.resolved_pad_right     = rbox.padding_right;
+    node.layout.resolved_pad_bottom    = rbox.padding_bottom;
+    node.layout.resolved_pad_left      = rbox.padding_left;
+    node.layout.resolved_content_width = content_w;
 }
 
 // ─── Block formatting context layout ─────────────────────────────────────────
@@ -438,7 +438,7 @@ pub fn layout_block_with_fc(
         build_box_rects(node, rbox, content_x, content_y, content_w, content_h, margin_left, margin_right);
         // Absolute/fixed children
         let containing_rect = if !matches!(node.style.position, Position::Static) {
-            node.padding_rect
+            node.layout.padding_rect
         } else {
             engine.pos_cb.get()
         };
@@ -446,9 +446,9 @@ pub fn layout_block_with_fc(
             let child = grid_child_mut(node, path);
             layout_positioned(engine, child, containing_rect, font_px, root_font_px);
         }
-        node.layout_dirty = false;
-        node.last_containing_width = containing_w;
-        return node.margin_rect.h;
+        node.layout.layout_dirty = false;
+        node.layout.last_containing_width = containing_w;
+        return node.layout.margin_rect.h;
     }
 
     // ─── Main block children loop ─────────────────────────────────────────────
@@ -484,7 +484,7 @@ pub fn layout_block_with_fc(
             abs_static_y.insert(eff_idx, sy);
             // Also store on the node itself for deeply nested abs elements whose
             // containing block is an ancestor further up the tree.
-            grid_child_mut(node, path).abs_static_y = Some(sy);
+            grid_child_mut(node, path).layout.abs_static_y = Some(sy);
             continue;
         }
 
@@ -520,9 +520,9 @@ pub fn layout_block_with_fc(
                 if intrinsic_w > 0.0 && intrinsic_w < child_content_w {
                     let irb = grid_child_ref(node, path);
                     let shrink_w = intrinsic_w
-                        + irb.resolved_pad_left + irb.resolved_pad_right
-                        + irb.resolved_border_left + irb.resolved_border_right
-                        + irb.resolved_margin_left + irb.resolved_margin_right;
+                        + irb.layout.resolved_pad_left + irb.layout.resolved_pad_right
+                        + irb.layout.resolved_border_left + irb.layout.resolved_border_right
+                        + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
                     engine.layout_box(
                         grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
                         font_px, root_font_px
@@ -530,15 +530,15 @@ pub fn layout_block_with_fc(
                 }
             }
             let ch = grid_child_ref(node, path);
-            let effective_w = ch.border_rect.w
-                + ch.resolved_margin_left + ch.resolved_margin_right;
+            let effective_w = ch.layout.border_rect.w
+                + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
             let float_w = effective_w.max(0.0);
-            let float_h = ch.margin_rect.h;
+            let float_h = ch.layout.margin_rect.h;
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
             let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, child_content_w, side);
             let ch = grid_child_ref(node, path);
-            let dx = content_x + placed.x - ch.margin_rect.x;
-            let dy = content_y + placed.y - ch.margin_rect.y;
+            let dx = content_x + placed.x - ch.layout.margin_rect.x;
+            let dy = content_y + placed.y - ch.layout.margin_rect.y;
             shift_rects(grid_child_mut(node, path), dx, dy);
 
             if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
@@ -552,16 +552,16 @@ pub fn layout_block_with_fc(
             let child = grid_child_ref(node, path);
             // Incremental layout: skip clean children whose containing width hasn't changed.
             // Just reposition them at the current child_y.
-            let can_skip = !child.layout_dirty
+            let can_skip = !child.layout.layout_dirty
                 && !child.has_dirty_descendant
-                && child.last_containing_width > 0.0
-                && (child.last_containing_width - child_content_w).abs() < 0.01
-                && child.margin_rect.h > 0.0;
+                && child.layout.last_containing_width > 0.0
+                && (child.layout.last_containing_width - child_content_w).abs() < 0.01
+                && child.layout.margin_rect.h > 0.0;
             if can_skip {
                 // Reposition only — keep cached geometry
                 let child = grid_child_mut(node, path);
-                let dx = content_x - child.margin_rect.x;
-                let dy = (content_y + child_y) - child.margin_rect.y;
+                let dx = content_x - child.layout.margin_rect.x;
+                let dy = (content_y + child_y) - child.layout.margin_rect.y;
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
                     crate::layout::shift_rects(child, dx, dy);
                 }
@@ -581,8 +581,8 @@ pub fn layout_block_with_fc(
             }
 
             let ch = grid_child_ref(node, path);
-            let child_top_margin    = ch.collapsed_margin_top;
-            let child_bottom_margin = ch.collapsed_margin_bottom;
+            let child_top_margin    = ch.layout.collapsed_margin_top;
+            let child_bottom_margin = ch.layout.collapsed_margin_bottom;
 
             if is_first_in_flow && can_collapse_top && !seen_float {
                 first_child_collapsed = true;
@@ -595,7 +595,7 @@ pub fn layout_block_with_fc(
             let _ = is_first_in_flow;
 
             let ch = grid_child_ref(node, path);
-            let child_h = ch.margin_rect.h;
+            let child_h = ch.layout.margin_rect.h;
             let mut left_edge = 0.0f32;
             let mut right_edge = child_content_w;
             let child_is_bfc = establishes_bfc(&ch.style);
@@ -604,32 +604,32 @@ pub fn layout_block_with_fc(
             }
 
             let ch = grid_child_ref(node, path);
-            let child_margin_left  = ch.resolved_margin_left;
-            let child_margin_right = ch.resolved_margin_right;
-            let child_border_top   = ch.resolved_border_top;
-            let child_pad_top      = ch.resolved_pad_top;
-            let child_content_h    = ch.content_rect.h;
+            let child_margin_left  = ch.layout.resolved_margin_left;
+            let child_margin_right = ch.layout.resolved_margin_right;
+            let child_border_top   = ch.layout.resolved_border_top;
+            let child_pad_top      = ch.layout.resolved_pad_top;
+            let child_content_h    = ch.layout.content_rect.h;
             let child_rbox_copy = ResolvedBox {
-                margin_top:    ch.resolved_margin_top,
+                margin_top:    ch.layout.resolved_margin_top,
                 margin_right:  child_margin_right,
-                margin_bottom: ch.resolved_margin_bottom,
+                margin_bottom: ch.layout.resolved_margin_bottom,
                 margin_left:   child_margin_left,
                 border_top:    child_border_top,
-                border_right:  ch.resolved_border_right,
-                border_bottom: ch.resolved_border_bottom,
-                border_left:   ch.resolved_border_left,
-                padding_top:   ch.resolved_pad_top,
-                padding_right: ch.resolved_pad_right,
-                padding_bottom:ch.resolved_pad_bottom,
-                padding_left:  ch.resolved_pad_left,
-                content_width: Some(ch.resolved_content_width),
+                border_right:  ch.layout.resolved_border_right,
+                border_bottom: ch.layout.resolved_border_bottom,
+                border_left:   ch.layout.resolved_border_left,
+                padding_top:   ch.layout.resolved_pad_top,
+                padding_right: ch.layout.resolved_pad_right,
+                padding_bottom:ch.layout.resolved_pad_bottom,
+                padding_left:  ch.layout.resolved_pad_left,
+                content_width: Some(ch.layout.resolved_content_width),
                 content_height:Some(child_content_h),
             };
             let cx = content_x + left_edge + child_margin_left + child_rbox_copy.border_left + child_rbox_copy.padding_left;
             let cy = content_y + child_y   + child_border_top  + child_pad_top;
             let ch = grid_child_ref(node, path);
-            let dx = cx - ch.content_rect.x;
-            let dy = cy - ch.content_rect.y;
+            let dx = cx - ch.layout.content_rect.x;
+            let dy = cy - ch.layout.content_rect.y;
             shift_rects(grid_child_mut(node, path), dx, dy);
 
             if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
@@ -638,7 +638,7 @@ pub fn layout_block_with_fc(
             }
 
             let ch = grid_child_ref(node, path);
-            child_y = ch.margin_rect.y - content_y + ch.margin_rect.h;
+            child_y = ch.layout.margin_rect.y - content_y + ch.layout.margin_rect.h;
             prev_bottom_margin = child_bottom_margin;
             last_in_flow_path = Some(path.clone());
             is_first_in_flow = false;
@@ -646,7 +646,7 @@ pub fn layout_block_with_fc(
         } else if grid_child_ref(node, path).style.is_inline_level() {
             let is_whitespace_only_text = grid_child_ref(node, path).is_text_node()
                 && grid_child_ref(node, path).text.chars().all(|c| c.is_ascii_whitespace());
-            if node.line_cache.is_empty() && !is_whitespace_only_text {
+            if node.layout.line_cache.is_empty() && !is_whitespace_only_text {
                 engine.layout_box(
                     grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
                     font_px, root_font_px
@@ -657,15 +657,15 @@ pub fn layout_block_with_fc(
                     && matches!(ch.style.display,
                         Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
                 {
-                    let max_line_w = ch.line_cache.iter()
+                    let max_line_w = ch.layout.line_cache.iter()
                         .map(|l| l.width).fold(0.0_f32, f32::max);
                     let intrinsic_w = if max_line_w > 0.0 { max_line_w }
                                       else { compute_intrinsic_width(ch) };
                     if intrinsic_w > 0.0 {
                         let shrink_w = intrinsic_w
-                            + ch.resolved_pad_left + ch.resolved_pad_right
-                            + ch.resolved_border_left + ch.resolved_border_right
-                            + ch.resolved_margin_left + ch.resolved_margin_right;
+                            + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
+                            + ch.layout.resolved_border_left + ch.layout.resolved_border_right
+                            + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
                         if shrink_w < child_content_w {
                             engine.layout_box(
                                 grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
@@ -676,8 +676,8 @@ pub fn layout_block_with_fc(
                 }
 
                 let ch = grid_child_ref(node, path);
-                let child_mw = ch.margin_rect.w;
-                let child_mh = ch.margin_rect.h;
+                let child_mw = ch.layout.margin_rect.w;
+                let child_mh = ch.layout.margin_rect.h;
 
                 if inline_x > 0.0 && inline_x + child_mw > child_content_w {
                     child_y += inline_line_h;
@@ -686,8 +686,8 @@ pub fn layout_block_with_fc(
                 }
 
                 let ch = grid_child_ref(node, path);
-                let dx = content_x + inline_x - ch.margin_rect.x;
-                let dy = content_y + child_y  - ch.margin_rect.y;
+                let dx = content_x + inline_x - ch.layout.margin_rect.x;
+                let dy = content_y + child_y  - ch.layout.margin_rect.y;
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
                     shift_rects(grid_child_mut(node, path), dx, dy);
                 }
@@ -711,7 +711,7 @@ pub fn layout_block_with_fc(
     // ─── Parent-last-child bottom margin collapsing ───────────────────────────
     let _last_child_collapsed_bottom = if let Some(ref p) = last_in_flow_path {
         if can_collapse_bottom {
-            let lcb = grid_child_ref(node, p).collapsed_margin_bottom;
+            let lcb = grid_child_ref(node, p).layout.collapsed_margin_bottom;
             child_y -= lcb;
             lcb
         } else {
@@ -743,8 +743,8 @@ pub fn layout_block_with_fc(
         0.0
     };
     // Include inline content (line_cache) height
-    let inline_bottom = if !node.line_cache.is_empty() {
-        let last = node.line_cache.last().unwrap();
+    let inline_bottom = if !node.layout.line_cache.is_empty() {
+        let last = node.layout.line_cache.last().unwrap();
         last.y - content_y + last.height
     } else {
         0.0
@@ -781,40 +781,40 @@ pub fn layout_block_with_fc(
     {
         let natural_scroll_h = child_y.max(float_bottom).max(inline_bottom)
                                       .max(content_h);
-        node.scroll_height = natural_scroll_h;
-        node.scroll_width  = content_w;
+        node.layout.scroll_height = natural_scroll_h;
+        node.layout.scroll_width  = content_w;
         // Clamp scrollTop
-        let max_scroll = (node.scroll_height - content_h).max(0.0);
-        node.scroll_top = node.scroll_top.min(max_scroll).max(0.0);
+        let max_scroll = (node.layout.scroll_height - content_h).max(0.0);
+        node.layout.scroll_top = node.layout.scroll_top.min(max_scroll).max(0.0);
     } else {
-        node.scroll_height = content_h;
-        node.scroll_width  = content_w;
-        node.scroll_top    = 0.0;
-        node.scroll_left   = 0.0;
+        node.layout.scroll_height = content_h;
+        node.layout.scroll_width  = content_w;
+        node.layout.scroll_top    = 0.0;
+        node.layout.scroll_left   = 0.0;
     }
 
     // ─── Collapsed margins (pass-through to parent) ───────────────────────────
-    node.collapsed_margin_top    = rbox.margin_top;
-    node.collapsed_margin_bottom = rbox.margin_bottom;
+    node.layout.collapsed_margin_top    = rbox.margin_top;
+    node.layout.collapsed_margin_bottom = rbox.margin_bottom;
 
     if is_empty_block(node, rbox) {
         // Empty block: own top and bottom margins collapse
         let own = collapse_two(rbox.margin_top, rbox.margin_bottom);
-        node.collapsed_margin_top    = own;
-        node.collapsed_margin_bottom = 0.0;
+        node.layout.collapsed_margin_top    = own;
+        node.layout.collapsed_margin_bottom = 0.0;
     } else {
         // Parent-first-child collapsing
         if first_child_collapsed {
             if let Some(ref p) = first_in_flow_path {
-                node.collapsed_margin_top =
-                    collapse_two(rbox.margin_top, grid_child_ref(node, p).collapsed_margin_top);
+                node.layout.collapsed_margin_top =
+                    collapse_two(rbox.margin_top, grid_child_ref(node, p).layout.collapsed_margin_top);
             }
         }
         // Parent-last-child collapsing
         if can_collapse_bottom {
             if let Some(ref p) = last_in_flow_path {
-                node.collapsed_margin_bottom =
-                    collapse_two(rbox.margin_bottom, grid_child_ref(node, p).collapsed_margin_bottom);
+                node.layout.collapsed_margin_bottom =
+                    collapse_two(rbox.margin_bottom, grid_child_ref(node, p).layout.collapsed_margin_bottom);
             }
         }
     }
@@ -824,7 +824,7 @@ pub fn layout_block_with_fc(
     // (CSS: containing block for absolutely positioned elements is the padding box
     //  of the nearest positioned ancestor).
     let containing_rect = if !matches!(node.style.position, Position::Static) {
-        node.padding_rect
+        node.layout.padding_rect
     } else {
         engine.pos_cb.get()
     };
@@ -838,8 +838,8 @@ pub fn layout_block_with_fc(
             let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                         && child.style.top.is_auto()   && child.style.bottom.is_auto();
             if all_auto && matches!(child.style.position, Position::Absolute) {
-                let dx = containing_rect.x - child.border_rect.x;
-                let dy = containing_rect.y - child.border_rect.y;
+                let dx = containing_rect.x - child.layout.border_rect.x;
+                let dy = containing_rect.y - child.layout.border_rect.y;
                 if dx != 0.0 || dy != 0.0 {
                     crate::layout::shift_rects(child, dx, dy);
                 }
@@ -850,10 +850,10 @@ pub fn layout_block_with_fc(
     // ─── Relative offsets ─────────────────────────────────────────────────────
     // (already applied per-child above; nothing more needed here)
 
-    node.layout_dirty = false;
-    node.last_containing_width = containing_w;
+    node.layout.layout_dirty = false;
+    node.layout.last_containing_width = containing_w;
 
-    node.margin_rect.h
+    node.layout.margin_rect.h
 }
 
 // ─── Multi-column layout ──────────────────────────────────────────────────────

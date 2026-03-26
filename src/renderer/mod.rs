@@ -58,6 +58,8 @@ pub struct Renderer {
     cached_hovered_id: u32,
     /// Whether the display list cache is valid.
     display_list_dirty: bool,
+    /// Layout generation from Document — when it changes, display list must rebuild.
+    cached_layout_generation: u64,
     /// Hovered dropdown option index (-1 = none).
     dropdown_hover_idx: i32,
     /// Vertical offset for content area (e.g. browser chrome height).
@@ -102,6 +104,7 @@ impl Renderer {
             cached_scroll_y: 0.0,
             cached_hovered_id: 0,
             display_list_dirty: true,
+            cached_layout_generation: 0,
             dropdown_hover_idx: -1,
             content_offset_y: 0.0,
             caret_epoch: std::time::Instant::now(),
@@ -493,13 +496,13 @@ impl Renderer {
 
         // Clamp scroll
         let doc_h = {
-            let root_h = doc.root.margin_rect.h;
+            let root_h = doc.root.layout.margin_rect.h;
             doc.root.children.iter()
                 .find(|c| c.tag == "body")
-                .map(|b| root_h.max(b.padding_rect.y + b.padding_rect.h))
+                .map(|b| root_h.max(b.layout.padding_rect.y + b.layout.padding_rect.h))
                 .unwrap_or(root_h)
         };
-        let doc_w = doc.root.margin_rect.w;
+        let doc_w = doc.root.layout.margin_rect.w;
         doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
         doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));
 
@@ -517,6 +520,7 @@ impl Renderer {
         // Rebuild when: content changed, hover changed, or scroll position changed.
         let needs_rebuild = self.display_list_dirty
             || self.cached_display_list.is_none()
+            || doc.layout_generation != self.cached_layout_generation
             || doc.hovered_box != self.cached_hovered_id
             || (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
             || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
@@ -532,6 +536,7 @@ impl Renderer {
             self.cached_scroll_x = doc.scroll_x;
             self.cached_scroll_y = doc.scroll_y;
             self.cached_hovered_id = doc.hovered_box;
+            self.cached_layout_generation = doc.layout_generation;
             self.display_list_dirty = false;
         }
 
@@ -611,7 +616,7 @@ impl Renderer {
 
         let sx = scroll_x;
         let sy = scroll_y;
-        let br = node.border_rect;
+        let br = node.layout.border_rect;
 
         // ── Viewport culling ──────────────────────────────────────────────────
         // Skip culling for inline elements: their border_rect is 0×0 and does
@@ -630,7 +635,7 @@ impl Renderer {
             }
         }
 
-        let pr      = node.padding_rect;
+        let pr      = node.layout.padding_rect;
         let px      = pr.x - sx;
         let py      = pr.y - sy;
         let pw      = pr.w;
@@ -839,7 +844,7 @@ impl Renderer {
 
         // ── Outline ──────────────────────────────────────────────────────────
         if eff_style.outline_width > 0.0 && eff_style.outline_style != BorderStyle::None {
-            let br2 = node.border_rect;
+            let br2 = node.layout.border_rect;
             let ofs = eff_style.outline_offset;
             let ow  = eff_style.outline_width;
             let rx  = br2.x - eff_sx - ofs - ow;
@@ -906,8 +911,8 @@ impl Renderer {
         // ── Per-element scroll: children are shifted by the element's scroll ──
         // Use eff_sx/eff_sy so sticky elements keep their children aligned with
         // the clamped (stuck) background position.
-        let child_sx = eff_sx + node.scroll_left;
-        let child_sy = eff_sy + node.scroll_top;
+        let child_sx = eff_sx + node.layout.scroll_left;
+        let child_sy = eff_sy + node.layout.scroll_top;
 
         // ── Negative z-index children (paint behind text) ────────────────────
         // CSS stacking: positioned children with z-index < 0 paint before the
@@ -935,8 +940,8 @@ impl Renderer {
         }
 
         // ── ::before pseudo-element (inline text content) ───────────────────
-        if !node.style.before_content.is_empty() && !node.line_cache.is_empty() {
-            let first = &node.line_cache[0];
+        if !node.style.before_content.is_empty() && !node.layout.line_cache.is_empty() {
+            let first = &node.layout.line_cache[0];
             let tx = first.x - eff_sx;
             let ty = first.y - eff_sy;
             let ps = node.style.before_style.as_deref().unwrap_or(&node.style);
@@ -958,7 +963,7 @@ impl Renderer {
         // render text to a temporary pixmap first, then composite with the transform.
         // This ensures glyphs scale/rotate correctly — just drawing at a shifted x/y
         // position does not change glyph size.
-        if !node.line_cache.is_empty() {
+        if !node.layout.line_cache.is_empty() {
             let flat = collect_flat_text(node);
             if let Some(css_t) = css_t_for_text {
                 // Render inline content into a transparent temp pixmap (same size).
@@ -995,8 +1000,8 @@ impl Renderer {
         }
 
         // ── ::after pseudo-element ────────────────────────────────────────────
-        if !node.style.after_content.is_empty() && !node.line_cache.is_empty() {
-            let last = &node.line_cache[node.line_cache.len() - 1];
+        if !node.style.after_content.is_empty() && !node.layout.line_cache.is_empty() {
+            let last = &node.layout.line_cache[node.layout.line_cache.len() - 1];
             let tx = last.x - eff_sx + last.width;
             let ty = last.y - eff_sy;
             let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
@@ -1011,7 +1016,7 @@ impl Renderer {
         }
 
         // ── List marker ──────────────────────────────────────────────────────
-        if node.style.display == Display::ListItem && !node.line_cache.is_empty() {
+        if node.style.display == Display::ListItem && !node.layout.line_cache.is_empty() {
             self.draw_list_marker(node, pixmap, eff_sx, eff_sy, eff_mask);
         }
 
@@ -1025,7 +1030,7 @@ impl Renderer {
 
         // ── Custom Component Painting ────────────────────────────────────────
         if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
-            let cr = node.content_rect;
+            let cr = node.layout.content_rect;
             (callbacks.paint)(node, pixmap, cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h, self.scale);
         }
 
@@ -1184,7 +1189,7 @@ impl Renderer {
         elem_ts: Transform,
         mask:   Option<&Mask>,
     ) {
-        let br      = node.border_rect;
+        let br      = node.layout.border_rect;
         let font_px = style.font_size_px(16.0, 16.0);
         let r_shorthand = style.border_radius.resolve(font_px, br.w, 16.0);
         let r_tl = if r_shorthand > 0.0 { r_shorthand }
@@ -1323,10 +1328,10 @@ impl Renderer {
         };
         if bstyle == BorderStyle::None || bstyle == BorderStyle::Hidden { return; }
         let font_px = style.font_size_px(16.0, 16.0);
-        let w = width_l.resolve(font_px, node.border_rect.w, 16.0);
+        let w = width_l.resolve(font_px, node.layout.border_rect.w, 16.0);
         if w < 0.5 { return; }
 
-        let br = node.border_rect;
+        let br = node.layout.border_rect;
         let rx = br.x - sx;
         let ry = br.y - sy;
         let ca = ((color.a as f32) * opacity) as u8;
@@ -1491,7 +1496,7 @@ impl Renderer {
         is_hovered: bool,
         is_active:  bool,
     ) {
-        if node.line_cache.is_empty() || flat.is_empty() { return; }
+        if node.layout.line_cache.is_empty() || flat.is_empty() { return; }
 
         let opacity             = eff_style.opacity;
         let fallback_font_px    = node.style.font_size_px(16.0, 16.0);
@@ -1518,9 +1523,9 @@ impl Renderer {
                 || node.style.overflow_x == Overflow::Scroll);
         // Right edge of the padding box in screen coordinates.
         // cursor_x is also in screen coords (line.x - sx), so we compare against this.
-        let max_content_right = (node.padding_rect.x - sx) + node.padding_rect.w;
+        let max_content_right = (node.layout.padding_rect.x - sx) + node.layout.padding_rect.w;
 
-        for line in node.line_cache.clone() {
+        for line in node.layout.line_cache.clone() {
             let line_start = floor_char_boundary(flat, line.text_start.min(flat.len()));
             let line_end   = floor_char_boundary(flat, (line.text_start + line.text_length).min(flat.len()));
             if line_start >= line_end { continue; }
@@ -1587,13 +1592,13 @@ impl Renderer {
             struct Chunk { s: usize, e: usize, run_idx: Option<usize>, #[allow(dead_code)] rtl: bool }
             let mut chunks: Vec<Chunk> = Vec::new();
 
-            if !line.visual_segments.is_empty() && !node.inline_runs.is_empty() {
+            if !line.visual_segments.is_empty() && !node.layout.inline_runs.is_empty() {
                 for vs in &line.visual_segments {
                     let seg_s   = vs.logical_start;
                     let seg_e   = vs.logical_start + vs.length;
                     let is_rtl  = (vs.level & 1) != 0;
                     let mut seg_chunks: Vec<Chunk> = Vec::new();
-                    for (ri, run) in node.inline_runs.iter().enumerate() {
+                    for (ri, run) in node.layout.inline_runs.iter().enumerate() {
                         let rs  = run.text_offset;
                         let re  = rs + run.length;
                         let cs  = seg_s.max(rs);
@@ -1627,10 +1632,10 @@ impl Renderer {
                     }
                     chunks.extend(seg_chunks);
                 }
-            } else if node.inline_runs.is_empty() {
+            } else if node.layout.inline_runs.is_empty() {
                 chunks.push(Chunk { s: line_start, e: line_end, run_idx: None, rtl: false });
             } else {
-                for (ri, run) in node.inline_runs.iter().enumerate() {
+                for (ri, run) in node.layout.inline_runs.iter().enumerate() {
                     let cs = line_start.max(run.text_offset);
                     let ce = line_end.min(run.text_offset + run.length);
                     if cs < ce {
@@ -1648,7 +1653,7 @@ impl Renderer {
 
                 let (run_style, run_font_px, run_letter_spc, run_word_spc, run_extra) =
                     if let Some(ri) = chunk.run_idx {
-                        let run = &node.inline_runs[ri];
+                        let run = &node.layout.inline_runs[ri];
                         let fp  = run.style.font_size_px(16.0, 16.0);
                         let ls  = run.style.letter_spacing.resolve(fp, 0.0, 16.0);
                         let ws  = run.style.word_spacing.resolve(fp, 0.0, 16.0);
@@ -1800,7 +1805,7 @@ impl Renderer {
             }
 
             // Whole-line decorations (when no per-run decorations)
-            if node.inline_runs.is_empty() {
+            if node.layout.inline_runs.is_empty() {
                 self.draw_text_decorations_line(node, &line, lx, ly, opacity, pixmap, mask);
             }
         }
@@ -2193,7 +2198,7 @@ impl Renderer {
     ) {
         let ms         = node.style.marker_style.as_deref();
         let font_px    = ms.map(|s| s.font_size_px(16.0, 16.0)).unwrap_or_else(|| node.style.font_size_px(16.0, 16.0));
-        let first_line = match node.line_cache.first() { Some(l) => l.clone(), None => return };
+        let first_line = match node.layout.line_cache.first() { Some(l) => l.clone(), None => return };
         let inside     = node.style.list_style_position == ListStylePosition::Inside;
 
         let c = ms.map(|s| s.color).unwrap_or(node.style.color);
@@ -2256,7 +2261,7 @@ impl Renderer {
     // ─── HR ──────────────────────────────────────────────────────────────────
 
     fn draw_hr(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.border_rect;
+        let cr = node.layout.border_rect;
         let y  = cr.y + cr.h / 2.0 - sy;
         let mut paint = Paint::default();
         paint.set_color_rgba8(128, 128, 128, 255);
@@ -2309,8 +2314,8 @@ impl Renderer {
     }
 
     fn draw_text_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let pr = node.padding_rect;
-        let cr = node.content_rect;
+        let pr = node.layout.padding_rect;
+        let cr = node.layout.content_rect;
         let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
 
         // Focus ring
@@ -2391,7 +2396,7 @@ impl Renderer {
 
 
     fn draw_textarea(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let pr = node.padding_rect;
+        let pr = node.layout.padding_rect;
         let x = pr.x - sx;
         let y = pr.y - sy;
         // Border handled by CSS. Draw resize grip only.
@@ -2412,7 +2417,7 @@ impl Renderer {
     }
 
     fn draw_checkbox(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         // Inset slightly so the border stays inside the content rect
         let inset = 1.0;
         let x = cr.x - sx + inset;
@@ -2447,7 +2452,7 @@ impl Renderer {
     }
 
     fn draw_radio(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         let cx = cr.x - sx + cr.w / 2.0;
         let cy = cr.y - sy + cr.h / 2.0;
         let r = (cr.w.min(cr.h) / 2.0 - 1.0).max(5.0);
@@ -2482,7 +2487,7 @@ impl Renderer {
     }
 
     fn draw_range(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         let x = cr.x - sx;
         let y = cr.y - sy;
         let w = cr.w;
@@ -2524,7 +2529,7 @@ impl Renderer {
     }
 
     fn draw_select(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let pr = node.padding_rect;
+        let pr = node.layout.padding_rect;
         let y = pr.y - sy;
         let h = pr.h;
         let x = pr.x - sx;
@@ -2560,7 +2565,7 @@ impl Renderer {
         // The background comes from CSS (default #efefef from UA).
         // The border comes from CSS (1px solid #767676 from UA).
         // We only need to add a default background if CSS doesn't set one.
-        let pr = node.padding_rect;
+        let pr = node.layout.padding_rect;
         let bg = node.style.background_color;
         if bg.a == 0 {
             let x = pr.x - sx;
@@ -2577,7 +2582,7 @@ impl Renderer {
     fn draw_button(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
         // <button> renders text children via normal inline layout.
         // Add default background if CSS doesn't set one. Border from CSS.
-        let pr = node.padding_rect;
+        let pr = node.layout.padding_rect;
         let bg = node.style.background_color;
         if bg.a == 0 {
             let x = pr.x - sx;
@@ -2591,7 +2596,7 @@ impl Renderer {
     }
 
     fn draw_progress(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         let x = cr.x - sx;
         let y = cr.y - sy;
 
@@ -2633,7 +2638,7 @@ impl Renderer {
     }
 
     fn draw_file_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let pr = node.padding_rect;
+        let pr = node.layout.padding_rect;
         let x = pr.x - sx;
         let y = pr.y - sy;
 
@@ -2669,7 +2674,7 @@ impl Renderer {
     }
 
     fn draw_color_input(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         let x = cr.x - sx;
         let y = cr.y - sy;
 
@@ -2691,8 +2696,8 @@ impl Renderer {
     }
 
     fn draw_date_input(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let pr = node.padding_rect;
-        let cr = node.content_rect;
+        let pr = node.layout.padding_rect;
+        let cr = node.layout.content_rect;
         let x = pr.x - sx;
         let y = pr.y - sy;
 
@@ -2742,7 +2747,7 @@ impl Renderer {
     }
 
     fn draw_meter(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, mask: Option<&Mask>) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         let x = cr.x - sx;
         let y = cr.y - sy;
 
@@ -2786,7 +2791,7 @@ impl Renderer {
         sy:     f32,
         mask:   Option<&Mask>,
     ) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         if cr.w <= 0.0 || cr.h <= 0.0 { return; }
 
         // If we have actual pixel data, draw it
@@ -2814,7 +2819,7 @@ impl Renderer {
         sy:     f32,
         mask:   Option<&Mask>,
     ) {
-        let cr = node.content_rect;
+        let cr = node.layout.content_rect;
         if cr.w <= 0.0 || cr.h <= 0.0 { return; }
         let markup = match &node.svg_markup {
             Some(m) => m,
@@ -3111,16 +3116,16 @@ impl Renderer {
 
     fn draw_scrollbars(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
         let show_v = node.style.overflow_y == Overflow::Scroll
-            || (node.style.overflow_y == Overflow::Auto && node.scroll_height > node.content_rect.h);
+            || (node.style.overflow_y == Overflow::Auto && node.layout.scroll_height > node.layout.content_rect.h);
         let show_h = node.style.overflow_x == Overflow::Scroll
-            || (node.style.overflow_x == Overflow::Auto && node.scroll_width > node.content_rect.w);
+            || (node.style.overflow_x == Overflow::Auto && node.layout.scroll_width > node.layout.content_rect.w);
         if !show_v && !show_h { return; }
 
         let thumb_col = node.style.scrollbar_thumb_color.unwrap_or(Color::rgba(128, 128, 128, 160));
         let track_col = node.style.scrollbar_track_color.unwrap_or(Color::rgba(128, 128, 128, 40));
 
-        let cr = node.content_rect;
-        let pr = node.padding_rect;
+        let cr = node.layout.content_rect;
+        let pr = node.layout.padding_rect;
         // Screen-space top-left of the padding box (used to anchor the scrollbar
         // at the right/bottom edge of the visible border-box interior).
         let prx = pr.x - sx;
@@ -3128,11 +3133,11 @@ impl Renderer {
         let cy = cr.y - sy;  // content rect top (for track start / scroll math)
         let ts = Transform::from_scale(self.scale, self.scale);
 
-        if show_v && node.scroll_height > cr.h {
+        if show_v && node.layout.scroll_height > cr.h {
             let track_h = cr.h;
-            let thumb_h = (track_h * track_h / node.scroll_height).max(20.0);
-            let max_s   = node.scroll_height - cr.h;
-            let thumb_y = if max_s > 0.0 { node.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
+            let thumb_h = (track_h * track_h / node.layout.scroll_height).max(20.0);
+            let max_s   = node.layout.scroll_height - cr.h;
+            let thumb_y = if max_s > 0.0 { node.layout.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
             // Align to the right edge of the padding box.
             let track_x = prx + pr.w - SCROLLBAR_WIDTH;
             let mut paint = Paint::default();
@@ -3147,11 +3152,11 @@ impl Renderer {
             }
         }
 
-        if show_h && node.scroll_width > cr.w {
+        if show_h && node.layout.scroll_width > cr.w {
             let track_w = pr.w - if show_v { SCROLLBAR_WIDTH } else { 0.0 };
-            let thumb_w = (track_w * track_w / node.scroll_width).max(20.0);
-            let max_s   = node.scroll_width - cr.w;
-            let thumb_x = if max_s > 0.0 { node.scroll_left * (track_w - thumb_w) / max_s } else { 0.0 };
+            let thumb_w = (track_w * track_w / node.layout.scroll_width).max(20.0);
+            let max_s   = node.layout.scroll_width - cr.w;
+            let thumb_x = if max_s > 0.0 { node.layout.scroll_left * (track_w - thumb_w) / max_s } else { 0.0 };
             // Align to the bottom edge of the padding box.
             let track_y = pry + pr.h - SCROLLBAR_WIDTH;
             let mut paint = Paint::default();
@@ -3197,8 +3202,8 @@ impl Renderer {
             let flat    = collect_flat_text(node);
             let font_px = node.style.font_size_px(16.0, 16.0);
 
-            let mut caret_x    = node.border_rect.x - sx;
-            let mut caret_y    = node.border_rect.y - sy;
+            let mut caret_x    = node.layout.border_rect.x - sx;
+            let mut caret_y    = node.layout.border_rect.y - sy;
             let mut caret_h    = font_px * 1.2;
             let mut found_line = false;
 
@@ -3207,7 +3212,7 @@ impl Renderer {
             // caret_local == line.text_start (i.e. the caret is at the
             // *beginning* of that line).  This is the correct position after
             // pressing Enter or being at the start of a wrapped/br line.
-            for line in &node.line_cache {
+            for line in &node.layout.line_cache {
                 let line_end = line.text_start + line.text_length;
                 if caret_local >= line.text_start && caret_local <= line_end {
                     caret_y = line.y - sy;
@@ -3215,7 +3220,7 @@ impl Renderer {
                     // Use the same measurement as the hit test (get_caret_x) so
                     // that click position and rendered caret position agree.
                     let cx = crate::layout::hit_test::get_caret_x(
-                        &flat, &node.inline_runs, line, caret_local,
+                        &flat, &node.layout.inline_runs, line, caret_local,
                     );
                     caret_x = cx - sx;
                     found_line = true;
@@ -3227,8 +3232,8 @@ impl Renderer {
                     // caret_local (the current match was an end-of-previous-line).
                 }
             }
-            if !found_line && !node.line_cache.is_empty() {
-                let last = node.line_cache.last().unwrap();
+            if !found_line && !node.layout.line_cache.is_empty() {
+                let last = node.layout.line_cache.last().unwrap();
                 caret_y = last.y - sy;
                 caret_h = last.height.max(font_px);
                 caret_x = last.x - sx + last.width;
@@ -4036,10 +4041,10 @@ pub fn draw_inspect_overlay(
         }
     };
 
-    let m = node.margin_rect;
-    let b = node.border_rect;
-    let p = node.padding_rect;
-    let c = node.content_rect;
+    let m = node.layout.margin_rect;
+    let b = node.layout.border_rect;
+    let p = node.layout.padding_rect;
+    let c = node.layout.content_rect;
     let sx = scroll_x;
     let sy = scroll_y;
 
@@ -4063,7 +4068,7 @@ impl Renderer {
     /// Draw the dropdown popup for an open <select> element.
     /// Renders actual option/optgroup DOM children with their CSS styles.
     fn draw_select_dropdown(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
-        let br = node.border_rect;
+        let br = node.layout.border_rect;
         let popup_x = br.x - sx;
         let popup_y = br.y + br.h - sy; // below the select
         let popup_w = br.w.max(150.0);

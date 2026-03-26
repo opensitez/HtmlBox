@@ -175,7 +175,7 @@ pub fn layout_flex(
             } else {
                 // Column direction needs actual height — must do full layout.
                 engine.layout_box(child, content_w, content_x, content_y, font_px, root_font_px);
-                child.content_rect.h
+                child.layout.content_rect.h
             }
         };
 
@@ -276,10 +276,10 @@ pub fn layout_flex(
             0.0
         };
         finish_flex(node, rbox, content_x, content_y, content_w, ch);
-        node.collapsed_margin_top    = rbox.margin_top;
-        node.collapsed_margin_bottom = rbox.margin_bottom;
+        node.layout.collapsed_margin_top    = rbox.margin_top;
+        node.layout.collapsed_margin_bottom = rbox.margin_bottom;
         layout_abs_children(engine, node, font_px, root_font_px);
-        return node.margin_rect.h;
+        return node.layout.margin_rect.h;
     }
 
     // ── Wrap into flex lines ──────────────────────────────────────────────────
@@ -409,13 +409,13 @@ pub fn layout_flex(
         // CSS Flexbox §4.5: resolve deferred min-height:auto for column flex items.
         // If the item's content height exceeds its allocated main_used, expand it.
         if item.auto_min_cross {
-            let content_h = child.margin_rect.h - item.outer_extra;
+            let content_h = child.layout.margin_rect.h - item.outer_extra;
             if content_h > item.main_used {
                 item.main_used = content_h;
             }
         }
 
-        item.cross_size = if is_row { child.margin_rect.h } else { child.margin_rect.w };
+        item.cross_size = if is_row { child.layout.margin_rect.h } else { child.layout.margin_rect.w };
     }
 
     // ── Compute line cross sizes ──────────────────────────────────────────────
@@ -584,7 +584,7 @@ pub fn layout_flex(
                     let cross_extra = irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                                     + irb.margin_top + irb.margin_bottom;
                     let target_h = (lc - cross_extra).max(0.0);
-                    if target_h > 0.0 && (target_h - child.content_rect.h).abs() > 0.5 {
+                    if target_h > 0.0 && (target_h - child.layout.content_rect.h).abs() > 0.5 {
                         let css_h = if child.style.box_sizing == BoxSizing::BorderBox {
                             target_h + irb.padding_top + irb.padding_bottom + irb.border_top + irb.border_bottom
                         } else { target_h };
@@ -592,13 +592,13 @@ pub fn layout_flex(
                         child.style.height = CssLength::Px(css_h);
                         engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
                         child.style.height = saved_h;
-                        items[item_idx].cross_size = child.margin_rect.h;
+                        items[item_idx].cross_size = child.layout.margin_rect.h;
                     }
                 } else if !is_row {
                     let cross_extra = irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                                     + irb.margin_left + irb.margin_right;
                     let stretch_w = (lc - cross_extra).max(0.0);
-                    if stretch_w > 0.0 && (stretch_w - child.content_rect.w).abs() > 0.5 {
+                    if stretch_w > 0.0 && (stretch_w - child.layout.content_rect.w).abs() > 0.5 {
                         let css_w = if child.style.box_sizing == BoxSizing::BorderBox {
                             stretch_w + irb.padding_left + irb.padding_right + irb.border_left + irb.border_right
                         } else { stretch_w };
@@ -606,7 +606,7 @@ pub fn layout_flex(
                         child.style.width = CssLength::Px(css_w);
                         engine.layout_box(child, css_w, content_x, content_y, font_px, root_font_px);
                         child.style.width = saved_w;
-                        items[item_idx].cross_size = child.margin_rect.w;
+                        items[item_idx].cross_size = child.layout.margin_rect.w;
                     }
                 }
                 0.0
@@ -620,7 +620,7 @@ pub fn layout_flex(
                         let intrinsic_w = crate::layout::block::compute_intrinsic_width(child).min(content_w);
                         if intrinsic_w < items[item_idx].cross_size - 0.5 {
                             engine.layout_box(child, intrinsic_w, content_x, content_y, font_px, root_font_px);
-                            items[item_idx].cross_size = child.margin_rect.w;
+                            items[item_idx].cross_size = child.layout.margin_rect.w;
                         }
                     }
                 }
@@ -655,8 +655,8 @@ pub fn layout_flex(
             (content_x + item.cross_pos, content_y + item.main_pos)
         };
         // Shift so that margin_rect origin is at (target_x, target_y)
-        let dx = target_x - child.margin_rect.x;
-        let dy = target_y - child.margin_rect.y;
+        let dx = target_x - child.layout.margin_rect.x;
+        let dy = target_y - child.layout.margin_rect.y;
         shift_rects(child, dx, dy);
 
         // Apply relative offset if position:relative
@@ -701,12 +701,12 @@ pub fn layout_flex(
 
     finish_flex(node, rbox, content_x, content_y, content_w, content_h);
 
-    node.collapsed_margin_top    = rbox.margin_top;
-    node.collapsed_margin_bottom = rbox.margin_bottom;
-    node.layout_dirty = false;
+    node.layout.collapsed_margin_top    = rbox.margin_top;
+    node.layout.collapsed_margin_bottom = rbox.margin_bottom;
+    node.layout.layout_dirty = false;
 
     layout_abs_children(engine, node, font_px, root_font_px);
-    node.margin_rect.h
+    node.layout.margin_rect.h
 }
 
 // ─── justify-content spacing ─────────────────────────────────────────────────
@@ -753,46 +753,46 @@ fn finish_flex(
     content_x: f32, content_y: f32,
     content_w: f32, content_h: f32,
 ) {
-    node.content_rect = Rect::new(content_x, content_y, content_w, content_h);
-    node.padding_rect = Rect::new(
+    node.layout.content_rect = Rect::new(content_x, content_y, content_w, content_h);
+    node.layout.padding_rect = Rect::new(
         content_x - rbox.padding_left, content_y - rbox.padding_top,
         content_w + rbox.padding_left + rbox.padding_right,
         content_h + rbox.padding_top  + rbox.padding_bottom,
     );
-    node.border_rect = Rect::new(
-        node.padding_rect.x - rbox.border_left,
-        node.padding_rect.y - rbox.border_top,
-        node.padding_rect.w + rbox.border_left + rbox.border_right,
-        node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
+    node.layout.border_rect = Rect::new(
+        node.layout.padding_rect.x - rbox.border_left,
+        node.layout.padding_rect.y - rbox.border_top,
+        node.layout.padding_rect.w + rbox.border_left + rbox.border_right,
+        node.layout.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
-    node.margin_rect = Rect::new(
-        node.border_rect.x - rbox.margin_left,
-        node.border_rect.y - rbox.margin_top,
-        node.border_rect.w + rbox.margin_left + rbox.margin_right,
-        node.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
+    node.layout.margin_rect = Rect::new(
+        node.layout.border_rect.x - rbox.margin_left,
+        node.layout.border_rect.y - rbox.margin_top,
+        node.layout.border_rect.w + rbox.margin_left + rbox.margin_right,
+        node.layout.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
     );
-    node.baseline = content_y + content_h;
+    node.layout.baseline = content_y + content_h;
 
-    node.resolved_margin_top    = rbox.margin_top;
-    node.resolved_margin_right  = rbox.margin_right;
-    node.resolved_margin_bottom = rbox.margin_bottom;
-    node.resolved_margin_left   = rbox.margin_left;
-    node.resolved_border_top    = rbox.border_top;
-    node.resolved_border_right  = rbox.border_right;
-    node.resolved_border_bottom = rbox.border_bottom;
-    node.resolved_border_left   = rbox.border_left;
-    node.resolved_pad_top       = rbox.padding_top;
-    node.resolved_pad_right     = rbox.padding_right;
-    node.resolved_pad_bottom    = rbox.padding_bottom;
-    node.resolved_pad_left      = rbox.padding_left;
-    node.resolved_content_width = content_w;
+    node.layout.resolved_margin_top    = rbox.margin_top;
+    node.layout.resolved_margin_right  = rbox.margin_right;
+    node.layout.resolved_margin_bottom = rbox.margin_bottom;
+    node.layout.resolved_margin_left   = rbox.margin_left;
+    node.layout.resolved_border_top    = rbox.border_top;
+    node.layout.resolved_border_right  = rbox.border_right;
+    node.layout.resolved_border_bottom = rbox.border_bottom;
+    node.layout.resolved_border_left   = rbox.border_left;
+    node.layout.resolved_pad_top       = rbox.padding_top;
+    node.layout.resolved_pad_right     = rbox.padding_right;
+    node.layout.resolved_pad_bottom    = rbox.padding_bottom;
+    node.layout.resolved_pad_left      = rbox.padding_left;
+    node.layout.resolved_content_width = content_w;
 }
 
 fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, root_font_px: f32) {
     // CSS spec: containing block for absolutely positioned children is the padding box
     // of the nearest positioned ancestor.
     let containing_rect = if !matches!(node.style.position, Position::Static) {
-        node.padding_rect
+        node.layout.padding_rect
     } else {
         engine.pos_cb.get()
     };
@@ -811,8 +811,8 @@ fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, 
         let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
                     && child.style.top.is_auto()   && child.style.bottom.is_auto();
         if all_auto && matches!(child.style.position, Position::Absolute) {
-            let cw = child.border_rect.w;
-            let ch = child.border_rect.h;
+            let cw = child.layout.border_rect.w;
+            let ch = child.layout.border_rect.h;
             // X: driven by justify-content of the flex container.
             let target_x = match node.style.justify_content {
                 JustifyContent::Center  => containing_rect.x + (containing_rect.w - cw) / 2.0,
@@ -825,8 +825,8 @@ fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, 
                 AlignItems::FlexEnd => containing_rect.y + containing_rect.h - ch,
                 _                   => containing_rect.y,
             };
-            let dx = target_x - child.border_rect.x;
-            let dy = target_y - child.border_rect.y;
+            let dx = target_x - child.layout.border_rect.x;
+            let dy = target_y - child.layout.border_rect.y;
             if dx != 0.0 || dy != 0.0 {
                 crate::layout::shift_rects(child, dx, dy);
             }

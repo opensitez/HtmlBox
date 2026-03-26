@@ -20,7 +20,7 @@ fn test_grid_auto_tracks() {
     // With auto auto, items should take their content width.
     // "Longer Text Content" is ~19 chars. "Short" is 5 chars.
     // In current buggy implementation, they might get 200px each (equal share).
-    assert!(c1.border_rect.w > c2.border_rect.w);
+    assert!(c1.layout.border_rect.w > c2.layout.border_rect.w);
 }
 
 #[test]
@@ -38,8 +38,8 @@ fn test_grid_item_stretch_background() {
     // Default justify-self is stretch.
     // c1 is inline-block, so it might shrink to fit if not forced to stretch.
     // c2 is block, so it should stretch naturally.
-    assert_eq!(c1.border_rect.w, 100.0);
-    assert_eq!(c2.border_rect.w, 100.0);
+    assert_eq!(c1.layout.border_rect.w, 100.0);
+    assert_eq!(c2.layout.border_rect.w, 100.0);
 }
 
 #[test]
@@ -56,8 +56,8 @@ fn test_grid_fr_with_auto() {
 
     // c1 should be 100px, c2 should be 300px.
     // In current buggy implementation, if there is an 'fr', 'auto' gets 0.
-    assert_eq!(c1.border_rect.w, 100.0);
-    assert_eq!(c2.border_rect.w, 300.0);
+    assert_eq!(c1.layout.border_rect.w, 100.0);
+    assert_eq!(c2.layout.border_rect.w, 300.0);
 }
 
 // ── Subgrid tests ─────────────────────────────────────────────────────────────
@@ -111,16 +111,16 @@ fn subgrid_children_align_to_parent_tracks() {
     let b = find_by_id(&doc.root, "b").expect("b");
     let c = find_by_id(&doc.root, "c").expect("c");
 
-    assert!((a.border_rect.w - 100.0).abs() < 2.0,
-        "subgrid child a width should be 100px, got {}", a.border_rect.w);
-    assert!((b.border_rect.w - 100.0).abs() < 2.0,
-        "subgrid child b width should be 100px, got {}", b.border_rect.w);
-    assert!((c.border_rect.w - 100.0).abs() < 2.0,
-        "subgrid child c width should be 100px, got {}", c.border_rect.w);
+    assert!((a.layout.border_rect.w - 100.0).abs() < 2.0,
+        "subgrid child a width should be 100px, got {}", a.layout.border_rect.w);
+    assert!((b.layout.border_rect.w - 100.0).abs() < 2.0,
+        "subgrid child b width should be 100px, got {}", b.layout.border_rect.w);
+    assert!((c.layout.border_rect.w - 100.0).abs() < 2.0,
+        "subgrid child c width should be 100px, got {}", c.layout.border_rect.w);
 
     // Children should be horizontally sequential
-    assert!(b.border_rect.x > a.border_rect.x, "b should be right of a");
-    assert!(c.border_rect.x > b.border_rect.x, "c should be right of b");
+    assert!(b.layout.border_rect.x > a.layout.border_rect.x, "b should be right of a");
+    assert!(c.layout.border_rect.x > b.layout.border_rect.x, "c should be right of b");
 }
 
 #[test]
@@ -145,9 +145,9 @@ fn subgrid_children_x_positions_match_parent_tracks() {
     let b = find_by_id(&doc.root, "b").expect("b");
     let c = find_by_id(&doc.root, "c").expect("c");
 
-    assert!((a.border_rect.w - 50.0).abs()  < 2.0, "a width={}", a.border_rect.w);
-    assert!((b.border_rect.w - 150.0).abs() < 2.0, "b width={}", b.border_rect.w);
-    assert!((c.border_rect.w - 100.0).abs() < 2.0, "c width={}", c.border_rect.w);
+    assert!((a.layout.border_rect.w - 50.0).abs()  < 2.0, "a width={}", a.layout.border_rect.w);
+    assert!((b.layout.border_rect.w - 150.0).abs() < 2.0, "b width={}", b.layout.border_rect.w);
+    assert!((c.layout.border_rect.w - 100.0).abs() < 2.0, "c width={}", c.layout.border_rect.w);
 }
 
 #[test]
@@ -197,11 +197,11 @@ fn subgrid_both_axes() {
 
     let a = find_by_id(&doc.root, "a").expect("a");
     let b = find_by_id(&doc.root, "b").expect("b");
-    assert!((a.border_rect.w - 100.0).abs() < 2.0, "a width={}", a.border_rect.w);
-    assert!((b.border_rect.w - 100.0).abs() < 2.0, "b width={}", b.border_rect.w);
+    assert!((a.layout.border_rect.w - 100.0).abs() < 2.0, "a width={}", a.layout.border_rect.w);
+    assert!((b.layout.border_rect.w - 100.0).abs() < 2.0, "b width={}", b.layout.border_rect.w);
     // a and b should be in the same row, b to the right of a
-    assert!(b.border_rect.x > a.border_rect.x, "b must be right of a");
-    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "a and b same row");
+    assert!(b.layout.border_rect.x > a.layout.border_rect.x, "b must be right of a");
+    assert!((a.layout.border_rect.y - b.layout.border_rect.y).abs() < 2.0, "a and b same row");
 }
 
 #[test]
@@ -229,15 +229,15 @@ fn subgrid_row_list_pattern() {
     let c = find_by_id(&doc.root, "c").expect("c");
     let d = find_by_id(&doc.root, "d").expect("d");
 
-    assert!((a.border_rect.w -  48.0).abs() < 2.0, "a={}", a.border_rect.w);
-    assert!((b.border_rect.w - 200.0).abs() < 2.0, "b={}", b.border_rect.w);
-    assert!((c.border_rect.w - 100.0).abs() < 2.0, "c={}", c.border_rect.w);
-    assert!((d.border_rect.w -  80.0).abs() < 2.0, "d={}", d.border_rect.w);
+    assert!((a.layout.border_rect.w -  48.0).abs() < 2.0, "a={}", a.layout.border_rect.w);
+    assert!((b.layout.border_rect.w - 200.0).abs() < 2.0, "b={}", b.layout.border_rect.w);
+    assert!((c.layout.border_rect.w - 100.0).abs() < 2.0, "c={}", c.layout.border_rect.w);
+    assert!((d.layout.border_rect.w -  80.0).abs() < 2.0, "d={}", d.layout.border_rect.w);
 
-    assert!((a.border_rect.x -   0.0).abs() < 2.0, "ax={}", a.border_rect.x);
-    assert!((b.border_rect.x -  48.0).abs() < 2.0, "bx={}", b.border_rect.x);
-    assert!((c.border_rect.x - 248.0).abs() < 2.0, "cx={}", c.border_rect.x);
-    assert!((d.border_rect.x - 348.0).abs() < 2.0, "dx={}", d.border_rect.x);
+    assert!((a.layout.border_rect.x -   0.0).abs() < 2.0, "ax={}", a.layout.border_rect.x);
+    assert!((b.layout.border_rect.x -  48.0).abs() < 2.0, "bx={}", b.layout.border_rect.x);
+    assert!((c.layout.border_rect.x - 248.0).abs() < 2.0, "cx={}", c.layout.border_rect.x);
+    assert!((d.layout.border_rect.x - 348.0).abs() < 2.0, "dx={}", d.layout.border_rect.x);
 }
 
 #[test]
@@ -267,13 +267,13 @@ fn subgrid_multi_row_alignment() {
     let r2b = find_by_id(&doc.root, "r2b").expect("r2b");
 
     // Both rows' first cells should be at x=0
-    assert!((r1a.border_rect.x - 0.0).abs() < 2.0, "r1a.x={}", r1a.border_rect.x);
-    assert!((r2a.border_rect.x - 0.0).abs() < 2.0, "r2a.x={}", r2a.border_rect.x);
+    assert!((r1a.layout.border_rect.x - 0.0).abs() < 2.0, "r1a.x={}", r1a.layout.border_rect.x);
+    assert!((r2a.layout.border_rect.x - 0.0).abs() < 2.0, "r2a.x={}", r2a.layout.border_rect.x);
     // Both rows' second cells should be at x=100
-    assert!((r1b.border_rect.x - 100.0).abs() < 2.0, "r1b.x={}", r1b.border_rect.x);
-    assert!((r2b.border_rect.x - 100.0).abs() < 2.0, "r2b.x={}", r2b.border_rect.x);
+    assert!((r1b.layout.border_rect.x - 100.0).abs() < 2.0, "r1b.x={}", r1b.layout.border_rect.x);
+    assert!((r2b.layout.border_rect.x - 100.0).abs() < 2.0, "r2b.x={}", r2b.layout.border_rect.x);
     // Row 2 should be below row 1
-    assert!(r2a.border_rect.y > r1a.border_rect.y, "r2 must be below r1");
+    assert!(r2a.layout.border_rect.y > r1a.layout.border_rect.y, "r2 must be below r1");
 }
 
 // ── Placement algorithm regression tests ─────────────────────────────────────
@@ -297,10 +297,10 @@ fn span_only_column_is_not_explicitly_placed() {
     );
     let a = find_by_id(&doc.root, "a").expect("a");
     let b = find_by_id(&doc.root, "b").expect("b");
-    assert!((a.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.border_rect.x);
-    assert!((b.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.border_rect.x);
+    assert!((a.layout.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.layout.border_rect.x);
+    assert!((b.layout.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.layout.border_rect.x);
     // Same row
-    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "must be same row");
+    assert!((a.layout.border_rect.y - b.layout.border_rect.y).abs() < 2.0, "must be same row");
 }
 
 #[test]
@@ -325,14 +325,14 @@ fn span_col_with_four_items_wraps_to_two_rows() {
     let c = find_by_id(&doc.root, "c").expect("c");
     let d = find_by_id(&doc.root, "d").expect("d");
     // Row 0: a at x=0, b at x=100
-    assert!((a.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.border_rect.x);
-    assert!((b.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.border_rect.x);
-    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0, "a,b same row");
+    assert!((a.layout.border_rect.x -   0.0).abs() < 2.0, "a.x={}", a.layout.border_rect.x);
+    assert!((b.layout.border_rect.x - 100.0).abs() < 2.0, "b.x={}", b.layout.border_rect.x);
+    assert!((a.layout.border_rect.y - b.layout.border_rect.y).abs() < 2.0, "a,b same row");
     // Row 1: c at x=0, d at x=100, both below row 0
-    assert!((c.border_rect.x -   0.0).abs() < 2.0, "c.x={}", c.border_rect.x);
-    assert!((d.border_rect.x - 100.0).abs() < 2.0, "d.x={}", d.border_rect.x);
-    assert!(c.border_rect.y > a.border_rect.y, "c must be below a");
-    assert!((c.border_rect.y - d.border_rect.y).abs() < 2.0, "c,d same row");
+    assert!((c.layout.border_rect.x -   0.0).abs() < 2.0, "c.x={}", c.layout.border_rect.x);
+    assert!((d.layout.border_rect.x - 100.0).abs() < 2.0, "d.x={}", d.layout.border_rect.x);
+    assert!(c.layout.border_rect.y > a.layout.border_rect.y, "c must be below a");
+    assert!((c.layout.border_rect.y - d.layout.border_rect.y).abs() < 2.0, "c,d same row");
 }
 
 #[test]
@@ -356,11 +356,11 @@ fn row_locked_auto_column_step2_placement() {
     let a = find_by_id(&doc.root, "a").expect("a");
     let b = find_by_id(&doc.root, "b").expect("b");
     // Both locked to row 0 → same y
-    assert!((a.border_rect.y - b.border_rect.y).abs() < 2.0,
-        "both must be in the same row; a.y={} b.y={}", a.border_rect.y, b.border_rect.y);
+    assert!((a.layout.border_rect.y - b.layout.border_rect.y).abs() < 2.0,
+        "both must be in the same row; a.y={} b.y={}", a.layout.border_rect.y, b.layout.border_rect.y);
     // Must be in different columns → different x
-    assert!((b.border_rect.x - a.border_rect.x).abs() > 50.0,
-        "must be in different columns; a.x={} b.x={}", a.border_rect.x, b.border_rect.x);
+    assert!((b.layout.border_rect.x - a.layout.border_rect.x).abs() > 50.0,
+        "must be in different columns; a.x={} b.x={}", a.layout.border_rect.x, b.layout.border_rect.x);
 }
 
 // ─── col-span-full (grid-column: 1 / -1) in grids and subgrids ──────────────
@@ -376,8 +376,8 @@ fn grid_col_span_full_spans_all_columns() {
     "#;
     let doc = parse_and_layout(html, 600.0);
     let full = find_by_id(&doc.root, "full").unwrap();
-    assert!(full.content_rect.w > 500.0,
-        "col-span-full must span all 6 columns, got width={}", full.content_rect.w);
+    assert!(full.layout.content_rect.w > 500.0,
+        "col-span-full must span all 6 columns, got width={}", full.layout.content_rect.w);
 }
 
 #[test]
@@ -394,10 +394,10 @@ fn subgrid_col_span_full_spans_inherited_columns() {
     let doc = parse_and_layout(html, 600.0);
     let sub = find_by_id(&doc.root, "sub").unwrap();
     let inner = find_by_id(&doc.root, "inner-full").unwrap();
-    assert!(sub.content_rect.w > 500.0,
-        "subgrid must span all 6 columns, got width={}", sub.content_rect.w);
-    assert!(inner.content_rect.w > 500.0,
-        "inner col-span-full in subgrid must span all inherited columns, got width={}", inner.content_rect.w);
+    assert!(sub.layout.content_rect.w > 500.0,
+        "subgrid must span all 6 columns, got width={}", sub.layout.content_rect.w);
+    assert!(inner.layout.content_rect.w > 500.0,
+        "inner col-span-full in subgrid must span all inherited columns, got width={}", inner.layout.content_rect.w);
 }
 
 #[test]
@@ -417,11 +417,11 @@ fn subgrid_col_span_full_with_sibling() {
     let sub = find_by_id(&doc.root, "sub").unwrap();
     let rest = find_by_id(&doc.root, "rest").unwrap();
     // sub spans 7 columns = 700px
-    assert!(sub.content_rect.w > 600.0,
-        "subgrid spanning 7 columns should be ~700px, got {}", sub.content_rect.w);
+    assert!(sub.layout.content_rect.w > 600.0,
+        "subgrid spanning 7 columns should be ~700px, got {}", sub.layout.content_rect.w);
     // rest with col-span-full should also span all 7 inherited columns
-    assert!(rest.content_rect.w > 600.0,
-        "col-span-full in subgrid must span all 7 inherited columns, got {}", rest.content_rect.w);
+    assert!(rest.layout.content_rect.w > 600.0,
+        "col-span-full in subgrid must span all 7 inherited columns, got {}", rest.layout.content_rect.w);
 }
 
 #[test]
@@ -440,11 +440,11 @@ fn subgrid_column_locked_item_uses_explicit_columns() {
     let a = find_by_id(&doc.root, "a").unwrap();
     let b = find_by_id(&doc.root, "b").unwrap();
     // a: spans 2 columns = 200px
-    assert!(a.content_rect.w > 150.0,
-        "a spanning 2 columns should be ~200px, got {}", a.content_rect.w);
+    assert!(a.layout.content_rect.w > 150.0,
+        "a spanning 2 columns should be ~200px, got {}", a.layout.content_rect.w);
     // b: columns 3..6 = 3 columns = 300px
-    assert!(b.content_rect.w > 250.0,
-        "b spanning columns 3-6 should be ~300px, got {}", b.content_rect.w);
+    assert!(b.layout.content_rect.w > 250.0,
+        "b spanning columns 3-6 should be ~300px, got {}", b.layout.content_rect.w);
 }
 
 #[test]
@@ -464,12 +464,12 @@ fn nested_subgrid_col_span_full() {
     let inner = find_by_id(&doc.root, "inner-sub").unwrap();
     let deep = find_by_id(&doc.root, "deep").unwrap();
     // Each should span 6 columns = 600px
-    assert!(outer.content_rect.w > 500.0,
-        "outer subgrid must be ~600px, got {}", outer.content_rect.w);
-    assert!(inner.content_rect.w > 500.0,
-        "inner subgrid with col-span-full must be ~600px, got {}", inner.content_rect.w);
-    assert!(deep.content_rect.w > 500.0,
-        "deep col-span-full in nested subgrid must be ~600px, got {}", deep.content_rect.w);
+    assert!(outer.layout.content_rect.w > 500.0,
+        "outer subgrid must be ~600px, got {}", outer.layout.content_rect.w);
+    assert!(inner.layout.content_rect.w > 500.0,
+        "inner subgrid with col-span-full must be ~600px, got {}", inner.layout.content_rect.w);
+    assert!(deep.layout.content_rect.w > 500.0,
+        "deep col-span-full in nested subgrid must be ~600px, got {}", deep.layout.content_rect.w);
 }
 
 #[test]
@@ -494,13 +494,13 @@ fn aol_trending_layout_pattern() {
     let art1 = find_by_id(&doc.root, "art1").unwrap();
 
     // right spans 7 columns
-    assert!(right.content_rect.w > 400.0,
-        "right panel (7 cols) too narrow: {}", right.content_rect.w);
+    assert!(right.layout.content_rect.w > 400.0,
+        "right panel (7 cols) too narrow: {}", right.layout.content_rect.w);
     // articles with col-span-full should span all 7 inherited columns
-    assert!(articles.content_rect.w > 400.0,
+    assert!(articles.layout.content_rect.w > 400.0,
         "articles col-span-full in subgrid too narrow: {} (should match right={})",
-        articles.content_rect.w, right.content_rect.w);
+        articles.layout.content_rect.w, right.layout.content_rect.w);
     // art1 with span 3 should be ~3/7 of articles width
-    assert!(art1.content_rect.w > 100.0,
-        "art1 span-3 in nested subgrid too narrow: {}", art1.content_rect.w);
+    assert!(art1.layout.content_rect.w > 100.0,
+        "art1 span-3 in nested subgrid too narrow: {}", art1.layout.content_rect.w);
 }

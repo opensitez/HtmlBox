@@ -147,8 +147,8 @@ fn shadow_content_is_laid_out() {
     "#, 400.0);
     let host = find_by_id(&doc.root, "host").unwrap();
     // Host should have height from shadow content (at least one line of text)
-    assert!(host.content_rect.h > 10.0,
-        "host height should include shadow content: got {}", host.content_rect.h);
+    assert!(host.layout.content_rect.h > 10.0,
+        "host height should include shadow content: got {}", host.layout.content_rect.h);
 }
 
 #[test]
@@ -167,8 +167,8 @@ fn light_dom_hidden_without_slot() {
     // The shadow <p> content is rendered via the host's layout (which swaps
     // shadow children into node.children during layout). We verify by checking
     // that the host itself has height (from shadow content).
-    assert!(host.content_rect.h > 10.0,
-        "host should have height from shadow content: got {}", host.content_rect.h);
+    assert!(host.layout.content_rect.h > 10.0,
+        "host should have height from shadow content: got {}", host.layout.content_rect.h);
 }
 
 // ── Phase 4: Slot projection ────────────────────────────────────────────────
@@ -185,8 +185,8 @@ fn default_slot_projects_light_dom() {
     "#, 400.0);
     let host = find_by_id(&doc.root, "host").unwrap();
     // Host should have height from projected content (light DOM <p> via slot)
-    assert!(host.content_rect.h > 10.0,
-        "host should have height from slotted content: got {}", host.content_rect.h);
+    assert!(host.layout.content_rect.h > 10.0,
+        "host should have height from slotted content: got {}", host.layout.content_rect.h);
 }
 
 #[test]
@@ -203,8 +203,8 @@ fn named_slot_projects_matching_content() {
     "#, 400.0);
     let host = find_by_id(&doc.root, "host").unwrap();
     // Host should have height from both named and default slots
-    assert!(host.content_rect.h > 20.0,
-        "host should have height from slotted content: got {}", host.content_rect.h);
+    assert!(host.layout.content_rect.h > 20.0,
+        "host should have height from slotted content: got {}", host.layout.content_rect.h);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn slot_fallback_when_no_matching_content() {
     "#, 400.0);
     // No light DOM children with slot="missing", so fallback should show
     let fallback = find_by_id(&doc.root, "fallback").unwrap();
-    assert!(fallback.content_rect.h > 0.0,
+    assert!(fallback.layout.content_rect.h > 0.0,
         "slot fallback should be laid out when no matching content");
 }
 

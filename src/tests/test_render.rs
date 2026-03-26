@@ -231,7 +231,7 @@ fn layout_flex_nav_li_items_no_overlap() {
     // Collect li border_rect x positions
     let mut li_boxes: Vec<f32> = Vec::new();
     fn collect_li(node: &crate::types::HtmlBox, out: &mut Vec<f32>) {
-        if node.tag == "li" { out.push(node.border_rect.x); }
+        if node.tag == "li" { out.push(node.layout.border_rect.x); }
         for ch in &node.children { collect_li(ch, out); }
     }
     collect_li(&doc.root, &mut li_boxes);
@@ -261,10 +261,10 @@ fn layout_abs_inset_zero_fills_parent_height() {
     let child = find_box(&doc.root, &|b| {
         b.attributes.get("class").map(|c| c == "child").unwrap_or(false)
     }).expect("child not found");
-    assert!((child.border_rect.w - 200.0).abs() < 1.0,
-        "inset:0 child width should be 200, got {}", child.border_rect.w);
-    assert!((child.border_rect.h - 100.0).abs() < 1.0,
-        "inset:0 child height should be 100, got {}", child.border_rect.h);
+    assert!((child.layout.border_rect.w - 200.0).abs() < 1.0,
+        "inset:0 child width should be 200, got {}", child.layout.border_rect.w);
+    assert!((child.layout.border_rect.h - 100.0).abs() < 1.0,
+        "inset:0 child height should be 100, got {}", child.layout.border_rect.h);
 }
 
 // ── Blend mode: solid colors ──────────────────────────────────────────────────
@@ -402,11 +402,11 @@ fn layout_sticky_inside_scrollable_div() {
         b.attributes.get("class").map(|c| c == "container").unwrap_or(false)
     }).expect("container not found");
     // Header must be inside the container vertically
-    assert!(hdr.border_rect.y >= container.border_rect.y,
+    assert!(hdr.layout.border_rect.y >= container.layout.border_rect.y,
         "sticky-hdr should be at or below container top; hdr.y={} container.y={}",
-        hdr.border_rect.y, container.border_rect.y);
-    assert!((hdr.border_rect.h - 30.0).abs() < 1.0,
-        "sticky-hdr height should be 30, got {}", hdr.border_rect.h);
+        hdr.layout.border_rect.y, container.layout.border_rect.y);
+    assert!((hdr.layout.border_rect.h - 30.0).abs() < 1.0,
+        "sticky-hdr height should be 30, got {}", hdr.layout.border_rect.h);
 }
 
 // ── inline-block in flex: background must cover padding ──────────────────────
@@ -442,19 +442,19 @@ fn layout_inline_block_in_flex_padding_covered() {
         b.attributes.get("class").map(|c| c == "btn").unwrap_or(false)
     }).expect("btn not found");
     let pad_total = 12.0 + 12.0; // padding-left + padding-right
-    let expected_border_w = btn.content_rect.w + pad_total;
-    assert!((btn.border_rect.w - expected_border_w).abs() < 1.5,
+    let expected_border_w = btn.layout.content_rect.w + pad_total;
+    assert!((btn.layout.border_rect.w - expected_border_w).abs() < 1.5,
         "btn border_rect.w should be content_rect.w + 24 = {expected_border_w}, got {}; \
-         content_rect.w={}", btn.border_rect.w, btn.content_rect.w);
+         content_rect.w={}", btn.layout.border_rect.w, btn.layout.content_rect.w);
     // content must be non-trivial (text was measured)
-    assert!(btn.content_rect.w > 5.0,
-        "btn content_rect.w should be > 5 (text width), got {}", btn.content_rect.w);
+    assert!(btn.layout.content_rect.w > 5.0,
+        "btn content_rect.w should be > 5 (text width), got {}", btn.layout.content_rect.w);
     // sidebar must keep its min-width (not be over-shrunk by flex)
     let sidebar = find_box(&doc.root, &|b| {
         b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)
     }).expect("sidebar not found");
-    assert!(sidebar.border_rect.w >= 169.0,
-        "sidebar must not shrink below min-width 170; got {}", sidebar.border_rect.w);
+    assert!(sidebar.layout.border_rect.w >= 169.0,
+        "sidebar must not shrink below min-width 170; got {}", sidebar.layout.border_rect.w);
 }
 
 // ── float:right inside a block renders to the right ──────────────────────────
@@ -480,13 +480,13 @@ fn layout_float_right_appears_on_right() {
         b.attributes.get("class").map(|c| c == "item").unwrap_or(false)
     }).expect("item not found");
     // The float must be to the right of the midpoint of the content area
-    let content_mid = item.content_rect.x + item.content_rect.w / 2.0;
-    assert!(stat.border_rect.x > content_mid,
+    let content_mid = item.layout.content_rect.x + item.layout.content_rect.w / 2.0;
+    assert!(stat.layout.border_rect.x > content_mid,
         "float:right stat should be in right half; stat.x={} content_mid={} item.content={:?}",
-        stat.border_rect.x, content_mid, item.content_rect);
+        stat.layout.border_rect.x, content_mid, item.layout.content_rect);
     // Float right edge should be near the content right edge
-    let stat_right  = stat.border_rect.x + stat.border_rect.w;
-    let content_right = item.content_rect.x + item.content_rect.w;
+    let stat_right  = stat.layout.border_rect.x + stat.layout.border_rect.w;
+    let content_right = item.layout.content_rect.x + item.layout.content_rect.w;
     assert!((stat_right - content_right).abs() < 2.0,
         "float:right right edge should align with content right; stat_right={stat_right} content_right={content_right}");
 }
@@ -526,18 +526,18 @@ fn debug_graph_sidebar_and_button() {
 
     // Check sidebar width
     let sidebar = find_box(&doc.root, &|b| b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)).unwrap();
-    eprintln!("sidebar border_rect={:?}", sidebar.border_rect);
+    eprintln!("sidebar border_rect={:?}", sidebar.layout.border_rect);
 
     // Check sstat float positions
     let sstats = find_all_boxes(&doc.root, &|b| b.attributes.get("class").map(|c| c == "sstat").unwrap_or(false));
     for s in &sstats {
-        eprintln!("sstat border_rect={:?} margin_rect={:?}", s.border_rect, s.margin_rect);
+        eprintln!("sstat border_rect={:?} margin_rect={:?}", s.layout.border_rect, s.layout.margin_rect);
     }
 
     // Check buttons
     let btns = find_all_boxes(&doc.root, &|b| matches!(b.attributes.get("class"), Some(c) if c.contains("btn")));
     for b in &btns {
-        eprintln!("btn '{}' border_rect={:?} content_rect={:?}", b.attributes.get("id").unwrap_or(&String::new()), b.border_rect, b.content_rect);
+        eprintln!("btn '{}' border_rect={:?} content_rect={:?}", b.attributes.get("id").unwrap_or(&String::new()), b.layout.border_rect, b.layout.content_rect);
     }
 }
 
@@ -592,11 +592,11 @@ fn layout_abs_all_auto_in_flex_inside_container() {
         b.attributes.get("class").map(|c| c == "ring").unwrap_or(false)
     }).expect("ring not found");
     // ring must be inside wrap (not at document origin ~0,0)
-    assert!(ring.border_rect.y >= wrap.border_rect.y - 1.0,
+    assert!(ring.layout.border_rect.y >= wrap.layout.border_rect.y - 1.0,
         "ring y ({}) should be >= wrap y ({}) — ring should not be at document origin",
-        ring.border_rect.y, wrap.border_rect.y);
-    assert!(ring.border_rect.x >= wrap.border_rect.x - 1.0,
-        "ring x ({}) should be >= wrap x ({})", ring.border_rect.x, wrap.border_rect.x);
+        ring.layout.border_rect.y, wrap.layout.border_rect.y);
+    assert!(ring.layout.border_rect.x >= wrap.layout.border_rect.x - 1.0,
+        "ring x ({}) should be >= wrap x ({})", ring.layout.border_rect.x, wrap.layout.border_rect.x);
 }
 
 /// Absolute child with all-auto insets inside a centered flex container should
@@ -618,10 +618,10 @@ fn layout_abs_all_auto_in_flex_centered() {
         b.attributes.get("class").map(|c| c == "child").unwrap_or(false)
     }).expect("child not found");
     // Container 200x200 at origin, child 40x40 → centered at (80, 80)
-    assert!((child.border_rect.x - 80.0).abs() < 2.0,
-        "abs child x should be ~80 (centered), got {}", child.border_rect.x);
-    assert!((child.border_rect.y - 80.0).abs() < 2.0,
-        "abs child y should be ~80 (centered), got {}", child.border_rect.y);
+    assert!((child.layout.border_rect.x - 80.0).abs() < 2.0,
+        "abs child x should be ~80 (centered), got {}", child.layout.border_rect.x);
+    assert!((child.layout.border_rect.y - 80.0).abs() < 2.0,
+        "abs child y should be ~80 (centered), got {}", child.layout.border_rect.y);
 }
 
 // ── Border-radius per-side arc: top-only border on a circle ──────────────────
@@ -741,11 +741,11 @@ fn debug_sidebar_box_sizing() {
         b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)
     }).unwrap();
     eprintln!("sidebar box_sizing={:?} border_rect.w={} content_rect.w={}",
-        sidebar.style.box_sizing, sidebar.border_rect.w, sidebar.content_rect.w);
+        sidebar.style.box_sizing, sidebar.layout.border_rect.w, sidebar.layout.content_rect.w);
     assert!(matches!(sidebar.style.box_sizing, BoxSizing::BorderBox),
         "sidebar should have box-sizing:border-box from * rule");
-    assert!((sidebar.border_rect.w - 170.0).abs() < 1.0,
-        "sidebar border_rect.w should be 170 (border-box), got {}", sidebar.border_rect.w);
+    assert!((sidebar.layout.border_rect.w - 170.0).abs() < 1.0,
+        "sidebar border_rect.w should be 170 (border-box), got {}", sidebar.layout.border_rect.w);
 }
 
 /// Flex-column with align-items:center must shrink auto-width children to their
@@ -768,11 +768,11 @@ fn layout_flex_column_center_shrinks_child_to_intrinsic_width() {
     }).unwrap();
     let h2 = find_box(col, &|b| b.tag == "h2").unwrap();
     // With centering, h2 must be narrower than the 400px container and have
-    // a non-zero left offset (margin_rect.x > col.content_rect.x).
-    assert!(h2.margin_rect.w < 380.0,
-        "h2 should shrink to text width, not fill 400px; got w={}", h2.margin_rect.w);
-    assert!(h2.margin_rect.x > col.content_rect.x + 1.0,
-        "h2 should be shifted right (centered); x={} col.content_rect.x={}",
-        h2.margin_rect.x, col.content_rect.x);
+    // a non-zero left offset (margin_rect.x > col.layout.content_rect.x).
+    assert!(h2.layout.margin_rect.w < 380.0,
+        "h2 should shrink to text width, not fill 400px; got w={}", h2.layout.margin_rect.w);
+    assert!(h2.layout.margin_rect.x > col.layout.content_rect.x + 1.0,
+        "h2 should be shifted right (centered); x={} col.layout.content_rect.x={}",
+        h2.layout.margin_rect.x, col.layout.content_rect.x);
 }
 

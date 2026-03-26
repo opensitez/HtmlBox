@@ -48,14 +48,14 @@ fn text_input_has_correct_display() {
 fn text_input_has_width() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.content_rect.w > 100.0, "input width {} should be > 100", input.content_rect.w);
+    assert!(input.layout.content_rect.w > 100.0, "input width {} should be > 100", input.layout.content_rect.w);
 }
 
 #[test]
 fn text_input_has_height() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.content_rect.h > 10.0, "input height {} should be > 10", input.content_rect.h);
+    assert!(input.layout.content_rect.h > 10.0, "input height {} should be > 10", input.layout.content_rect.h);
 }
 
 #[test]
@@ -76,8 +76,8 @@ fn text_input_preserves_placeholder() {
 fn text_input_has_border() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.resolved_border_top > 0.0, "input should have border");
-    assert!(input.resolved_border_left > 0.0);
+    assert!(input.layout.resolved_border_top > 0.0, "input should have border");
+    assert!(input.layout.resolved_border_left > 0.0);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn text_input_text_centered_vertically() {
     let input = find_by_tag(&doc.root, "input").unwrap();
     let font_px = input.style.font_size_px(16.0, 16.0);
     let line_h = font_px * 1.2;
-    let top_space = (input.content_rect.h - line_h) / 2.0;
+    let top_space = (input.layout.content_rect.h - line_h) / 2.0;
     assert!(top_space > 1.0, "should have > 1px above text, got {}", top_space);
 }
 
@@ -237,15 +237,15 @@ fn process_form_input_key_space() {
 fn checkbox_has_correct_size() {
     let doc = layout_html(r#"<input type="checkbox">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.content_rect.w, 16.0);
-    assert_eq!(input.content_rect.h, 16.0);
+    assert_eq!(input.layout.content_rect.w, 16.0);
+    assert_eq!(input.layout.content_rect.h, 16.0);
 }
 
 #[test]
 fn checkbox_no_border() {
     let doc = layout_html(r#"<input type="checkbox">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.resolved_border_top, 0.0);
+    assert_eq!(input.layout.resolved_border_top, 0.0);
 }
 
 #[test]
@@ -269,11 +269,11 @@ fn checkbox_text_not_overlapping() {
     find_all_by_tag(&doc.root, "input", &mut inputs);
     let input = inputs[0];
     // The text "Label" should start after the checkbox margin box
-    let input_right = input.margin_rect.x + input.margin_rect.w;
+    let input_right = input.layout.margin_rect.x + input.layout.margin_rect.w;
     // Check that the parent div's line cache positions text after the checkbox
     let div = find_by_tag(&doc.root, "div").unwrap();
-    assert!(!div.line_cache.is_empty(), "div should have line cache");
-    let line = &div.line_cache[0];
+    assert!(!div.layout.line_cache.is_empty(), "div should have line cache");
+    let line = &div.layout.line_cache[0];
     // text_x_offset should be > 0 (accounting for checkbox)
     assert!(line.text_x_offset > 0.0, "text_x_offset {} should be > 0", line.text_x_offset);
 }
@@ -284,8 +284,8 @@ fn checkbox_text_not_overlapping() {
 fn radio_has_correct_size() {
     let doc = layout_html(r#"<input type="radio" name="g">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.content_rect.w, 16.0);
-    assert_eq!(input.content_rect.h, 16.0);
+    assert_eq!(input.layout.content_rect.w, 16.0);
+    assert_eq!(input.layout.content_rect.h, 16.0);
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn button_display_inline_flex() {
 fn button_has_width() {
     let doc = layout_html(r#"<input type="submit" value="Submit Form">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.content_rect.w > 20.0, "button width {} should be > 20", input.content_rect.w);
+    assert!(input.layout.content_rect.w > 20.0, "button width {} should be > 20", input.layout.content_rect.w);
 }
 
 // ── Select Tests ─────────────────────────────────────────────────────────────
@@ -410,7 +410,7 @@ fn select_tracks_selected_index() {
 fn select_has_width() {
     let doc = layout_html(r#"<select><option>Option</option></select>"#, 400.0);
     let select = find_by_tag(&doc.root, "select").unwrap();
-    assert!(select.content_rect.w > 50.0, "select width {} should be > 50", select.content_rect.w);
+    assert!(select.layout.content_rect.w > 50.0, "select width {} should be > 50", select.layout.content_rect.w);
 }
 
 #[test]
@@ -438,8 +438,8 @@ fn textarea_has_content() {
 fn textarea_has_width_and_height() {
     let doc = layout_html(r#"<textarea rows="3">Text</textarea>"#, 400.0);
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    assert!(ta.content_rect.w > 50.0);
-    assert!(ta.content_rect.h > 20.0);
+    assert!(ta.layout.content_rect.w > 50.0);
+    assert!(ta.layout.content_rect.h > 20.0);
 }
 
 // ── Range Input Tests ────────────────────────────────────────────────────────
@@ -457,7 +457,7 @@ fn range_input_preserves_attributes() {
 fn range_input_no_border() {
     let doc = layout_html(r#"<input type="range">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.resolved_border_top, 0.0);
+    assert_eq!(input.layout.resolved_border_top, 0.0);
 }
 
 // ── Progress Tests ───────────────────────────────────────────────────────────
@@ -466,8 +466,8 @@ fn range_input_no_border() {
 fn progress_has_size() {
     let doc = layout_html(r#"<progress value="0.5" max="1"></progress>"#, 400.0);
     let prog = find_by_tag(&doc.root, "progress").unwrap();
-    assert!(prog.content_rect.w > 50.0);
-    assert!(prog.content_rect.h > 5.0);
+    assert!(prog.layout.content_rect.w > 50.0);
+    assert!(prog.layout.content_rect.h > 5.0);
 }
 
 // ── Meter Tests ──────────────────────────────────────────────────────────────
@@ -476,8 +476,8 @@ fn progress_has_size() {
 fn meter_has_size() {
     let doc = layout_html(r#"<meter value="0.5" min="0" max="1"></meter>"#, 400.0);
     let meter = find_by_tag(&doc.root, "meter").unwrap();
-    assert!(meter.content_rect.w > 30.0);
-    assert!(meter.content_rect.h > 5.0);
+    assert!(meter.layout.content_rect.w > 30.0);
+    assert!(meter.layout.content_rect.h > 5.0);
 }
 
 // ── Fieldset/Legend Tests ────────────────────────────────────────────────────
@@ -493,7 +493,7 @@ fn fieldset_is_block() {
 fn fieldset_has_border() {
     let doc = layout_html(r#"<fieldset><legend>Title</legend></fieldset>"#, 400.0);
     let fs = find_by_tag(&doc.root, "fieldset").unwrap();
-    assert!(fs.resolved_border_top > 0.0);
+    assert!(fs.layout.resolved_border_top > 0.0);
 }
 
 // ── Hidden Input ─────────────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ fn select_dark_theme_options_readable() {
 fn textarea_has_border() {
     let doc = layout_html(r#"<textarea>text</textarea>"#, 400.0);
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    assert!(ta.resolved_border_top > 0.0, "textarea should have border");
+    assert!(ta.layout.resolved_border_top > 0.0, "textarea should have border");
 }
 
 #[test]
@@ -642,8 +642,8 @@ fn textarea_width_override() {
     let doc = layout_html(r#"<style>textarea { width: 400px; }</style>
         <textarea>text</textarea>"#, 500.0);
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    assert!((ta.margin_rect.w - 400.0).abs() < 5.0,
-        "textarea width {} should be ~400", ta.margin_rect.w);
+    assert!((ta.layout.margin_rect.w - 400.0).abs() < 5.0,
+        "textarea width {} should be ~400", ta.layout.margin_rect.w);
 }
 
 // ── Input styling tests ─────────────────────────────────────────────────────
@@ -653,8 +653,8 @@ fn input_padding_override() {
     let doc = layout_html(r#"<style>input { padding: 10px 15px; }</style>
         <input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!((input.resolved_pad_top - 10.0).abs() < 1.0, "padding-top {} should be ~10", input.resolved_pad_top);
-    assert!((input.resolved_pad_left - 15.0).abs() < 1.0, "padding-left {} should be ~15", input.resolved_pad_left);
+    assert!((input.layout.resolved_pad_top - 10.0).abs() < 1.0, "padding-top {} should be ~10", input.layout.resolved_pad_top);
+    assert!((input.layout.resolved_pad_left - 15.0).abs() < 1.0, "padding-left {} should be ~15", input.layout.resolved_pad_left);
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn input_border_color_override() {
     let doc = layout_html(r#"<style>input { border: 2px solid red; }</style>
         <input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!((input.resolved_border_top - 2.0).abs() < 0.5, "border should be 2px");
+    assert!((input.layout.resolved_border_top - 2.0).abs() < 0.5, "border should be 2px");
 }
 
 #[test]
@@ -712,14 +712,14 @@ fn button_white_space_nowrap() {
 fn checkbox_in_label_spacing() {
     let doc = layout_html(r#"<label><input type="checkbox"> Option</label>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.resolved_margin_right >= 4.0, "checkbox should have right margin >= 4, got {}", input.resolved_margin_right);
+    assert!(input.layout.resolved_margin_right >= 4.0, "checkbox should have right margin >= 4, got {}", input.layout.resolved_margin_right);
 }
 
 #[test]
 fn radio_in_label_spacing() {
     let doc = layout_html(r#"<label><input type="radio" name="g"> Choice</label>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.resolved_margin_right >= 4.0, "radio should have right margin >= 4, got {}", input.resolved_margin_right);
+    assert!(input.layout.resolved_margin_right >= 4.0, "radio should have right margin >= 4, got {}", input.layout.resolved_margin_right);
 }
 
 // ── Form input key handling tests ────────────────────────────────────────────
@@ -876,8 +876,8 @@ fn textarea_rows_affects_height() {
     let doc2 = layout_html(r#"<textarea rows="6">text</textarea>"#, 400.0);
     let ta1 = find_by_tag(&doc1.root, "textarea").unwrap();
     let ta2 = find_by_tag(&doc2.root, "textarea").unwrap();
-    assert!(ta2.content_rect.h > ta1.content_rect.h,
-        "rows=6 height {} should be > rows=2 height {}", ta2.content_rect.h, ta1.content_rect.h);
+    assert!(ta2.layout.content_rect.h > ta1.layout.content_rect.h,
+        "rows=6 height {} should be > rows=2 height {}", ta2.layout.content_rect.h, ta1.layout.content_rect.h);
 }
 
 // ── Input size attribute ────────────────────────────────────────────────────
@@ -888,8 +888,8 @@ fn input_size_affects_width() {
     let doc2 = layout_html(r#"<input type="text" size="40">"#, 500.0);
     let i1 = find_by_tag(&doc1.root, "input").unwrap();
     let i2 = find_by_tag(&doc2.root, "input").unwrap();
-    assert!(i2.content_rect.w > i1.content_rect.w,
-        "size=40 width {} should be > size=5 width {}", i2.content_rect.w, i1.content_rect.w);
+    assert!(i2.layout.content_rect.w > i1.layout.content_rect.w,
+        "size=40 width {} should be > size=5 width {}", i2.layout.content_rect.w, i1.layout.content_rect.w);
 }
 
 // ── Disabled blocks form_input_key ──────────────────────────────────────────
@@ -942,8 +942,8 @@ fn input_css_width_override() {
     let doc = layout_html(r#"<style>input { width: 300px; }</style><input type="text">"#, 500.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
     // margin_rect width should be close to 300px (border-box)
-    assert!((input.margin_rect.w - 300.0).abs() < 5.0,
-        "input width {} should be ~300", input.margin_rect.w);
+    assert!((input.layout.margin_rect.w - 300.0).abs() < 5.0,
+        "input width {} should be ~300", input.layout.margin_rect.w);
 }
 
 #[test]
@@ -984,8 +984,8 @@ fn select_with_size_is_taller() {
     let doc2 = layout_html(r#"<select size="4"><option>A</option><option>B</option><option>C</option><option>D</option></select>"#, 400.0);
     let s1 = find_by_tag(&doc1.root, "select").unwrap();
     let s2 = find_by_tag(&doc2.root, "select").unwrap();
-    assert!(s2.margin_rect.h > s1.margin_rect.h,
-        "select size=4 height {} should be > default height {}", s2.margin_rect.h, s1.margin_rect.h);
+    assert!(s2.layout.margin_rect.h > s1.layout.margin_rect.h,
+        "select size=4 height {} should be > default height {}", s2.layout.margin_rect.h, s1.layout.margin_rect.h);
 }
 
 // ── Multiple select ──────────────────────────────────────────────────────────
@@ -1021,7 +1021,7 @@ fn date_input_preserves_value() {
 fn file_input_has_width() {
     let doc = layout_html(r#"<input type="file">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.content_rect.w > 100.0);
+    assert!(input.layout.content_rect.w > 100.0);
 }
 
 // ── Input number min/max preserved ──────────────────────────────────────────
@@ -1068,8 +1068,8 @@ fn button_is_focusable() {
 fn form_inside_table_works() {
     let doc = layout_html(r#"<table><form><tr><td>Label</td><td><input type="text"></td></tr></form></table>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.content_rect.w > 50.0, "input inside form-in-table should have width, got {}", input.content_rect.w);
-    assert!(input.content_rect.h > 5.0, "input inside form-in-table should have height, got {}", input.content_rect.h);
+    assert!(input.layout.content_rect.w > 50.0, "input inside form-in-table should have width, got {}", input.layout.content_rect.w);
+    assert!(input.layout.content_rect.h > 5.0, "input inside form-in-table should have height, got {}", input.layout.content_rect.h);
 }
 
 #[test]
@@ -1085,8 +1085,8 @@ fn click_and_type_integration() {
     let mut doc = layout_html(r#"<input type="text" id="t" value="">"#, 400.0);
     let input = find_by_id(&doc.root, "t").unwrap();
     let input_center = (
-        input.border_rect.x + input.border_rect.w / 2.0,
-        input.border_rect.y + input.border_rect.h / 2.0,
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
     );
 
     // Simulate click: MouseDown then MouseUp
@@ -1111,7 +1111,7 @@ fn click_and_type_integration() {
 fn click_and_type_password() {
     let mut doc = layout_html(r#"<input type="password" id="p" value="">"#, 400.0);
     let input = find_by_id(&doc.root, "p").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     assert!(doc.focused_box != 0, "password input should focus");
@@ -1125,7 +1125,7 @@ fn click_checkbox_toggles() {
     let mut doc = layout_html(r#"<input type="checkbox" id="c">"#, 400.0);
     let cb = find_by_id(&doc.root, "c").unwrap();
     assert!(!cb.attributes.contains_key("checked"));
-    let center = (cb.border_rect.x + cb.border_rect.w / 2.0, cb.border_rect.y + cb.border_rect.h / 2.0);
+    let center = (cb.layout.border_rect.x + cb.layout.border_rect.w / 2.0, cb.layout.border_rect.y + cb.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let cb = find_by_id(&doc.root, "c").unwrap();
@@ -1136,7 +1136,7 @@ fn click_checkbox_toggles() {
 fn click_radio_selects() {
     let mut doc = layout_html(r#"<input type="radio" name="g" id="r1"><input type="radio" name="g" id="r2">"#, 400.0);
     let r2 = find_by_id(&doc.root, "r2").unwrap();
-    let center = (r2.border_rect.x + r2.border_rect.w / 2.0, r2.border_rect.y + r2.border_rect.h / 2.0);
+    let center = (r2.layout.border_rect.x + r2.layout.border_rect.w / 2.0, r2.layout.border_rect.y + r2.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let r2 = find_by_id(&doc.root, "r2").unwrap();
@@ -1155,7 +1155,7 @@ fn click_button_fires_event(html: &str, expected_tag: &str) -> Vec<FormEventKind
         events_clone.lock().unwrap().push(e.kind.clone());
     }));
     let btn = find_by_tag(&doc.root, expected_tag).unwrap();
-    let center = (btn.border_rect.x + btn.border_rect.w / 2.0, btn.border_rect.y + btn.border_rect.h / 2.0);
+    let center = (btn.layout.border_rect.x + btn.layout.border_rect.w / 2.0, btn.layout.border_rect.y + btn.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let result = events_ref.lock().unwrap().clone();
@@ -1206,8 +1206,8 @@ fn button_element_type_button_no_submit() {
 fn click_sets_focus(html: &str, tag: &str) -> bool {
     let mut doc = layout_html(html, 400.0);
     let elem = find_by_tag(&doc.root, tag).unwrap();
-    let center = (elem.border_rect.x + elem.border_rect.w / 2.0,
-                  elem.border_rect.y + elem.border_rect.h / 2.0);
+    let center = (elem.layout.border_rect.x + elem.layout.border_rect.w / 2.0,
+                  elem.layout.border_rect.y + elem.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.focused_box != 0
@@ -1343,8 +1343,8 @@ fn enter_in_text_input_no_newline() {
     let mut doc = layout_html(r#"<form action="/go"><input type="text" id="t" value="hi"></form>"#, 400.0);
     // Focus the input
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0,
-                  input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Press Enter
@@ -1360,8 +1360,8 @@ fn enter_in_text_input_no_newline() {
 fn disabled_input_no_focus_on_click() {
     let mut doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0,
-                  input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     // Disabled inputs ARE focusable per HTML spec (browsers focus them on click)
     // but they shouldn't accept keyboard input (already tested above)
@@ -1497,8 +1497,8 @@ fn reset_clears_text_inputs() {
     </form>"#, 400.0);
     // Simulate typing to change value
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0,
-                  input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
@@ -1563,7 +1563,7 @@ fn select_arrow_down_changes_option() {
     </select>"#, 400.0);
     // Focus the select
     let sel = find_by_id(&doc.root, "s").unwrap();
-    let center = (sel.border_rect.x + sel.border_rect.w / 2.0, sel.border_rect.y + sel.border_rect.h / 2.0);
+    let center = (sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0, sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Arrow down should select next option
@@ -1581,7 +1581,7 @@ fn select_arrow_up_changes_option() {
         <option value="c">Gamma</option>
     </select>"#, 400.0);
     let sel = find_by_id(&doc.root, "s").unwrap();
-    let center = (sel.border_rect.x + sel.border_rect.w / 2.0, sel.border_rect.y + sel.border_rect.h / 2.0);
+    let center = (sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0, sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
@@ -1596,7 +1596,7 @@ fn select_arrow_up_changes_option() {
 fn number_input_arrow_up_increments() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
@@ -1608,7 +1608,7 @@ fn number_input_arrow_up_increments() {
 fn number_input_arrow_down_decrements() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
@@ -1620,7 +1620,7 @@ fn number_input_arrow_down_decrements() {
 fn number_input_respects_max() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="10" max="10">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false);
@@ -1632,7 +1632,7 @@ fn number_input_respects_max() {
 fn number_input_respects_min() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="0" min="0">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0, input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false);
@@ -1772,8 +1772,8 @@ fn range_has_default_value() {
 fn ctrl_a_selects_all_in_input() {
     let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0,
-                  input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Ctrl+A
@@ -1789,8 +1789,8 @@ fn ctrl_a_selects_all_in_input() {
 fn backspace_deletes_selection() {
     let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.border_rect.x + input.border_rect.w / 2.0,
-                  input.border_rect.y + input.border_rect.h / 2.0);
+    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Select all with Ctrl+A
@@ -1821,13 +1821,13 @@ fn input_explicit_height_stretches_padding_rect() {
     );
     let input = find_by_id(&doc.root, "t").unwrap();
     // padding_rect.h should be at least 80px (the explicit height)
-    assert!(input.padding_rect.h >= 78.0,
+    assert!(input.layout.padding_rect.h >= 78.0,
         "padding_rect height {} should be >= 78 when height:80px is set",
-        input.padding_rect.h);
+        input.layout.padding_rect.h);
     // border_rect should also reflect the height
-    assert!(input.border_rect.h >= 78.0,
+    assert!(input.layout.border_rect.h >= 78.0,
         "border_rect height {} should be >= 78 when height:80px is set",
-        input.border_rect.h);
+        input.layout.border_rect.h);
 }
 
 #[test]
@@ -1840,12 +1840,12 @@ fn input_explicit_height_content_rect_smaller() {
     let input = find_by_id(&doc.root, "t").unwrap();
     // With border-box, border_rect.h = 100, content_rect.h = 100 - padding*2 - border*2
     // UA has border: 1px, so content = 100 - 20 - 2 = 78
-    assert!(input.border_rect.h >= 98.0,
+    assert!(input.layout.border_rect.h >= 98.0,
         "border_rect height {} should be ~100 with border-box",
-        input.border_rect.h);
-    assert!(input.content_rect.h < input.border_rect.h,
+        input.layout.border_rect.h);
+    assert!(input.layout.content_rect.h < input.layout.border_rect.h,
         "content_rect.h {} should be smaller than border_rect.h {} due to padding",
-        input.content_rect.h, input.border_rect.h);
+        input.layout.content_rect.h, input.layout.border_rect.h);
 }
 
 #[test]
@@ -1856,9 +1856,9 @@ fn textarea_explicit_height_stretches() {
         400.0,
     );
     let ta = find_by_id(&doc.root, "t").unwrap();
-    assert!(ta.padding_rect.h >= 118.0,
+    assert!(ta.layout.padding_rect.h >= 118.0,
         "textarea padding_rect.h {} should be >= 118 with height:120px",
-        ta.padding_rect.h);
+        ta.layout.padding_rect.h);
 }
 
 #[test]
@@ -1869,9 +1869,9 @@ fn select_explicit_height_stretches() {
         400.0,
     );
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert!(sel.padding_rect.h >= 58.0,
+    assert!(sel.layout.padding_rect.h >= 58.0,
         "select padding_rect.h {} should be >= 58 with height:60px",
-        sel.padding_rect.h);
+        sel.layout.padding_rect.h);
 }
 
 #[test]
@@ -1881,9 +1881,9 @@ fn button_explicit_height_stretches() {
         400.0,
     );
     let btn = find_by_id(&doc.root, "b").unwrap();
-    assert!(btn.padding_rect.h >= 78.0,
+    assert!(btn.layout.padding_rect.h >= 78.0,
         "button padding_rect.h {} should be >= 78 with height:80px",
-        btn.padding_rect.h);
+        btn.layout.padding_rect.h);
 }
 
 #[test]
@@ -1893,7 +1893,7 @@ fn submit_input_explicit_height_stretches() {
         400.0,
     );
     let sub = find_by_id(&doc.root, "s").unwrap();
-    assert!(sub.padding_rect.h >= 58.0,
+    assert!(sub.layout.padding_rect.h >= 58.0,
         "submit padding_rect.h {} should be >= 58 with height:60px",
-        sub.padding_rect.h);
+        sub.layout.padding_rect.h);
 }

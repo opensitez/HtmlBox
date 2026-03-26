@@ -48,7 +48,7 @@ fn layoutadv_min_height_enforced() {
             && (b.style.min_height.resolve(16.0, 0.0, 16.0) - 200.0).abs() < 1.0
     });
     assert!(b.is_some());
-    assert!(b.unwrap().content_rect.h >= 200.0);
+    assert!(b.unwrap().layout.content_rect.h >= 200.0);
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn layoutadv_max_height_enforced() {
     );
     let b = find_box(&doc.root, &|b| b.tag == "div" && !b.style.max_height.is_none());
     assert!(b.is_some());
-    assert!(b.unwrap().content_rect.h <= 50.0);
+    assert!(b.unwrap().layout.content_rect.h <= 50.0);
 }
 
 // ── Margin Collapsing ─────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ fn layoutadv_margin_collapsing_positive() {
     );
     let divs = find_all_boxes(&doc.root, &|b| b.tag == "div");
     assert!(divs.len() >= 2);
-    let content_gap = divs[1].content_rect.y - (divs[0].content_rect.y + divs[0].content_rect.h);
+    let content_gap = divs[1].layout.content_rect.y - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
     // Collapsed to max(30,20)=30, not 50
     assert!(content_gap < 45.0, "expected collapsed gap < 45, got {}", content_gap);
 }
@@ -85,7 +85,7 @@ fn layoutadv_margin_collapsing_equal() {
     );
     let divs = find_all_boxes(&doc.root, &|b| b.tag == "div");
     assert!(divs.len() >= 2);
-    let content_gap = divs[1].content_rect.y - (divs[0].content_rect.y + divs[0].content_rect.h);
+    let content_gap = divs[1].layout.content_rect.y - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
     // Should be ~20 (collapsed), not 40 (sum)
     assert!(content_gap < 35.0, "expected collapsed gap < 35, got {}", content_gap);
 }
@@ -260,16 +260,16 @@ fn layoutadv_child_combinator_flex_basis_applied() {
     assert_eq!(cards.len(), 3);
 
     // All three cards should be on the same row (same y position).
-    let y0 = cards[0].margin_rect.y;
-    assert!((cards[1].margin_rect.y - y0).abs() < 2.0,
+    let y0 = cards[0].layout.margin_rect.y;
+    assert!((cards[1].layout.margin_rect.y - y0).abs() < 2.0,
         "card B should be on the same row as card A (child combinator not applying flex-basis)");
-    assert!((cards[2].margin_rect.y - y0).abs() < 2.0,
+    assert!((cards[2].layout.margin_rect.y - y0).abs() < 2.0,
         "card C should be on the same row as card A");
 
     // They should be side-by-side (x positions increasing).
-    assert!(cards[1].margin_rect.x > cards[0].margin_rect.x + 50.0,
+    assert!(cards[1].layout.margin_rect.x > cards[0].layout.margin_rect.x + 50.0,
         "card B should be to the right of card A");
-    assert!(cards[2].margin_rect.x > cards[1].margin_rect.x + 50.0,
+    assert!(cards[2].layout.margin_rect.x > cards[1].layout.margin_rect.x + 50.0,
         "card C should be to the right of card B");
 }
 
@@ -301,15 +301,15 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
     assert_eq!(boxes.len(), 3);
 
     // All three flex items should be on the same row.
-    let y0 = boxes[0].margin_rect.y;
-    assert!((boxes[1].margin_rect.y - y0).abs() < 2.0,
+    let y0 = boxes[0].layout.margin_rect.y;
+    assert!((boxes[1].layout.margin_rect.y - y0).abs() < 2.0,
         "box B on same row as A — auto margin in child should not inflate intrinsic width");
-    assert!((boxes[2].margin_rect.y - y0).abs() < 2.0,
+    assert!((boxes[2].layout.margin_rect.y - y0).abs() < 2.0,
         "box C on same row as A");
 
     // Each box should be much narrower than the full container.
     for b in &boxes {
-        assert!(b.margin_rect.w < 400.0,
+        assert!(b.layout.margin_rect.w < 400.0,
             "auto-margin child must not inflate flex item intrinsic width to container width");
     }
 }
@@ -357,8 +357,8 @@ fn flex_stretch_sidebar_fills_height_initial() {
     engine.layout(&mut doc, 800.0);
 
     let side = find_by_id(&doc.root, "side").expect("side");
-    assert!((side.border_rect.h - 600.0).abs() < 2.0,
-        "sidebar should stretch to 100vh=600px on initial layout, got {}", side.border_rect.h);
+    assert!((side.layout.border_rect.h - 600.0).abs() < 2.0,
+        "sidebar should stretch to 100vh=600px on initial layout, got {}", side.layout.border_rect.h);
 }
 
 /// Flex-stretch: sidebar correctly updates its height when the window is resized.
@@ -385,8 +385,8 @@ fn flex_stretch_sidebar_updates_on_viewport_height_resize() {
 
     {
         let side = find_by_id(&doc.root, "side").expect("side");
-        assert!((side.border_rect.h - 600.0).abs() < 2.0,
-            "initial: sidebar should be 600px, got {}", side.border_rect.h);
+        assert!((side.layout.border_rect.h - 600.0).abs() < 2.0,
+            "initial: sidebar should be 600px, got {}", side.layout.border_rect.h);
     }
 
     // Simulate window resize: taller viewport. Width unchanged so pruning would
@@ -396,8 +396,8 @@ fn flex_stretch_sidebar_updates_on_viewport_height_resize() {
 
     {
         let side = find_by_id(&doc.root, "side").expect("side");
-        assert!((side.border_rect.h - 900.0).abs() < 2.0,
-            "after resize to 900px: sidebar should be 900px, got {}", side.border_rect.h);
+        assert!((side.layout.border_rect.h - 900.0).abs() < 2.0,
+            "after resize to 900px: sidebar should be 900px, got {}", side.layout.border_rect.h);
     }
 }
 
@@ -425,8 +425,8 @@ fn layout_pruning_still_active_on_width_only_resize() {
 
     {
         let card = find_by_id(&doc.root, "card").expect("card");
-        assert!((card.border_rect.w - 300.0).abs() < 2.0, "initial: card 300px wide");
-        assert!((card.border_rect.h - 200.0).abs() < 2.0, "initial: card 200px tall");
+        assert!((card.layout.border_rect.w - 300.0).abs() < 2.0, "initial: card 300px wide");
+        assert!((card.layout.border_rect.h - 200.0).abs() < 2.0, "initial: card 200px tall");
     }
 
     // Widen viewport; card dimensions unchanged, only centering margin shifts.
@@ -434,7 +434,7 @@ fn layout_pruning_still_active_on_width_only_resize() {
 
     {
         let card = find_by_id(&doc.root, "card").expect("card");
-        assert!((card.border_rect.w - 300.0).abs() < 2.0, "after width resize: card still 300px");
-        assert!((card.border_rect.h - 200.0).abs() < 2.0, "after width resize: card still 200px");
+        assert!((card.layout.border_rect.w - 300.0).abs() < 2.0, "after width resize: card still 300px");
+        assert!((card.layout.border_rect.h - 200.0).abs() < 2.0, "after width resize: card still 200px");
     }
 }

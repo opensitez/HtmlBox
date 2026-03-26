@@ -1,98 +1,35 @@
 //! LayoutBox — geometry and rendering data, separated from the DOM tree.
 //!
-//! During the bridge period, LayoutBox data is duplicated between here and
-//! HtmlBox. The layout engine writes to both. Eventually HtmlBox's geometry
-//! fields will be removed and everything goes through LayoutBox.
+//! This module re-exports `types::LayoutBox` as the core geometry struct
+//! and provides `StandaloneLayoutBox` (with node_id + style) for the
+//! parallel LayoutStore. Eventually HtmlBox's embedded LayoutBox will go
+//! away and everything goes through LayoutStore.
 //!
 //! LayoutBox is indexed by node_id (same as DomArena) for O(1) lookup.
 
-use crate::types::{Rect, ComputedStyle, LayoutLine, InlineRun};
+use crate::types::{ComputedStyle, LayoutBox as CoreLayoutBox};
 
-/// Layout data for a single node — box model geometry + computed style.
+/// Standalone layout data for a single node — wraps core geometry + node identity + style.
 #[derive(Clone, Debug)]
 pub struct LayoutBox {
     /// Stable node identity — same as HtmlBox.node_id and DomArena NodeId.
     pub node_id: u32,
 
-    // ── Box model geometry (set by layout pass) ──
-    pub content_rect: Rect,
-    pub padding_rect: Rect,
-    pub border_rect:  Rect,
-    pub margin_rect:  Rect,
-    pub baseline:     f32,
+    /// Layout geometry data (same struct embedded in HtmlBox.layout).
+    pub layout: CoreLayoutBox,
 
-    // ── Resolved box model (resolved from style at layout time) ──
-    pub resolved_margin_top:    f32,
-    pub resolved_margin_right:  f32,
-    pub resolved_margin_bottom: f32,
-    pub resolved_margin_left:   f32,
-    pub resolved_border_top:    f32,
-    pub resolved_border_right:  f32,
-    pub resolved_border_bottom: f32,
-    pub resolved_border_left:   f32,
-    pub resolved_pad_top:       f32,
-    pub resolved_pad_right:     f32,
-    pub resolved_pad_bottom:    f32,
-    pub resolved_pad_left:      f32,
-    pub resolved_content_width: f32,
-
-    // ── Collapsed margins ──
-    pub collapsed_margin_top:    f32,
-    pub collapsed_margin_bottom: f32,
-
-    // ── Scroll state ──
-    pub scroll_height: f32,
-    pub scroll_width:  f32,
-    pub scroll_top:    f32,
-    pub scroll_left:   f32,
-
-    // ── Computed style ──
+    /// Computed style snapshot at layout time.
     pub style: ComputedStyle,
-
-    // ── Inline content cache ──
-    pub line_cache:  Vec<LayoutLine>,
-    pub inline_runs: Vec<InlineRun>,
-
-    // ── Dirty tracking ──
-    pub layout_dirty:          bool,
-    pub last_containing_width: f32,
-    pub cached_intrinsic_w:    std::cell::Cell<f32>,
 }
 
 impl LayoutBox {
     pub fn new(node_id: u32) -> Self {
+        let mut lb = CoreLayoutBox::default();
+        lb.layout_dirty = true;
         Self {
             node_id,
-            content_rect: Rect::default(),
-            padding_rect: Rect::default(),
-            border_rect:  Rect::default(),
-            margin_rect:  Rect::default(),
-            baseline:     0.0,
-            resolved_margin_top:    0.0,
-            resolved_margin_right:  0.0,
-            resolved_margin_bottom: 0.0,
-            resolved_margin_left:   0.0,
-            resolved_border_top:    0.0,
-            resolved_border_right:  0.0,
-            resolved_border_bottom: 0.0,
-            resolved_border_left:   0.0,
-            resolved_pad_top:       0.0,
-            resolved_pad_right:     0.0,
-            resolved_pad_bottom:    0.0,
-            resolved_pad_left:      0.0,
-            resolved_content_width: 0.0,
-            collapsed_margin_top:    0.0,
-            collapsed_margin_bottom: 0.0,
-            scroll_height: 0.0,
-            scroll_width:  0.0,
-            scroll_top:    0.0,
-            scroll_left:   0.0,
+            layout: lb,
             style: ComputedStyle::default(),
-            line_cache:  Vec::new(),
-            inline_runs: Vec::new(),
-            layout_dirty:          true,
-            last_containing_width: 0.0,
-            cached_intrinsic_w:    std::cell::Cell::new(f32::NAN),
         }
     }
 }

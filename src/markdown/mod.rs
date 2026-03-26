@@ -150,7 +150,7 @@ fn append_run(block: &mut HtmlBox, text: &str, style: ComputedStyle) {
     }
     let offset = block.text.len();
     block.text.push_str(text);
-    block.inline_runs.push(InlineRun {
+    block.layout.inline_runs.push(InlineRun {
         text_offset: offset,
         length: text.len(),
         style,

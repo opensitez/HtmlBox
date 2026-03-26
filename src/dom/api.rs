@@ -250,7 +250,7 @@ impl Document {
 
         if let Some(parent) = self.find_htmlbox_mut(parent_id) {
             parent.children.push(child_box);
-            parent.layout_dirty = true;
+            parent.layout.layout_dirty = true;
         }
     }
 
@@ -277,7 +277,7 @@ impl Document {
                 .position(|c| c.node_id == reference_id)
                 .unwrap_or(parent.children.len());
             parent.children.insert(idx, child_box);
-            parent.layout_dirty = true;
+            parent.layout.layout_dirty = true;
         }
     }
 
@@ -293,7 +293,7 @@ impl Document {
         // Mark parent dirty for layout
         if parent_id != 0 {
             if let Some(parent) = self.find_htmlbox_mut(parent_id) {
-                parent.layout_dirty = true;
+                parent.layout.layout_dirty = true;
             }
         }
     }
@@ -304,7 +304,7 @@ impl Document {
         self.arena.set_attribute(NodeId(id), key, value);
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.attributes.insert(key.to_string(), value.to_string());
-            node.layout_dirty = true;
+            node.layout.layout_dirty = true;
         }
     }
 
@@ -492,7 +492,7 @@ impl Document {
 
     /// Get the bounding rect of a node (border box in document coordinates).
     pub fn dom_get_bounding_rect(&self, id: u32) -> Option<Rect> {
-        self.get_box_by_id(id).map(|node| node.border_rect)
+        self.get_box_by_id(id).map(|node| node.layout.border_rect)
     }
 
     /// Get the offset width (border box width).

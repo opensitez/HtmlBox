@@ -4142,7 +4142,7 @@ fn apply_container_cascade_inner(
             }
             // Mark layout dirty so the subtree pruning doesn't suppress the
             // geometry changes caused by these newly applied container rules.
-            node.layout_dirty = true;
+            node.layout.layout_dirty = true;
         }
     }
 
@@ -4151,8 +4151,8 @@ fn apply_container_cascade_inner(
     let pushed_container = !matches!(node.style.container_type, ContainerType::Normal);
     if pushed_container {
         container_stack.push(ContainerEntry {
-            width:  node.content_rect.w,
-            height: node.content_rect.h,
+            width:  node.layout.content_rect.w,
+            height: node.layout.content_rect.h,
             name:   node.style.container_name.clone(),
         });
     }
@@ -4199,7 +4199,7 @@ fn apply_container_cascade_inner(
     // If any descendant changed, mark this node dirty too.
     // This prevents the layout subtree pruning from skipping an ancestor whose
     // content width is unchanged while a child still needs re-layout.
-    if changed { node.layout_dirty = true; }
+    if changed { node.layout.layout_dirty = true; }
 
     ancestors.pop();
     if pushed_container { container_stack.pop(); }
@@ -5095,7 +5095,7 @@ fn apply_cascade_inner(
     // Mark dirty so the layout subtree pruning (in layout_box_with_fc) knows to
     // re-layout this element.  Cleared by the individual layout algorithms after
     // they have computed the final geometry.
-    root.layout_dirty = true;
+    root.layout.layout_dirty = true;
 
     // <form> inside table elements: browsers treat it as transparent (display:contents)
     // so it doesn't break table row grouping. Check if any ancestor is a table element.
@@ -5982,7 +5982,7 @@ fn apply_matched_results(
         }
     }
 
-    root.layout_dirty = true;
+    root.layout.layout_dirty = true;
 
     if root.tag == "form" {
         let in_table = ancestors.iter().any(|a|

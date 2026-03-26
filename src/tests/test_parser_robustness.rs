@@ -191,7 +191,7 @@ fn insert_br_in_td_preserves_table_structure() {
         .expect("<td> must exist before Enter");
     let td_ptr = td as *const HtmlBox;
     let (cx, cy) = {
-        let line = &td.line_cache[0];
+        let line = &td.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0)
     };
 
@@ -225,7 +225,7 @@ fn insert_br_in_div_preserves_div() {
         b.tag == "div" && b.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false)
     }).expect("editable div");
     let (cx, cy) = {
-        let line = &div.line_cache[0];
+        let line = &div.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0)
     };
 
@@ -257,7 +257,7 @@ fn insert_char_marks_layout_dirty() {
     let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p")
         .expect("p element");
     let (cx, cy) = {
-        let line = &p.line_cache[0];
+        let line = &p.layout.line_cache[0];
         (line.x + 1.0, line.y + line.height / 2.0)
     };
 
@@ -267,7 +267,7 @@ fn insert_char_marks_layout_dirty() {
     doc.editor.insert_char(&mut doc.root, 'X');
 
     let p_after_insert = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p").unwrap();
-    assert!(p_after_insert.layout_dirty, "node must be layout_dirty after insert_char");
+    assert!(p_after_insert.layout.layout_dirty, "node must be layout_dirty after insert_char");
 
     // After re-layout, the inserted character should appear in the text.
     renderer.layout_engine().layout(&mut doc, 900.0);

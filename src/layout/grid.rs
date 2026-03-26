@@ -238,7 +238,7 @@ pub fn layout_grid_subgrid(
             engine.layout_box(child, sw, content_x, 0.0, font_px, root_font_px);
             let cf = child.style.font_size_px(font_px, root_font_px);
             let cr = engine.res_box(&child.style, cf, sw, root_font_px);
-            let h = child.border_rect.h + cr.margin_top + cr.margin_bottom;
+            let h = child.layout.border_rect.h + cr.margin_top + cr.margin_bottom;
             let rspan = (re - rs).max(1);
             let hp = h / rspan as f32;
             for r in rs..re.min(n_rows) { if hp > heights[r] { heights[r] = hp; } }
@@ -299,19 +299,19 @@ pub fn layout_grid_subgrid(
         let eff_justify = effective_justify_self(child, node_justify_items);
         let cell_w = sw;
         let dx_align = match eff_justify {
-            AlignItems::FlexEnd  => cell_w - child.border_rect.w - cr.margin_left - cr.margin_right,
-            AlignItems::Center   => (cell_w - child.border_rect.w - cr.margin_left - cr.margin_right) / 2.0,
+            AlignItems::FlexEnd  => cell_w - child.layout.border_rect.w - cr.margin_left - cr.margin_right,
+            AlignItems::Center   => (cell_w - child.layout.border_rect.w - cr.margin_left - cr.margin_right) / 2.0,
             _ => 0.0,
         };
         let dy_align = match eff_align {
-            AlignItems::FlexEnd  => cell_h - child.border_rect.h - cr.margin_top - cr.margin_bottom,
-            AlignItems::Center   => (cell_h - child.border_rect.h - cr.margin_top - cr.margin_bottom) / 2.0,
+            AlignItems::FlexEnd  => cell_h - child.layout.border_rect.h - cr.margin_top - cr.margin_bottom,
+            AlignItems::Center   => (cell_h - child.layout.border_rect.h - cr.margin_top - cr.margin_bottom) / 2.0,
             _ => 0.0,
         };
         let target_x = ix + cr.margin_left + dx_align;
         let target_y = iy + cr.margin_top  + dy_align;
-        let dx = target_x - child.border_rect.x;
-        let dy = target_y - child.border_rect.y;
+        let dx = target_x - child.layout.border_rect.x;
+        let dy = target_y - child.layout.border_rect.y;
         shift_rects(child, dx, dy);
 
         if matches!(child.style.position, Position::Relative | Position::Sticky) {
@@ -323,7 +323,7 @@ pub fn layout_grid_subgrid(
         + row_heights.last().copied().unwrap_or(0.0);
     let ch = rbox.content_height.unwrap_or(total_h);
 
-    node.layout_dirty = false;
+    node.layout.layout_dirty = false;
     layout_abs_children(engine, node, font_px, root_font_px);
     finish_grid(node, rbox, content_x, content_y, content_w, ch)
 }
@@ -385,7 +385,7 @@ pub fn layout_grid(
     let n_items = item_indices.len();
     if n_items == 0 {
         let ch = rbox.content_height.unwrap_or(0.0);
-        node.layout_dirty = false;
+        node.layout.layout_dirty = false;
         let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
         layout_abs_children(engine, node, font_px, root_font_px);
         return result;
@@ -644,7 +644,7 @@ pub fn layout_grid(
     };
     if n_rows == 0 {
         let ch = rbox.content_height.unwrap_or(0.0);
-        node.layout_dirty = false;
+        node.layout.layout_dirty = false;
         let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
         layout_abs_children(engine, node, font_px, root_font_px);
         return result;
@@ -731,7 +731,7 @@ pub fn layout_grid(
             engine.layout_box(child, span_w, content_x, 0.0, font_px, root_font_px);
         }
 
-        let h = child.border_rect.h + crbox.margin_top + crbox.margin_bottom;
+        let h = child.layout.border_rect.h + crbox.margin_top + crbox.margin_bottom;
         // Distribute height across spanned rows
         let row_span = (re - rs).max(1);
         let h_per_row = h / row_span as f32;
@@ -837,8 +837,8 @@ pub fn layout_grid(
             // Align subgrid box within its cell
             let target_x = ix + crbox.margin_left;
             let target_y = iy + crbox.margin_top;
-            let ddx = target_x - child.border_rect.x;
-            let ddy = target_y - child.border_rect.y;
+            let ddx = target_x - child.layout.border_rect.x;
+            let ddy = target_y - child.layout.border_rect.y;
             if ddx.abs() > 0.01 || ddy.abs() > 0.01 { shift_rects(child, ddx, ddy); }
             if matches!(child.style.position, Position::Relative | Position::Sticky) {
                 apply_relative_offset(child, child_font, content_w, root_font_px);
@@ -881,15 +881,15 @@ pub fn layout_grid(
 
         let dx_align = match eff_justify {
             AlignItems::FlexStart => 0.0,
-            AlignItems::FlexEnd   => cell_w - child.border_rect.w - crbox.margin_left - crbox.margin_right,
-            AlignItems::Center    => (cell_w - child.border_rect.w - crbox.margin_left - crbox.margin_right) / 2.0,
+            AlignItems::FlexEnd   => cell_w - child.layout.border_rect.w - crbox.margin_left - crbox.margin_right,
+            AlignItems::Center    => (cell_w - child.layout.border_rect.w - crbox.margin_left - crbox.margin_right) / 2.0,
             AlignItems::Stretch   => 0.0,
             AlignItems::Baseline  => 0.0,
         };
         let dy_align = match eff_align {
             AlignItems::FlexStart => 0.0,
-            AlignItems::FlexEnd   => cell_h - child.border_rect.h - crbox.margin_top - crbox.margin_bottom,
-            AlignItems::Center    => (cell_h - child.border_rect.h - crbox.margin_top - crbox.margin_bottom) / 2.0,
+            AlignItems::FlexEnd   => cell_h - child.layout.border_rect.h - crbox.margin_top - crbox.margin_bottom,
+            AlignItems::Center    => (cell_h - child.layout.border_rect.h - crbox.margin_top - crbox.margin_bottom) / 2.0,
             AlignItems::Stretch   => 0.0,
             AlignItems::Baseline  => 0.0,
         };
@@ -898,8 +898,8 @@ pub fn layout_grid(
         let target_x = ix + crbox.margin_left + dx_align;
         let target_y = iy + crbox.margin_top  + dy_align;
 
-        let dx = target_x - child.border_rect.x;
-        let dy = target_y - child.border_rect.y;
+        let dx = target_x - child.layout.border_rect.x;
+        let dy = target_y - child.layout.border_rect.y;
         shift_rects(child, dx, dy);
 
         // Apply relative offset
@@ -916,13 +916,13 @@ pub fn layout_grid(
     // Save restored heights
     for path in &item_indices {
         let child = grid_child_mut(node, path);
-        child.scroll_height = child.content_rect.h;
+        child.layout.scroll_height = child.layout.content_rect.h;
     }
 
     // Collapsed margins: no pass-through
-    node.collapsed_margin_top    = rbox.margin_top;
-    node.collapsed_margin_bottom = rbox.margin_bottom;
-    node.layout_dirty = false;
+    node.layout.collapsed_margin_top    = rbox.margin_top;
+    node.layout.collapsed_margin_bottom = rbox.margin_bottom;
+    node.layout.layout_dirty = false;
 
     let result = finish_grid(node, rbox, content_x, content_y, content_w, ch);
     layout_abs_children(engine, node, font_px, root_font_px);
@@ -1400,46 +1400,46 @@ fn finish_grid(
     content_w: f32, content_h: f32,
 ) -> f32 {
     let ch = rbox.content_height.unwrap_or(content_h);
-    node.content_rect = Rect::new(content_x, content_y, content_w, ch);
-    node.padding_rect = Rect::new(
+    node.layout.content_rect = Rect::new(content_x, content_y, content_w, ch);
+    node.layout.padding_rect = Rect::new(
         content_x - rbox.padding_left, content_y - rbox.padding_top,
         content_w + rbox.padding_left + rbox.padding_right,
         ch + rbox.padding_top + rbox.padding_bottom,
     );
-    node.border_rect = Rect::new(
-        node.padding_rect.x - rbox.border_left,
-        node.padding_rect.y - rbox.border_top,
-        node.padding_rect.w + rbox.border_left + rbox.border_right,
-        node.padding_rect.h + rbox.border_top  + rbox.border_bottom,
+    node.layout.border_rect = Rect::new(
+        node.layout.padding_rect.x - rbox.border_left,
+        node.layout.padding_rect.y - rbox.border_top,
+        node.layout.padding_rect.w + rbox.border_left + rbox.border_right,
+        node.layout.padding_rect.h + rbox.border_top  + rbox.border_bottom,
     );
-    node.margin_rect = Rect::new(
-        node.border_rect.x - rbox.margin_left,
-        node.border_rect.y - rbox.margin_top,
-        node.border_rect.w + rbox.margin_left + rbox.margin_right,
-        node.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
+    node.layout.margin_rect = Rect::new(
+        node.layout.border_rect.x - rbox.margin_left,
+        node.layout.border_rect.y - rbox.margin_top,
+        node.layout.border_rect.w + rbox.margin_left + rbox.margin_right,
+        node.layout.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
     );
-    node.baseline = node.content_rect.y + ch;
+    node.layout.baseline = node.layout.content_rect.y + ch;
 
-    node.resolved_margin_top    = rbox.margin_top;
-    node.resolved_margin_right  = rbox.margin_right;
-    node.resolved_margin_bottom = rbox.margin_bottom;
-    node.resolved_margin_left   = rbox.margin_left;
-    node.resolved_border_top    = rbox.border_top;
-    node.resolved_border_right  = rbox.border_right;
-    node.resolved_border_bottom = rbox.border_bottom;
-    node.resolved_border_left   = rbox.border_left;
-    node.resolved_pad_top       = rbox.padding_top;
-    node.resolved_pad_right     = rbox.padding_right;
-    node.resolved_pad_bottom    = rbox.padding_bottom;
-    node.resolved_pad_left      = rbox.padding_left;
-    node.resolved_content_width = content_w;
+    node.layout.resolved_margin_top    = rbox.margin_top;
+    node.layout.resolved_margin_right  = rbox.margin_right;
+    node.layout.resolved_margin_bottom = rbox.margin_bottom;
+    node.layout.resolved_margin_left   = rbox.margin_left;
+    node.layout.resolved_border_top    = rbox.border_top;
+    node.layout.resolved_border_right  = rbox.border_right;
+    node.layout.resolved_border_bottom = rbox.border_bottom;
+    node.layout.resolved_border_left   = rbox.border_left;
+    node.layout.resolved_pad_top       = rbox.padding_top;
+    node.layout.resolved_pad_right     = rbox.padding_right;
+    node.layout.resolved_pad_bottom    = rbox.padding_bottom;
+    node.layout.resolved_pad_left      = rbox.padding_left;
+    node.layout.resolved_content_width = content_w;
 
-    node.margin_rect.h
+    node.layout.margin_rect.h
 }
 
 fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, root_font_px: f32) {
     let containing_rect = if !matches!(node.style.position, Position::Static) {
-        node.padding_rect
+        node.layout.padding_rect
     } else {
         engine.pos_cb.get()
     };

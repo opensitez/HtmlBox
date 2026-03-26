@@ -186,8 +186,8 @@ fn container_query_width_changes_box_size() {
         800.0,
     );
     let inner = find_by_id(&doc.root, "inner").expect("inner");
-    assert!((inner.border_rect.w - 200.0).abs() < 2.0,
-        "inner width should be 200px, got {}", inner.border_rect.w);
+    assert!((inner.layout.border_rect.w - 200.0).abs() < 2.0,
+        "inner width should be 200px, got {}", inner.layout.border_rect.w);
 }
 
 #[test]

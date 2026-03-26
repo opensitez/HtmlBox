@@ -132,8 +132,8 @@ fn test_inline_span_background_propagated_to_text_run() {
 
     // Every inline run collected from the span should carry the background colour.
     let p = find_box(&doc.root, &|b| b.tag == "p").expect("p not found");
-    assert!(!p.inline_runs.is_empty(), "p should have inline runs");
-    for run in &p.inline_runs {
+    assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
+    for run in &p.layout.inline_runs {
         assert_eq!(run.style.background_color, Color::rgb(255, 255, 0),
                    "all runs under highlighted span should carry yellow background");
     }

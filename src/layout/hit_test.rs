@@ -283,8 +283,8 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
     if matches!(node.style.display, Display::None) { return None; }
 
     // Adjust for this node's own scroll offset (rare — only scrollable boxes)
-    let px = doc_pt.0 + node.scroll_left;
-    let py = doc_pt.1 + node.scroll_top;
+    let px = doc_pt.0 + node.layout.scroll_left;
+    let py = doc_pt.1 + node.layout.scroll_top;
 
     // Note: inline-content hit test is performed after child checks so that
     // block children (e.g. buttons) receive hits even when the parent has
@@ -306,9 +306,9 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
             for &(_, idx) in &zi_children {
                 let child = &node.children[idx];
                 if child.tag == "::before" || child.tag == "::after" { continue; }
-                if child.border_rect.h <= 0.0
+                if child.layout.border_rect.h <= 0.0
                     && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
-                let b = &child.border_rect;
+                let b = &child.layout.border_rect;
                 if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
                     if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
                     return Some(HitResult { node_id: child.node_id, local_offset: 0 });
@@ -325,11 +325,11 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
             continue;
         }
         // Skip elements with 0 height and overflow:hidden — they're collapsed (e.g. hidden dropdowns)
-        if child.border_rect.h <= 0.0
+        if child.layout.border_rect.h <= 0.0
             && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
         // Skip ::before/::after pseudo-elements for hit testing — they're decorative
         if child.tag == "::before" || child.tag == "::after" { continue; }
-        let b = &child.border_rect;
+        let b = &child.layout.border_rect;
         if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
             return Some(HitResult { node_id: child.node_id, local_offset: 0 });
@@ -338,10 +338,10 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 2: children whose marginRect contains the point (gap / margin areas)
     for child in node.children.iter().rev() {
-        let b = &child.border_rect;
+        let b = &child.layout.border_rect;
         let in_border = px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h;
         if in_border { continue; }
-        let m = &child.margin_rect;
+        let m = &child.layout.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
         }
@@ -349,24 +349,24 @@ fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 3: X-range only — handles margin-collapse overflow
     for child in node.children.iter().rev() {
-        let m = &child.margin_rect;
+        let m = &child.layout.margin_rect;
         let in_margin = px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h;
         if in_margin { continue; }
-        let b = &child.border_rect;
+        let b = &child.layout.border_rect;
         if px >= b.x && px < b.x + b.w {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
         }
     }
 
     // Fallback: If no children hit, but this node contains the point
-    let b = &node.border_rect;
+    let b = &node.layout.border_rect;
     if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
         // If this node has inline content, return the inline hit offset
         // (caret/text hit). Otherwise select the node itself.
-            if !node.line_cache.is_empty() {
+            if !node.layout.line_cache.is_empty() {
             let flat = collect_flat_text(node);
-            let line = snap_to_line(&node.line_cache, py);
-            let off  = get_offset_from_x(&flat, &node.inline_runs, line, px);
+            let line = snap_to_line(&node.layout.line_cache, py);
+            let off  = get_offset_from_x(&flat, &node.layout.inline_runs, line, px);
             return Some(HitResult { node_id: node.node_id, local_offset: off });
         }
         return Some(HitResult { node_id: node.node_id, local_offset: 0 });
@@ -407,7 +407,7 @@ fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
 /// The point is relative to the document origin (top-left of viewport content),
 /// before any scroll offset is applied — i.e. `(mouse_x + scroll_x, mouse_y + scroll_y)`.
 pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<HitResult> {
-    // Coordinates are absolute — pass directly (root.content_rect is always 0,0)
+    // Coordinates are absolute — pass directly (root.layout.content_rect is always 0,0)
     hit_test_impl(root, doc_pt, button)
 }
 
@@ -435,19 +435,19 @@ fn find_and_measure(
     if node.node_id == target_id {
         let flat = collect_flat_text(node);
         return Some(caret_point_in_box(
-            &flat, &node.inline_runs, &node.line_cache,
+            &flat, &node.layout.inline_runs, &node.layout.line_cache,
             local_offset, scroll_x, scroll_y,
         ));
     }
 
     // If this box is a block container with inline content (has line_cache),
     // check whether the target is an inline descendant laid out here.
-    if !node.line_cache.is_empty() {
+    if !node.layout.line_cache.is_empty() {
         let mut acc: usize = 0;
         if let Some(abs_off) = inline_offset_of_by_id(node, target_id, local_offset, &mut acc) {
             let flat = collect_flat_text(node);
             return Some(caret_point_in_box(
-                &flat, &node.inline_runs, &node.line_cache,
+                &flat, &node.layout.inline_runs, &node.layout.line_cache,
                 abs_off, scroll_x, scroll_y,
             ));
         }
@@ -521,9 +521,9 @@ pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> u32 {
 
 fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<u32> {
     if matches!(node.style.display, Display::None) { return None; }
-    let (px, py) = (pt.0 + node.scroll_left, pt.1 + node.scroll_top);
+    let (px, py) = (pt.0 + node.layout.scroll_left, pt.1 + node.layout.scroll_top);
     for child in node.children.iter().rev() {
-        let m = &child.margin_rect;
+        let m = &child.layout.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
             if let Some(r) = deepest_box_at(child, (px, py), _button) { return Some(r); }
             return Some(child.node_id);
@@ -544,7 +544,7 @@ pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<S
             None
         }
         if let Some(node) = find_node(root, hit.node_id) {
-            for run in &node.inline_runs {
+            for run in &node.layout.inline_runs {
                 if hit.local_offset >= run.text_offset && hit.local_offset < run.text_offset + run.length {
                     if !run.style.href.is_empty() {
                         return Some(run.style.href.clone());

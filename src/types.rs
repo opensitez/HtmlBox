@@ -1457,19 +1457,14 @@ pub struct LayoutLine {
     pub char_x: Vec<f32>,
 }
 
-// ─── HTML Box (DOM node) ─────────────────────────────────────────────────────
+// ─── Layout Box (geometry computed by the layout pass) ───────────────────────
 
-/// A box/node in the box tree.  Mirrors the C++ `Box` struct.
+/// Layout-only data for a box. Separated from DOM data so that each pipeline
+/// stage owns its own data — better cache behavior, independent invalidation,
+/// and the ability to have multiple layout views from one DOM.
 #[derive(Clone, Debug)]
-pub struct HtmlBox {
-    pub tag:        String,
-    pub node_id:    u32,                // Stable identity — index into Document.arena
-    pub style:      ComputedStyle,
-    pub attributes: HashMap<String, String>,
-    pub text:       String,             // Own text content
-    pub children:   Vec<HtmlBox>,
-
-    // Layout results (set by layout pass)
+pub struct LayoutBox {
+    // Box model geometry (set by layout pass)
     pub content_rect: Rect,
     pub padding_rect: Rect,
     pub border_rect:  Rect,
@@ -1493,8 +1488,82 @@ pub struct HtmlBox {
     pub scroll_left:   f32,
 
     /// Static y position for absolutely positioned elements (set during parent layout).
-    /// Used when top/bottom are both auto to place the element where it would be in flow.
     pub abs_static_y: Option<f32>,
+
+    // Dirty flag for incremental layout
+    pub layout_dirty:          bool,
+    pub last_containing_width: f32,
+
+    // Resolved box-model cache (set by layout, read by parent layout)
+    pub resolved_margin_top:    f32,
+    pub resolved_margin_right:  f32,
+    pub resolved_margin_bottom: f32,
+    pub resolved_margin_left:   f32,
+    pub resolved_border_top:    f32,
+    pub resolved_border_right:  f32,
+    pub resolved_border_bottom: f32,
+    pub resolved_border_left:   f32,
+    pub resolved_pad_top:       f32,
+    pub resolved_pad_right:     f32,
+    pub resolved_pad_bottom:    f32,
+    pub resolved_pad_left:      f32,
+    pub resolved_content_width: f32,
+
+    /// Cached intrinsic (max-content) width — `NAN` means not yet computed.
+    pub cached_intrinsic_w: std::cell::Cell<f32>,
+}
+
+impl Default for LayoutBox {
+    fn default() -> Self {
+        Self {
+            content_rect: Rect::default(),
+            padding_rect: Rect::default(),
+            border_rect:  Rect::default(),
+            margin_rect:  Rect::default(),
+            baseline:     0.0,
+            line_cache:   Vec::new(),
+            inline_runs:  Vec::new(),
+            collapsed_margin_top:    0.0,
+            collapsed_margin_bottom: 0.0,
+            scroll_height: 0.0,
+            scroll_width:  0.0,
+            scroll_top:    0.0,
+            scroll_left:   0.0,
+            abs_static_y:  None,
+            layout_dirty:          false,
+            last_containing_width: 0.0,
+            resolved_margin_top:    0.0,
+            resolved_margin_right:  0.0,
+            resolved_margin_bottom: 0.0,
+            resolved_margin_left:   0.0,
+            resolved_border_top:    0.0,
+            resolved_border_right:  0.0,
+            resolved_border_bottom: 0.0,
+            resolved_border_left:   0.0,
+            resolved_pad_top:       0.0,
+            resolved_pad_right:     0.0,
+            resolved_pad_bottom:    0.0,
+            resolved_pad_left:      0.0,
+            resolved_content_width: 0.0,
+            cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
+        }
+    }
+}
+
+// ─── HTML Box (DOM node) ─────────────────────────────────────────────────────
+
+/// A box/node in the box tree.  Mirrors the C++ `Box` struct.
+#[derive(Clone, Debug)]
+pub struct HtmlBox {
+    pub tag:        String,
+    pub node_id:    u32,                // Stable identity — index into Document.arena
+    pub style:      ComputedStyle,
+    pub attributes: HashMap<String, String>,
+    pub text:       String,             // Own text content
+    pub children:   Vec<HtmlBox>,
+
+    /// Layout geometry — all layout-computed fields live here.
+    pub layout: LayoutBox,
 
     // Image pixel data for <img> and replaced elements (RGBA8, row-major)
     pub image_data:   Option<Vec<u8>>,
@@ -1518,10 +1587,6 @@ pub struct HtmlBox {
     pub svg_viewbox_w: f32,
     pub svg_viewbox_h: f32,
 
-    // Dirty flag for incremental layout
-    pub layout_dirty:          bool,
-    pub last_containing_width: f32,
-
     // ── Form input editing state ─────────────────────────────────────────
     /// Cursor position (char index) within the input's value string.
     pub input_cursor: usize,
@@ -1530,25 +1595,6 @@ pub struct HtmlBox {
 
     // Custom data store (arbitrary key/value pairs set by application code)
     pub data: HashMap<String, String>,
-
-    // Resolved box-model cache (set by layout, read by parent layout)
-    pub resolved_margin_top:    f32,
-    pub resolved_margin_right:  f32,
-    pub resolved_margin_bottom: f32,
-    pub resolved_margin_left:   f32,
-    pub resolved_border_top:    f32,
-    pub resolved_border_right:  f32,
-    pub resolved_border_bottom: f32,
-    pub resolved_border_left:   f32,
-    pub resolved_pad_top:       f32,
-    pub resolved_pad_right:     f32,
-    pub resolved_pad_bottom:    f32,
-    pub resolved_pad_left:      f32,
-    pub resolved_content_width: f32,
-
-    /// Cached intrinsic (max-content) width — `NAN` means not yet computed.
-    /// Reset at the start of each layout pass.
-    pub cached_intrinsic_w: std::cell::Cell<f32>,
 
     /// Matched CSS rules (populated only when inspect mode is enabled).
     /// Each entry records the selector, declarations, and source of a rule
@@ -1649,13 +1695,7 @@ impl HtmlBox {
             attributes: HashMap::new(),
             text: String::new(),
             children: Vec::new(),
-            content_rect: Rect::default(),
-            padding_rect: Rect::default(),
-            border_rect:  Rect::default(),
-            margin_rect:  Rect::default(),
-            baseline:     0.0,
-            line_cache:   Vec::new(),
-            inline_runs:  Vec::new(),
+            layout: LayoutBox::default(),
 
             image_data:   None,
             image_width:  0,
@@ -1672,34 +1712,10 @@ impl HtmlBox {
             svg_viewbox_w: 0.0,
             svg_viewbox_h: 0.0,
 
-            collapsed_margin_top:    0.0,
-            collapsed_margin_bottom: 0.0,
-            scroll_height: 0.0,
-            scroll_width:  0.0,
-            scroll_top:    0.0,
-            scroll_left:   0.0,
-            abs_static_y:  None,
-            layout_dirty:          false,
-            last_containing_width: 0.0,
             input_cursor: 0,
             input_sel_anchor: 0,
 
-            resolved_margin_top:    0.0,
-            resolved_margin_right:  0.0,
-            resolved_margin_bottom: 0.0,
-            resolved_margin_left:   0.0,
-            resolved_border_top:    0.0,
-            resolved_border_right:  0.0,
-            resolved_border_bottom: 0.0,
-            resolved_border_left:   0.0,
-            resolved_pad_top:       0.0,
-            resolved_pad_right:     0.0,
-            resolved_pad_bottom:    0.0,
-            resolved_pad_left:      0.0,
-            resolved_content_width: 0.0,
-
             data: HashMap::new(),
-            cached_intrinsic_w: std::cell::Cell::new(f32::NAN),
             matched_rules: Vec::new(),
             shadow_root: None,
             hover_applied: false,
@@ -2063,6 +2079,10 @@ pub struct Document {
     /// polite regions are silently initialised so they don't flood the user on load.
     pub(crate) live_regions_initialized: bool,
 
+    /// Monotonically increasing counter bumped after every layout pass.
+    /// Used by the Renderer to detect when the display list cache is stale.
+    pub layout_generation: u64,
+
     // ── Async image loading ─────────────────────────────────────────────────
     /// Receiver for images arriving from background fetch threads.
     /// Each message is (node_path, decoded_rgba, width, height).
@@ -2119,6 +2139,7 @@ impl Document {
             pending_announcements:    Vec::new(),
             live_region_snapshots:    HashMap::new(),
             live_regions_initialized: false,
+            layout_generation:   0,
             pending_images:      None,
             images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
@@ -2240,7 +2261,7 @@ impl Document {
         // with an href. If so, find the ancestor <a> element for hover styling.
         if let Some(ref hr) = hit_result {
             if let Some(hit_box) = self.get_box_by_id(hr.node_id) {
-                for run in &hit_box.inline_runs {
+                for run in &hit_box.layout.inline_runs {
                     if hr.local_offset >= run.text_offset && hr.local_offset < run.text_offset + run.length {
                         if !run.style.href.is_empty() {
                             if let Some(link_id) = find_link_node_id(&self.root, &run.style.href) {
@@ -2277,7 +2298,7 @@ impl Document {
                         Some(s) => s,
                         None => { self.open_select = 0; return redraw; }
                     };
-                    let dropdown_y = sel.border_rect.y + sel.border_rect.h;
+                    let dropdown_y = sel.layout.border_rect.y + sel.layout.border_rect.h;
                     let font_px = sel.style.font_size_px(16.0, 16.0);
                     let item_h = font_px * 1.8;
                     let group_h = font_px * 1.5;
@@ -2447,13 +2468,13 @@ impl Document {
                                     }
                                 }
 
-                                let dropdown_y = sel.border_rect.y + sel.border_rect.h;
-                                let popup_w = sel.border_rect.w.max(150.0);
+                                let dropdown_y = sel.layout.border_rect.y + sel.layout.border_rect.h;
+                                let popup_w = sel.layout.border_rect.w.max(150.0);
                                 let click_y = doc_pt.1;
                                 let click_x = doc_pt.0;
 
                                 if click_y >= dropdown_y && click_y < dropdown_y + total_h
-                                    && click_x >= sel.border_rect.x && click_x < sel.border_rect.x + popup_w
+                                    && click_x >= sel.layout.border_rect.x && click_x < sel.layout.border_rect.x + popup_w
                                 {
                                     // Determine which option was clicked
                                     let rel_y = click_y - dropdown_y - 4.0;
@@ -2499,7 +2520,7 @@ impl Document {
                                             if let Some(tn) = sel_mut.children.iter_mut().rev().find(|c| c.tag == "#text") {
                                                 tn.text = new_text;
                                             }
-                                            sel_mut.layout_dirty = true;
+                                            sel_mut.layout.layout_dirty = true;
                                             if let Some(ref mut cb) = self.on_form_event {
                                                 cb(&FormEvent {
                                                     tag: "select".into(),
@@ -2571,7 +2592,7 @@ impl Document {
         // Full cascade + layout only when event handlers or editor logic changed
         // DOM state (class toggles, etc.), not merely for hover/active pointer updates.
         if handled {
-            let width = self.root.last_containing_width.max(0.0);
+            let width = self.root.layout.last_containing_width.max(0.0);
             self.recascade();
             LayoutEngine::new().layout(self, width);
         }
@@ -2691,7 +2712,7 @@ impl Document {
                             if let Some(tn) = sel.children.iter_mut().rev().find(|c| c.tag == "#text") {
                                 tn.text = new_text;
                             }
-                            sel.layout_dirty = true;
+                            sel.layout.layout_dirty = true;
                         }
                     }
                     true
@@ -2722,7 +2743,7 @@ impl Document {
                                 format!("{}", new_val)
                             };
                             input.attributes.insert("value".into(), s);
-                            input.layout_dirty = true;
+                            input.layout.layout_dirty = true;
                         }
                     }
                     true
@@ -3129,7 +3150,7 @@ impl Document {
         if !self.animation_overrides.is_empty() {
             fn mark_dirty(node: &mut HtmlBox, ids: &HashMap<u32, Vec<(String, String)>>) {
                 if ids.contains_key(&node.node_id) {
-                    node.layout_dirty = true;
+                    node.layout.layout_dirty = true;
                 }
                 for child in &mut node.children {
                     mark_dirty(child, ids);
@@ -3168,14 +3189,14 @@ impl Document {
                     let new_scroll = (drag.start_scroll + dy * drag.scroll_per_px).max(0.0);
                     match drag.kind {
                         ScrollbarDragKind::Viewport => {
-                            let doc_h = self.root.margin_rect.h;
+                            let doc_h = self.root.layout.margin_rect.h;
                             let max_s = (doc_h - viewport_h).max(0.0);
                             self.scroll_y = new_scroll.min(max_s);
                         }
                         ScrollbarDragKind::Element(nid) => {
                             if let Some(node) = self.get_box_by_id_mut(nid) {
-                                let max_s = (node.scroll_height - node.content_rect.h).max(0.0);
-                                node.scroll_top = new_scroll.min(max_s);
+                                let max_s = (node.layout.scroll_height - node.layout.content_rect.h).max(0.0);
+                                node.layout.scroll_top = new_scroll.min(max_s);
                             }
                         }
                     }
@@ -3194,7 +3215,7 @@ impl Document {
             // ── MouseDown: hit-test scrollbars, start drag ────────────────────
             MouseDown => {
                 // Viewport scrollbar — right edge of window.
-                let doc_h = self.root.margin_rect.h;
+                let doc_h = self.root.layout.margin_rect.h;
                 if doc_h > viewport_h && screen_x >= viewport_w - SBW {
                     let track_h = viewport_h;
                     let thumb_h = (track_h * track_h / doc_h).max(20.0);
@@ -3966,7 +3987,7 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
             }
         }
         node.attributes.insert("value".into(), value);
-        node.layout_dirty = true;
+        node.layout.layout_dirty = true;
     }
 
     changed || key_code == 37 || key_code == 39 || key_code == 36 || key_code == 35
@@ -4070,6 +4091,7 @@ impl Clone for Document {
             pending_announcements:    self.pending_announcements.clone(),
             live_region_snapshots:    self.live_region_snapshots.clone(),
             live_regions_initialized: self.live_regions_initialized,
+            layout_generation:       self.layout_generation,
             // Async image state is not cloned — cloned docs start with no pending fetches.
             pending_images:   None,
             images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -4148,7 +4170,7 @@ fn scroll_abs_in(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
     for child in &mut node.children {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) {
-            let mr = child.margin_rect;
+            let mr = child.layout.margin_rect;
             if pt.0 >= mr.x && pt.0 < mr.x + mr.w && pt.1 >= mr.y && pt.1 < mr.y + mr.h {
                 if scroll_box_at(child, pt, delta_x, delta_y) { return true; }
             }
@@ -4170,20 +4192,20 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
 
     // Adjust pt for this node's own scroll so we can test its children,
     // whose margin_rect positions are in layout space (scroll = 0 reference).
-    let local_pt = (pt.0 + node.scroll_left, pt.1 + node.scroll_top);
+    let local_pt = (pt.0 + node.layout.scroll_left, pt.1 + node.layout.scroll_top);
 
     // Recurse depth-first; innermost hit wins.
     for child in &mut node.children {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) {
             // Out-of-flow boxes use the viewport coordinate rather than parent scroll.
-            let mr = child.margin_rect;
+            let mr = child.layout.margin_rect;
             if pt.0 >= mr.x && pt.0 < mr.x + mr.w && pt.1 >= mr.y && pt.1 < mr.y + mr.h {
                 if scroll_box_at(child, pt, delta_x, delta_y) { return true; }
             }
             continue;
         }
-        let mr = child.margin_rect;
+        let mr = child.layout.margin_rect;
         if local_pt.0 >= mr.x && local_pt.0 < mr.x + mr.w
             && local_pt.1 >= mr.y && local_pt.1 < mr.y + mr.h
         {
@@ -4198,27 +4220,27 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
     // Check whether *this* node is scrollable.
     let can_v = delta_y.abs() > 0.1
         && matches!(node.style.overflow_y, Overflow::Scroll | Overflow::Auto)
-        && node.scroll_height > node.content_rect.h;
+        && node.layout.scroll_height > node.layout.content_rect.h;
     let can_h = delta_x.abs() > 0.1
         && matches!(node.style.overflow_x, Overflow::Scroll | Overflow::Auto)
-        && node.scroll_width > node.content_rect.w;
+        && node.layout.scroll_width > node.layout.content_rect.w;
 
     let mut scrolled = false;
 
     if can_v {
-        let max_scroll = (node.scroll_height - node.content_rect.h).max(0.0);
-        let before = node.scroll_top;
-        node.scroll_top = (node.scroll_top - delta_y).clamp(0.0, max_scroll);
-        if (node.scroll_top - before).abs() > 1e-3 {
+        let max_scroll = (node.layout.scroll_height - node.layout.content_rect.h).max(0.0);
+        let before = node.layout.scroll_top;
+        node.layout.scroll_top = (node.layout.scroll_top - delta_y).clamp(0.0, max_scroll);
+        if (node.layout.scroll_top - before).abs() > 1e-3 {
             apply_scroll_snap_y(node);
             scrolled = true;
         }
     }
     if can_h {
-        let max_scroll = (node.scroll_width - node.content_rect.w).max(0.0);
-        let before = node.scroll_left;
-        node.scroll_left = (node.scroll_left - delta_x).clamp(0.0, max_scroll);
-        if (node.scroll_left - before).abs() > 1e-3 {
+        let max_scroll = (node.layout.scroll_width - node.layout.content_rect.w).max(0.0);
+        let before = node.layout.scroll_left;
+        node.layout.scroll_left = (node.layout.scroll_left - delta_x).clamp(0.0, max_scroll);
+        if (node.layout.scroll_left - before).abs() > 1e-3 {
             apply_scroll_snap_x(node);
             scrolled = true;
         }
@@ -4248,34 +4270,34 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
 /// if the element has `scroll-snap-type` with a Y/Both axis.
 fn apply_scroll_snap_y(node: &mut HtmlBox) {
     if !node.style.scroll_snap_type.snaps_y() { return; }
-    let content_y = node.content_rect.y;
-    let content_h = node.content_rect.h;
+    let content_y = node.layout.content_rect.y;
+    let content_h = node.layout.content_rect.h;
     let snap_points = collect_snap_points_y(node, content_y, content_h);
     if snap_points.is_empty() { return; }
-    let max_scroll = (node.scroll_height - content_h).max(0.0);
-    let target = nearest_snap(node.scroll_top, &snap_points, content_h,
+    let max_scroll = (node.layout.scroll_height - content_h).max(0.0);
+    let target = nearest_snap(node.layout.scroll_top, &snap_points, content_h,
                               node.style.scroll_snap_type.mandatory);
-    node.scroll_top = target.clamp(0.0, max_scroll);
+    node.layout.scroll_top = target.clamp(0.0, max_scroll);
 }
 
 /// Snap the horizontal scroll position of `node`.
 fn apply_scroll_snap_x(node: &mut HtmlBox) {
     if !node.style.scroll_snap_type.snaps_x() { return; }
-    let content_x = node.content_rect.x;
-    let content_w = node.content_rect.w;
+    let content_x = node.layout.content_rect.x;
+    let content_w = node.layout.content_rect.w;
     let snap_points = collect_snap_points_x(node, content_x, content_w);
     if snap_points.is_empty() { return; }
-    let max_scroll = (node.scroll_width - content_w).max(0.0);
-    let target = nearest_snap(node.scroll_left, &snap_points, content_w,
+    let max_scroll = (node.layout.scroll_width - content_w).max(0.0);
+    let target = nearest_snap(node.layout.scroll_left, &snap_points, content_w,
                               node.style.scroll_snap_type.mandatory);
-    node.scroll_left = target.clamp(0.0, max_scroll);
+    node.layout.scroll_left = target.clamp(0.0, max_scroll);
 }
 
 fn collect_snap_points_y(node: &HtmlBox, content_y: f32, content_h: f32) -> Vec<f32> {
     let mut pts = Vec::new();
     for child in &node.children {
         if matches!(child.style.display, Display::None) { continue; }
-        let mr = child.margin_rect;
+        let mr = child.layout.margin_rect;
         let pt = match child.style.scroll_snap_align {
             ScrollSnapAlign::Start  => mr.y - content_y,
             ScrollSnapAlign::End    => mr.y + mr.h - content_y - content_h,
@@ -4291,7 +4313,7 @@ fn collect_snap_points_x(node: &HtmlBox, content_x: f32, content_w: f32) -> Vec<
     let mut pts = Vec::new();
     for child in &node.children {
         if matches!(child.style.display, Display::None) { continue; }
-        let mr = child.margin_rect;
+        let mr = child.layout.margin_rect;
         let pt = match child.style.scroll_snap_align {
             ScrollSnapAlign::Start  => mr.x - content_x,
             ScrollSnapAlign::End    => mr.x + mr.w - content_x - content_w,
@@ -4342,8 +4364,8 @@ fn scrollbar_hit_test(
     if matches!(node.style.display, Display::None) { return false; }
 
     // Children are rendered with the parent's scroll added.
-    let child_sx = sx + node.scroll_left;
-    let child_sy = sy + node.scroll_top;
+    let child_sx = sx + node.layout.scroll_left;
+    let child_sy = sy + node.layout.scroll_top;
 
     for child in node.children.iter_mut() {
         if scrollbar_hit_test(child, screen_x, screen_y, child_sx, child_sy, sbw, drag_out) {
@@ -4351,37 +4373,37 @@ fn scrollbar_hit_test(
         }
     }
 
-    let cr = node.content_rect;
-    let pr = node.padding_rect;
+    let cr = node.layout.content_rect;
+    let pr = node.layout.padding_rect;
     let prx = pr.x - sx;
     let cy = cr.y - sy;
 
     let show_v = node.style.overflow_y == Overflow::Scroll
-        || (node.style.overflow_y == Overflow::Auto && node.scroll_height > cr.h);
+        || (node.style.overflow_y == Overflow::Auto && node.layout.scroll_height > cr.h);
 
-    if show_v && node.scroll_height > cr.h {
+    if show_v && node.layout.scroll_height > cr.h {
         // Scrollbar is at the right edge of the padding box (matches draw_scrollbars).
         let track_x = prx + pr.w - sbw;
         if screen_x >= track_x && screen_x < prx + pr.w
             && screen_y >= cy && screen_y < cy + cr.h
         {
             let track_h     = cr.h;
-            let thumb_h     = (track_h * track_h / node.scroll_height).max(20.0);
-            let max_s       = node.scroll_height - cr.h;
+            let thumb_h     = (track_h * track_h / node.layout.scroll_height).max(20.0);
+            let max_s       = node.layout.scroll_height - cr.h;
             let scroll_per_px = if track_h - thumb_h > 0.0 { max_s / (track_h - thumb_h) } else { 0.0 };
-            let thumb_y     = if max_s > 0.0 { node.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
+            let thumb_y     = if max_s > 0.0 { node.layout.scroll_top * (track_h - thumb_h) / max_s } else { 0.0 };
             let local_y     = screen_y - cy;
 
             // Jump-scroll if click is outside the thumb.
             if !(local_y >= thumb_y && local_y < thumb_y + thumb_h) {
                 let new_thumb_y = (local_y - thumb_h * 0.5).clamp(0.0, track_h - thumb_h);
-                node.scroll_top = (new_thumb_y * scroll_per_px).clamp(0.0, max_s);
+                node.layout.scroll_top = (new_thumb_y * scroll_per_px).clamp(0.0, max_s);
             }
 
             *drag_out = Some(ScrollbarDrag {
                 kind:          ScrollbarDragKind::Element(node.node_id),
                 start_mouse_y: screen_y,
-                start_scroll:  node.scroll_top,
+                start_scroll:  node.layout.scroll_top,
                 scroll_per_px,
             });
             return true;

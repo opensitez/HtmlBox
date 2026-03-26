@@ -307,16 +307,16 @@ fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
     // Fast path: if neither this node nor any descendant is dirty, skip entirely
-    if !node.layout_dirty && !node.has_dirty_descendant {
+    if !node.layout.layout_dirty && !node.has_dirty_descendant {
         return false;
     }
-    node.cached_intrinsic_w.set(f32::NAN);
+    node.layout.cached_intrinsic_w.set(f32::NAN);
     let mut child_dirty = false;
     for child in &mut node.children {
         if propagate_dirty(child) { child_dirty = true; }
     }
-    if child_dirty { node.layout_dirty = true; }
-    node.layout_dirty
+    if child_dirty { node.layout.layout_dirty = true; }
+    node.layout.layout_dirty
 }
 
 // ─── Resolved box model ───────────────────────────────────────────────────────
@@ -978,15 +978,15 @@ impl LayoutEngine {
         // Set up root geometry — only reset height, preserve width for cache stability
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
-        doc.root.content_rect.x = 0.0; doc.root.content_rect.y = 0.0;
-        doc.root.content_rect.w = content_w; doc.root.content_rect.h = 0.0;
-        doc.root.padding_rect.x = 0.0; doc.root.padding_rect.y = 0.0;
-        doc.root.padding_rect.w = content_w; doc.root.padding_rect.h = 0.0;
-        doc.root.border_rect.x  = 0.0; doc.root.border_rect.y  = 0.0;
-        doc.root.border_rect.w  = content_w; doc.root.border_rect.h  = 0.0;
-        doc.root.margin_rect.x  = 0.0; doc.root.margin_rect.y  = 0.0;
-        doc.root.margin_rect.w  = content_w; doc.root.margin_rect.h  = 0.0;
-        doc.root.layout_dirty = true; // force root to always re-layout
+        doc.root.layout.content_rect.x = 0.0; doc.root.layout.content_rect.y = 0.0;
+        doc.root.layout.content_rect.w = content_w; doc.root.layout.content_rect.h = 0.0;
+        doc.root.layout.padding_rect.x = 0.0; doc.root.layout.padding_rect.y = 0.0;
+        doc.root.layout.padding_rect.w = content_w; doc.root.layout.padding_rect.h = 0.0;
+        doc.root.layout.border_rect.x  = 0.0; doc.root.layout.border_rect.y  = 0.0;
+        doc.root.layout.border_rect.w  = content_w; doc.root.layout.border_rect.h  = 0.0;
+        doc.root.layout.margin_rect.x  = 0.0; doc.root.layout.margin_rect.y  = 0.0;
+        doc.root.layout.margin_rect.w  = content_w; doc.root.layout.margin_rect.h  = 0.0;
+        doc.root.layout.layout_dirty = true; // force root to always re-layout
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
@@ -997,13 +997,16 @@ impl LayoutEngine {
         self.layout_box(&mut doc.root, content_w, 0.0, 0.0, root_font_px, root_font_px);
 
         // Update root geometry with final height
-        let h = doc.root.margin_rect.h;
-        doc.root.content_rect.h = h;
-        doc.root.padding_rect.h = h;
-        doc.root.border_rect.h  = h;
+        let h = doc.root.layout.margin_rect.h;
+        doc.root.layout.content_rect.h = h;
+        doc.root.layout.padding_rect.h = h;
+        doc.root.layout.border_rect.h  = h;
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);
+
+        // Bump generation so renderer knows to rebuild display list
+        doc.layout_generation = doc.layout_generation.wrapping_add(1);
     }
 
     pub fn layout_box(
@@ -1033,57 +1036,57 @@ impl LayoutEngine {
         self.layout_calls.set(calls + 1);
         if calls > 5_000_000 {
             eprintln!("  [layout] ABORTING: >5M layout calls — infinite loop detected");
-            node.content_rect = Rect::new(x, y, containing_w, 0.0);
-            node.padding_rect = node.content_rect;
-            node.border_rect  = node.content_rect;
-            node.margin_rect  = node.content_rect;
+            node.layout.content_rect = Rect::new(x, y, containing_w, 0.0);
+            node.layout.padding_rect = node.layout.content_rect;
+            node.layout.border_rect  = node.layout.content_rect;
+            node.layout.margin_rect  = node.layout.content_rect;
             return 0.0;
         }
         // Guard against stack overflow on deeply nested DOMs.
         let depth = self.layout_depth.get();
         if depth >= MAX_LAYOUT_DEPTH {
-            node.content_rect = Rect::new(x, y, containing_w, 0.0);
-            node.padding_rect = node.content_rect;
-            node.border_rect  = node.content_rect;
-            node.margin_rect  = node.content_rect;
+            node.layout.content_rect = Rect::new(x, y, containing_w, 0.0);
+            node.layout.padding_rect = node.layout.content_rect;
+            node.layout.border_rect  = node.layout.content_rect;
+            node.layout.margin_rect  = node.layout.content_rect;
             return 0.0;
         }
         // Don't layout display:none
         if matches!(node.style.display, Display::None) {
-            node.content_rect = Rect::default();
-            node.padding_rect = Rect::default();
-            node.border_rect  = Rect::default();
-            node.margin_rect  = Rect::default();
+            node.layout.content_rect = Rect::default();
+            node.layout.padding_rect = Rect::default();
+            node.layout.border_rect  = Rect::default();
+            node.layout.margin_rect  = Rect::default();
             return 0.0;
         }
 
         // display:contents — the element itself generates no box.
         // Its children are promoted to the parent's formatting context.
         if matches!(node.style.display, Display::Contents) {
-            node.content_rect = Rect::default();
-            node.padding_rect = Rect::default();
-            node.border_rect  = Rect::default();
-            node.margin_rect  = Rect::default();
+            node.layout.content_rect = Rect::default();
+            node.layout.padding_rect = Rect::default();
+            node.layout.border_rect  = Rect::default();
+            node.layout.margin_rect  = Rect::default();
             return 0.0;
         }
 
         // Fast path: skip full layout if the containing width hasn't changed
         // and the node isn't dirty. Just reposition the cached result.
-        if !node.layout_dirty
-            && node.last_containing_width > 0.0
-            && (node.last_containing_width - containing_w).abs() < 0.01
-            && node.margin_rect.w > 0.0
-            && node.margin_rect.h > 0.0
+        if !node.layout.layout_dirty
+            && node.layout.last_containing_width > 0.0
+            && (node.layout.last_containing_width - containing_w).abs() < 0.01
+            && node.layout.margin_rect.w > 0.0
+            && node.layout.margin_rect.h > 0.0
             && fc.is_none()
             && !matches!(node.style.display, Display::None | Display::Contents)
         {
-            let dx = x - node.margin_rect.x;
-            let dy = y - node.margin_rect.y;
+            let dx = x - node.layout.margin_rect.x;
+            let dy = y - node.layout.margin_rect.y;
             if dx.abs() > 0.01 || dy.abs() > 0.01 {
                 shift_rects(node, dx, dy);
             }
             self.layout_depth.set(depth);
-            return node.margin_rect.h;
+            return node.layout.margin_rect.h;
         }
 
         self.layout_depth.set(depth + 1);
@@ -1183,7 +1186,7 @@ impl LayoutEngine {
         // (e.g. height: 100vh) and flex-stretch heights dependent on the viewport
         // are recalculated rather than returning stale cached geometry.
         let viewport_h_unchanged = self.viewport_h == self.last_geometry_viewport_h;
-        if fc.is_none() && !node.layout_dirty && node.resolved_content_width > 0.0
+        if fc.is_none() && !node.layout.layout_dirty && node.layout.resolved_content_width > 0.0
             && viewport_h_unchanged
         {
             let new_content_w = if let Some(cw) = rbox.content_width {
@@ -1198,18 +1201,18 @@ impl LayoutEngine {
             // child.style.height before calling layout_box a second time.
             let height_ok = match rbox.content_height {
                 None    => true,  // auto height is determined by children — safe
-                Some(h) => (h - node.content_rect.h).abs() < 0.5,
+                Some(h) => (h - node.layout.content_rect.h).abs() < 0.5,
             };
-            if (new_content_w - node.resolved_content_width).abs() < 0.5 && height_ok {
+            if (new_content_w - node.layout.resolved_content_width).abs() < 0.5 && height_ok {
                 // Content size is unchanged — just move the subtree.
-                let dx = (x + rbox.margin_left) - node.border_rect.x;
-                let dy = (y + rbox.margin_top)  - node.border_rect.y;
+                let dx = (x + rbox.margin_left) - node.layout.border_rect.x;
+                let dy = (y + rbox.margin_top)  - node.layout.border_rect.y;
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
                     shift_rects(node, dx, dy);
                 }
-                node.layout_dirty = false;
-                node.last_containing_width = containing_w;
-                return node.margin_rect.h;
+                node.layout.layout_dirty = false;
+                node.layout.last_containing_width = containing_w;
+                return node.layout.margin_rect.h;
             }
         }
 
@@ -1221,8 +1224,8 @@ impl LayoutEngine {
             block::build_box_rects(node, &rbox, x + rbox.margin_left + rbox.border_left + rbox.padding_left,
                                    y + rbox.margin_top + rbox.border_top + rbox.padding_top,
                                    final_w, final_h, rbox.margin_left, rbox.margin_right);
-            node.layout_dirty = false;
-            return node.margin_rect.h;
+            node.layout.layout_dirty = false;
+            return node.layout.margin_rect.h;
         }
 
         // Track the nearest positioned ancestor's padding rect for abs children.
@@ -1289,8 +1292,8 @@ impl LayoutEngine {
 
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);
-        node.layout_dirty = false;
-        node.last_containing_width = containing_w;
+        node.layout.layout_dirty = false;
+        node.layout.last_containing_width = containing_w;
         h
     }
 
@@ -1307,8 +1310,8 @@ impl LayoutEngine {
         let _rbox = self.res_box(&node.style, font_px, max_w, root_font_px);
 
         let h = self.layout_box(node, max_w, x, y, parent_font_px, root_font_px);
-        let w = node.border_rect.w;
-        let baseline = node.baseline;
+        let w = node.layout.border_rect.w;
+        let baseline = node.layout.baseline;
         (w, h, baseline)
     }
 }
@@ -1431,9 +1434,9 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
         let intrinsic_w = block::compute_intrinsic_width(node);
         if intrinsic_w > 0.0 && intrinsic_w < layout_w {
             let shrink_w = intrinsic_w
-                + node.resolved_pad_left  + node.resolved_pad_right
-                + node.resolved_border_left + node.resolved_border_right
-                + node.resolved_margin_left + node.resolved_margin_right;
+                + node.layout.resolved_pad_left  + node.layout.resolved_pad_right
+                + node.layout.resolved_border_left + node.layout.resolved_border_right
+                + node.layout.resolved_margin_left + node.layout.resolved_margin_right;
             engine.layout_box(node, shrink_w, 0.0, 0.0, font_px, root_font_px);
         }
     }
@@ -1451,7 +1454,7 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     {
         // Both left and right set with auto margins — center the element.
         // available = containing_w - left - right - border_box_w
-        let avail = containing_w - res_l - res_r - node.border_rect.w;
+        let avail = containing_w - res_l - res_r - node.layout.border_rect.w;
         if node.style.margin_left.is_auto() && node.style.margin_right.is_auto() {
             containing_x + res_l + (avail / 2.0).max(0.0)
         } else if node.style.margin_left.is_auto() {
@@ -1462,7 +1465,7 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     } else if !left_auto {
         containing_x + res_l + rbox.margin_left
     } else if !right_auto {
-        (containing_x + containing_w) - res_r - node.border_rect.w - rbox.margin_right
+        (containing_x + containing_w) - res_r - node.layout.border_rect.w - rbox.margin_right
     } else {
         containing_x + rbox.margin_left
     };
@@ -1470,12 +1473,12 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     let y = if !top_auto {
         containing_y + res_t + rbox.margin_top
     } else if !bot_auto {
-        (containing_y + containing_h) - res_b - node.border_rect.h - rbox.margin_bottom
+        (containing_y + containing_h) - res_b - node.layout.border_rect.h - rbox.margin_bottom
     } else if let Some(abs_sy) = static_y {
         // Static position: absolute document-space y where the element would
         // appear in normal flow. Already accounts for parent offsets.
         abs_sy + rbox.margin_top
-    } else if let Some(abs_sy) = node.abs_static_y {
+    } else if let Some(abs_sy) = node.layout.abs_static_y {
         // Static position recorded on the node itself (set during parent's
         // inline/block layout for deeply nested absolute elements).
         abs_sy + rbox.margin_top
@@ -1485,13 +1488,13 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     };
 
     // Shift all rects to final position
-    let dx = x - node.border_rect.x;
-    let dy = y - node.border_rect.y;
+    let dx = x - node.layout.border_rect.x;
+    let dy = y - node.layout.border_rect.y;
     shift_rects(node, dx, dy);
 
     // If both sides set → we may need to re-layout with constrained size
     if let Some(cw) = constrained_w {
-        if node.content_rect.w != cw {
+        if node.layout.content_rect.w != cw {
             engine.layout_box(node, layout_w, x, y, font_px, root_font_px);
         }
     }
@@ -1500,22 +1503,22 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     // Without this, inset:0 (top:0 bottom:0) leaves height at 0 because layout_box
     // has no content to fill the space.
     if let Some(ch) = constrained_h {
-        if node.style.height.is_auto() && (node.content_rect.h - ch).abs() > 0.5 {
-            let diff = ch - node.content_rect.h;
-            node.content_rect.h += diff;
-            node.padding_rect.h += diff;
-            node.border_rect.h  += diff;
-            node.margin_rect.h  += diff;
+        if node.style.height.is_auto() && (node.layout.content_rect.h - ch).abs() > 0.5 {
+            let diff = ch - node.layout.content_rect.h;
+            node.layout.content_rect.h += diff;
+            node.layout.padding_rect.h += diff;
+            node.layout.border_rect.h  += diff;
+            node.layout.margin_rect.h  += diff;
         }
     }
 }
 
 pub fn shift_rects(node: &mut HtmlBox, dx: f32, dy: f32) {
-    node.content_rect.x += dx; node.content_rect.y += dy;
-    node.padding_rect.x += dx; node.padding_rect.y += dy;
-    node.border_rect.x  += dx; node.border_rect.y  += dy;
-    node.margin_rect.x  += dx; node.margin_rect.y  += dy;
-    for line in &mut node.line_cache {
+    node.layout.content_rect.x += dx; node.layout.content_rect.y += dy;
+    node.layout.padding_rect.x += dx; node.layout.padding_rect.y += dy;
+    node.layout.border_rect.x  += dx; node.layout.border_rect.y  += dy;
+    node.layout.margin_rect.x  += dx; node.layout.margin_rect.y  += dy;
+    for line in &mut node.layout.line_cache {
         line.x += dx;
         line.y += dy;
     }

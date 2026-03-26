@@ -33,9 +33,9 @@ fn overflow_scroll_height_computed() {
     </body></html>"#);
 
     let b = query(&doc, "#box").expect("box not found");
-    assert!(b.scroll_height > 100.0,
-        "scroll_height {} should exceed container height 100", b.scroll_height);
-    assert_eq!(b.scroll_top, 0.0, "initial scroll_top must be zero");
+    assert!(b.layout.scroll_height > 100.0,
+        "scroll_height {} should exceed container height 100", b.layout.scroll_height);
+    assert_eq!(b.layout.scroll_top, 0.0, "initial scroll_top must be zero");
 }
 
 #[test]
@@ -49,9 +49,9 @@ fn overflow_visible_resets_scroll() {
     </body></html>"#);
 
     let b = query(&doc, "#box").expect("box not found");
-    assert_eq!(b.scroll_top, 0.0);
+    assert_eq!(b.layout.scroll_top, 0.0);
     // scroll_height for a non-scroll container equals content height
-    assert!(b.scroll_height <= b.content_rect.h + 1.0,
+    assert!(b.layout.scroll_height <= b.layout.content_rect.h + 1.0,
         "non-scroll container must not have extra scroll_height");
 }
 
@@ -70,7 +70,7 @@ fn wheel_scrolls_inner_container_not_viewport() {
 
     let b_top_before = {
         let b = query(&doc, "#box").expect("box");
-        b.scroll_top
+        b.layout.scroll_top
     };
     let viewport_y_before = doc.scroll_y;
 
@@ -80,7 +80,7 @@ fn wheel_scrolls_inner_container_not_viewport() {
 
     let b_top_after = {
         let b = query(&doc, "#box").expect("box");
-        b.scroll_top
+        b.layout.scroll_top
     };
     assert!(b_top_after > b_top_before,
         "inner container scroll_top must increase after wheel-down");
@@ -112,9 +112,9 @@ fn horizontal_wheel_scrolls_overflow_x_container() {
         <div id="box"><div id="inner"></div></div>
     </body></html>"#);
 
-    let before = { query(&doc, "#box").unwrap().scroll_left };
+    let before = { query(&doc, "#box").unwrap().layout.scroll_left };
     doc.process_wheel_event_xy((50.0, 50.0), -50.0, 0.0); // negative delta_x = scroll right
-    let after = { query(&doc, "#box").unwrap().scroll_left };
+    let after = { query(&doc, "#box").unwrap().layout.scroll_left };
     assert!(after > before,
         "scroll_left {} must increase after horizontal wheel", after);
 }
@@ -224,11 +224,11 @@ fn mandatory_snap_aligns_after_scroll() {
     </body></html>"#);
 
     // Place cursor inside #box and scroll down 60px (negative = scroll down).
-    let box_y = query(&doc, "#box").unwrap().content_rect.y;
+    let box_y = query(&doc, "#box").unwrap().layout.content_rect.y;
     let pt = (10.0, box_y + 10.0);
     doc.process_wheel_event(pt, -60.0);
 
-    let scroll_top = query(&doc, "#box").unwrap().scroll_top;
+    let scroll_top = query(&doc, "#box").unwrap().layout.scroll_top;
     // Mandatory snap: nearest snap point to 60px is 100px (item 2 start).
     // (distance to 0: 60, distance to 100: 40 → snaps to 100)
     assert!(
@@ -254,11 +254,11 @@ fn proximity_snap_does_not_snap_when_far() {
 
     // Snap points: 0, 200. Scroll to 110 — more than 50px (half of 100px viewport)
     // from the nearest snap point (200 - 110 = 90 > 50). Should stay at 110.
-    let box_y = query(&doc, "#box").unwrap().content_rect.y;
+    let box_y = query(&doc, "#box").unwrap().layout.content_rect.y;
     let pt = (10.0, box_y + 10.0);
     doc.process_wheel_event(pt, -110.0); // negative = scroll down
 
-    let scroll_top = query(&doc, "#box").unwrap().scroll_top;
+    let scroll_top = query(&doc, "#box").unwrap().layout.scroll_top;
     // Nearest snap point: 0 (distance 110), 200 (distance 90) — both > 50.
     // proximity: don't snap.
     assert!(

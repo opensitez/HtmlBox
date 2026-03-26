@@ -8,7 +8,7 @@ use crate::types::*;
 // Collect all text from a box's inline_runs (and recursively children)
 fn collect_inline_text(b: &HtmlBox) -> String {
     let mut result = String::new();
-    for run in &b.inline_runs {
+    for run in &b.layout.inline_runs {
         let end = run.text_offset + run.length;
         if end <= b.text.len() {
             result.push_str(&b.text[run.text_offset..end]);
@@ -32,7 +32,7 @@ fn serialize_inline(b: &HtmlBox, block_style: Option<&ComputedStyle>) -> String 
 
     let is_autolink = b.data.contains_key("md-autolink");
 
-    for run in &b.inline_runs {
+    for run in &b.layout.inline_runs {
         let end = run.text_offset + run.length;
         let chunk = if end <= b.text.len() {
             &b.text[run.text_offset..end]

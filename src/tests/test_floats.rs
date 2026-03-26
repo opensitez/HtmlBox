@@ -15,8 +15,8 @@ mod tests {
 
         let float_box = crate::tests::test_grid::find_by_id(&doc.root, "float").expect("float box not found");
         // Float should be at Y=0 (same as text)
-        assert_eq!(float_box.border_rect.y, 0.0, "Float should be on the same line as text");
-        assert_eq!(float_box.border_rect.x, 150.0, "Float should be on the right edge");
+        assert_eq!(float_box.layout.border_rect.y, 0.0, "Float should be on the same line as text");
+        assert_eq!(float_box.layout.border_rect.x, 150.0, "Float should be on the right edge");
     }
 
     #[test]
@@ -32,16 +32,16 @@ mod tests {
         let dot_box  = crate::tests::test_grid::find_by_id(&doc.root, "dot") .expect("dot box not found");
         let wrap_box = crate::tests::test_grid::find_by_id(&doc.root, "wrap").expect("wrap box not found");
 
-        println!("Dot rect: {:?}", dot_box.border_rect);
+        println!("Dot rect: {:?}", dot_box.layout.border_rect);
 
         // The float occupies x=0..10 on the first line.
         // The parent's first line_cache entry must start at x >= 10 so
         // the inline text doesn't overlap the float.
         assert!(
-            !wrap_box.line_cache.is_empty(),
+            !wrap_box.layout.line_cache.is_empty(),
             "wrap div must have at least one layout line"
         );
-        let first_line = &wrap_box.line_cache[0];
+        let first_line = &wrap_box.layout.line_cache[0];
         println!("First line x: {}", first_line.x);
         assert!(
             first_line.x >= 10.0,
@@ -67,10 +67,10 @@ mod tests {
         
         let row2_box = crate::tests::test_grid::find_by_id(&doc.root, "row2").expect("row2 not found");
         
-        let row2_text_line = &row2_box.line_cache[0];
+        let row2_text_line = &row2_box.layout.line_cache[0];
         // Row2 should start at its box's content_rect.x
-        assert!((row2_text_line.x - row2_box.content_rect.x).abs() < 0.1, 
+        assert!((row2_text_line.x - row2_box.layout.content_rect.x).abs() < 0.1, 
                 "Row2.x ({}) should be equal to content_rect.x ({})", 
-                row2_text_line.x, row2_box.content_rect.x);
+                row2_text_line.x, row2_box.layout.content_rect.x);
     }
 }

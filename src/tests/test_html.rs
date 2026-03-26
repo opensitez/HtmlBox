@@ -537,9 +537,9 @@ fn html_body_layout_position() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 8.0);
-    assert_eq!(body.content_rect.w, 784.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.x, 8.0);
+    assert_eq!(body.layout.content_rect.w, 784.0);
 }
 
 #[test]
@@ -551,9 +551,9 @@ fn html_body_layout_with_explicit_margin() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 8.0);
-    assert_eq!(body.content_rect.w, 784.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.x, 8.0);
+    assert_eq!(body.layout.content_rect.w, 784.0);
 }
 
 #[test]
@@ -565,8 +565,8 @@ fn html_body_layout_with_box_sizing() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.x, 0.0);
 }
 
 #[test]
@@ -578,10 +578,10 @@ fn html_body_layout_demo_pattern() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
-    assert_eq!(doc.root.margin_rect.x, 0.0);
-    assert_eq!(doc.root.content_rect.w, 685.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.x, 0.0);
+    assert_eq!(doc.root.layout.margin_rect.x, 0.0);
+    assert_eq!(doc.root.layout.content_rect.w, 685.0);
 }
 
 #[test]
@@ -593,8 +593,8 @@ fn html_body_layout_with_floats() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.x, 0.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.x, 0.0);
 }
 
 #[test]
@@ -606,8 +606,8 @@ fn html_body_bfc_isolation() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.w, 800.0);
 }
 
 #[test]
@@ -621,8 +621,8 @@ fn html_body_margin_padding_box_sizing_combinations() {
         let body = get_body(&doc);
         assert!(body.is_some());
         // auto width: contentWidth = 800 - 10 - 10 - 20 - 20 = 740
-        assert_eq!(body.unwrap().content_rect.w, 740.0);
-        assert_eq!(get_body(&doc).unwrap().margin_rect.x, 0.0);
+        assert_eq!(body.unwrap().layout.content_rect.w, 740.0);
+        assert_eq!(get_body(&doc).unwrap().layout.margin_rect.x, 0.0);
     }
     // margin + padding + border-box
     {
@@ -633,8 +633,8 @@ fn html_body_margin_padding_box_sizing_combinations() {
         let body = get_body(&doc);
         assert!(body.is_some());
         // auto width with border-box: same as content-box for auto width
-        assert_eq!(body.unwrap().content_rect.w, 740.0);
-        assert_eq!(get_body(&doc).unwrap().margin_rect.x, 0.0);
+        assert_eq!(body.unwrap().layout.content_rect.w, 740.0);
+        assert_eq!(get_body(&doc).unwrap().layout.margin_rect.x, 0.0);
     }
 }
 
@@ -647,8 +647,8 @@ fn html_body_explicit_width_with_margin() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.content_rect.w, 600.0);
-    assert_eq!(body.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.w, 600.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
 }
 
 #[test]
@@ -657,9 +657,9 @@ fn html_body_no_margin_full_viewport() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.content_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 1024.0);
-    assert_eq!(body.margin_rect.w, 1024.0);
+    assert_eq!(body.layout.content_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.w, 1024.0);
+    assert_eq!(body.layout.margin_rect.w, 1024.0);
 }
 
 // ============================================================
@@ -675,13 +675,13 @@ fn html_table_full_width_in_body_with_padding() {
     let body = get_body(&doc);
     assert!(body.is_some());
     // body contentWidth = 800 - 16 - 16 = 768
-    assert_eq!(body.unwrap().content_rect.w, 768.0);
+    assert_eq!(body.unwrap().layout.content_rect.w, 768.0);
     let table = find_box(&doc.root, &|b: &HtmlBox| {
         b.style.display == Display::Table
     });
     assert!(table.is_some());
     // table at 100% should match body content width
-    assert_eq!(table.unwrap().margin_rect.w, 768.0);
+    assert_eq!(table.unwrap().layout.margin_rect.w, 768.0);
 }
 
 #[test]
@@ -692,12 +692,12 @@ fn html_table_full_width_in_body_with_padding_and_box_sizing() {
     );
     let body = get_body(&doc);
     assert!(body.is_some());
-    assert_eq!(body.unwrap().content_rect.w, 768.0);
+    assert_eq!(body.unwrap().layout.content_rect.w, 768.0);
     let table = find_box(&doc.root, &|b: &HtmlBox| {
         b.style.display == Display::Table
     });
     assert!(table.is_some());
-    assert_eq!(table.unwrap().margin_rect.w, 768.0);
+    assert_eq!(table.unwrap().layout.margin_rect.w, 768.0);
 }
 
 #[test]
@@ -709,12 +709,12 @@ fn html_table_in_body_with_margin_and_padding() {
     let body = get_body(&doc);
     assert!(body.is_some());
     // contentWidth = 800 - 8 - 8 - 16 - 16 = 752
-    assert_eq!(body.unwrap().content_rect.w, 752.0);
+    assert_eq!(body.unwrap().layout.content_rect.w, 752.0);
     let table = find_box(&doc.root, &|b: &HtmlBox| {
         b.style.display == Display::Table
     });
     assert!(table.is_some());
-    assert_eq!(table.unwrap().margin_rect.w, 752.0);
+    assert_eq!(table.unwrap().layout.margin_rect.w, 752.0);
 }
 
 // ============================================================
@@ -776,16 +776,16 @@ fn html_double_layout_preserves_body_position() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    assert_eq!(body.margin_rect.x, 0.0);
-    assert_eq!(body.content_rect.w, 800.0);
+    assert_eq!(body.layout.margin_rect.x, 0.0);
+    assert_eq!(body.layout.content_rect.w, 800.0);
 
     // Second layout at 700
     let doc2 = parse_and_layout("<style>body { margin: 0; }</style><p>Text</p>", 700.0);
     let body2 = get_body(&doc2);
     assert!(body2.is_some());
     let body2 = body2.unwrap();
-    assert_eq!(body2.margin_rect.x, 0.0);
-    assert_eq!(body2.content_rect.w, 700.0);
+    assert_eq!(body2.layout.margin_rect.x, 0.0);
+    assert_eq!(body2.layout.content_rect.w, 700.0);
 }
 
 #[test]
@@ -795,14 +795,14 @@ fn html_double_layout_with_floats_preserves_body() {
     let doc = parse_and_layout(html, 800.0);
     let body = get_body(&doc);
     assert!(body.is_some());
-    assert_eq!(body.unwrap().margin_rect.x, 0.0);
+    assert_eq!(body.unwrap().layout.margin_rect.x, 0.0);
 
     let doc2 = parse_and_layout(html, 750.0);
     let body2 = get_body(&doc2);
     assert!(body2.is_some());
     let body2 = body2.unwrap();
-    assert_eq!(body2.margin_rect.x, 0.0);
-    assert_eq!(body2.content_rect.w, 750.0);
+    assert_eq!(body2.layout.margin_rect.x, 0.0);
+    assert_eq!(body2.layout.content_rect.w, 750.0);
 }
 
 #[test]
@@ -812,17 +812,17 @@ fn html_double_layout_same_width_stable() {
     let body1 = get_body(&doc1);
     assert!(body1.is_some());
     let body1 = body1.unwrap();
-    let x1 = body1.margin_rect.x;
-    let w1 = body1.content_rect.w;
-    let h1 = body1.content_rect.h;
+    let x1 = body1.layout.margin_rect.x;
+    let w1 = body1.layout.content_rect.w;
+    let h1 = body1.layout.content_rect.h;
 
     let doc2 = parse_and_layout(html, 600.0);
     let body2 = get_body(&doc2);
     assert!(body2.is_some());
     let body2 = body2.unwrap();
-    assert_eq!(body2.margin_rect.x, x1);
-    assert_eq!(body2.content_rect.w, w1);
-    assert_eq!(body2.content_rect.h, h1);
+    assert_eq!(body2.layout.margin_rect.x, x1);
+    assert_eq!(body2.layout.content_rect.w, w1);
+    assert_eq!(body2.layout.content_rect.h, h1);
 }
 
 #[test]
@@ -832,12 +832,12 @@ fn html_double_layout_table_in_body_with_padding() {
     let doc1 = parse_and_layout(html, 800.0);
     let table1 = find_box(&doc1.root, &|b: &HtmlBox| b.style.display == Display::Table);
     assert!(table1.is_some());
-    let tw1 = table1.unwrap().margin_rect.w;
+    let tw1 = table1.unwrap().layout.margin_rect.w;
 
     let doc2 = parse_and_layout(html, 800.0);
     let table2 = find_box(&doc2.root, &|b: &HtmlBox| b.style.display == Display::Table);
     assert!(table2.is_some());
-    assert_eq!(table2.unwrap().margin_rect.w, tw1);
+    assert_eq!(table2.unwrap().layout.margin_rect.w, tw1);
     // Table should match body content width = 800 - 32 = 768
     assert_eq!(tw1, 768.0);
 }

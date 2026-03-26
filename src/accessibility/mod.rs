@@ -229,7 +229,7 @@ fn walk(
     let mut ak = Node::new(role);
 
     // ── Bounds (physical pixels) ──────────────────────────────────────────────
-    let r = &node.border_rect;
+    let r = &node.layout.border_rect;
     ak.set_bounds(AkRect {
         x0: (r.x * scale) as f64,
         y0: (r.y * scale) as f64,

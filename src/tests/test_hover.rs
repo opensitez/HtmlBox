@@ -99,14 +99,14 @@ fn parent_hover_child_max_height() {
 
     // Before hover: sub should be constrained to 0 height
     let sub = find_by_id(&doc.root, "sub").unwrap();
-    assert!(sub.content_rect.h < 1.0,
-        "before hover: sub should have ~0 height, got {}", sub.content_rect.h);
+    assert!(sub.layout.content_rect.h < 1.0,
+        "before hover: sub should have ~0 height, got {}", sub.layout.content_rect.h);
 
     // Hover on nav (parent) — sub should expand
     recascade_with_hover(&mut doc, "nav");
     let sub = find_by_id(&doc.root, "sub").unwrap();
-    assert!(sub.content_rect.h > 10.0,
-        "after hovering parent: sub should have visible height, got {}", sub.content_rect.h);
+    assert!(sub.layout.content_rect.h > 10.0,
+        "after hovering parent: sub should have visible height, got {}", sub.layout.content_rect.h);
 }
 
 // ── Hover on sibling content within parent ──────────────────────────────
@@ -227,15 +227,15 @@ fn usps_nav_dropdown_max_height_on_hover() {
 
     // Before hover: dropdown should have 0 height
     let dd = find_by_id(&doc.root, "dropdown").unwrap();
-    assert!(dd.content_rect.h < 1.0,
-        "before hover: dropdown h={}", dd.content_rect.h);
+    assert!(dd.layout.content_rect.h < 1.0,
+        "before hover: dropdown h={}", dd.layout.content_rect.h);
 
     // Hover on the <a> link — li:hover should match because li contains the hovered <a>
     recascade_with_hover(&mut doc, "link");
     let dd = find_by_id(&doc.root, "dropdown").unwrap();
-    eprintln!("after hover link: dropdown max_height={:?} h={}", dd.style.max_height, dd.content_rect.h);
-    assert!(dd.content_rect.h > 5.0,
-        "after hover: dropdown should expand, h={}", dd.content_rect.h);
+    eprintln!("after hover link: dropdown max_height={:?} h={}", dd.style.max_height, dd.layout.content_rect.h);
+    assert!(dd.layout.content_rect.h > 5.0,
+        "after hover: dropdown should expand, h={}", dd.layout.content_rect.h);
 }
 
 // ── USPS-style: positioned ::before on hover + dropdown + hover-out ──────
@@ -275,18 +275,18 @@ fn usps_hover_before_and_dropdown_on_link_hover() {
     // Before hover: both dropdowns collapsed
     let dd1 = find_by_id(&doc.root, "dd1").unwrap();
     let dd2 = find_by_id(&doc.root, "dd2").unwrap();
-    assert!(dd1.content_rect.h < 1.0, "dd1 should be collapsed before hover");
-    assert!(dd2.content_rect.h < 1.0, "dd2 should be collapsed before hover");
+    assert!(dd1.layout.content_rect.h < 1.0, "dd1 should be collapsed before hover");
+    assert!(dd2.layout.content_rect.h < 1.0, "dd2 should be collapsed before hover");
 
     // Hover on "Send" link — should open dd1 via li:hover div
     recascade_with_hover(&mut doc, "link1");
     let dd1 = find_by_id(&doc.root, "dd1").unwrap();
     let dd2 = find_by_id(&doc.root, "dd2").unwrap();
     eprintln!("[test] after hover link1: dd1 max_height={:?} h={}, dd2 h={}",
-        dd1.style.max_height, dd1.content_rect.h, dd2.content_rect.h);
-    assert!(dd1.content_rect.h > 5.0,
-        "dd1 should expand when hovering link inside li, h={}", dd1.content_rect.h);
-    assert!(dd2.content_rect.h < 1.0, "dd2 should stay collapsed");
+        dd1.style.max_height, dd1.layout.content_rect.h, dd2.layout.content_rect.h);
+    assert!(dd1.layout.content_rect.h > 5.0,
+        "dd1 should expand when hovering link inside li, h={}", dd1.layout.content_rect.h);
+    assert!(dd2.layout.content_rect.h < 1.0, "dd2 should stay collapsed");
 
     // Check that a::before is active (the link should have before_style)
     let link1 = find_by_id(&doc.root, "link1").unwrap();
@@ -297,10 +297,10 @@ fn usps_hover_before_and_dropdown_on_link_hover() {
     recascade_with_hover(&mut doc, "link2");
     let dd1 = find_by_id(&doc.root, "dd1").unwrap();
     let dd2 = find_by_id(&doc.root, "dd2").unwrap();
-    assert!(dd1.content_rect.h < 1.0,
-        "dd1 should collapse after hover-out, h={}", dd1.content_rect.h);
-    assert!(dd2.content_rect.h > 5.0,
-        "dd2 should expand when hovering link2, h={}", dd2.content_rect.h);
+    assert!(dd1.layout.content_rect.h < 1.0,
+        "dd1 should collapse after hover-out, h={}", dd1.layout.content_rect.h);
+    assert!(dd2.layout.content_rect.h > 5.0,
+        "dd2 should expand when hovering link2, h={}", dd2.layout.content_rect.h);
 
     // Check that link1's ::before is gone (hover-out cleanup)
     let link1 = find_by_id(&doc.root, "link1").unwrap();
@@ -311,9 +311,9 @@ fn usps_hover_before_and_dropdown_on_link_hover() {
     // The ::before should be removed or have no content when not hovered
     if has_before_child {
         let before = link1.children.iter().find(|c| c.tag == "::before").unwrap();
-        assert!(before.text.is_empty() && before.border_rect.h < 1.0,
+        assert!(before.text.is_empty() && before.layout.border_rect.h < 1.0,
             "stale ::before should not render after hover-out, text='{}' h={}",
-            before.text, before.border_rect.h);
+            before.text, before.layout.border_rect.h);
     }
 }
 

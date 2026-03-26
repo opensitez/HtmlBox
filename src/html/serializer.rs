@@ -587,7 +587,7 @@ pub fn serialize_box(node: &HtmlBox, out: &mut String) {
     // Inline runs — emit styled text segments.
     // Our InlineRun has text_offset, length, style but no atomicBox pointer,
     // so we just emit the text slice with light markup for common properties.
-    for run in &node.inline_runs {
+    for run in &node.layout.inline_runs {
         let end = (run.text_offset + run.length).min(node.text.len());
         if run.text_offset > node.text.len() {
             continue;

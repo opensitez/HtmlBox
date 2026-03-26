@@ -26,8 +26,8 @@ fn display_contents_child_has_zero_box() {
     let wrapper = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "wrapper").unwrap_or(false)
     }).expect("wrapper element");
-    assert_eq!(wrapper.content_rect.w, 0.0, "display:contents element should have 0 width");
-    assert_eq!(wrapper.content_rect.h, 0.0, "display:contents element should have 0 height");
+    assert_eq!(wrapper.layout.content_rect.w, 0.0, "display:contents element should have 0 width");
+    assert_eq!(wrapper.layout.content_rect.h, 0.0, "display:contents element should have 0 height");
 }
 
 #[test]
@@ -45,10 +45,10 @@ fn display_contents_children_visible_in_block() {
     let inner = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "inner").unwrap_or(false)
     }).expect("inner <p>");
-    assert!(inner.content_rect.w > 0.0,
-        "child of display:contents must have width > 0, got {}", inner.content_rect.w);
-    assert!(inner.content_rect.h > 0.0,
-        "child of display:contents must have height > 0, got {}", inner.content_rect.h);
+    assert!(inner.layout.content_rect.w > 0.0,
+        "child of display:contents must have width > 0, got {}", inner.layout.content_rect.w);
+    assert!(inner.layout.content_rect.h > 0.0,
+        "child of display:contents must have height > 0, got {}", inner.layout.content_rect.h);
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn display_contents_nested_chain() {
     let deep = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "deep").unwrap_or(false)
     }).expect("deep <p>");
-    assert!(deep.content_rect.h > 0.0,
-        "deeply nested display:contents child must have height > 0, got {}", deep.content_rect.h);
+    assert!(deep.layout.content_rect.h > 0.0,
+        "deeply nested display:contents child must have height > 0, got {}", deep.layout.content_rect.h);
 }
 
 #[test]
@@ -90,8 +90,8 @@ fn display_contents_block_height_includes_promoted_children() {
     let parent = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "parent").unwrap_or(false)
     }).expect("parent div");
-    assert!(parent.content_rect.h > 0.0,
-        "parent must have height > 0 from promoted children, got {}", parent.content_rect.h);
+    assert!(parent.layout.content_rect.h > 0.0,
+        "parent must have height > 0 from promoted children, got {}", parent.layout.content_rect.h);
 }
 
 #[test]
@@ -118,14 +118,14 @@ fn display_contents_mixed_with_normal_children() {
         b.attributes.get("id").map(|v| v == "last").unwrap_or(false)
     }).expect("last");
 
-    assert!(promoted.content_rect.h > 0.0,
+    assert!(promoted.layout.content_rect.h > 0.0,
         "promoted child must have height > 0");
-    assert!(promoted.margin_rect.y > first.margin_rect.y,
+    assert!(promoted.layout.margin_rect.y > first.layout.margin_rect.y,
         "promoted child must be below first child (promoted.y={}, first.y={})",
-        promoted.margin_rect.y, first.margin_rect.y);
-    assert!(last.margin_rect.y > promoted.margin_rect.y,
+        promoted.layout.margin_rect.y, first.layout.margin_rect.y);
+    assert!(last.layout.margin_rect.y > promoted.layout.margin_rect.y,
         "last child must be below promoted child (last.y={}, promoted.y={})",
-        last.margin_rect.y, promoted.margin_rect.y);
+        last.layout.margin_rect.y, promoted.layout.margin_rect.y);
 }
 
 // ─── display:contents in flex layout ─────────────────────────────────────────
@@ -145,8 +145,8 @@ fn display_contents_in_flex_children_promoted() {
     let item = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "item").unwrap_or(false)
     }).expect("flex item");
-    assert!(item.content_rect.h > 0.0,
-        "display:contents child in flex must be laid out, got height={}", item.content_rect.h);
+    assert!(item.layout.content_rect.h > 0.0,
+        "display:contents child in flex must be laid out, got height={}", item.layout.content_rect.h);
 }
 
 // ─── AOL/netscape.com header pattern ─────────────────────────────────────────
@@ -178,17 +178,17 @@ fn aol_header_pattern_contents_chain_in_block() {
     let header_inner = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "header-inner").unwrap_or(false)
     }).expect("header-inner");
-    assert!(header_inner.content_rect.h > 0.0,
+    assert!(header_inner.layout.content_rect.h > 0.0,
         "header content through display:contents chain must have height > 0, got {}",
-        header_inner.content_rect.h);
-    assert!(header_inner.content_rect.w > 100.0,
-        "header content must have reasonable width, got {}", header_inner.content_rect.w);
+        header_inner.layout.content_rect.h);
+    assert!(header_inner.layout.content_rect.w > 100.0,
+        "header content must have reasonable width, got {}", header_inner.layout.content_rect.w);
 
     // Content below the header must be pushed down.
     let content = find_box(&doc.root, &|b: &HtmlBox| {
         b.attributes.get("id").map(|v| v == "content").unwrap_or(false)
     }).expect("content div");
-    assert!(content.margin_rect.y >= header_inner.margin_rect.y + header_inner.margin_rect.h,
+    assert!(content.layout.margin_rect.y >= header_inner.layout.margin_rect.y + header_inner.layout.margin_rect.h,
         "content must be below header (content.y={}, header bottom={})",
-        content.margin_rect.y, header_inner.margin_rect.y + header_inner.margin_rect.h);
+        content.layout.margin_rect.y, header_inner.layout.margin_rect.y + header_inner.layout.margin_rect.h);
 }

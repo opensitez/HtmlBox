@@ -2185,6 +2185,7 @@ fn parse_html_full(
         pending_announcements:    Vec::new(),
         live_region_snapshots:    std::collections::HashMap::new(),
         live_regions_initialized: false,
+        layout_generation:   0,
         pending_images:      None,
         images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         on_form_event:       None,

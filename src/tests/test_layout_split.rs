@@ -11,12 +11,12 @@ fn layout_store_basic_operations() {
     assert_eq!(store.len(), 0);
 
     let lb = store.get_or_create(42);
-    lb.content_rect.w = 100.0;
-    lb.content_rect.h = 50.0;
+    lb.layout.content_rect.w = 100.0;
+    lb.layout.content_rect.h = 50.0;
     assert_eq!(store.len(), 1);
 
     let lb = store.get(42).unwrap();
-    assert_eq!(lb.content_rect.w, 100.0);
+    assert_eq!(lb.layout.content_rect.w, 100.0);
     assert_eq!(lb.node_id, 42);
 
     store.remove(42);
@@ -35,22 +35,22 @@ fn layout_store_on_document() {
 fn layout_box_has_correct_defaults() {
     let lb = LayoutBox::new(7);
     assert_eq!(lb.node_id, 7);
-    assert_eq!(lb.content_rect.w, 0.0);
-    assert_eq!(lb.content_rect.h, 0.0);
-    assert!(lb.layout_dirty);
-    assert!(lb.cached_intrinsic_w.get().is_nan());
+    assert_eq!(lb.layout.content_rect.w, 0.0);
+    assert_eq!(lb.layout.content_rect.h, 0.0);
+    assert!(lb.layout.layout_dirty);
+    assert!(lb.layout.cached_intrinsic_w.get().is_nan());
 }
 
 #[test]
 fn layout_store_get_or_create_is_idempotent() {
     let mut store = LayoutStore::new();
-    store.get_or_create(10).content_rect.w = 200.0;
-    store.get_or_create(10).content_rect.h = 100.0;
+    store.get_or_create(10).layout.content_rect.w = 200.0;
+    store.get_or_create(10).layout.content_rect.h = 100.0;
 
     // Should still be the same box
     let lb = store.get(10).unwrap();
-    assert_eq!(lb.content_rect.w, 200.0);
-    assert_eq!(lb.content_rect.h, 100.0);
+    assert_eq!(lb.layout.content_rect.w, 200.0);
+    assert_eq!(lb.layout.content_rect.h, 100.0);
     assert_eq!(store.len(), 1);
 }
 
