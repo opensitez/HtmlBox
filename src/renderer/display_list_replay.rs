@@ -513,10 +513,13 @@ fn replay_inner(
                         if !display_text.is_empty() {
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 let c = apply_opacity(color, a2);
+                                // Vertically center the text in the element
+                                let line_h = *font_size * 1.2;
+                                let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
                                     target, *fs, *sc, scale,
-                                    rect.x + 2.0, rect.y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    rect.x + 2.0, text_y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, line_h,
                                     &c, &super::display_list::TextDecoration::default(),
                                     0.0, false,
                                 );
@@ -538,10 +541,13 @@ fn replay_inner(
                                 } else {
                                     apply_opacity(color, a2)
                                 };
+                                // Vertically center the text in the element
+                                let line_h = *font_size * 1.2;
+                                let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
                                     target, *fs, *sc, scale,
-                                    rect.x + 2.0, rect.y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    rect.x + 2.0, text_y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, line_h,
                                     &c, &super::display_list::TextDecoration::default(),
                                     0.0, false,
                                 );
@@ -576,10 +582,13 @@ fn replay_inner(
                         if !display_text.is_empty() {
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 let c = apply_opacity(color, a2);
+                                // Vertically center the text in the element
+                                let line_h = *font_size * 1.2;
+                                let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
                                     target, *fs, *sc, scale,
-                                    rect.x + 2.0, rect.y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, *font_size * 1.2,
+                                    rect.x + 2.0, text_y, display_text, font_family,
+                                    *font_size, *font_weight, 0, 100.0, line_h,
                                     &c, &super::display_list::TextDecoration::default(),
                                     0.0, false,
                                 );

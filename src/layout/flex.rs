@@ -114,6 +114,10 @@ pub fn layout_flex(
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         // CSS Flexbox §4.1: whitespace-only anonymous flex items are not rendered
         if child.tag == "#text" && child.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+        // CSS Flexbox §4: blockify inline-level flex items
+        if matches!(child.style.display, Display::Inline) {
+            child.style.display = Display::Block;
+        }
 
         let child_font = child.style.font_size_px(font_px, root_font_px);
         let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);

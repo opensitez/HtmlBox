@@ -535,10 +535,12 @@ impl LayoutEngine {
             let mut max_word = 0.0f32;
             for word in text.split(|c: char| c.is_ascii_whitespace()) {
                 if word.is_empty() { continue; }
+                // Note: measure_text_width_weighted handles scaling internally,
+                // so pass logical font_px, not font_px * scale.
                 let w = if let Some(fs_ptr) = self.font_system {
                     let fs = unsafe { &mut *fs_ptr };
                     crate::layout::inline_layout::measure_text_width_weighted(
-                        word, font_px * self.scale,
+                        word, font_px,
                         Some(fs),
                         node.style.font_weight, node.style.font_style,
                         self.scale,
@@ -592,17 +594,27 @@ impl LayoutEngine {
         if node.is_text_node() {
             let text = &node.text;
             if text.is_empty() { return 0.0; }
+            // Collapse whitespace for normal white-space mode (CSS §4.1.1)
+            let text = if matches!(node.style.white_space, WhiteSpace::Normal | WhiteSpace::Nowrap) {
+                let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                collapsed
+            } else {
+                text.clone()
+            };
+            if text.is_empty() { return 0.0; }
             let w = if let Some(fs_ptr) = self.font_system {
                 let fs = unsafe { &mut *fs_ptr };
+                // Note: measure_text_width_weighted handles scaling internally,
+                // so pass logical font_px, not font_px * scale.
                 crate::layout::inline_layout::measure_text_width_weighted(
-                    text, font_px * self.scale,
+                    &text, font_px,
                     Some(fs),
                     node.style.font_weight, node.style.font_style,
                     self.scale,
                     &node.style.font_family,
                 )
             } else {
-                crate::layout::inline_layout::measure_text_width_ts(text, font_px, 8)
+                crate::layout::inline_layout::measure_text_width_ts(&text, font_px, 8)
             };
             return w;
         }
