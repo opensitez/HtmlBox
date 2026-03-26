@@ -189,7 +189,6 @@ fn insert_br_in_td_preserves_table_structure() {
     // Find the <td> and click in the middle.
     let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td")
         .expect("<td> must exist before Enter");
-    let td_ptr = td as *const HtmlBox;
     let (cx, cy) = {
         let line = &td.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0)

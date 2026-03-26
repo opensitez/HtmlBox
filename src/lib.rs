@@ -174,7 +174,7 @@ pub fn load_html_with_registry(
     html::load_background_images(&mut doc.root, &doc.base_url.clone());
     // Fire DOMContentLoaded — listeners registered before load_html can react.
     let evt = dom::HtmlEvent::new(dom::HtmlEventType::DOMContentLoaded);
-    doc.events.dispatch(&doc.root, evt);
+    doc.events.dispatch(&mut doc.root, evt);
     doc
 }
 

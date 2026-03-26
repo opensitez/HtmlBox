@@ -21,8 +21,8 @@ fn frame(html: &str) -> EngineFrame {
 fn color_inherits_to_children() {
     let mut f = frame(r#"<div style="color: red"><p id="child">text</p></div>"#);
     let child = f.doc.get_element_by_id("child").unwrap();
-    let ptr = crate::types::find_by_node_id(&f.doc.root, child);
-    let style = unsafe { &*ptr }.style.clone();
+    let node = f.doc.get_box_by_id(child).unwrap();
+    let style = node.style.clone();
     assert_eq!(style.color.r, 255, "red should inherit to child");
     assert_eq!(style.color.g, 0);
 }
@@ -31,8 +31,8 @@ fn color_inherits_to_children() {
 fn font_size_inherits() {
     let mut f = frame(r#"<div style="font-size: 24px"><span id="s">text</span></div>"#);
     let s = f.doc.get_element_by_id("s").unwrap();
-    let ptr = crate::types::find_by_node_id(&f.doc.root, s);
-    let style = unsafe { &*ptr }.style.clone();
+    let node = f.doc.get_box_by_id(s).unwrap();
+    let style = node.style.clone();
     let fs = style.font_size_px(16.0, 16.0);
     assert!((fs - 24.0).abs() < 1.0, "font-size should inherit: got {}", fs);
 }
@@ -41,8 +41,8 @@ fn font_size_inherits() {
 fn background_does_not_inherit() {
     let mut f = frame(r#"<div style="background-color: blue"><p id="child">text</p></div>"#);
     let child = f.doc.get_element_by_id("child").unwrap();
-    let ptr = crate::types::find_by_node_id(&f.doc.root, child);
-    let style = unsafe { &*ptr }.style.clone();
+    let node = f.doc.get_box_by_id(child).unwrap();
+    let style = node.style.clone();
     // Background should NOT inherit — child should have transparent/default
     assert_ne!(style.background_color.b, 255, "background should not inherit");
 }
@@ -51,8 +51,8 @@ fn background_does_not_inherit() {
 fn display_does_not_inherit() {
     let mut f = frame(r#"<div style="display: flex"><span id="child">text</span></div>"#);
     let child = f.doc.get_element_by_id("child").unwrap();
-    let ptr = crate::types::find_by_node_id(&f.doc.root, child);
-    let style = unsafe { &*ptr }.style.clone();
+    let node = f.doc.get_box_by_id(child).unwrap();
+    let style = node.style.clone();
     assert_ne!(style.display, crate::types::Display::Flex, "display should not inherit");
 }
 
@@ -68,16 +68,16 @@ fn add_class_triggers_style_update() {
     let p = f.doc.get_element_by_id("p").unwrap();
 
     // Before: default color (black)
-    let ptr = crate::types::find_by_node_id(&f.doc.root, p);
-    assert_eq!(unsafe { &*ptr }.style.color.r, 0);
+    let node = f.doc.get_box_by_id(p).unwrap();
+    assert_eq!(node.style.color.r, 0);
 
     // Add class and update
     f.toggle_class(p, "red");
     f.update_frame();
 
     // After: red
-    let ptr = crate::types::find_by_node_id(&f.doc.root, p);
-    assert_eq!(unsafe { &*ptr }.style.color.r, 255, "adding .red class should make text red");
+    let node = f.doc.get_box_by_id(p).unwrap();
+    assert_eq!(node.style.color.r, 255, "adding .red class should make text red");
 }
 
 #[test]
@@ -153,8 +153,8 @@ fn click_handler_can_modify_dom() {
     f.mark_style_dirty();
     f.update_frame();
 
-    let ptr = crate::types::find_by_node_id(&f.doc.root, target);
-    assert_eq!(unsafe { &*ptr }.style.color.r, 255, "target should be red after class add");
+    let node = f.doc.get_box_by_id(target).unwrap();
+    assert_eq!(node.style.color.r, 255, "target should be red after class add");
 }
 
 #[test]
@@ -183,8 +183,8 @@ fn inline_style_overrides_class() {
     let mut f = frame(html);
     let p = f.doc.get_element_by_id("p").unwrap();
 
-    let ptr = crate::types::find_by_node_id(&f.doc.root, p);
-    let color = unsafe { &*ptr }.style.color;
+    let node = f.doc.get_box_by_id(p).unwrap();
+    let color = node.style.color;
     assert_eq!(color.r, 255, "inline style should override class: r={}", color.r);
     assert_eq!(color.b, 0);
 }
@@ -199,8 +199,8 @@ fn class_selector_overrides_tag() {
     let mut f = frame(html);
     let p = f.doc.get_element_by_id("p").unwrap();
 
-    let ptr = crate::types::find_by_node_id(&f.doc.root, p);
-    let color = unsafe { &*ptr }.style.color;
+    let node = f.doc.get_box_by_id(p).unwrap();
+    let color = node.style.color;
     assert_eq!(color.r, 255, "class should override tag: r={}", color.r);
 }
 

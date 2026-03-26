@@ -68,8 +68,6 @@ pub struct HtmlEvent {
     pub target:          u32,
     /// Stable node_id of the current listener's element.
     pub current_target:  u32,
-    /// Root of the document tree (mutable access for DOM manipulation in callbacks).
-    pub root:        *mut HtmlBox,
     /// Position in window coordinates.
     pub client_pos:  (f32, f32),
     /// Position in document coordinates.
@@ -99,7 +97,6 @@ impl HtmlEvent {
             event_type,
             target:          0,
             current_target:  0,
-            root:            std::ptr::null_mut(),
             client_pos:      (0.0, 0.0),
             doc_pos:         (0.0, 0.0),
             button:          0,
@@ -125,7 +122,9 @@ impl HtmlEvent {
 
 // ─── Event listener registry ──────────────────────────────────────────────────
 
-pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent) + Send + Sync + 'static>;
+/// Event handler callback. Receives the event and a mutable reference to the
+/// DOM root so handlers can query/mutate the tree without unsafe pointer casts.
+pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent, &mut HtmlBox) + Send + Sync + 'static>;
 
 struct EventListenerEntry {
     id:         i32,
@@ -207,29 +206,30 @@ impl EventListeners {
 
     /// Dispatch a non-bubbling event: fires only on the exact target element.
     /// Used for MouseEnter, MouseLeave, Focus, Blur (which do not bubble).
-    pub fn dispatch_direct(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
-        let inner = self.inner.read().unwrap();
-        if inner.entries.is_empty() { return false; }
-        evt.root = root as *const HtmlBox as *mut HtmlBox;
+    pub fn dispatch_direct(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> bool {
         let target_id = evt.target;
         if target_id == 0 { return false; }
-        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
-            if node.node_id == id { return Some(node); }
-            for child in &node.children {
-                if let Some(f) = find_node(child, id) { return Some(f); }
-            }
-            None
-        }
-        let b = match find_node(root, target_id) {
-            Some(n) => n,
-            None => return false,
+
+        // Phase 1: collect matching entry IDs (immutable borrow of root + entries)
+        let matches: Vec<usize> = {
+            let inner = self.inner.read().unwrap();
+            if inner.entries.is_empty() { return false; }
+            let b = match find_node_ref(root, target_id) {
+                Some(n) => n, None => return false,
+            };
+            inner.entries.iter().enumerate()
+                .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
+                .map(|(i, _)| i)
+                .collect()
         };
+        if matches.is_empty() { return false; }
+
+        // Phase 2: call handlers with mutable root
         evt.current_target = target_id;
+        let inner = self.inner.read().unwrap();
         let mut handled = false;
-        for entry in &inner.entries {
-            if entry.event_type != evt.event_type { continue; }
-            if !matches_simple_selector(b, &entry.selector) { continue; }
-            (entry.callback)(&mut evt);
+        for &ei in &matches {
+            (inner.entries[ei].callback)(&mut evt, root);
             handled = true;
             if evt.propagation_stopped { break; }
         }
@@ -238,112 +238,114 @@ impl EventListeners {
 
     /// Dispatch an event from a hit-test target, bubbling up through ancestors.
     /// Returns `true` if any handler was executed (useful for triggered redraws).
-    pub fn dispatch(&self, root: &HtmlBox, mut evt: HtmlEvent) -> bool {
-        let inner = self.inner.read().unwrap();
-        if inner.entries.is_empty() { return false; }
-        evt.root = root as *const HtmlBox as *mut HtmlBox;
+    pub fn dispatch(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> bool {
+        // Phase 1: collect (node_id, entry_index) matches using immutable access
+        let matches: Vec<(u32, Vec<usize>)> = {
+            let inner = self.inner.read().unwrap();
+            if inner.entries.is_empty() { return false; }
+            let target_id = evt.target;
 
-        let mut handled = false;
-        let target_id = evt.target;
-
-        if target_id != 0 {
-            // Build the ancestor path by node_id
-            let mut path: Vec<u32> = Vec::new();
-            collect_id_path(root, target_id, &mut path);
-
-            // Bubble: fire from target outward
-            for &nid in path.iter().rev() {
-                // Look up the node to check selector matching
-                fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
-                    if node.node_id == id { return Some(node); }
-                    for child in &node.children {
-                        if let Some(f) = find_node(child, id) { return Some(f); }
-                    }
-                    None
-                }
-                let b = match find_node(root, nid) {
-                    Some(n) => n,
-                    None => continue,
-                };
-                evt.current_target = nid;
-                for entry in &inner.entries {
-                    if entry.event_type != evt.event_type { continue; }
-                    if !matches_simple_selector(b, &entry.selector) { continue; }
-                    (entry.callback)(&mut evt);
-                    handled = true;
-                    if evt.propagation_stopped { break; }
-                }
-                if evt.propagation_stopped { break; }
+            if target_id != 0 {
+                let mut path: Vec<u32> = Vec::new();
+                collect_id_path(root, target_id, &mut path);
+                path.iter().rev().filter_map(|&nid| {
+                    let b = find_node_ref(root, nid)?;
+                    let eis: Vec<usize> = inner.entries.iter().enumerate()
+                        .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
+                        .map(|(i, _)| i)
+                        .collect();
+                    if eis.is_empty() { None } else { Some((nid, eis)) }
+                }).collect()
+            } else {
+                let eis: Vec<usize> = inner.entries.iter().enumerate()
+                    .filter(|(_, e)| {
+                        e.event_type == evt.event_type && {
+                            let sel = e.selector.as_str();
+                            sel == "*" || sel == "html" || sel == "body"
+                        }
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                if eis.is_empty() { vec![] } else { vec![(root.node_id, eis)] }
             }
-        } else {
-            // No positional target: fire on root (keyboard, scroll, selection-change)
-            evt.current_target = root.node_id;
-            for entry in &inner.entries {
-                if entry.event_type != evt.event_type { continue; }
-                let sel = entry.selector.as_str();
-                if sel != "*" && sel != "html" && sel != "body" { continue; }
-                (entry.callback)(&mut evt);
+        };
+        if matches.is_empty() { return false; }
+
+        // Phase 2: call handlers with mutable root
+        let inner = self.inner.read().unwrap();
+        let mut handled = false;
+        for (nid, eis) in &matches {
+            evt.current_target = *nid;
+            for &ei in eis {
+                (inner.entries[ei].callback)(&mut evt, root);
                 handled = true;
                 if evt.propagation_stopped { break; }
             }
+            if evt.propagation_stopped { break; }
         }
-
         handled || evt.default_prevented
     }
 
     /// Dispatch and return the (possibly modified) event so callers can inspect
     /// `evt.default_prevented` to decide whether to run default behavior.
-    pub fn dispatch_and_return(&self, root: &HtmlBox, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
-        let inner = self.inner.read().unwrap();
-        if inner.entries.is_empty() { return (false, evt); }
-        evt.root = root as *const HtmlBox as *mut HtmlBox;
-
-        let mut handled = false;
-        let target_id = evt.target;
-
-        if target_id != 0 {
-            let mut path: Vec<u32> = Vec::new();
-            collect_id_path(root, target_id, &mut path);
-
-            for &nid in path.iter().rev() {
-                fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
-                    if node.node_id == id { return Some(node); }
-                    for child in &node.children {
-                        if let Some(f) = find_node(child, id) { return Some(f); }
-                    }
-                    None
-                }
-                let b = match find_node(root, nid) {
-                    Some(n) => n,
-                    None => continue,
-                };
-                evt.current_target = nid;
-                for entry in &inner.entries {
-                    if entry.event_type != evt.event_type { continue; }
-                    if !matches_simple_selector(b, &entry.selector) { continue; }
-                    (entry.callback)(&mut evt);
-                    handled = true;
-                    if evt.propagation_stopped { break; }
-                }
-                if evt.propagation_stopped { break; }
+    pub fn dispatch_and_return(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
+        // Phase 1: collect matches
+        let matches: Vec<(u32, Vec<usize>)> = {
+            let inner = self.inner.read().unwrap();
+            if inner.entries.is_empty() { return (false, evt); }
+            let target_id = evt.target;
+            if target_id != 0 {
+                let mut path: Vec<u32> = Vec::new();
+                collect_id_path(root, target_id, &mut path);
+                path.iter().rev().filter_map(|&nid| {
+                    let b = find_node_ref(root, nid)?;
+                    let eis: Vec<usize> = inner.entries.iter().enumerate()
+                        .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
+                        .map(|(i, _)| i)
+                        .collect();
+                    if eis.is_empty() { None } else { Some((nid, eis)) }
+                }).collect()
+            } else {
+                let eis: Vec<usize> = inner.entries.iter().enumerate()
+                    .filter(|(_, e)| {
+                        e.event_type == evt.event_type && {
+                            let sel = e.selector.as_str();
+                            sel == "*" || sel == "html" || sel == "body"
+                        }
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                if eis.is_empty() { vec![] } else { vec![(root.node_id, eis)] }
             }
-        } else {
-            evt.current_target = root.node_id;
-            for entry in &inner.entries {
-                if entry.event_type != evt.event_type { continue; }
-                let sel = entry.selector.as_str();
-                if sel != "*" && sel != "html" && sel != "body" { continue; }
-                (entry.callback)(&mut evt);
+        };
+        if matches.is_empty() { return (false, evt); }
+
+        // Phase 2: call handlers with mutable root
+        let inner = self.inner.read().unwrap();
+        let mut handled = false;
+        for (nid, eis) in &matches {
+            evt.current_target = *nid;
+            for &ei in eis {
+                (inner.entries[ei].callback)(&mut evt, root);
                 handled = true;
                 if evt.propagation_stopped { break; }
             }
+            if evt.propagation_stopped { break; }
         }
-
-        (handled, evt)
+        (handled || evt.default_prevented, evt)
     }
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+/// Find a node by node_id in the tree (immutable).
+fn find_node_ref(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+    if node.node_id == id { return Some(node); }
+    for child in &node.children {
+        if let Some(f) = find_node_ref(child, id) { return Some(f); }
+    }
+    None
+}
 
 /// Build path of node_ids `[root, ..., parent, target]` from root down to target.
 fn collect_id_path(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool {
@@ -563,33 +565,16 @@ fn collect_all<'a>(node: &'a HtmlBox, sel: &str, out: &mut Vec<&'a HtmlBox>) {
     for child in &node.children { collect_all(child, sel, out); }
 }
 
-/// Returns all boxes matching the selector (mutable).
-/// Uses internal pointer manipulation to collect multiple &mut references safely.
-pub fn query_selector_all_mut<'a>(root: &'a mut HtmlBox, selector: &str) -> Vec<&'a mut HtmlBox> {
-    // Collect node_ids first, then look up each one individually.
-    let ids = {
-        let mut out = Vec::new();
-        fn collect_ids(node: &HtmlBox, sel: &str, out: &mut Vec<u32>) {
-            if matches_simple_selector(node, sel) { out.push(node.node_id); }
-            for child in &node.children { collect_ids(child, sel, out); }
-        }
-        collect_ids(root, selector, &mut out);
-        out
-    };
-    // Use raw pointer to collect multiple &mut references (safe because they're distinct nodes).
-    let root_ptr = root as *mut HtmlBox;
-    ids.into_iter()
-        .filter_map(|id| {
-            fn find_mut(node: &mut HtmlBox, id: u32) -> Option<*mut HtmlBox> {
-                if node.node_id == id { return Some(node as *mut HtmlBox); }
-                for child in &mut node.children {
-                    if let Some(p) = find_mut(child, id) { return Some(p); }
-                }
-                None
-            }
-            unsafe { find_mut(&mut *root_ptr, id).map(|p| &mut *p) }
-        })
-        .collect()
+/// Returns node_ids of all boxes matching the selector.
+/// Callers use `find_box_mut(root, id)` to get `&mut` references one at a time.
+pub fn query_selector_all_ids(root: &HtmlBox, selector: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    fn collect_ids(node: &HtmlBox, sel: &str, out: &mut Vec<u32>) {
+        if matches_simple_selector(node, sel) { out.push(node.node_id); }
+        for child in &node.children { collect_ids(child, sel, out); }
+    }
+    collect_ids(root, selector, &mut out);
+    out
 }
 
 // ─── Tree traversal ───────────────────────────────────────────────────────────
@@ -630,22 +615,8 @@ pub fn prepend_child(parent: &mut HtmlBox, child: HtmlBox) {
     parent.children.insert(0, child);
 }
 
-/// Insert `new_node` before `reference` within `parent`.
-/// Accepts `*const HtmlBox` for backward compatibility; matches by pointer identity.
-/// Returns `false` if `reference` was not found.
-pub fn insert_before(parent: &mut HtmlBox, reference: *const HtmlBox, new_node: HtmlBox) -> bool {
-    if let Some(idx) = parent.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, reference))
-    {
-        parent.children.insert(idx, new_node);
-        true
-    } else {
-        false
-    }
-}
-
 /// Insert `new_node` before the child with `reference_id` within `parent`.
-pub fn insert_before_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+pub fn insert_before(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
@@ -655,22 +626,8 @@ pub fn insert_before_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: Ht
         false
     }
 }
-
-/// Insert `new_node` after `reference` within `parent`.
-/// Accepts `*const HtmlBox` for backward compatibility; matches by pointer identity.
-pub fn insert_after(parent: &mut HtmlBox, reference: *const HtmlBox, new_node: HtmlBox) -> bool {
-    if let Some(idx) = parent.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, reference))
-    {
-        parent.children.insert(idx + 1, new_node);
-        true
-    } else {
-        false
-    }
-}
-
 /// Insert `new_node` after the child with `reference_id` within `parent`.
-pub fn insert_after_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
+pub fn insert_after(parent: &mut HtmlBox, reference_id: u32, new_node: HtmlBox) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
@@ -680,7 +637,6 @@ pub fn insert_after_by_id(parent: &mut HtmlBox, reference_id: u32, new_node: Htm
         false
     }
 }
-
 /// Remove the child at position `index` from `parent`, returning it.
 pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
     if index < parent.children.len() {
@@ -690,27 +646,14 @@ pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
     }
 }
 
-/// Remove the child identified by pointer from `parent`, returning it.
-/// Accepts `*const HtmlBox` for backward compatibility.
-pub fn remove_child(parent: &mut HtmlBox, target: *const HtmlBox) -> Option<HtmlBox> {
-    if let Some(idx) = parent.children.iter()
-        .position(|c| std::ptr::eq(c as *const HtmlBox, target))
-    {
-        Some(parent.children.remove(idx))
-    } else {
-        None
-    }
-}
-
 /// Remove the child identified by node_id from `parent`, returning it.
-pub fn remove_child_by_id(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
+pub fn remove_child(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
     if let Some(idx) = parent.children.iter().position(|c| c.node_id == node_id) {
         Some(parent.children.remove(idx))
     } else {
         None
     }
 }
-
 /// Deep-clone an element (HtmlBox implements Clone).
 pub fn clone_element(b: &HtmlBox) -> HtmlBox {
     b.clone()

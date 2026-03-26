@@ -164,7 +164,7 @@ fn tab_fires_focus_event() {
 
     // "button" selector matches both buttons; Focus is direct (non-bubbling) so
     // it fires on the focused element directly.
-    doc.events.add("button", HtmlEventType::Focus, Box::new(move |_evt| {
+    doc.events.add("button", HtmlEventType::Focus, Box::new(move |_evt, _root| {
         *fc.lock().unwrap() += 1;
     }));
 

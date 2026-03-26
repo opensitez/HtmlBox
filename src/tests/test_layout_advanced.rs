@@ -316,17 +316,6 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
 
 // ── Flex-stretch height on initial layout and after viewport resize ───────────
 
-fn find_by_id_mut<'a>(node: &'a mut HtmlBox, id: &str) -> Option<&'a HtmlBox> {
-    if node.attributes.get("id").map(|s| s == id).unwrap_or(false) {
-        // SAFETY: we only need an immutable ref; re-borrow immutably via pointer
-        return Some(unsafe { &*(node as *const HtmlBox) });
-    }
-    for child in node.children.iter_mut() {
-        if let Some(b) = find_by_id_mut(child, id) { return Some(b); }
-    }
-    None
-}
-
 fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
     if node.attributes.get("id").map(|s| s == id).unwrap_or(false) { return Some(node); }
     for child in &node.children {

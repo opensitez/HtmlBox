@@ -371,21 +371,10 @@ impl Document {
             node.text.clear();
         }
 
-        // Rebuild arena for new children
-        // We need to use raw pointer to work around borrow checker
-        let root_ptr = &mut self.root as *mut HtmlBox;
-        fn find_mut_raw(node: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
-            if node.node_id == id { return Some(node); }
+        // Rebuild arena for new children — split borrow: &mut self.arena + &mut self.root
+        if let Some(node) = crate::dom::find_box_mut(&mut self.root, id) {
             for child in &mut node.children {
-                if let Some(found) = find_mut_raw(child, id) { return Some(found); }
-            }
-            None
-        }
-        unsafe {
-            if let Some(node) = find_mut_raw(&mut *root_ptr, id) {
-                for child in &mut node.children {
-                    crate::html::rebuild_arena_recursive_pub(&mut self.arena, child, NodeId(id));
-                }
+                crate::html::rebuild_arena_recursive_pub(&mut self.arena, child, NodeId(id));
             }
         }
     }

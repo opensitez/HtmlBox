@@ -2337,12 +2337,12 @@ impl Document {
                         let mut e = HtmlEvent::new(HtmlEventType::DragStart);
                         e.target = self.drag_source; e.doc_pos = self.drag_start_doc_pt;
                         e.client_pos = (self.drag_start_doc_pt.0, self.drag_start_doc_pt.1 - self.scroll_y);
-                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
                     }
                     if self.drag_active {
                         let mut e = HtmlEvent::new(HtmlEventType::Drag);
                         e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
                     }
                 }
             }
@@ -2384,18 +2384,18 @@ impl Document {
                         if old_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Blur);
                             e.target = old_focus; e.related_target = new_focus;
-                            self.events.dispatch(&self.root, e);
+                            self.events.dispatch(&mut self.root, e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
                             e.target = old_focus; e.related_target = new_focus;
-                            self.events.dispatch(&self.root, e);
+                            self.events.dispatch(&mut self.root, e);
                         }
                         if new_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Focus);
                             e.target = new_focus; e.related_target = old_focus;
-                            self.events.dispatch(&self.root, e);
+                            self.events.dispatch(&mut self.root, e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
                             e.target = new_focus; e.related_target = old_focus;
-                            self.events.dispatch(&self.root, e);
+                            self.events.dispatch(&mut self.root, e);
                         }
                         // Always recascade when focus changes so :focus/:focus-visible update.
                         self.stylesheet.rebuild_index();
@@ -2418,7 +2418,7 @@ impl Document {
                     if was_dragging {
                             let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
                         e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.events.dispatch(&self.root, e) { redraw = true; }
+                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
                     }
                     self.drag_source = 0;
                     self.drag_active = false;
@@ -2428,7 +2428,7 @@ impl Document {
                         let mut click = HtmlEvent::new(HtmlEventType::Click);
                         click.target = hit_node_id; click.doc_pos = doc_pt; click.client_pos = client_pos;
                         click.button = button;
-                        if self.events.dispatch(&self.root, click) { redraw = true; }
+                        if self.events.dispatch(&mut self.root, click) { redraw = true; }
 
                         // Form element interactions
                         if hit_node_id != 0 && button == 0 {
@@ -2558,7 +2558,7 @@ impl Document {
                             let mut dbl = HtmlEvent::new(HtmlEventType::DblClick);
                             dbl.target = hit_node_id; dbl.doc_pos = doc_pt; dbl.client_pos = client_pos;
                             dbl.button = button;
-                            if self.events.dispatch(&self.root, dbl) { redraw = true; }
+                            if self.events.dispatch(&mut self.root, dbl) { redraw = true; }
                             // Reset so triple-click doesn't re-trigger.
                             self.last_click_target = 0;
                             self.last_click_time   = None;
@@ -2579,7 +2579,7 @@ impl Document {
             _ => {}
         }
 
-        let (handled, evt) = self.events.dispatch_and_return(&self.root, evt);
+        let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
         if handled { redraw = true; }
 
         // Only perform editor/default behavior if not prevented by handlers.
@@ -2618,8 +2618,8 @@ impl Document {
                 let mut e = HtmlEvent::new($t);
                 e.target = $tgt; e.related_target = $rel;
                 e.doc_pos = doc_pt; e.client_pos = client_pos;
-                if $bubble { self.events.dispatch(&self.root, e) }
-                else       { self.events.dispatch_direct(&self.root, e) }
+                if $bubble { self.events.dispatch(&mut self.root, e) }
+                else       { self.events.dispatch_direct(&mut self.root, e) }
             }};
         }
         if old_id != 0 {
@@ -2657,7 +2657,7 @@ impl Document {
         evt.alt_key = alt;
         evt.meta_key = meta;
 
-        let (handled, evt) = self.events.dispatch_and_return(&self.root, evt);
+        let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
 
         let mut redraw = handled;
 
@@ -3324,18 +3324,18 @@ impl Document {
         if old_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Blur);
             e.target = old_focus; e.related_target = new_focus;
-            self.events.dispatch(&self.root, e);
+            self.events.dispatch(&mut self.root, e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
             e.target = old_focus; e.related_target = new_focus;
-            self.events.dispatch(&self.root, e);
+            self.events.dispatch(&mut self.root, e);
         }
         if new_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Focus);
             e.target = new_focus; e.related_target = old_focus;
-            self.events.dispatch(&self.root, e);
+            self.events.dispatch(&mut self.root, e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
             e.target = new_focus; e.related_target = old_focus;
-            self.events.dispatch(&self.root, e);
+            self.events.dispatch(&mut self.root, e);
         }
         self.stylesheet.rebuild_index();
         self.hovered_box = 0;
@@ -4417,23 +4417,6 @@ fn scrollbar_hit_test(
 
 /// Extract the CSS properties that can participate in transitions from a style.
 /// Values are serialised to `rgba(…)` or `Npx` strings for comparison/interpolation.
-/// Walk the tree to find a node by its stable node_id; returns a raw pointer
-/// (null if not found or id==0).
-/// DEPRECATED: Use `Document::get_box_by_id()` instead. Kept only for test compatibility.
-#[deprecated(note = "Use Document::get_box_by_id() instead")]
-pub fn find_by_node_id(root: &HtmlBox, id: u32) -> *const HtmlBox {
-    if id == 0 { return std::ptr::null(); }
-    fn walk(node: &HtmlBox, id: u32) -> *const HtmlBox {
-        if node.node_id == id { return node as *const HtmlBox; }
-        for child in &node.children {
-            let p = walk(child, id);
-            if !p.is_null() { return p; }
-        }
-        std::ptr::null()
-    }
-    walk(root, id)
-}
-
 /// Find the node_id of the nearest ancestor of `target_id` that has a valid node_id.
 /// Used when hit-test returns a node with node_id=0 (e.g. pseudo-elements, post-process nodes).
 pub fn find_parent_node_id_by_id(root: &HtmlBox, target_id: u32) -> u32 {

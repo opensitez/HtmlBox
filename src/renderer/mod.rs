@@ -43,12 +43,6 @@ pub struct Renderer {
     /// Logical viewport height (layout pixels) — kept in sync by `render()` so
     /// that `vh` units and `flex-stretch` heights work on every repaint.
     viewport_h: f32,
-    /// Element IDs (node_id) that currently have active transitions
-    /// or animation overrides. When set, the renderer uses node.style (already has
-    /// the interpolated values applied) rather than hover_style for these elements.
-    transitioning_ids: std::collections::HashSet<u32>,
-    /// Focused element node_id — set during render() for form element caret drawing.
-    focused_id: u32,
     /// Cached display list — rebuilt only when content changes.
     cached_display_list: Option<display_list::DisplayList>,
     /// Scroll position when the display list was last built.
@@ -247,7 +241,7 @@ impl Renderer {
                         .unwrap_or(0);
                     evt.target = hit_id;
                     let events = doc.events.clone();
-                    events.dispatch(&doc.root, evt);
+                    events.dispatch(&mut doc.root, evt);
                     // dx/dy are in browser-event convention (positive = scroll right/down).
                     // process_wheel_event uses the opposite convention (negative = scroll down)
                     // inherited from main.rs LineDelta usage, so negate before forwarding.
@@ -327,7 +321,7 @@ impl Renderer {
                     let mut evt = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Resize);
                     evt.client_pos = (size.width as f32, size.height as f32);
                     let events = doc.events.clone();
-                    events.dispatch(&doc.root, evt);
+                    events.dispatch(&mut doc.root, evt);
                 }
                 false // host still needs to call platform.resize() / re-layout
             }

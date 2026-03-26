@@ -141,12 +141,10 @@ fn create_and_append_element() {
     assert_eq!(doc.dom_tag(p), Some("p"));
 
     // Verify in HtmlBox tree
-    let div_box = crate::types::find_by_node_id(&doc.root, div);
-    assert!(!div_box.is_null());
-    let div_ref = unsafe { &*div_box };
-    assert_eq!(div_ref.children.len(), 1);
-    assert_eq!(div_ref.children[0].tag, "p");
-    assert_eq!(div_ref.children[0].node_id, p);
+    let div_box = doc.get_box_by_id(div).unwrap();
+    assert_eq!(div_box.children.len(), 1);
+    assert_eq!(div_box.children[0].tag, "p");
+    assert_eq!(div_box.children[0].node_id, p);
 }
 
 #[test]
@@ -159,10 +157,9 @@ fn create_and_append_text() {
 
     assert_eq!(doc.dom_text_content(p), "Hello World");
 
-    let p_box = crate::types::find_by_node_id(&doc.root, p);
-    let p_ref = unsafe { &*p_box };
-    assert_eq!(p_ref.children.len(), 1);
-    assert_eq!(p_ref.children[0].text, "Hello World");
+    let p_box = doc.get_box_by_id(p).unwrap();
+    assert_eq!(p_box.children.len(), 1);
+    assert_eq!(p_box.children[0].text, "Hello World");
 }
 
 #[test]
@@ -180,11 +177,10 @@ fn insert_before_works() {
     assert_eq!(children[1], li_b);
 
     // HtmlBox tree matches
-    let ul_box = crate::types::find_by_node_id(&doc.root, ul);
-    let ul_ref = unsafe { &*ul_box };
-    assert_eq!(ul_ref.children.len(), 2);
-    assert_eq!(ul_ref.children[0].node_id, li_a);
-    assert_eq!(ul_ref.children[1].node_id, li_b);
+    let ul_box = doc.get_box_by_id(ul).unwrap();
+    assert_eq!(ul_box.children.len(), 2);
+    assert_eq!(ul_box.children[0].node_id, li_a);
+    assert_eq!(ul_box.children[1].node_id, li_b);
 }
 
 #[test]
@@ -203,9 +199,8 @@ fn remove_child_works() {
     assert_eq!(remaining[1], items[2]);
 
     // HtmlBox tree matches
-    let ul_box = crate::types::find_by_node_id(&doc.root, ul);
-    let ul_ref = unsafe { &*ul_box };
-    assert_eq!(ul_ref.children.len(), 2);
+    let ul_box = doc.get_box_by_id(ul).unwrap();
+    assert_eq!(ul_box.children.len(), 2);
 }
 
 #[test]
@@ -219,9 +214,8 @@ fn set_attribute_updates_both_trees() {
     assert_eq!(doc.dom_get_attribute(div, "data-value"), Some("42".to_string()));
 
     // HtmlBox updated
-    let div_box = crate::types::find_by_node_id(&doc.root, div);
-    let div_ref = unsafe { &*div_box };
-    assert_eq!(div_ref.attributes.get("data-value").map(|s| s.as_str()), Some("42"));
+    let div_box = doc.get_box_by_id(div).unwrap();
+    assert_eq!(div_box.attributes.get("data-value").map(|s| s.as_str()), Some("42"));
 }
 
 #[test]
@@ -232,9 +226,8 @@ fn remove_attribute_updates_both_trees() {
     doc.dom_remove_attribute(div, "data-x");
 
     assert_eq!(doc.dom_get_attribute(div, "data-x"), None);
-    let div_box = crate::types::find_by_node_id(&doc.root, div);
-    let div_ref = unsafe { &*div_box };
-    assert!(!div_ref.attributes.contains_key("data-x"));
+    let div_box = doc.get_box_by_id(div).unwrap();
+    assert!(!div_box.attributes.contains_key("data-x"));
 }
 
 #[test]
@@ -247,10 +240,9 @@ fn set_text_content_replaces_children() {
     assert_eq!(doc.dom_text_content(div), "new text only");
     assert_eq!(doc.dom_children(div).len(), 0); // arena children removed
 
-    let div_box = crate::types::find_by_node_id(&doc.root, div);
-    let div_ref = unsafe { &*div_box };
-    assert_eq!(div_ref.children.len(), 0);
-    assert_eq!(div_ref.text, "new text only");
+    let div_box = doc.get_box_by_id(div).unwrap();
+    assert_eq!(div_box.children.len(), 0);
+    assert_eq!(div_box.text, "new text only");
 }
 
 #[test]
@@ -265,11 +257,10 @@ fn set_inner_html_parses_and_replaces() {
     assert_eq!(doc.dom_tag(children[0]), Some("p"));
     assert_eq!(doc.dom_tag(children[1]), Some("span"));
 
-    let div_box = crate::types::find_by_node_id(&doc.root, div);
-    let div_ref = unsafe { &*div_box };
-    assert_eq!(div_ref.children.len(), 2);
-    assert_eq!(div_ref.children[0].tag, "p");
-    assert_eq!(div_ref.children[1].tag, "span");
+    let div_box = doc.get_box_by_id(div).unwrap();
+    assert_eq!(div_box.children.len(), 2);
+    assert_eq!(div_box.children[0].tag, "p");
+    assert_eq!(div_box.children[1].tag, "span");
 }
 
 // ── classList ──────────────────────────────────────────────────────────────
