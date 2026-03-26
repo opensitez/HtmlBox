@@ -306,8 +306,12 @@ fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
-    let mut child_dirty = false;
+    // Fast path: if neither this node nor any descendant is dirty, skip entirely
+    if !node.layout_dirty && !node.has_dirty_descendant {
+        return false;
+    }
     node.cached_intrinsic_w.set(f32::NAN);
+    let mut child_dirty = false;
     for child in &mut node.children {
         if propagate_dirty(child) { child_dirty = true; }
     }

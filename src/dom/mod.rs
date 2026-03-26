@@ -478,6 +478,7 @@ pub fn set_style_property(b: &mut HtmlBox, prop: &str, value: &str) {
     apply_property(&mut b.style, prop, value);
     let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
     upsert_style_attr_prop(style_str, prop, value);
+    mark_layout_dirty(b);
 }
 
 /// Upsert a single `prop: value` declaration inside an inline style string.
@@ -621,6 +622,7 @@ pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a H
 /// Append `child` as the last child of `parent`.
 pub fn append_child(parent: &mut HtmlBox, child: HtmlBox) {
     parent.children.push(child);
+    mark_layout_dirty(parent);
 }
 
 /// Prepend `child` as the first child of `parent`.
@@ -719,6 +721,31 @@ pub fn create_element(tag: &str) -> HtmlBox {
     HtmlBox::new(tag)
 }
 
+// ─── Dirty flag helpers ───────────────────────────────────────────────────────
+
+/// Mark a node as needing re-layout. Call after any mutation that changes
+/// geometry (text content, style, children added/removed).
+pub fn mark_layout_dirty(node: &mut HtmlBox) {
+    node.layout_dirty = true;
+    node.line_cache.clear();
+}
+
+/// Mark a node as dirty AND propagate `has_dirty_descendant` up from a child
+/// to the root. Call on the root after marking a descendant dirty.
+pub fn propagate_dirty_to_root(root: &mut HtmlBox, target_id: u32) -> bool {
+    if root.node_id == target_id {
+        root.layout_dirty = true;
+        return true;
+    }
+    for child in &mut root.children {
+        if propagate_dirty_to_root(child, target_id) {
+            root.has_dirty_descendant = true;
+            return true;
+        }
+    }
+    false
+}
+
 // ─── Text content ─────────────────────────────────────────────────────────────
 
 /// Get the concatenated text content of a box and all descendants.
@@ -733,6 +760,7 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
         b.children[0].text = text.to_string();
         b.children[0].line_cache.clear();
         b.line_cache.clear();
+        mark_layout_dirty(b);
         return;
     }
     b.children.clear();
@@ -746,6 +774,7 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
     tn.style.active_style = None;
     tn.style.visited_style = None;
     b.children.push(tn);
+    mark_layout_dirty(b);
 }
 
 // ─── Editing: toggle formatting on selection ──────────────────────────────────

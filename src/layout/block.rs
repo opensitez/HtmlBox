@@ -549,17 +549,35 @@ pub fn layout_block_with_fc(
         }
 
         if grid_child_ref(node, path).style.is_block_level() {
-            let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
-            if child_is_bfc_pre || !seen_float {
-                engine.layout_box(
-                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                    font_px, root_font_px
-                );
+            let child = grid_child_ref(node, path);
+            // Incremental layout: skip clean children whose containing width hasn't changed.
+            // Just reposition them at the current child_y.
+            let can_skip = !child.layout_dirty
+                && !child.has_dirty_descendant
+                && child.last_containing_width > 0.0
+                && (child.last_containing_width - child_content_w).abs() < 0.01
+                && child.margin_rect.h > 0.0;
+            if can_skip {
+                // Reposition only — keep cached geometry
+                let child = grid_child_mut(node, path);
+                let dx = content_x - child.margin_rect.x;
+                let dy = (content_y + child_y) - child.margin_rect.y;
+                if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                    crate::layout::shift_rects(child, dx, dy);
+                }
             } else {
-                engine.layout_box_with_fc(
-                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                    font_px, root_font_px, Some(&mut *fc)
-                );
+                let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
+                if child_is_bfc_pre || !seen_float {
+                    engine.layout_box(
+                        grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
+                        font_px, root_font_px
+                    );
+                } else {
+                    engine.layout_box_with_fc(
+                        grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
+                        font_px, root_font_px, Some(&mut *fc)
+                    );
+                }
             }
 
             let ch = grid_child_ref(node, path);
