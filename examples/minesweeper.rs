@@ -153,20 +153,18 @@ impl ApplicationHandler for App {
             let state = self.state.clone();
             // New game
             let state2 = state.clone();
-            doc.events.add("#new-game", HtmlEventType::Click, Box::new(move |evt| {
+            doc.events.add("#new-game", HtmlEventType::Click, Box::new(move |evt, root| {
                 
                 if evt.button != 0 { return; }
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                 let mut st = state2.lock().unwrap();
                 new_game(&mut st, root);
             }));
 
             // Flag mode toggle
             let state3 = state.clone();
-            doc.events.add("#flag-mode", HtmlEventType::Click, Box::new(move |evt| {
+            doc.events.add("#flag-mode", HtmlEventType::Click, Box::new(move |evt, root| {
                 
                 if evt.button != 0 { return; }
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                 let mut st = state3.lock().unwrap();
                 st.flag_mode = !st.flag_mode;
                 if let Some(btn) = dom::query_selector_mut(root, "#flag-mode") {
@@ -178,12 +176,13 @@ impl ApplicationHandler for App {
 
             // Cell click
             let state4 = state.clone();
-            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt| {
-                
+            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt, root| {
+
                 if evt.button != 0 { return; }
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-                let target = unsafe { &*(evt.current_target as *const HtmlBox) };
-                let id = dom::get_attribute(target, "id").unwrap_or_default();
+                let cur_id = evt.current_target;
+                let id = dom::find_box_mut(root, cur_id)
+                    .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
+                    .unwrap_or_default();
                 if let Some(idx) = parse_id_to_idx(&id) {
                     let mut st = state4.lock().unwrap();
                     if st.flag_mode {
@@ -214,11 +213,12 @@ impl ApplicationHandler for App {
 
             // Right-click/context menu toggles flag as well
             let state5 = state.clone();
-            doc.events.add(".cell", HtmlEventType::ContextMenu, Box::new(move |evt| {
-                
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-                let target = unsafe { &*(evt.current_target as *const HtmlBox) };
-                let id = dom::get_attribute(target, "id").unwrap_or_default();
+            doc.events.add(".cell", HtmlEventType::ContextMenu, Box::new(move |evt, root| {
+
+                let cur_id = evt.current_target;
+                let id = dom::find_box_mut(root, cur_id)
+                    .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
+                    .unwrap_or_default();
                 if let Some(idx) = parse_id_to_idx(&id) {
                     let mut st = state5.lock().unwrap();
                     st.flagged[idx] = !st.flagged[idx];

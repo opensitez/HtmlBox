@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-debugclient.py — Python client for rhtmledit debugserver.
+debugclient.py — Python client for Phoenix Browser debug server.
 
 Usage as CLI:
     python3 examples/debugclient.py [port]              # interactive REPL
@@ -22,7 +22,7 @@ import sys
 import os
 
 class DebugClient:
-    """Persistent TCP connection to debugserver with typed methods."""
+    """Persistent TCP connection to browser debug server with typed methods."""
 
     def __init__(self, port=9222, host='127.0.0.1'):
         self.host = host
@@ -494,13 +494,32 @@ def _interactive(port):
     try:
         s.connect(('127.0.0.1', port))
     except ConnectionRefusedError:
-        print(f"Cannot connect to 127.0.0.1:{port} — is debugserver running?")
+        print(f"Cannot connect to 127.0.0.1:{port} — is the browser running with --debug-port?")
         sys.exit(1)
 
-    print(f'Connected to debugserver on port {port}')
-    print('Type JSON commands, or shortcuts:')
-    print('  ss=screenshot  f <sel>=find  i <sel>=inspect  t=tree  q=quit')
-    print('  deep <sel>  computed <sel>  rules <sel>  perf  bench')
+    print(f'Connected to debug server on port {port}')
+    print()
+    print('Shortcuts:')
+    print('  ss                 screenshot        f <sel>      find elements')
+    print('  i <sel>            inspect           deep <sel>   full inspection')
+    print('  computed <sel>     computed styles    rules <sel>  matched CSS rules')
+    print('  css <sel> <props>  query CSS props   hl <sel>     highlight overlay')
+    print('  t [sel]            DOM tree          dt [nid]     JSON DOM tree')
+    print('  tx <sel>           text content      a <sel> <n>  get attribute')
+    print('  path <sel>         CSS selector path parent <sel> ancestor chain')
+    print('  bm <sel>           box model         hit <x> <y>  hit test')
+    print('  search <text>      search by text    a11y         accessibility tree')
+    print('  c <sel>|<x> <y>    click             h <sel>|<x> <y>  hover')
+    print('  k <key>            send key          ty <text>    type text')
+    print('  style <sel> <p> <v> set style        cls+ <sel> <c> add class')
+    print('  cls- <sel> <c>     remove class      cls~ <sel> <c> toggle class')
+    print('  force <sel> <state> force hover/focus/active')
+    print('  nav <url>          navigate          r <w> [h]    resize')
+    print('  sc <dy>            scroll            vp           viewport info')
+    print('  net                network info      perf         load timing')
+    print('  bench [n]          benchmark         benchp       progressive bench')
+    print('  q                  quit server')
+    print('  Any JSON: {"cmd":"...","key":"val"}')
     print()
 
     def reader():
@@ -531,6 +550,10 @@ def _interactive(port):
         't': '{"cmd":"tree"}',
         'q': '{"cmd":"quit"}',
         'perf': '{"cmd":"perf"}',
+        'net': '{"cmd":"network"}',
+        'vp': '{"cmd":"viewport"}',
+        'a11y': '{"cmd":"a11y"}',
+        'benchp': '{"cmd":"bench-progressive"}',
     }
 
     try:
@@ -549,10 +572,58 @@ def _interactive(port):
                 line = json.dumps({"cmd": "computed", "selector": line[9:].strip()})
             elif line.startswith('rules '):
                 line = json.dumps({"cmd": "matched-rules", "selector": line[6:].strip()})
+            elif line.startswith('css '):
+                parts = line[4:].strip().split(None, 1)
+                sel = parts[0] if parts else ''
+                props = parts[1] if len(parts) > 1 else ''
+                line = json.dumps({"cmd": "css", "selector": sel, "props": props})
             elif line.startswith('tx '):
                 line = json.dumps({"cmd": "text", "selector": line[3:].strip()})
+            elif line.startswith('a ') and not line.startswith('a11y'):
+                parts = line[2:].strip().split(None, 1)
+                sel = parts[0] if parts else ''
+                name = parts[1] if len(parts) > 1 else ''
+                line = json.dumps({"cmd": "attr", "selector": sel, "name": name})
             elif line.startswith('hl '):
                 line = json.dumps({"cmd": "highlight", "selector": line[3:].strip()})
+            elif line.startswith('path '):
+                line = json.dumps({"cmd": "dom-path", "selector": line[5:].strip()})
+            elif line.startswith('parent '):
+                line = json.dumps({"cmd": "parent", "selector": line[7:].strip()})
+            elif line.startswith('bm '):
+                line = json.dumps({"cmd": "box-model", "selector": line[3:].strip()})
+            elif line.startswith('dt'):
+                rest = line[2:].strip()
+                if rest and rest.isdigit():
+                    line = json.dumps({"cmd": "dom-tree", "nid": int(rest), "depth": 2})
+                else:
+                    line = json.dumps({"cmd": "dom-tree", "depth": 2})
+            elif line.startswith('hit '):
+                parts = line[4:].strip().split()
+                if len(parts) >= 2:
+                    line = json.dumps({"cmd": "hit", "x": float(parts[0]), "y": float(parts[1])})
+            elif line.startswith('search '):
+                line = json.dumps({"cmd": "search", "query": line[7:].strip()})
+            elif line.startswith('style '):
+                parts = line[6:].strip().split(None, 2)
+                if len(parts) >= 3:
+                    line = json.dumps({"cmd": "setstyle", "selector": parts[0], "prop": parts[1], "value": parts[2]})
+            elif line.startswith('cls+ '):
+                parts = line[5:].strip().split(None, 1)
+                if len(parts) >= 2:
+                    line = json.dumps({"cmd": "add-class", "selector": parts[0], "class": parts[1]})
+            elif line.startswith('cls- '):
+                parts = line[5:].strip().split(None, 1)
+                if len(parts) >= 2:
+                    line = json.dumps({"cmd": "remove-class", "selector": parts[0], "class": parts[1]})
+            elif line.startswith('cls~ '):
+                parts = line[5:].strip().split(None, 1)
+                if len(parts) >= 2:
+                    line = json.dumps({"cmd": "toggle-class", "selector": parts[0], "class": parts[1]})
+            elif line.startswith('force '):
+                parts = line[6:].strip().split(None, 1)
+                if len(parts) >= 2:
+                    line = json.dumps({"cmd": "force-state", "selector": parts[0], "state": parts[1]})
             elif line.startswith('bench'):
                 n = 5
                 parts = line.split()
@@ -570,8 +641,19 @@ def _interactive(port):
                     line = json.dumps({"cmd": "hover", "x": float(rest[0]), "y": float(rest[1])})
                 else:
                     line = json.dumps({"cmd": "hover", "selector": line[2:].strip()})
+            elif line.startswith('k '):
+                line = json.dumps({"cmd": "key", "key": line[2:].strip()})
+            elif line.startswith('ty '):
+                line = json.dumps({"cmd": "type", "text": line[3:].strip()})
             elif line.startswith('nav '):
                 line = json.dumps({"cmd": "navigate", "url": line[4:].strip()})
+            elif line.startswith('r '):
+                parts = line[2:].strip().split()
+                cmd = {"cmd": "resize", "width": int(parts[0])}
+                if len(parts) > 1: cmd["height"] = int(parts[1])
+                line = json.dumps(cmd)
+            elif line.startswith('sc '):
+                line = json.dumps({"cmd": "scroll", "dy": int(line[3:].strip())})
             elif line.startswith('t '):
                 line = json.dumps({"cmd": "tree", "selector": line[2:].strip()})
             elif not line.startswith('{'):

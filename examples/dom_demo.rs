@@ -189,7 +189,7 @@ impl App {
             if let Some(feed) = dom::query_selector_mut(&mut doc.root, "#activity-feed") {
                 while feed.children.len() >= 10 {
                     if let Some(first_id) = dom::get_first_child(feed).map(|c| c.node_id) {
-                        dom::remove_child_by_id(feed, first_id);
+                        dom::remove_child(feed, first_id);
                     } else { break; }
                 }
                 let mut item = dom::create_element("div");
@@ -202,7 +202,7 @@ impl App {
         if let Some(alerts) = dom::query_selector_mut(&mut doc.root, "#alerts") {
             if alerts.children.len() > 5 {
                 if let Some(first_id) = dom::get_first_child(alerts).map(|c| c.node_id) {
-                    dom::remove_child_by_id(alerts, first_id);
+                    dom::remove_child(alerts, first_id);
                 }
             }
         }
@@ -222,7 +222,7 @@ impl App {
 
         // Toolbar buttons: match by class to avoid catching other buttons in the
         // document. Prevent default editor behavior for toolbar actions.
-        doc.events.add(".tb-btn", HtmlEventType::Click, Box::new(move |evt| {
+        doc.events.add(".tb-btn", HtmlEventType::Click, Box::new(move |evt, root| {
             // left-click only
             if evt.button != 0 { return; }
             // Prevent default editor behavior for toolbar actions
@@ -231,23 +231,29 @@ impl App {
             let doc_pos = evt.doc_pos;
             let btn_ptr = evt.target;
             let cur_ptr = evt.current_target;
-            let cur_node = unsafe { &*rhtmledit::types::find_by_node_id(&*evt.root, cur_ptr) };
-            let btn_text = dom::get_text_content(cur_node).trim().to_string();
-            let id = cur_node.attributes.get("id").cloned().unwrap_or_default();
-            let cls = cur_node.attributes.get("class").cloned().unwrap_or_default();
+            fn find_node_ref(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+                if node.node_id == id { return Some(node); }
+                for c in &node.children { if let Some(f) = find_node_ref(c, id) { return Some(f); } }
+                None
+            }
+            let (btn_text, id, cls) = find_node_ref(root, cur_ptr)
+                .map(|cur_node| (
+                    dom::get_text_content(cur_node).trim().to_string(),
+                    cur_node.attributes.get("id").cloned().unwrap_or_default(),
+                    cur_node.attributes.get("class").cloned().unwrap_or_default(),
+                ))
+                .unwrap_or_default();
             eprintln!("[DOM_DBG] click button target={} current_target={} id='{}' class='{}' btn_text='{}' doc_pos={:?} button={}", btn_ptr, cur_ptr, id, cls, btn_text, doc_pos, evt.button);
             let mut st = state.write().unwrap();
 
             if btn_text.contains("Dark") {
                 st.dark_mode = !st.dark_mode;
                 // Mutation of DOM from event handler is allowed via unsafe for now
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                 if st.dark_mode { dom::add_class(root, "dark"); eprintln!("[DOM_DBG] dark ON"); }
                 else { dom::remove_class(root, "dark"); eprintln!("[DOM_DBG] dark OFF"); }
                 // layout will be done by caller after event processing
             } else if btn_text.contains("Compact") {
                 st.compact = !st.compact;
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                 if st.compact { dom::add_class(root, "compact"); eprintln!("[DOM_DBG] compact ON"); }
                 else { dom::remove_class(root, "compact"); eprintln!("[DOM_DBG] compact OFF"); }
                 // layout will be done by caller after event processing
@@ -258,7 +264,6 @@ impl App {
                 if st.chaos_mode {
                     let ts_str = time_str(st.tick);
                     let msg = format!("🔥 [{}] CHAOS MODE ENGAGED — brace yourself", ts_str);
-                    let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                     if let Some(alerts) = dom::query_selector_mut(root, "#alerts") {
                         let mut a = dom::create_element("div");
                         dom::add_class(&mut a, "alert"); dom::add_class(&mut a, "alert-warn");
@@ -271,7 +276,6 @@ impl App {
             } else if btn_text.contains("Service") {
                 st.svc_count += 1;
                 let svc_count = st.svc_count;
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                     if let Some(tbody) = dom::query_selector_mut(root, "#svc-tbody") {
                     const NAMES: &[&str] = &["🔴 Redis", "📦 Kafka", "🌐 Nginx", "🔍 Elastic", "📊 Prometheus", "🔐 Vault", "🗺 Consul", "📉 Grafana", "🔭 Jaeger", "📁 MinIO"];
                     let idx = ((svc_count - 5) % 10) as usize;
@@ -290,21 +294,19 @@ impl App {
                     // layout will be done by caller after event processing
                 }
             } else if btn_text.contains("Alerts") {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                  if let Some(alerts) = dom::query_selector_mut(root, "#alerts") {
                      while !alerts.children.is_empty() {
                          let fid = dom::get_first_child(alerts).map(|c| c.node_id).unwrap();
-                         dom::remove_child_by_id(alerts, fid);
+                         dom::remove_child(alerts, fid);
                      }
                      eprintln!("[DOM_DBG] alerts cleared");
                     // layout will be done by caller after event processing
                  }
             } else if btn_text.contains("Feed") {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
                  if let Some(feed) = dom::query_selector_mut(root, "#activity-feed") {
                      while !feed.children.is_empty() {
                          let fid = dom::get_first_child(feed).map(|c| c.node_id).unwrap();
-                         dom::remove_child_by_id(feed, fid);
+                         dom::remove_child(feed, fid);
                      }
                      eprintln!("[DOM_DBG] feed cleared");
                      // layout will be done by caller after event processing

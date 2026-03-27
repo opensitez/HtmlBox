@@ -13,6 +13,12 @@ use rhtmledit::HtmlBox;
 
 const HTML: &str = include_str!("html/event_playground.html");
 
+fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+    if node.node_id == id { return Some(node); }
+    for child in &node.children { if let Some(found) = find_node(child, id) { return Some(found); } }
+    None
+}
+
 // ── Shared event log buffer ────────────────────────────────────────────────────
 
 /// Category for color-coding log entries
@@ -134,58 +140,59 @@ impl ApplicationHandler for App {
 
         // --- MouseOver ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseOver, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::add_class(tgt, "hover-box-active");
+        doc.events.add(".hover-box", HtmlEventType::MouseOver, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::add_class(t, "hover-box-active"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             if let Some(el) = dom::query_selector_mut(root, "#hover-status") {
                 dom::set_text_content(el, &format!("MouseOver: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Mouse, "MouseOver", &format!("#{} at ({:.0},{:.0})", id, evt.client_pos.0, evt.client_pos.1));
-            let _ = root;
         }));
 
         // --- MouseOut ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseOut, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::remove_class(tgt, "hover-box-active");
+        doc.events.add(".hover-box", HtmlEventType::MouseOut, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::remove_class(t, "hover-box-active"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             if let Some(el) = dom::query_selector_mut(root, "#hover-status") {
                 dom::set_text_content(el, &format!("MouseOut: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Mouse, "MouseOut", &format!("#{}", id));
-            let _ = root;
         }));
 
         // --- MouseEnter ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseEnter, Box::new(move |evt| {
-            let tgt = unsafe { &*(evt.current_target as *const HtmlBox) };
-            let id  = tgt.attributes.get("id").cloned().unwrap_or_default();
+        doc.events.add(".hover-box", HtmlEventType::MouseEnter, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = find_node(root, cur_id)
+                .and_then(|t| t.attributes.get("id").cloned())
+                .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Mouse, "MouseEnter", &format!("#{}", id));
         }));
 
         // --- MouseLeave ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseLeave, Box::new(move |evt| {
-            let tgt = unsafe { &*(evt.current_target as *const HtmlBox) };
-            let id  = tgt.attributes.get("id").cloned().unwrap_or_default();
+        doc.events.add(".hover-box", HtmlEventType::MouseLeave, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = find_node(root, cur_id)
+                .and_then(|t| t.attributes.get("id").cloned())
+                .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Mouse, "MouseLeave", &format!("#{}", id));
         }));
 
         // --- MouseMove (on hover zone) ---
         let s = shared.clone();
-        doc.events.add("#zone-hover", HtmlEventType::MouseMove, Box::new(move |evt| {
+        doc.events.add("#zone-hover", HtmlEventType::MouseMove, Box::new(move |evt, root| {
             s.lock().unwrap().push(EvCat::Mouse, "MouseMove", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
         }));
 
         // --- Click ---
         let s = shared.clone();
-        doc.events.add("#btn-click", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-click", HtmlEventType::Click, Box::new(move |evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "Click fired!");
             }
@@ -195,8 +202,7 @@ impl ApplicationHandler for App {
 
         // --- DblClick ---
         let s = shared.clone();
-        doc.events.add("#btn-dblclick", HtmlEventType::DblClick, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-dblclick", HtmlEventType::DblClick, Box::new(move |evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "DblClick fired!");
             }
@@ -206,8 +212,7 @@ impl ApplicationHandler for App {
 
         // --- ContextMenu ---
         let s = shared.clone();
-        doc.events.add("#btn-ctx", HtmlEventType::ContextMenu, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-ctx", HtmlEventType::ContextMenu, Box::new(move |evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "ContextMenu fired!");
             }
@@ -217,44 +222,43 @@ impl ApplicationHandler for App {
 
         // --- DragStart (on drag cards) ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::DragStart, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::add_class(tgt, "drag-card-active");
+        doc.events.add(".drag-card", HtmlEventType::DragStart, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::add_class(t, "drag-card-active"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             if let Some(el) = dom::query_selector_mut(root, "#drag-status") {
                 dom::set_text_content(el, &format!("Dragging #{}", id));
             }
             s.lock().unwrap().push(EvCat::Drag, "DragStart", &format!("#{}", id));
-            let _ = root;
         }));
 
         // --- Drag ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::Drag, Box::new(move |evt| {
-            let tgt = unsafe { &*(evt.current_target as *const HtmlBox) };
-            let id  = tgt.attributes.get("id").cloned().unwrap_or_default();
+        doc.events.add(".drag-card", HtmlEventType::Drag, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = find_node(root, cur_id)
+                .and_then(|t| t.attributes.get("id").cloned())
+                .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Drag, "Drag", &format!("#{} at ({:.0},{:.0})", id, evt.client_pos.0, evt.client_pos.1));
         }));
 
         // --- DragEnd ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::DragEnd, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::remove_class(tgt, "drag-card-active");
+        doc.events.add(".drag-card", HtmlEventType::DragEnd, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::remove_class(t, "drag-card-active"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             if let Some(el) = dom::query_selector_mut(root, "#drag-status") {
                 dom::set_text_content(el, &format!("DragEnd #{}", id));
             }
             s.lock().unwrap().push(EvCat::Drag, "DragEnd", &format!("#{}", id));
-            let _ = root;
         }));
 
         // --- KeyDown ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::KeyDown, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("body", HtmlEventType::KeyDown, Box::new(move |evt, root| {
             let kc   = evt.key_code;
             let key_name = key_code_name(kc);
             if let Some(el) = dom::query_selector_mut(root, "#key-display") {
@@ -270,8 +274,7 @@ impl ApplicationHandler for App {
 
         // --- KeyUp ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::KeyUp, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("body", HtmlEventType::KeyUp, Box::new(move |evt, root| {
             let kc   = evt.key_code;
             let key_name = key_code_name(kc);
             if let Some(el) = dom::query_selector_mut(root, "#key-display") {
@@ -283,8 +286,7 @@ impl ApplicationHandler for App {
 
         // --- Wheel (on wheel zone) ---
         let s = shared.clone();
-        doc.events.add("#zone-wheel", HtmlEventType::Wheel, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#zone-wheel", HtmlEventType::Wheel, Box::new(move |evt, root| {
             let dx = evt.delta_x;
             let dy = evt.delta_y;
             let mut st = s.lock().unwrap();
@@ -313,11 +315,11 @@ impl ApplicationHandler for App {
 
         // --- Focus (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::Focus, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::add_class(tgt, "focus-item-focused");
+        doc.events.add(".focus-item", HtmlEventType::Focus, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::add_class(t, "focus-item-focused"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             let dot_id = format!("#{}", id.replace("focus-item", "focus-dot"));
             if let Some(dot) = dom::query_selector_mut(root, &dot_id) {
                 dom::add_class(dot, "focus-dot-on");
@@ -326,16 +328,15 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("Focus: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Focus, "Focus", &format!("#{}", id));
-            let _ = root;
         }));
 
         // --- Blur (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::Blur, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let tgt  = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            let id   = tgt.attributes.get("id").cloned().unwrap_or_default();
-            dom::remove_class(tgt, "focus-item-focused");
+        doc.events.add(".focus-item", HtmlEventType::Blur, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = dom::find_box_mut(root, cur_id)
+                .map(|t| { dom::remove_class(t, "focus-item-focused"); t.attributes.get("id").cloned().unwrap_or_default() })
+                .unwrap_or_default();
             let dot_id = format!("#{}", id.replace("focus-item", "focus-dot"));
             if let Some(dot) = dom::query_selector_mut(root, &dot_id) {
                 dom::remove_class(dot, "focus-dot-on");
@@ -344,29 +345,31 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("Blur: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Focus, "Blur", &format!("#{}", id));
-            let _ = root;
         }));
 
         // --- FocusIn (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::FocusIn, Box::new(move |evt| {
-            let tgt = unsafe { &*(evt.current_target as *const HtmlBox) };
-            let id  = tgt.attributes.get("id").cloned().unwrap_or_default();
+        doc.events.add(".focus-item", HtmlEventType::FocusIn, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = find_node(root, cur_id)
+                .and_then(|t| t.attributes.get("id").cloned())
+                .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Focus, "FocusIn", &format!("#{}", id));
         }));
 
         // --- FocusOut (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::FocusOut, Box::new(move |evt| {
-            let tgt = unsafe { &*(evt.current_target as *const HtmlBox) };
-            let id  = tgt.attributes.get("id").cloned().unwrap_or_default();
+        doc.events.add(".focus-item", HtmlEventType::FocusOut, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let id = find_node(root, cur_id)
+                .and_then(|t| t.attributes.get("id").cloned())
+                .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Focus, "FocusOut", &format!("#{}", id));
         }));
 
         // --- PointerDown ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerDown, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#pointer-canvas", HtmlEventType::PointerDown, Box::new(move |evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#pointer-status") {
                 dom::set_text_content(el, &format!("PointerDown at ({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
             }
@@ -376,8 +379,7 @@ impl ApplicationHandler for App {
 
         // --- PointerUp ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerUp, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#pointer-canvas", HtmlEventType::PointerUp, Box::new(move |evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#pointer-status") {
                 dom::set_text_content(el, &format!("PointerUp at ({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
             }
@@ -387,8 +389,7 @@ impl ApplicationHandler for App {
 
         // --- PointerMove ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerMove, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#pointer-canvas", HtmlEventType::PointerMove, Box::new(move |evt, root| {
             let cx = evt.client_pos.0;
             let cy = evt.client_pos.1;
             // Find canvas rect first, then update dot
@@ -411,20 +412,19 @@ impl ApplicationHandler for App {
 
         // --- PointerOver ---
         let s = shared.clone();
-        doc.events.add("#zone-pointer", HtmlEventType::PointerOver, Box::new(move |evt| {
+        doc.events.add("#zone-pointer", HtmlEventType::PointerOver, Box::new(move |evt, root| {
             s.lock().unwrap().push(EvCat::Pointer, "PointerOver", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
         }));
 
         // --- PointerOut ---
         let s = shared.clone();
-        doc.events.add("#zone-pointer", HtmlEventType::PointerOut, Box::new(move |evt| {
+        doc.events.add("#zone-pointer", HtmlEventType::PointerOut, Box::new(move |evt, root| {
             s.lock().unwrap().push(EvCat::Pointer, "PointerOut", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
         }));
 
         // --- Resize ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::Resize, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("body", HtmlEventType::Resize, Box::new(move |evt, root| {
             let w = evt.client_pos.0 as u32;
             let h = evt.client_pos.1 as u32;
             if let Some(el) = dom::query_selector_mut(root, "#viewport-size") {
@@ -436,7 +436,7 @@ impl ApplicationHandler for App {
 
         // --- DOMContentLoaded ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::DOMContentLoaded, Box::new(move |_evt| {
+        doc.events.add("body", HtmlEventType::DOMContentLoaded, Box::new(move |_evt, _root| {
             s.lock().unwrap().push(EvCat::Life, "DOMContentLoaded", "document ready");
         }));
 

@@ -386,7 +386,8 @@ fn enter_creates_new_line_scenario(
     // Press Enter.
     doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
 
-    // Re-layout so the new DOM structure gets coordinates.
+    // Re-cascade + layout so the new DOM structure gets styles and coordinates.
+    doc.style_dirty = true;
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     // The caret box must still be set and have lines.
@@ -546,10 +547,17 @@ fn enter_in_cell_caret_renders_on_new_line() {
 
     doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (click_x, click_y), 0);
     doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+    doc.style_dirty = true;
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     // After relayout the <td> must have two lines.
-    let td = unsafe { &*td_ptr };
+    // Re-find the td by walking the tree (old pointer may be invalidated).
+    fn find_td2(node: &HtmlBox) -> Option<&HtmlBox> {
+        if node.tag == "td" { return Some(node); }
+        for c in &node.children { if let Some(r) = find_td2(c) { return Some(r); } }
+        None
+    }
+    let td = find_td2(&doc.root).expect("<td> must still exist");
     assert!(td.layout.line_cache.len() >= 2,
         "<td> must have ≥ 2 lines after Enter (has {})", td.layout.line_cache.len());
 

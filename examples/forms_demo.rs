@@ -118,8 +118,7 @@ impl ApplicationHandler<()> for App {
         // Checkboxes: toggle and update summary
         for id in &["pep","mush","onion","saus","pepper","olive","cheese","jala"] {
             let sel = format!("#{}", id);
-            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt, root| {
                 // Toggle is already handled by process_mouse_event
                 update_summary(root);
             }));
@@ -128,15 +127,13 @@ impl ApplicationHandler<()> for App {
         // Radio buttons: update summary on size change
         for val in &["small", "medium", "large"] {
             let sel = format!("input[value={}]", val);
-            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt, root| {
                 update_summary(root);
             }));
         }
 
         // Order button
-        doc.events.add("#order-btn", HtmlEventType::Click, Box::new(|evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#order-btn", HtmlEventType::Click, Box::new(|evt, root| {
             if let Some(el) = dom::query_selector_mut(root, "#status") {
                 dom::set_text_content(el, "Order placed! Thank you!");
             }
@@ -147,8 +144,7 @@ impl ApplicationHandler<()> for App {
         }));
 
         // Reset button
-        doc.events.add("#reset-btn", HtmlEventType::Click, Box::new(|evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#reset-btn", HtmlEventType::Click, Box::new(|evt, root| {
             // Clear text inputs
             for id in &["name", "phone"] {
                 if let Some(el) = dom::query_selector_mut(root, &format!("#{}", id)) {

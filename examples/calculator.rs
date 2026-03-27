@@ -109,16 +109,19 @@ impl ApplicationHandler for App {
         let doc = load_html_with_registry(HTML, "", self.width, 420.0, self.registry.clone());
 
         // buttons
-        doc.events.add(".btn", HtmlEventType::Click, Box::new(move |evt| {
+        doc.events.add(".btn", HtmlEventType::Click, Box::new(move |evt, root| {
             // left click only
             if evt.button != 0 { return; }
             // Prevent default editor behavior (caret/selection) for buttons
             evt.prevent_default();
-            let root = unsafe { &mut *(evt.root as *mut rhtmledit::types::HtmlBox) };
-            let target = unsafe { &*(evt.current_target as *const rhtmledit::types::HtmlBox) };
+            let cur_id = evt.current_target;
             // Read button value first
-            let val_opt = dom::get_attribute(target, "data-value");
-            let id = dom::get_attribute(target, "id").unwrap_or("");
+            let val_opt = dom::find_box_mut(root, cur_id)
+                .and_then(|t| dom::get_attribute(t, "data-value").map(|s| s.to_string()));
+            let id = dom::find_box_mut(root, cur_id)
+                .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
+                .unwrap_or_default();
+            let id = id.as_str();
             // clear
             if id == "clear" {
                 if let Some(d) = dom::query_selector_mut(root, "#display") { dom::set_text_content(d, "0"); }

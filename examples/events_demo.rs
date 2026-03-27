@@ -63,8 +63,7 @@ impl ApplicationHandler for App {
         let doc = load_html(HTML, self.width);
 
         // Card selection on click (only fires when not dragging — handled below)
-        doc.events.add(".card", HtmlEventType::Click, Box::new(|evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add(".card", HtmlEventType::Click, Box::new(|evt, root| {
             let cur_id = evt.current_target;
             // Deselect all cards first
             deselect_all(root);
@@ -513,7 +512,7 @@ fn drop_card(doc: &mut Document, card_id: &str, target_body_id: &str) -> bool {
         {
             Some(id) => id, None => return false,
         };
-        match dom::remove_child_by_id(src_body, card_node_id) {
+        match dom::remove_child(src_body, card_node_id) {
             Some(c) => c, None => return false,
         }
     };
@@ -523,7 +522,7 @@ fn drop_card(doc: &mut Document, card_id: &str, target_body_id: &str) -> bool {
         Some(target_body) => {
             let placeholder_id = target_body.children.first().map(|c| c.node_id);
             if let Some(ph_id) = placeholder_id {
-                dom::insert_after_by_id(target_body, ph_id, card);
+                dom::insert_after(target_body, ph_id, card);
             } else {
                 dom::append_child(target_body, card);
             }

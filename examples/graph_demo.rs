@@ -259,8 +259,8 @@ fn log_event(root: &mut HtmlBox, state: &mut AppState, etype: &str, detail: &str
 }
 
 fn scale_all_charts(root: &mut HtmlBox, mult: f32) {
-    let graphs = dom::query_selector_all_mut(root, "graph");
-    for g in graphs {
+    let graph_ids = dom::query_selector_all_ids(root, "graph");
+    for gid in graph_ids { let g = dom::find_box_mut(root, gid).unwrap();
         let vals_str = dom::get_attribute(g, "data-values").unwrap_or("").to_string();
         if vals_str.is_empty() { continue; }
         let new_vals: Vec<String> = vals_str.split(',')
@@ -274,8 +274,8 @@ fn scale_all_charts(root: &mut HtmlBox, mult: f32) {
 fn randomize_all_charts(root: &mut HtmlBox) {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let graphs = dom::query_selector_all_mut(root, "graph");
-    for g in graphs {
+    let graph_ids = dom::query_selector_all_ids(root, "graph");
+    for gid in graph_ids { let g = dom::find_box_mut(root, gid).unwrap();
         let vals_str = dom::get_attribute(g, "data-values").unwrap_or("").to_string();
         if vals_str.is_empty() { continue; }
         let new_vals: Vec<String> = vals_str.split(',')
@@ -312,31 +312,35 @@ impl ApplicationHandler for App {
         let state = self.state.clone();
         
         // Interactivity: Cycle chart type on click using library event system
-        doc.events.add("graph", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let target_mut = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
+        doc.events.add("graph", HtmlEventType::Click, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
             let types = ["bar", "line", "area", "pie", "donut", "hbar", "scatter", "gauge"];
-            let cur = target_mut.attributes.get("data-type").cloned().unwrap_or("bar".to_string());
-            let idx = types.iter().position(|&t| t == cur).unwrap_or(0);
+            let (cur_type, elem_id) = dom::find_box_mut(root, cur_id)
+                .map(|t| (
+                    t.attributes.get("data-type").cloned().unwrap_or("bar".to_string()),
+                    dom::get_attribute(t, "id").unwrap_or("?").to_string(),
+                ))
+                .unwrap_or(("bar".to_string(), "?".to_string()));
+            let idx = types.iter().position(|t| *t == cur_type).unwrap_or(0);
             let next = types[(idx + 1) % types.len()];
-            dom::set_attribute(target_mut, "data-type", next);
-            
+            if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
+                dom::set_attribute(target_mut, "data-type", next);
+            }
+
             let mut st = state.lock().unwrap();
             st.cycle_count += 1;
-            let id = dom::get_attribute(target_mut, "id").unwrap_or("?").to_string();
             bump_interaction(root, &mut st);
-            update_status(root, &format!("Cycled {} to {}", id, next));
-            log_event(root, &mut st, "CLICK", &format!("graph#{} -> {}", id, next));
+            update_status(root, &format!("Cycled {} to {}", elem_id, next));
+            log_event(root, &mut st, "CLICK", &format!("graph#{} -> {}", elem_id, next));
         }));
 
         // All Bar/Line/etc buttons
         let types = [("bar", "#btn-bar"), ("line", "#btn-line"), ("pie", "#btn-pie"), ("area", "#btn-area"), ("scatter", "#btn-scatter")];
         for (t, id) in types {
             let state = self.state.clone();
-            doc.events.add(id, HtmlEventType::Click, Box::new(move |evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-                let graphs = dom::query_selector_all_mut(root, "graph");
-                for g in graphs {
+            doc.events.add(id, HtmlEventType::Click, Box::new(move |evt, root| {
+                let graph_ids = dom::query_selector_all_ids(root, "graph");
+                for gid in graph_ids { let g = dom::find_box_mut(root, gid).unwrap();
                     dom::set_attribute(g, "data-type", t);
                 }
                 let mut st = state.lock().unwrap();
@@ -348,8 +352,7 @@ impl ApplicationHandler for App {
 
         // Randomize
         let state = self.state.clone();
-        doc.events.add("#btn-rand", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-rand", HtmlEventType::Click, Box::new(move |evt, root| {
             randomize_all_charts(root);
             let mut st = state.lock().unwrap();
             st.refresh_count += 1;
@@ -360,8 +363,7 @@ impl ApplicationHandler for App {
 
         // Grow
         let state = self.state.clone();
-        doc.events.add("#btn-grow", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-grow", HtmlEventType::Click, Box::new(move |evt, root| {
             scale_all_charts(root, 1.1);
             let mut st = state.lock().unwrap();
             bump_interaction(root, &mut st);
@@ -371,8 +373,7 @@ impl ApplicationHandler for App {
 
         // Shrink
         let state = self.state.clone();
-        doc.events.add("#btn-shrink", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+        doc.events.add("#btn-shrink", HtmlEventType::Click, Box::new(move |evt, root| {
             scale_all_charts(root, 0.9);
             let mut st = state.lock().unwrap();
             bump_interaction(root, &mut st);
@@ -382,16 +383,22 @@ impl ApplicationHandler for App {
 
         // Sidebar selection
         let state = self.state.clone();
-        doc.events.add(".sb-item", HtmlEventType::Click, Box::new(move |evt| {
-            let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-            let all = dom::query_selector_all_mut(root, ".sb-item");
-            for b in all {
-                dom::remove_class(b, "sb-item-active");
+        doc.events.add(".sb-item", HtmlEventType::Click, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            let all_ids = dom::query_selector_all_ids(root, ".sb-item");
+            for bid in all_ids {
+                if let Some(b) = dom::find_box_mut(root, bid) {
+                    dom::remove_class(b, "sb-item-active");
+                }
             }
-            let target_mut = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            dom::add_class(target_mut, "sb-item-active");
-            
-            let id = dom::get_attribute(target_mut, "id").unwrap_or("");
+            if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
+                dom::add_class(target_mut, "sb-item-active");
+            }
+
+            let id = dom::find_box_mut(root, cur_id)
+                .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
+                .unwrap_or_default();
+            let id = id.as_str();
             let mult = match id {
                 "sb-home"     => 1.0,
                 "sb-products" => 0.75,
@@ -417,9 +424,11 @@ impl ApplicationHandler for App {
         }));
 
         // KPI selection
-        doc.events.add(".kpi", HtmlEventType::Click, Box::new(move |evt| {
-            let target_mut = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-            dom::toggle_class(target_mut, "kpi-selected");
+        doc.events.add(".kpi", HtmlEventType::Click, Box::new(move |evt, root| {
+            let cur_id = evt.current_target;
+            if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
+                dom::toggle_class(target_mut, "kpi-selected");
+            }
         }));
 
         self.doc = Some(doc);

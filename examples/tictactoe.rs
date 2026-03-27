@@ -113,17 +113,20 @@ impl ApplicationHandler for App {
         if let Some(doc) = self.doc.as_mut() {
             let state = self.state.clone();
             // cell clicks: human plays X, then AI (O) via minimax
-            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
-                let target_mut = unsafe { &mut *(evt.current_target as *mut HtmlBox) };
-                let id = dom::get_attribute(target_mut, "id").unwrap_or_default();
+            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt, root| {
+                let cur_id = evt.current_target;
+                let id = dom::find_box_mut(root, cur_id)
+                    .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
+                    .unwrap_or_default();
                 let idx = id.strip_prefix('c').and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
                 let mut st = state.lock().unwrap();
                 if st.board[idx].is_some() { return; }
                 // Human move
                 st.board[idx] = Some('X');
-                dom::set_text_content(target_mut, "X");
-                dom::add_class(target_mut, "cell-x");
+                if let Some(cell) = dom::query_selector_mut(root, &format!("#{}", id)) {
+                    dom::set_text_content(cell, "X");
+                    dom::add_class(cell, "cell-x");
+                }
                 if let Some((w, line)) = check_winner(&st.board) {
                     for &i in &line { if let Some(c) = dom::query_selector_mut(root, &format!("#c{}", i)) { dom::add_class(c, "cell-win"); } }
                     if let Some(s) = dom::query_selector_mut(root, "#status") { dom::set_text_content(s, &format!("{} wins!", w)); }
@@ -155,8 +158,7 @@ impl ApplicationHandler for App {
 
             // Reset button
             let state = self.state.clone();
-            doc.events.add("#reset", HtmlEventType::Click, Box::new(move |evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+            doc.events.add("#reset", HtmlEventType::Click, Box::new(move |evt, root| {
                 let mut st = state.lock().unwrap();
                 for i in 0..9 {
                     if let Some(c) = dom::query_selector_mut(root, &format!("#c{}", i)) {
@@ -171,13 +173,11 @@ impl ApplicationHandler for App {
             }));
 
             // Difficulty toggles
-            doc.events.add("#diff-easy", HtmlEventType::Click, Box::new(move |evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+            doc.events.add("#diff-easy", HtmlEventType::Click, Box::new(move |evt, root| {
                 if let Some(e) = dom::query_selector_mut(root, "#diff-easy") { dom::add_class(e, "btn-diff-active"); }
                 if let Some(e) = dom::query_selector_mut(root, "#diff-hard") { dom::remove_class(e, "btn-diff-active"); }
             }));
-            doc.events.add("#diff-hard", HtmlEventType::Click, Box::new(move |evt| {
-                let root = unsafe { &mut *(evt.root as *mut HtmlBox) };
+            doc.events.add("#diff-hard", HtmlEventType::Click, Box::new(move |evt, root| {
                 if let Some(e) = dom::query_selector_mut(root, "#diff-hard") { dom::add_class(e, "btn-diff-active"); }
                 if let Some(e) = dom::query_selector_mut(root, "#diff-easy") { dom::remove_class(e, "btn-diff-active"); }
             }));

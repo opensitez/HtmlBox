@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[test]
 fn event_listener_registration() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("#btn", HtmlEventType::Click, Box::new(|_| {}));
+    let id = listeners.add("#btn", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id > 0);
     assert!(!listeners.is_empty());
     
@@ -19,19 +19,19 @@ fn event_listener_registration() {
 
 #[test]
 fn event_dispatch_bubbling() {
-    let doc = parse_html(r#"<div id="parent"><p id="child">Click me</p></div>"#);
+    let mut doc = parse_html(r#"<div id="parent"><p id="child">Click me</p></div>"#);
     let mut listeners = EventListeners::new();
     
     let parent_called = Arc::new(AtomicUsize::new(0));
     let child_called = Arc::new(AtomicUsize::new(0));
     
     let pc = parent_called.clone();
-    listeners.add("#parent", HtmlEventType::Click, Box::new(move |_| {
+    listeners.add("#parent", HtmlEventType::Click, Box::new(move |_, _| {
         pc.fetch_add(1, Ordering::SeqCst);
     }));
     
     let cc = child_called.clone();
-    listeners.add("#child", HtmlEventType::Click, Box::new(move |_| {
+    listeners.add("#child", HtmlEventType::Click, Box::new(move |_, _| {
         cc.fetch_add(1, Ordering::SeqCst);
     }));
     
@@ -39,7 +39,7 @@ fn event_dispatch_bubbling() {
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
     evt.target = child_box.node_id;
     
-    listeners.dispatch(&doc.root, evt);
+    listeners.dispatch(&mut doc.root, evt);
     
     assert_eq!(child_called.load(Ordering::SeqCst), 1);
     assert_eq!(parent_called.load(Ordering::SeqCst), 1);
@@ -47,16 +47,16 @@ fn event_dispatch_bubbling() {
 
 #[test]
 fn event_stop_propagation() {
-    let doc = parse_html(r#"<div id="parent"><p id="child">Click me</p></div>"#);
+    let mut doc = parse_html(r#"<div id="parent"><p id="child">Click me</p></div>"#);
     let mut listeners = EventListeners::new();
     
     let parent_called = Arc::new(AtomicUsize::new(0));
     let pc = parent_called.clone();
-    listeners.add("#parent", HtmlEventType::Click, Box::new(move |_| {
+    listeners.add("#parent", HtmlEventType::Click, Box::new(move |_, _| {
         pc.fetch_add(1, Ordering::SeqCst);
     }));
     
-    listeners.add("#child", HtmlEventType::Click, Box::new(|evt| {
+    listeners.add("#child", HtmlEventType::Click, Box::new(|evt, _root| {
         evt.stop_propagation();
     }));
     
@@ -64,17 +64,17 @@ fn event_stop_propagation() {
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
     evt.target = child_box.node_id;
     
-    listeners.dispatch(&doc.root, evt);
+    listeners.dispatch(&mut doc.root, evt);
     
     assert_eq!(parent_called.load(Ordering::SeqCst), 0);
 }
 
 #[test]
 fn event_prevent_default() {
-    let doc = parse_html(r#"<div id="x">Test</div>"#);
+    let mut doc = parse_html(r#"<div id="x">Test</div>"#);
     let mut listeners = EventListeners::new();
     
-    listeners.add("#x", HtmlEventType::Click, Box::new(|evt| {
+    listeners.add("#x", HtmlEventType::Click, Box::new(|evt, _root| {
         evt.prevent_default();
     }));
     
@@ -82,29 +82,29 @@ fn event_prevent_default() {
     let mut evt = HtmlEvent::new(HtmlEventType::Click);
     evt.target = x_box.node_id;
     
-    let prevented = listeners.dispatch(&doc.root, evt);
+    let prevented = listeners.dispatch(&mut doc.root, evt);
     assert!(prevented);
 }
 
 #[test]
 fn event_selector_matching() {
-    let doc = parse_html(r#"<div class="btn">A</div><div class="btn">B</div>"#);
+    let mut doc = parse_html(r#"<div class="btn">A</div><div class="btn">B</div>"#);
     let mut listeners = EventListeners::new();
     
     let called_with = Arc::new(AtomicUsize::new(0));
     let cw = called_with.clone();
     
-    listeners.add(".btn", HtmlEventType::Click, Box::new(move |_| {
+    listeners.add(".btn", HtmlEventType::Click, Box::new(move |_, _| {
         cw.fetch_add(1, Ordering::SeqCst);
     }));
     
-    let divs = query_selector_all(&doc.root, ".btn");
-    assert_eq!(divs.len(), 2);
-    
-    for d in divs {
+    let div_ids: Vec<u32> = query_selector_all(&doc.root, ".btn").iter().map(|d| d.node_id).collect();
+    assert_eq!(div_ids.len(), 2);
+
+    for nid in div_ids {
         let mut evt = HtmlEvent::new(HtmlEventType::Click);
-        evt.target = d.node_id;
-        listeners.dispatch(&doc.root, evt);
+        evt.target = nid;
+        listeners.dispatch(&mut doc.root, evt);
     }
     
     assert_eq!(called_with.load(Ordering::SeqCst), 2);
@@ -119,7 +119,7 @@ fn click_fires_on_mouseup_same_target() {
     );
     let click_count = Arc::new(AtomicUsize::new(0));
     let cc = click_count.clone();
-    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_| {
+    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_, _| {
         cc.fetch_add(1, Ordering::SeqCst);
     }));
     doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
@@ -135,7 +135,7 @@ fn click_does_not_fire_on_different_target() {
     );
     let click_count = Arc::new(AtomicUsize::new(0));
     let cc = click_count.clone();
-    doc.events.add("*", HtmlEventType::Click, Box::new(move |evt| {
+    doc.events.add("*", HtmlEventType::Click, Box::new(move |evt, _root| {
         evt.stop_propagation();
         cc.fetch_add(1, Ordering::SeqCst);
     }));
@@ -154,7 +154,7 @@ fn client_pos_set_on_events() {
     );
     let got_pos = Arc::new(std::sync::Mutex::new((0.0f32, 0.0f32)));
     let gp = got_pos.clone();
-    doc.events.add("#box", HtmlEventType::MouseMove, Box::new(move |evt| {
+    doc.events.add("#box", HtmlEventType::MouseMove, Box::new(move |evt, _root| {
         *gp.lock().unwrap() = evt.client_pos;
     }));
     doc.process_mouse_event(HtmlEventType::MouseMove, (80.0, 40.0), 0);
@@ -174,10 +174,10 @@ fn dblclick_fires_within_400ms() {
     let click_count = Arc::new(AtomicUsize::new(0));
     let dc = dbl_count.clone();
     let cc = click_count.clone();
-    doc.events.add("#btn", HtmlEventType::DblClick, Box::new(move |_| {
+    doc.events.add("#btn", HtmlEventType::DblClick, Box::new(move |_, _| {
         dc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_| {
+    doc.events.add("#btn", HtmlEventType::Click, Box::new(move |_, _| {
         cc.fetch_add(1, Ordering::SeqCst);
     }));
     // First click
@@ -198,7 +198,7 @@ fn dblclick_does_not_fire_on_different_targets() {
     );
     let dbl_count = Arc::new(AtomicUsize::new(0));
     let dc = dbl_count.clone();
-    doc.events.add("*", HtmlEventType::DblClick, Box::new(move |_| {
+    doc.events.add("*", HtmlEventType::DblClick, Box::new(move |_, _| {
         dc.fetch_add(1, Ordering::SeqCst);
     }));
     doc.process_mouse_event(HtmlEventType::MouseDown, (50.0, 20.0), 0);
@@ -221,13 +221,13 @@ fn drag_fires_after_threshold() {
     let sc = start_count.clone();
     let dc = drag_count.clone();
     let ec = end_count.clone();
-    doc.events.add("#card", HtmlEventType::DragStart, Box::new(move |_| {
+    doc.events.add("#card", HtmlEventType::DragStart, Box::new(move |_, _| {
         sc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#card", HtmlEventType::Drag, Box::new(move |_| {
+    doc.events.add("#card", HtmlEventType::Drag, Box::new(move |_, _| {
         dc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#card", HtmlEventType::DragEnd, Box::new(move |_| {
+    doc.events.add("#card", HtmlEventType::DragEnd, Box::new(move |_, _| {
         ec.fetch_add(1, Ordering::SeqCst);
     }));
     doc.process_mouse_event(HtmlEventType::MouseDown, (100.0, 50.0), 0);
@@ -254,7 +254,7 @@ fn click_suppressed_when_drag_occurred() {
     );
     let click_count = Arc::new(AtomicUsize::new(0));
     let cc = click_count.clone();
-    doc.events.add("#card", HtmlEventType::Click, Box::new(move |_| {
+    doc.events.add("#card", HtmlEventType::Click, Box::new(move |_, _| {
         cc.fetch_add(1, Ordering::SeqCst);
     }));
     doc.process_mouse_event(HtmlEventType::MouseDown, (100.0, 50.0), 0);
@@ -277,10 +277,10 @@ fn mouseenter_does_not_bubble() {
     let child_enter  = Arc::new(AtomicUsize::new(0));
     let pe = parent_enter.clone();
     let ce = child_enter.clone();
-    doc.events.add("#b",     HtmlEventType::MouseEnter, Box::new(move |_| {
+    doc.events.add("#b",     HtmlEventType::MouseEnter, Box::new(move |_, _| {
         pe.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#child", HtmlEventType::MouseEnter, Box::new(move |_| {
+    doc.events.add("#child", HtmlEventType::MouseEnter, Box::new(move |_, _| {
         ce.fetch_add(1, Ordering::SeqCst);
     }));
     // Start on A so hovered_box is set to A, then move to child inside B.
@@ -301,11 +301,11 @@ fn mouseleave_does_not_bubble() {
     let parent_leave = Arc::new(AtomicUsize::new(0));
     let al = a_leave.clone();
     let pl = parent_leave.clone();
-    doc.events.add("#a",   HtmlEventType::MouseLeave, Box::new(move |_| {
+    doc.events.add("#a",   HtmlEventType::MouseLeave, Box::new(move |_, _| {
         al.fetch_add(1, Ordering::SeqCst);
     }));
     // body is ancestor of #a; MouseLeave should not bubble to it.
-    doc.events.add("body", HtmlEventType::MouseLeave, Box::new(move |_| {
+    doc.events.add("body", HtmlEventType::MouseLeave, Box::new(move |_, _| {
         pl.fetch_add(1, Ordering::SeqCst);
     }));
     doc.process_mouse_event(HtmlEventType::MouseMove, (50.0, 25.0), 0);
@@ -329,10 +329,10 @@ fn mouseover_mouseout_dispatch_over_out() {
     let oc  = over_count.clone();
     let outc = out_count.clone();
 
-    doc.events.add("#b", HtmlEventType::MouseOver, Box::new(move |_| {
+    doc.events.add("#b", HtmlEventType::MouseOver, Box::new(move |_, _| {
         oc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#a", HtmlEventType::MouseOut, Box::new(move |_| {
+    doc.events.add("#a", HtmlEventType::MouseOut, Box::new(move |_, _| {
         outc.fetch_add(1, Ordering::SeqCst);
     }));
 
@@ -359,10 +359,10 @@ fn pointerover_pointerout_dispatch_over_out() {
     let poc  = pover_count.clone();
     let potc = pout_count.clone();
 
-    doc.events.add("#b", HtmlEventType::PointerOver, Box::new(move |_| {
+    doc.events.add("#b", HtmlEventType::PointerOver, Box::new(move |_, _| {
         poc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#a", HtmlEventType::PointerOut, Box::new(move |_| {
+    doc.events.add("#a", HtmlEventType::PointerOut, Box::new(move |_, _| {
         potc.fetch_add(1, Ordering::SeqCst);
     }));
 
@@ -389,11 +389,11 @@ fn focusin_focusout_on_mouse_down_focus_change() {
     let fof  = focusout_fired.clone();
 
     // FocusIn bubbles — stop propagation so it registers exactly once per dispatch.
-    doc.events.add("*", HtmlEventType::FocusIn, Box::new(move |evt| {
+    doc.events.add("*", HtmlEventType::FocusIn, Box::new(move |evt, _root| {
         fif.store(true, Ordering::SeqCst);
         evt.stop_propagation();
     }));
-    doc.events.add("*", HtmlEventType::FocusOut, Box::new(move |evt| {
+    doc.events.add("*", HtmlEventType::FocusOut, Box::new(move |evt, _root| {
         fof.store(true, Ordering::SeqCst);
         evt.stop_propagation();
     }));
@@ -428,13 +428,13 @@ fn pointer_down_up_move_events() {
     let uc = up_count.clone();
     let mc = move_count.clone();
 
-    doc.events.add("#box", HtmlEventType::PointerDown, Box::new(move |_| {
+    doc.events.add("#box", HtmlEventType::PointerDown, Box::new(move |_, _| {
         dc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#box", HtmlEventType::PointerUp, Box::new(move |_| {
+    doc.events.add("#box", HtmlEventType::PointerUp, Box::new(move |_, _| {
         uc.fetch_add(1, Ordering::SeqCst);
     }));
-    doc.events.add("#box", HtmlEventType::PointerMove, Box::new(move |_| {
+    doc.events.add("#box", HtmlEventType::PointerMove, Box::new(move |_, _| {
         mc.fetch_add(1, Ordering::SeqCst);
     }));
 
@@ -451,19 +451,19 @@ fn pointer_down_up_move_events() {
 
 #[test]
 fn wheel_event_dispatch() {
-    let doc = parse_html(r#"<div id="scroll-area">content</div>"#);
+    let mut doc = parse_html(r#"<div id="scroll-area">content</div>"#);
 
     let wheel_count = Arc::new(AtomicUsize::new(0));
     let wc = wheel_count.clone();
 
-    doc.events.add("#scroll-area", HtmlEventType::Wheel, Box::new(move |_| {
+    doc.events.add("#scroll-area", HtmlEventType::Wheel, Box::new(move |_, _| {
         wc.fetch_add(1, Ordering::SeqCst);
     }));
 
     let scroll_box = query_selector(&doc.root, "#scroll-area").unwrap();
     let mut evt = HtmlEvent::new(HtmlEventType::Wheel);
     evt.target = scroll_box.node_id;
-    doc.events.dispatch(&doc.root, evt);
+    { let evts = doc.events.clone(); evts.dispatch(&mut doc.root, evt); }
 
     assert_eq!(wheel_count.load(Ordering::SeqCst), 1, "Wheel event should fire once");
 }
@@ -472,17 +472,17 @@ fn wheel_event_dispatch() {
 
 #[test]
 fn dom_content_loaded_event_dispatch() {
-    let doc = parse_html("<p>hello</p>");
+    let mut doc = parse_html("<p>hello</p>");
 
     let fired = Arc::new(AtomicBool::new(false));
     let f = fired.clone();
 
-    doc.events.add("*", HtmlEventType::DOMContentLoaded, Box::new(move |_| {
+    doc.events.add("*", HtmlEventType::DOMContentLoaded, Box::new(move |_, _| {
         f.store(true, Ordering::SeqCst);
     }));
 
     let evt = HtmlEvent::new(HtmlEventType::DOMContentLoaded);
-    doc.events.dispatch(&doc.root, evt);
+    { let evts = doc.events.clone(); evts.dispatch(&mut doc.root, evt); }
 
     assert!(fired.load(Ordering::SeqCst), "DOMContentLoaded should have fired");
 }
@@ -491,17 +491,17 @@ fn dom_content_loaded_event_dispatch() {
 
 #[test]
 fn resize_event_dispatch() {
-    let doc = parse_html("<body><p>page</p></body>");
+    let mut doc = parse_html("<body><p>page</p></body>");
 
     let fired = Arc::new(AtomicBool::new(false));
     let f = fired.clone();
 
-    doc.events.add("*", HtmlEventType::Resize, Box::new(move |_| {
+    doc.events.add("*", HtmlEventType::Resize, Box::new(move |_, _| {
         f.store(true, Ordering::SeqCst);
     }));
 
     let evt = HtmlEvent::new(HtmlEventType::Resize);
-    doc.events.dispatch(&doc.root, evt);
+    { let evts = doc.events.clone(); evts.dispatch(&mut doc.root, evt); }
 
     assert!(fired.load(Ordering::SeqCst), "Resize event should have fired");
 }

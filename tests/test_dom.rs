@@ -367,9 +367,9 @@ fn dom_prepend_child() {
 fn dom_remove_child() {
     let mut doc = parse(r#"<div id="parent"><p id="a">A</p><p id="b">B</p></div>"#);
     let parent = query_selector_mut(&mut doc.root, "#parent").unwrap();
-    let a_ptr = query_selector(parent, "#a").unwrap() as *const HtmlBox;
+    let a_id = query_selector(parent, "#a").unwrap().node_id;
     let old_count = parent.children.len();
-    remove_child(parent, a_ptr);
+    remove_child(parent, a_id);
     assert_eq!(parent.children.len(), old_count - 1);
     assert!(query_selector(parent, "#a").is_none());
 }
@@ -549,10 +549,10 @@ fn dom_get_outer_html_vs_inner_html() {
 fn dom_insert_before() {
     let mut doc = parse(r#"<div id="parent"><p id="a">A</p><p id="b">B</p></div>"#);
     let parent = query_selector_mut(&mut doc.root, "#parent").unwrap();
-    let b_ptr = query_selector(parent, "#b").unwrap() as *const HtmlBox;
+    let b_id = query_selector(parent, "#b").unwrap().node_id;
     let mut new_el = create_element("p");
     set_attribute(&mut new_el, "id", "mid");
-    insert_before(parent, b_ptr, new_el);
+    insert_before(parent, b_id, new_el);
 
     let element_children: Vec<&HtmlBox> = parent.children.iter()
         .filter(|c| !c.is_text_node())
@@ -570,10 +570,10 @@ fn dom_insert_before() {
 fn dom_insert_after() {
     let mut doc = parse(r#"<div id="parent"><p id="a">A</p><p id="b">B</p></div>"#);
     let parent = query_selector_mut(&mut doc.root, "#parent").unwrap();
-    let a_ptr = query_selector(parent, "#a").unwrap() as *const HtmlBox;
+    let a_id = query_selector(parent, "#a").unwrap().node_id;
     let mut new_el = create_element("p");
     set_attribute(&mut new_el, "id", "mid");
-    insert_after(parent, a_ptr, new_el);
+    insert_after(parent, a_id, new_el);
 
     let element_children: Vec<&HtmlBox> = parent.children.iter()
         .filter(|c| !c.is_text_node())
@@ -653,8 +653,8 @@ fn dom_move_element() {
     // Grab the child element, remove from "a", append to "b"
     let child = {
         let a = query_selector_mut(&mut doc.root, "#a").unwrap();
-        let child_ptr = query_selector(a, "#child").unwrap() as *const HtmlBox;
-        remove_child(a, child_ptr).unwrap()
+        let child_id = query_selector(a, "#child").unwrap().node_id;
+        remove_child(a, child_id).unwrap()
     };
     {
         let b = query_selector_mut(&mut doc.root, "#b").unwrap();
@@ -678,21 +678,12 @@ fn dom_move_element() {
 fn dom_set_text_content_then_get_other() {
     let mut doc = parse(r#"<div><p id="a">Hello</p><p id="b">World</p></div>"#);
 
-    let a_ptr = query_selector(&doc.root, "#a").unwrap() as *const HtmlBox;
-    let b_ptr = query_selector(&doc.root, "#b").unwrap() as *const HtmlBox;
-
     {
         let a = query_selector_mut(&mut doc.root, "#a").unwrap();
         set_text_content(a, "Changed");
     }
-    let ta = {
-        let a = unsafe { &*a_ptr };
-        get_text_content(a)
-    };
-    let tb = {
-        let b = unsafe { &*b_ptr };
-        get_text_content(b)
-    };
+    let ta = get_text_content(query_selector(&doc.root, "#a").unwrap());
+    let tb = get_text_content(query_selector(&doc.root, "#b").unwrap());
     assert!(ta.contains("Changed"), "got: {ta}");
     assert!(tb.contains("World"), "got: {tb}");
 
@@ -700,14 +691,8 @@ fn dom_set_text_content_then_get_other() {
         let b = query_selector_mut(&mut doc.root, "#b").unwrap();
         set_text_content(b, "Also changed");
     }
-    let ta2 = {
-        let a = unsafe { &*a_ptr };
-        get_text_content(a)
-    };
-    let tb2 = {
-        let b = unsafe { &*b_ptr };
-        get_text_content(b)
-    };
+    let ta2 = get_text_content(query_selector(&doc.root, "#a").unwrap());
+    let tb2 = get_text_content(query_selector(&doc.root, "#b").unwrap());
     assert!(ta2.contains("Changed"), "got: {ta2}");
     assert!(tb2.contains("Also changed"), "got: {tb2}");
 }
@@ -853,28 +838,28 @@ fn dom_remove_nonexistent_data() {
 #[test]
 fn dom_event_listener_add_returns_id() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("p", HtmlEventType::Click, Box::new(|_| {}));
+    let id = listeners.add("p", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id > 0);
 }
 
 #[test]
 fn dom_event_listener_add_by_id_selector() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("#btn", HtmlEventType::Click, Box::new(|_| {}));
+    let id = listeners.add("#btn", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id > 0);
 }
 
 #[test]
 fn dom_event_listener_add_by_class_selector() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add(".item", HtmlEventType::Click, Box::new(|_| {}));
+    let id = listeners.add(".item", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id > 0);
 }
 
 #[test]
 fn dom_event_listener_remove_by_id() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
+    let id = listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id > 0);
     listeners.remove(id);
     // Removing again should not crash
@@ -885,8 +870,8 @@ fn dom_event_listener_remove_by_id() {
 #[test]
 fn dom_event_listener_remove_by_selector() {
     let mut listeners = EventListeners::new();
-    listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
-    listeners.add("#x", HtmlEventType::DblClick, Box::new(|_| {}));
+    listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
+    listeners.add("#x", HtmlEventType::DblClick, Box::new(|_, _| {}));
     listeners.remove_by_selector("#x");
     assert!(listeners.is_empty());
 }
@@ -894,8 +879,8 @@ fn dom_event_listener_remove_by_selector() {
 #[test]
 fn dom_event_listener_remove_by_selector_and_type() {
     let mut listeners = EventListeners::new();
-    let id1 = listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
-    let id2 = listeners.add("#x", HtmlEventType::DblClick, Box::new(|_| {}));
+    let id1 = listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
+    let id2 = listeners.add("#x", HtmlEventType::DblClick, Box::new(|_, _| {}));
     assert!(id1 > 0);
     assert!(id2 > 0);
     listeners.remove_by_selector_and_type("#x", HtmlEventType::Click);
@@ -906,8 +891,8 @@ fn dom_event_listener_remove_by_selector_and_type() {
 #[test]
 fn dom_event_listener_remove_all() {
     let mut listeners = EventListeners::new();
-    listeners.add("#a", HtmlEventType::Click, Box::new(|_| {}));
-    listeners.add("#b", HtmlEventType::MouseDown, Box::new(|_| {}));
+    listeners.add("#a", HtmlEventType::Click, Box::new(|_, _| {}));
+    listeners.add("#b", HtmlEventType::MouseDown, Box::new(|_, _| {}));
     listeners.remove_all();
     assert!(listeners.is_empty());
 }
@@ -915,17 +900,17 @@ fn dom_event_listener_remove_all() {
 #[test]
 fn dom_event_listener_multiple_on_same_element() {
     let mut listeners = EventListeners::new();
-    let id1 = listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
-    let id2 = listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
+    let id1 = listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
+    let id2 = listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
     assert!(id1 != id2);
 }
 
 #[test]
 fn dom_event_listener_ids_are_unique() {
     let mut listeners = EventListeners::new();
-    let id1 = listeners.add("#a", HtmlEventType::Click, Box::new(|_| {}));
-    let id2 = listeners.add("#a", HtmlEventType::MouseDown, Box::new(|_| {}));
-    let id3 = listeners.add(".foo", HtmlEventType::MouseUp, Box::new(|_| {}));
+    let id1 = listeners.add("#a", HtmlEventType::Click, Box::new(|_, _| {}));
+    let id2 = listeners.add("#a", HtmlEventType::MouseDown, Box::new(|_, _| {}));
+    let id3 = listeners.add(".foo", HtmlEventType::MouseUp, Box::new(|_, _| {}));
     assert!(id1 != id2);
     assert!(id2 != id3);
     assert!(id1 > 0);
@@ -936,12 +921,12 @@ fn dom_event_listener_ids_are_unique() {
 #[test]
 fn dom_event_listener_all_types_accepted() {
     let mut listeners = EventListeners::new();
-    let a = listeners.add("#x", HtmlEventType::Click, Box::new(|_| {}));
-    let b = listeners.add("#x", HtmlEventType::DblClick, Box::new(|_| {}));
-    let c = listeners.add("#x", HtmlEventType::MouseDown, Box::new(|_| {}));
-    let d = listeners.add("#x", HtmlEventType::MouseUp, Box::new(|_| {}));
-    let f = listeners.add("#x", HtmlEventType::MouseEnter, Box::new(|_| {}));
-    let g = listeners.add("#x", HtmlEventType::MouseLeave, Box::new(|_| {}));
+    let a = listeners.add("#x", HtmlEventType::Click, Box::new(|_, _| {}));
+    let b = listeners.add("#x", HtmlEventType::DblClick, Box::new(|_, _| {}));
+    let c = listeners.add("#x", HtmlEventType::MouseDown, Box::new(|_, _| {}));
+    let d = listeners.add("#x", HtmlEventType::MouseUp, Box::new(|_, _| {}));
+    let f = listeners.add("#x", HtmlEventType::MouseEnter, Box::new(|_, _| {}));
+    let g = listeners.add("#x", HtmlEventType::MouseLeave, Box::new(|_, _| {}));
     assert!(a > 0);
     assert!(b > 0);
     assert!(c > 0);
@@ -954,11 +939,11 @@ fn dom_event_listener_all_types_accepted() {
 #[test]
 fn dom_event_listener_new_types() {
     let mut listeners = EventListeners::new();
-    listeners.add("*", HtmlEventType::Input, Box::new(|_| {}));
-    listeners.add("*", HtmlEventType::Change, Box::new(|_| {}));
-    listeners.add("*", HtmlEventType::Focus, Box::new(|_| {}));
-    listeners.add("*", HtmlEventType::Blur, Box::new(|_| {}));
-    listeners.add("*", HtmlEventType::SelectionChange, Box::new(|_| {}));
+    listeners.add("*", HtmlEventType::Input, Box::new(|_, _| {}));
+    listeners.add("*", HtmlEventType::Change, Box::new(|_, _| {}));
+    listeners.add("*", HtmlEventType::Focus, Box::new(|_, _| {}));
+    listeners.add("*", HtmlEventType::Blur, Box::new(|_, _| {}));
+    listeners.add("*", HtmlEventType::SelectionChange, Box::new(|_, _| {}));
     listeners.remove_all();
     assert!(listeners.is_empty());
 }
@@ -966,7 +951,7 @@ fn dom_event_listener_new_types() {
 #[test]
 fn dom_event_listener_mouse_move_type() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("*", HtmlEventType::MouseMove, Box::new(|_| {}));
+    let id = listeners.add("*", HtmlEventType::MouseMove, Box::new(|_, _| {}));
     assert!(id > 0);
     listeners.remove(id);
     assert!(listeners.is_empty());
@@ -975,7 +960,7 @@ fn dom_event_listener_mouse_move_type() {
 #[test]
 fn dom_event_listener_context_menu_type() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("*", HtmlEventType::ContextMenu, Box::new(|_| {}));
+    let id = listeners.add("*", HtmlEventType::ContextMenu, Box::new(|_, _| {}));
     assert!(id > 0);
     listeners.remove(id);
     assert!(listeners.is_empty());
@@ -984,13 +969,13 @@ fn dom_event_listener_context_menu_type() {
 #[test]
 fn dom_event_listener_drag_types() {
     let mut listeners = EventListeners::new();
-    let a = listeners.add("*", HtmlEventType::DragStart, Box::new(|_| {}));
-    let b = listeners.add("*", HtmlEventType::Drag, Box::new(|_| {}));
-    let c = listeners.add("*", HtmlEventType::DragEnter, Box::new(|_| {}));
-    let d = listeners.add("*", HtmlEventType::DragOver, Box::new(|_| {}));
-    let f = listeners.add("*", HtmlEventType::DragLeave, Box::new(|_| {}));
-    let g = listeners.add("*", HtmlEventType::Drop, Box::new(|_| {}));
-    let h = listeners.add("*", HtmlEventType::DragEnd, Box::new(|_| {}));
+    let a = listeners.add("*", HtmlEventType::DragStart, Box::new(|_, _| {}));
+    let b = listeners.add("*", HtmlEventType::Drag, Box::new(|_, _| {}));
+    let c = listeners.add("*", HtmlEventType::DragEnter, Box::new(|_, _| {}));
+    let d = listeners.add("*", HtmlEventType::DragOver, Box::new(|_, _| {}));
+    let f = listeners.add("*", HtmlEventType::DragLeave, Box::new(|_, _| {}));
+    let g = listeners.add("*", HtmlEventType::Drop, Box::new(|_, _| {}));
+    let h = listeners.add("*", HtmlEventType::DragEnd, Box::new(|_, _| {}));
     assert!(a > 0 && b > a && c > b && d > c && f > d && g > f && h > g);
     listeners.remove_all();
 }
@@ -998,9 +983,9 @@ fn dom_event_listener_drag_types() {
 #[test]
 fn dom_event_listener_keyboard_types() {
     let mut listeners = EventListeners::new();
-    let a = listeners.add("*", HtmlEventType::KeyDown, Box::new(|_| {}));
-    let b = listeners.add("*", HtmlEventType::KeyUp, Box::new(|_| {}));
-    let c = listeners.add("*", HtmlEventType::KeyPress, Box::new(|_| {}));
+    let a = listeners.add("*", HtmlEventType::KeyDown, Box::new(|_, _| {}));
+    let b = listeners.add("*", HtmlEventType::KeyUp, Box::new(|_, _| {}));
+    let c = listeners.add("*", HtmlEventType::KeyPress, Box::new(|_, _| {}));
     assert!(a > 0 && b > a && c > b);
     listeners.remove_all();
 }
@@ -1008,7 +993,7 @@ fn dom_event_listener_keyboard_types() {
 #[test]
 fn dom_event_listener_scroll_type() {
     let mut listeners = EventListeners::new();
-    let id = listeners.add("*", HtmlEventType::Scroll, Box::new(|_| {}));
+    let id = listeners.add("*", HtmlEventType::Scroll, Box::new(|_, _| {}));
     assert!(id > 0);
     listeners.remove(id);
     assert!(listeners.is_empty());
@@ -1089,7 +1074,7 @@ fn dom_event_listener_all_new_types_registrable() {
     let mut ids = Vec::new();
     for &t in &types {
         for &sel in &selectors {
-            ids.push(listeners.add(sel, t, Box::new(|_| {})));
+            ids.push(listeners.add(sel, t, Box::new(|_, _| {})));
         }
     }
     assert_eq!(ids.len(), types.len() * selectors.len());

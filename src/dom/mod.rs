@@ -1291,29 +1291,25 @@ impl Editor {
     }
 
     /// Split the current block element at the caret position, creating a new sibling block.
-    /// This is what the Enter key triggers.
-    ///
-    /// Only "prose" tags (`<p>`, `<h1>`–`<h6>`, `<li>`, `<dt>`, `<dd>`, `<pre>`) are
-    /// split into two siblings. Structural containers (`<div>`, `<td>`, flex/grid
-    /// children, `<blockquote>`, sectioning elements, …) receive a `<br>` instead,
-    /// so that pressing Enter inside a flex cell does not spawn a new cell.
+    /// Uses the DOM API (create_element, insert_after, set_text_content) instead of
+    /// direct Vec manipulation.
     pub fn insert_newline(&mut self, root: &mut HtmlBox) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
-        // Delete selection first (before we look at the tag).
+        // Delete selection first.
         if self.has_selection() {
             let (s, e) = (self.sel_start, self.sel_end);
             if let Some(b) = find_box_mut(root, caret_nid) { delete_range_full(b, s, e); }
             self.collapse_to(s);
         }
 
-        // Peek at the tag — do NOT mutate yet.
+        // Peek at the tag.
         let block_tag = match find_box_mut(root, caret_nid) {
             Some(b) => b.tag.clone(),
             None    => return,
         };
 
-        // Non-prose containers fall back to inserting a <br> line break.
+        // Non-prose containers get a <br> instead.
         if !is_prose_tag(&block_tag) {
             self.insert_br(root);
             return;
@@ -1321,44 +1317,59 @@ impl Editor {
 
         let split_at = self.caret_local;
 
-        // Gather info and trim text after the split point from the current block.
-        // The borrow of `root` ends when this block exits.
-        let (block_tag, after_text) = match find_box_mut(root, caret_nid) {
+        // Get text after the split point, then remove it from the current block.
+        let (tag, after_text) = match find_box_mut(root, caret_nid) {
             Some(b) => {
                 let flat = crate::layout::inline_layout::collect_flat_text(b);
                 let split = split_at.min(flat.len());
                 let after = flat[split..].to_string();
-                let flen  = flat.len();
+                let flen = flat.len();
                 delete_range_full(b, split, flen);
+                mark_layout_dirty(b);
                 (b.tag.clone(), after)
             }
             None => return,
         };
 
-        // Find parent, insert new sibling, then update the caret.
-        if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
-            let idx_opt = parent.children.iter()
-                .position(|c| c.node_id == caret_nid);
-            if let Some(idx) = idx_opt {
-                let new_tag = if is_block_tag(&block_tag) { block_tag.as_str() } else { "p" };
-                let mut new_block = HtmlBox::new(new_tag);
-                apply_property(&mut new_block.style, "display", "block");
-                new_block.layout.layout_dirty = true;
-                if !after_text.is_empty() {
-                    let mut tn = HtmlBox::new("#text");
-                    tn.text = after_text;
-                    new_block.children.push(tn);
+        // Create new sibling block via DOM API, inheriting style from the original.
+        let new_tag = if is_block_tag(&tag) { tag.as_str() } else { "p" };
+        let mut new_block = create_element(new_tag);
+        // Copy the computed style from the source block so the new block inherits
+        // font, color, etc. without needing a full cascade.
+        if let Some(src) = find_box_mut(root, caret_nid) {
+            new_block.style = src.style.clone();
+            new_block.style.hover_style = None;
+            new_block.style.active_style = None;
+            new_block.style.visited_style = None;
+        }
+        mark_layout_dirty(&mut new_block);
+
+        // Add text content to the new block.
+        if !after_text.is_empty() {
+            set_text_content(&mut new_block, &after_text);
+            // Inherit style to text child too
+            if let Some(tc) = new_block.children.first_mut() {
+                if let Some(src) = find_box_mut(root, caret_nid) {
+                    tc.style = src.style.clone();
+                    tc.style.hover_style = None;
                 }
-                parent.children[idx].layout.layout_dirty = true;
-                parent.children.insert(idx + 1, new_block);
-                parent.layout.layout_dirty = true;
-                self.caret_box = Some(parent.children[idx + 1].node_id);
-                self.collapse_to(0);
             }
         }
+        let new_block_id = new_block.node_id;
+
+        // Insert after the current block using the parent.
+        if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
+            insert_after(parent, caret_nid, new_block);
+            mark_layout_dirty(parent);
+        }
+
+        // Move caret to start of new block.
+        self.caret_box = Some(new_block_id);
+        self.collapse_to(0);
     }
 
     /// Insert a `<br>` at the caret position (soft line break within the current block).
+    /// Insert a `<br>` at the caret position. Uses DOM API.
     pub fn insert_br(&mut self, root: &mut HtmlBox) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
@@ -1370,7 +1381,7 @@ impl Editor {
 
         let caret = self.caret_local;
 
-        // Find the leaf text node and its local offset.
+        // Find the leaf text node and split at the caret position.
         let leaf_nid;
         let local_off;
         {
@@ -1381,22 +1392,19 @@ impl Editor {
                     local_off = local;
                 }
                 Err(_) => {
-                    // Caret is past end — append a <br> as last child of container
-                    container.children.push(HtmlBox::new("br"));
-                    container.layout.layout_dirty = true;
+                    // Caret is past end — append <br> via DOM API
+                    let br = create_element("br");
+                    append_child(container, br);
+                    mark_layout_dirty(container);
                     self.collapse_to(caret);
                     return;
                 }
             }
         }
 
-        // Walk the tree to find the leaf's parent and split.
+        // Split the text node at the caret and insert <br> between the halves.
         split_node_with_br(root, leaf_nid, local_off);
-        // Mark the caret box dirty so layout re-runs on this subtree.
-        if let Some(b) = find_box_mut(root, caret_nid) { b.layout.layout_dirty = true; }
-        // Caret offset in flat text is unchanged (<br> is transparent to flat-text),
-        // but we mark that the caret is now at the START of the next visual line so
-        // that rendering and insertion prefer the node after the <br>.
+        if let Some(b) = find_box_mut(root, caret_nid) { mark_layout_dirty(b); }
         self.collapse_to(caret);
         self.caret_at_line_start = true;
     }
@@ -1730,24 +1738,32 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) 
     {
         if node.children[idx].is_text_node() {
             let text = node.children[idx].text.clone();
+            let old_id = node.children[idx].node_id;
             let split = local_off.min(text.len());
             let before = text[..split].to_string();
             let after  = text[split..].to_string();
 
-            // Remove the original leaf, then insert [before, br, after] in order.
-            node.children.remove(idx);
-            if !after.is_empty() {
-                let mut an = HtmlBox::new("#text"); an.text = after;
-                node.children.insert(idx, an);
-            }
-            node.children.insert(idx, HtmlBox::new("br"));
+            // Remove the original leaf, then insert [before, br, after] via DOM API.
+            remove_child(node, old_id);
+            // Build the replacement nodes
+            let mut new_children = Vec::new();
             if !before.is_empty() {
                 let mut bn = HtmlBox::new("#text"); bn.text = before;
-                node.children.insert(idx, bn);
+                new_children.push(bn);
             }
+            new_children.push(HtmlBox::new("br"));
+            if !after.is_empty() {
+                let mut an = HtmlBox::new("#text"); an.text = after;
+                new_children.push(an);
+            }
+            // Insert at the position where the old node was
+            for (i, child) in new_children.into_iter().rev().enumerate() {
+                node.children.insert(idx, child);
+            }
+            // Update linked-list pointers
+            crate::html::populate_sibling_links(node);
             return true;
         }
-        // Non-text element child — fall through to recursion (Case B inside it).
     }
 
     // Case B: the leaf is this node itself (has its own .text, no children)
