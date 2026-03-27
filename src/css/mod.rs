@@ -433,7 +433,10 @@ fn matches_part_with_context(
                             return false;
                         }
                         ctx.keyboard_focus || is_text_entry(b)
-                    } else { false }
+                    } else {
+                        // Fallback: use element_id when html_box not available
+                        ctx.element_id != 0 && ctx.element_id == ctx.focused_box && ctx.keyboard_focus
+                    }
                 }
                 "focus-within" => {
                     if ctx.focused_box != 0 {
@@ -2802,9 +2805,17 @@ pub fn parse_css_filter(v: &str) -> crate::types::CssFilters {
 /// Any still-unresolved var() (unknown custom property with no fallback) is dropped.
 pub fn resolve_var_references(val: &str, variables: &HashMap<String, String>) -> String {
     if !val.contains("var(") { return val.to_string(); }
-    let resolved = resolve_var_pass(val, variables);
+    let mut result = resolve_var_pass(val, variables);
+    // Iterate to resolve chained vars (var(--a) → var(--b) → value).
+    // Max 10 iterations to prevent infinite loops from circular refs.
+    for _ in 0..10 {
+        if !result.contains("var(") { return result; }
+        let next = resolve_var_pass(&result, variables);
+        if next == result { break; } // no progress — unresolvable
+        result = next;
+    }
     // Drop any remaining unresolved var() by substituting with fallback or "".
-    if resolved.contains("var(") { resolve_var_pass(&resolved, &HashMap::new()) } else { resolved }
+    if result.contains("var(") { resolve_var_pass(&result, &HashMap::new()) } else { result }
 }
 
 fn resolve_var_pass(val: &str, variables: &HashMap<String, String>) -> String {
@@ -5364,6 +5375,18 @@ fn apply_cascade_inner(
                 if matches!(val, crate::types::CssValue::Inherit) {
                     let name = property_defs::get(id).name;
                     inherit_props.insert(name.to_string());
+                } else if let crate::types::CssValue::Raw(ref s) = val {
+                    // Raw values may contain var() even when has_vars is false
+                    // (the rule has var refs but no variables are defined in scope).
+                    // Resolve var() with empty vars — triggers fallback values.
+                    if s.contains("var(") {
+                        let resolved = resolve_var_references(s, &local_vars);
+                        if !resolved.trim().is_empty() {
+                            apply_property_by_id_str(&mut style, id, &resolved);
+                        }
+                    } else {
+                        apply_css_value(&mut style, id, val);
+                    }
                 } else {
                     apply_css_value(&mut style, id, val);
                 }
@@ -6896,7 +6919,7 @@ button:hover, input[type=submit]:hover, input[type=button]:hover, input[type=res
   background-color: #e0e0e0; border-color: #666;
 }
 input:focus, select:focus, textarea:focus {
-  border-color: #4285f4; outline: none;
+  border-color: #4285f4;
 }
 input:disabled, select:disabled, textarea:disabled, button:disabled {
   opacity: 0.6; cursor: default;

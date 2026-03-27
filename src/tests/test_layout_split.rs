@@ -64,7 +64,7 @@ fn document_has_all_architecture_pieces() {
 
     // Node map
     doc.rebuild_node_map();
-    assert!(!doc.node_map.is_empty(), "node_map should be populated");
+    assert!(!doc.node_index.is_empty(), "node_map should be populated");
 
     // Layout store
     assert_eq!(doc.layout_store.len(), 0, "layout store starts empty");

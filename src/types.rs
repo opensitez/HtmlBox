@@ -2432,8 +2432,10 @@ pub struct Document {
     /// Next node_id to assign (monotonically increasing counter).
     pub next_node_id:    u32,
     /// Bridge lookup: set of known node_ids in the tree.
-    /// Rebuilt by `rebuild_node_map()` after any tree mutation (layout, cascade, etc.).
-    pub node_map:        HashMap<u32, ()>,
+    /// O(1) node lookup index: node_id → raw pointer into the HtmlBox tree.
+    /// Rebuilt by `rebuild_node_index()` after layout. Pointers are valid only
+    /// until the next tree mutation (layout, DOM change).
+    pub node_index: HashMap<u32, *const HtmlBox>,
     /// Separated layout data indexed by node_id (bridge: duplicates HtmlBox geometry).
     pub layout_store:    crate::layout::layout_box::LayoutStore,
     /// Nodes created by dom_create_element/dom_create_text that haven't been
@@ -2562,7 +2564,7 @@ impl Document {
             title:           String::new(),
             arena:           DomArena::new(),
             next_node_id:    1,  // 0 = NodeId::NONE (reserved)
-            node_map:        HashMap::new(),
+            node_index:      HashMap::new(),
             layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             base_url:        String::new(),
@@ -2630,24 +2632,34 @@ impl Document {
 
     // ── Node index (node_id → pointer for O(1) lookup) ───────────────────────
 
-    /// Rebuild the node index by walking the HtmlBox tree.
-    /// Call this after any operation that may move HtmlBox nodes in memory
-    /// (layout, cascade, tree mutations).
-    pub fn rebuild_node_map(&mut self) {
-        self.node_map.clear();
-        fn collect(node: &HtmlBox, map: &mut HashMap<u32, ()>) {
-            if node.node_id != 0 { map.insert(node.node_id, ()); }
+    /// Rebuild the O(1) node index by walking the tree and storing pointers.
+    /// Called after layout (tree structure is stable until next mutation).
+    pub fn rebuild_node_index(&mut self) {
+        self.node_index.clear();
+        fn collect(node: &HtmlBox, map: &mut HashMap<u32, *const HtmlBox>) {
+            if node.node_id != 0 {
+                map.insert(node.node_id, node as *const HtmlBox);
+            }
             for child in &node.children { collect(child, map); }
         }
-        collect(&self.root, &mut self.node_map);
+        collect(&self.root, &mut self.node_index);
     }
 
-    /// Look up an HtmlBox by its stable node_id via tree walk.
-    /// Node lookup by tree walk (always returns current data).
-    /// The arena (`self.nodes`) is synced after layout and can be used for
-    /// read-only queries when freshness is guaranteed.
+    /// Backward-compat alias.
+    pub fn rebuild_node_map(&mut self) { self.rebuild_node_index(); }
+
+    /// O(1) node lookup by node_id. Uses the cached pointer index.
+    /// Falls back to tree walk if index is empty (not yet built).
+    #[inline]
     pub fn get_box_by_id(&self, node_id: u32) -> Option<&HtmlBox> {
         if node_id == 0 { return None; }
+        // Fast path: O(1) index lookup
+        if let Some(&ptr) = self.node_index.get(&node_id) {
+            // SAFETY: pointer is valid because the tree hasn't been mutated
+            // since rebuild_node_index() was called.
+            return Some(unsafe { &*ptr });
+        }
+        // Fallback: tree walk (index not built yet)
         fn walk(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
             if node.node_id == id { return Some(node); }
             for child in &node.children { if let Some(f) = walk(child, id) { return Some(f); } }
@@ -2656,8 +2668,7 @@ impl Document {
         walk(&self.root, node_id)
     }
 
-    /// Node lookup by node_id. Currently uses tree walk.
-    /// When the arena becomes the primary storage, this will be O(1).
+    /// Same as get_box_by_id — O(1) when index is built.
     #[inline]
     pub fn get_node(&self, node_id: u32) -> Option<&HtmlBox> {
         self.get_box_by_id(node_id)
@@ -4571,7 +4582,7 @@ impl Clone for Document {
             base_url:        self.base_url.clone(),
             arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
             next_node_id:    self.next_node_id,
-            node_map:        HashMap::new(),   // rebuilt on demand
+            node_index:      HashMap::new(),   // rebuilt on demand
             layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),

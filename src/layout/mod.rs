@@ -846,7 +846,8 @@ impl LayoutEngine {
         // Use the document's viewport_h if it was set during load_html (it knows
         // the real window height); only fall back to the engine default if the
         // document doesn't have a value yet.
-        if doc.viewport_h > 0.0 {
+        // Only use doc's viewport_h as fallback if the engine's hasn't been set.
+        if self.viewport_h <= 0.0 && doc.viewport_h > 0.0 {
             self.viewport_h = doc.viewport_h;
         }
         // Keep viewport in doc so focus-change recascades use the correct size.
@@ -1027,6 +1028,18 @@ impl LayoutEngine {
         // Root always needs re-layout since we reset its height to 0 above.
         doc.root.layout.layout_dirty = true;
 
+        // When viewport height changed, mark all nodes dirty so vh-dependent
+        // elements and flex-stretch children get recalculated.
+        if (self.viewport_h - self.last_geometry_viewport_h).abs() > 0.5
+            && !self.last_geometry_viewport_h.is_nan()
+        {
+            fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
+                n.layout.layout_dirty = true;
+                for c in &mut n.children { mark_all_dirty(c); }
+            }
+            mark_all_dirty(&mut doc.root);
+        }
+
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
             resolve_all_slots(&mut doc.root);
@@ -1046,6 +1059,9 @@ impl LayoutEngine {
 
         // Mark arena as stale — it will be rebuilt on next get_node() call
         doc.nodes_stale = true;
+
+        // Rebuild O(1) node index (pointers stable until next mutation)
+        doc.rebuild_node_index();
 
         // Bump generation so renderer knows to rebuild display list
         doc.layout_generation = doc.layout_generation.wrapping_add(1);
@@ -1114,12 +1130,17 @@ impl LayoutEngine {
 
         // Fast path: skip full layout if the containing width hasn't changed
         // and the node isn't dirty. Just reposition the cached result.
+        // Also skip when viewport height changed (vh-dependent elements need re-layout).
+        // Note: during layout_geometry, last_geometry_viewport_h still holds the OLD value.
+        let vh_ok = (self.viewport_h - self.last_geometry_viewport_h).abs() < 0.5
+            || self.last_geometry_viewport_h.is_nan();
         if !node.layout.layout_dirty
             && node.layout.last_containing_width > 0.0
             && (node.layout.last_containing_width - containing_w).abs() < 0.01
             && node.layout.margin_rect.w > 0.0
             && node.layout.margin_rect.h > 0.0
             && fc.is_none()
+            && vh_ok
             && !matches!(node.style.display, Display::None | Display::Contents)
         {
             let dx = x - node.layout.margin_rect.x;
@@ -1294,7 +1315,12 @@ impl LayoutEngine {
 
         // Replaced elements (input, select, textarea, img) cannot be flex/grid
         // containers per CSS spec — blockify so parent flex/grid also sees correct display.
-        if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe") {
+        // Exception: button-type inputs (submit/button/reset) use inline-flex for centering.
+        let is_button_input = node.tag == "input" && matches!(
+            node.attributes.get("type").map(|s| s.as_str()),
+            Some("submit") | Some("button") | Some("reset")
+        );
+        if !is_button_input && matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe") {
             match node.style.display {
                 Display::Flex | Display::Grid => { node.style.display = Display::Block; }
                 Display::InlineFlex | Display::InlineGrid => { node.style.display = Display::InlineBlock; }

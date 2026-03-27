@@ -194,12 +194,32 @@ pub fn layout_grid_subgrid(
     for (ii, path) in item_indices.iter().enumerate() {
         let child = grid_child_ref(node, path);
         if is_explicitly_placed(child, &area_map, &sub_col_names, &sub_row_names) { continue; }
-        let span_col = get_span_col(child).min(n_cols);
+
+        // If column is definite but row is auto, preserve the resolved column
+        // placement and only auto-place the row.
+        let (pcs, pce, _, _) = placements[ii];
+        let (cs_span, cs_val) = decode_grid_line(child.style.grid_column_start);
+        let col_is_definite = (!cs_span && cs_val != 0)
+            || (!child.style.grid_column_start_name.is_empty()
+                && lookup_named_line(&child.style.grid_column_start_name, &sub_col_names).is_some());
+
+        let (use_cs, use_ce, span_col) = if col_is_definite {
+            // Column already resolved — keep it
+            (pcs, pce, (pce - pcs).max(1))
+        } else {
+            let sc = get_span_col(child).min(n_cols);
+            (auto_col, auto_col + sc, sc)
+        };
         let span_row = get_span_row(child);
+
+        // Auto-place the row
+        if col_is_definite {
+            auto_col = use_cs;
+        }
         'outer: loop {
             if auto_row > MAX_GRID_SPAN { break 'outer; }
             ensure_row(&mut occ, auto_row + span_row, max_col);
-            if auto_col + span_col > max_col { auto_row += 1; auto_col = 0; continue; }
+            if auto_col + span_col > max_col { auto_row += 1; auto_col = if col_is_definite { use_cs } else { 0 }; continue; }
             let mut fits = true;
             'chk: for r in auto_row..auto_row + span_row {
                 ensure_row(&mut occ, r, max_col);
@@ -209,9 +229,11 @@ pub fn layout_grid_subgrid(
             }
             if fits { break 'outer; }
             auto_col += 1;
-            if auto_col + span_col > max_col { auto_row += 1; auto_col = 0; }
+            if auto_col + span_col > max_col { auto_row += 1; auto_col = if col_is_definite { use_cs } else { 0 }; }
         }
-        placements[ii] = (auto_col, auto_col + span_col, auto_row, auto_row + span_row);
+        let final_cs = if col_is_definite { use_cs } else { auto_col };
+        let final_ce = if col_is_definite { use_ce } else { auto_col + span_col };
+        placements[ii] = (final_cs, final_ce, auto_row, auto_row + span_row);
         for r in auto_row..auto_row + span_row {
             ensure_row(&mut occ, r, max_col);
             for c in auto_col..auto_col + span_col { if c < occ[r].len() { occ[r][c] = true; } }

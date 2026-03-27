@@ -762,7 +762,8 @@ pub fn default_display(tag: &str) -> &'static str {
         "colgroup" => "table-column-group",
         "caption"  => "table-caption",
         "img" | "svg" | "canvas" | "video" | "audio" => "inline-block",
-        "input" | "button" | "select" | "textarea" => "inline-block",
+        "input" | "select" | "textarea" => "inline-block",
+        "button" => "inline-flex",
         "ruby" => "ruby",
         "rt"   => "ruby-text",
         // Non-visual: display:none
@@ -2137,7 +2138,7 @@ fn parse_html_full(
         base_url: base_url.to_string(),
         arena: parser.arena,
         next_node_id: parser.next_node_id,
-        node_map: std::collections::HashMap::new(),
+        node_index: std::collections::HashMap::new(),
         layout_store: crate::layout::layout_box::LayoutStore::new(),
         pending_nodes: std::collections::HashMap::new(),
         linked_stylesheets,
