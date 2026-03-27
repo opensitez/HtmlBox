@@ -185,9 +185,22 @@ fn replay_inner(
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
                     let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    // Apply the current transform to text position and scale.
+                    // Extract effective scale factor from the transform matrix.
+                    let eff_sx = (ts.sx * ts.sx + ts.ky * ts.ky).sqrt();
+                    let eff_sy = (ts.kx * ts.kx + ts.sy * ts.sy).sqrt();
+                    let eff_scale = eff_sx.max(eff_sy);
+                    // Transform the text origin
+                    let phys_x = ts.sx * *x + ts.ky * *y + ts.tx;
+                    let phys_y = ts.kx * *x + ts.sy * *y + ts.ty;
+                    // draw_text_cmd expects logical coords that it will multiply by scale.
+                    // We pass pre-transformed coords divided by eff_scale so the multiplication
+                    // brings them back to the correct physical position.
+                    let text_x = phys_x / eff_scale;
+                    let text_y = phys_y / eff_scale;
                     draw_text_cmd(
-                        target, *fs, *sc, scale,
-                        *x, *y, text, font_family, *font_size, *font_weight,
+                        target, *fs, *sc, eff_scale,
+                        text_x, text_y, text, font_family, *font_size, *font_weight,
                         *font_style, *font_stretch, *line_height,
                         &apply_opacity(color, alpha), decoration,
                         *letter_spacing, *small_caps,
