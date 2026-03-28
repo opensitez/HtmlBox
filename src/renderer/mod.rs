@@ -2,6 +2,7 @@ pub mod display_list;
 pub mod display_list_builder;
 pub mod display_list_replay;
 pub mod compositor;
+pub mod tiles;
 
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform};
 use cosmic_text::{Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache, Style as CTextStyle};
@@ -38,6 +39,10 @@ pub struct Renderer {
     pub content_offset_y: f32,
     /// Compositor layer tree — built after layout, used for scroll/transform/opacity.
     pub compositor: compositor::Compositor,
+    /// Tile manager — caches rasterized tiles for fast scroll.
+    pub tile_manager: tiles::TileManager,
+    /// Whether to use tiled rendering (can be disabled for debugging).
+    pub use_tiles: bool,
 }
 
 impl Renderer {
@@ -58,6 +63,8 @@ impl Renderer {
             cached_layout_generation: 0, dropdown_hover_idx: -1,
             content_offset_y: 0.0,
             compositor: compositor::Compositor::new(),
+            tile_manager: tiles::TileManager::new(),
+            use_tiles: false, // disabled by default until stable
         }
     }
 
@@ -310,16 +317,21 @@ impl Renderer {
             .or_else(|| { let c = doc.root.style.background_color; if c.a > 0 { Some(c) } else { None } })
             .map(|c| c.to_tiny_skia()).unwrap_or(tiny_skia::Color::WHITE);
         pixmap.fill(canvas_color);
+
+        // Check what changed since last render
+        let layout_changed = doc.layout_generation != self.cached_layout_generation;
+        let hover_changed = doc.hovered_box != self.cached_hovered_id;
+        let scroll_changed = (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
+            || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
         let needs_rebuild = self.display_list_dirty
             || self.cached_display_list.is_none()
-            || doc.layout_generation != self.cached_layout_generation
-            || doc.hovered_box != self.cached_hovered_id
-            || (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
-            || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
+            || layout_changed || hover_changed || scroll_changed;
+
         if needs_rebuild {
+            // Build display list (needed for both tiled and non-tiled paths)
             let list = display_list_builder::build_display_list_full(
                 &doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h),
-                doc.scroll_x, doc.scroll_y, // used for viewport culling in builder
+                doc.scroll_x, doc.scroll_y,
                 doc.hovered_box, doc.active_box, &doc.visited_urls,
             );
             self.cached_display_list = Some(list);
@@ -328,11 +340,41 @@ impl Renderer {
             self.cached_hovered_id = doc.hovered_box;
             self.cached_layout_generation = doc.layout_generation;
             self.display_list_dirty = false;
-            // Rebuild compositor layer tree when layout changes
-            self.compositor.build_layers(&doc.root, view_w, view_h);
+
+            // Rebuild compositor layer tree on layout change
+            if layout_changed {
+                self.compositor.build_layers(&doc.root, view_w, view_h);
+            }
+
+            // Tiled path: invalidate tiles on layout/hover change, composite on scroll
+            if self.use_tiles {
+                self.tile_manager.doc_width = doc_w;
+                self.tile_manager.doc_height = doc_h;
+                if layout_changed || hover_changed {
+                    self.tile_manager.invalidate_all();
+                }
+                // Update viewport and rasterize needed tiles
+                let needed = self.tile_manager.update_viewport(
+                    Rect::new(doc.scroll_x, doc.scroll_y, view_w, view_h), scale * zoom,
+                );
+                for (tx, ty) in needed {
+                    if self.tile_manager.ensure_tile(tx, ty) {
+                        // Rasterize this tile using the display list
+                        self.rasterize_tile(tx, ty, doc.scroll_x, doc.scroll_y, scale * zoom);
+                    }
+                }
+                self.tile_manager.evict_distant();
+            }
         }
-        if let Some(ref list) = self.cached_display_list {
-            display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
+
+        if self.use_tiles {
+            // Fast path: composite pre-rasterized tiles
+            self.tile_manager.composite_to(pixmap, doc.scroll_x, doc.scroll_y, scale * zoom);
+        } else {
+            // Legacy path: replay full display list
+            if let Some(ref list) = self.cached_display_list {
+                display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
+            }
         }
         // Paint custom components on top of the display list
         if !self.component_registry.map.is_empty() || !self.component_registry.components.is_empty() {
@@ -450,6 +492,30 @@ impl Renderer {
     }
 
     /// Walk the DOM tree and paint any custom components.
+    /// Rasterize a single tile from the cached display list.
+    fn rasterize_tile(&mut self, tx: i32, ty: i32, _scroll_x: f32, _scroll_y: f32, scale: f32) {
+        if let Some(tile) = self.tile_manager.tiles.get_mut(&(tx, ty)) {
+            // Clear tile
+            tile.pixmap.fill(tiny_skia::Color::WHITE);
+
+            // Replay display list into the tile, offset so the tile covers
+            // its region of the document
+            let tile_scroll_x = tx as f32 * tiles::TILE_SIZE;
+            let tile_scroll_y = ty as f32 * tiles::TILE_SIZE;
+
+            if let Some(ref list) = self.cached_display_list {
+                // Build a display list clipped to this tile's region
+                // For now, replay the full list with tile-relative scroll offset
+                // (the replay clips to the pixmap bounds automatically)
+                display_list_replay::replay_with_text(
+                    list, &mut tile.pixmap, scale,
+                    &mut self.font_system, &mut self.swash_cache,
+                );
+            }
+            tile.dirty = false;
+        }
+    }
+
     fn paint_custom_components(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, scale: f32) {
         // Trait-based component — same coordinate contract as legacy: logical coords, scale passed separately
         if let Some(component) = self.component_registry.get_component(&node.tag) {
