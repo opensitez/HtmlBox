@@ -652,4 +652,67 @@ impl EngineFrame {
     pub fn has_announcements(&self) -> bool {
         !self.doc.pending_announcements.is_empty()
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Animation API — programmatic animations + CSS transition integration
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Start a CSS transition on a property. The engine interpolates from the
+    /// current value to the target over the given duration.
+    ///
+    /// For compositor properties (transform, opacity), this is GPU-only — no
+    /// layout or repaint needed. For layout properties (width, height, margin),
+    /// this triggers incremental relayout each frame.
+    pub fn animate(
+        &mut self,
+        node_id: u32,
+        property: &str,
+        target_value: &str,
+        duration_ms: f32,
+        easing: crate::types::EasingFn,
+    ) {
+        // Check if this is a compositor-only property
+        let is_compositor = matches!(property, "transform" | "opacity" | "filter");
+
+        if let Some(node) = self.doc.get_box_by_id_mut(node_id) {
+            // Get current value as string for interpolation start point
+            let current = match property {
+                "opacity" => format!("{}", node.style.opacity),
+                "transform" => node.style.transform.clone(),
+                _ => String::new(),
+            };
+
+            // Create a transition state
+            let transition = crate::types::TransitionState {
+                property: property.to_string(),
+                from_value: current,
+                to_value: target_value.to_string(),
+                start_time: std::time::Instant::now(),
+                duration_ms,
+                delay_ms: 0.0,
+                timing_fn: easing,
+            };
+
+            // Add to document's active transitions
+            self.doc.transition_states
+                .entry(node_id)
+                .or_insert_with(Vec::new)
+                .push(transition);
+
+            self.doc.needs_animation_frame = true;
+        }
+
+        if is_compositor {
+            self.mark_paint_dirty(); // compositor-only: just repaint
+        } else {
+            self.mark_style_dirty(); // layout property: full cascade + layout
+        }
+    }
+
+    /// Check if any animations are currently running.
+    pub fn has_animations(&self) -> bool {
+        self.doc.needs_animation_frame
+            || !self.doc.active_animations.is_empty()
+            || !self.doc.transition_states.is_empty()
+    }
 }
