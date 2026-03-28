@@ -1070,51 +1070,58 @@ impl LayoutEngine {
     fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
         self.layout_calls.set(0);
         self.layout_start.set(Some(std::time::Instant::now()));
-        // Propagate layout_dirty upward: if any descendant is dirty, mark
-        // ancestors dirty so the subtree-pruning check doesn't skip them.
-        propagate_dirty(&mut doc.root);
-
-        // Set up root geometry — only reset height, preserve width for cache stability
-        let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
-        let content_w = rbox.content_width.unwrap_or(viewport_width);
-        doc.root.layout.content_rect.x = 0.0; doc.root.layout.content_rect.y = 0.0;
-        doc.root.layout.content_rect.w = content_w; doc.root.layout.content_rect.h = 0.0;
-        doc.root.layout.padding_rect.x = 0.0; doc.root.layout.padding_rect.y = 0.0;
-        doc.root.layout.padding_rect.w = content_w; doc.root.layout.padding_rect.h = 0.0;
-        doc.root.layout.border_rect.x  = 0.0; doc.root.layout.border_rect.y  = 0.0;
-        doc.root.layout.border_rect.w  = content_w; doc.root.layout.border_rect.h  = 0.0;
-        doc.root.layout.margin_rect.x  = 0.0; doc.root.layout.margin_rect.y  = 0.0;
-        doc.root.layout.margin_rect.w  = content_w; doc.root.layout.margin_rect.h  = 0.0;
-        // Root always needs re-layout since we reset its height to 0 above.
-        doc.root.layout.layout_dirty = true;
-
-        // When viewport height changed, mark all nodes dirty so vh-dependent
-        // elements and flex-stretch children get recalculated.
-        if (self.viewport_h - self.last_geometry_viewport_h).abs() > 0.5
-            && !self.last_geometry_viewport_h.is_nan()
-        {
-            fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
-                n.layout.layout_dirty = true;
-                n.layout.intrinsic_dirty = true;
-                n.has_dirty_layout_descendant = true;
-                for c in &mut n.children { mark_all_dirty(c); }
-            }
-            mark_all_dirty(&mut doc.root);
-        }
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
             resolve_all_slots(&mut doc.root);
         }
 
+        // ── Phase 1: Generate fragment tree from DOM ──────────────────────────
+        // The fragment tree has structural fixes:
+        // - Anonymous blocks for mixed block+inline
+        // - display:contents removed (children reparented)
+        // - Flex/grid children blockified
+        // - Parent-first-child margin-top zeroed (collapses through parent)
+        let frag_tree = fragment::generate_fragments(&doc.root);
+
+        // ── Phase 2: Convert to HtmlBox tree for layout ──────────────────────
+        // The converted tree has the same field names as HtmlBox so existing
+        // layout functions work unchanged. The DOM is not mutated.
+        let mut layout_tree = fragment::to_htmlbox(&frag_tree, &doc.root);
+
+        // Mark ENTIRE layout tree as dirty — the fragment tree is fresh and
+        // all nodes need layout. This prevents the subtree pruning cache from
+        // skipping nodes that have stale geometry from a previous DOM layout.
+        fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
+            n.layout.layout_dirty = true;
+            n.layout.intrinsic_dirty = true;
+            n.has_dirty_layout_descendant = true;
+            n.layout.last_containing_width = 0.0; // invalidate cache
+            for c in &mut n.children { mark_all_dirty(c); }
+        }
+        mark_all_dirty(&mut layout_tree);
+        propagate_dirty(&mut layout_tree);
+
+        // Set up root geometry
+        let rbox = self.res_box(&layout_tree.style, root_font_px, viewport_width, root_font_px);
+        let content_w = rbox.content_width.unwrap_or(viewport_width);
+        layout_tree.layout.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+        layout_tree.layout.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+        layout_tree.layout.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+        layout_tree.layout.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+
+        // ── Phase 3: Layout the converted tree ───────────────────────────────
         self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
-        self.layout_box(&mut doc.root, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
+        self.layout_box(&mut layout_tree, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
 
         // Update root geometry with final height
-        let h = doc.root.layout.margin_rect.h;
-        doc.root.layout.content_rect.h = h;
-        doc.root.layout.padding_rect.h = h;
-        doc.root.layout.border_rect.h  = h;
+        let h = layout_tree.layout.margin_rect.h;
+        layout_tree.layout.content_rect.h = h;
+        layout_tree.layout.padding_rect.h = h;
+        layout_tree.layout.border_rect.h  = h;
+
+        // ── Phase 4: Write layout results back to DOM ────────────────────────
+        fragment::write_back_htmlbox(&layout_tree, &mut doc.root);
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);

@@ -38,6 +38,8 @@ pub fn establishes_bfc(style: &ComputedStyle) -> bool {
 /// Mirrors C++ CanCollapseTopWithFirstChild.
 fn can_collapse_top_with_first_child(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
     if establishes_bfc(&node.style) { return false; }
+    // The root element (<html>) is the initial BFC — never collapses through
+    if node.tag == "html" { return false; }
     if rbox.border_top > 0.0 { return false; }
     if rbox.padding_top > 0.0 { return false; }
     if !node.layout.line_cache.is_empty() { return false; }

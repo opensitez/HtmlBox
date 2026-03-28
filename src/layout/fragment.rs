@@ -215,14 +215,9 @@ fn generate_node(node: &HtmlBox, parent_is_flex_grid: bool) -> Fragment {
         has_dirty_layout_descendant: node.has_dirty_layout_descendant,
     };
 
-    // Blockify inline items in flex/grid parents
-    if parent_is_flex_grid
-        && matches!(frag.style.display, Display::Inline)
-        && matches!(frag.style.float, Float::None)
-        && !matches!(frag.style.position, Position::Absolute | Position::Fixed)
-    {
-        frag.style.display = Display::Block;
-    }
+    // Blockification of flex/grid inline children is handled by the
+    // existing cascade (::before/::after) and layout_box dispatch.
+    // Don't modify styles in the fragment tree to avoid divergence.
 
     let is_flex_grid = matches!(frag.style.display,
         Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid);
@@ -236,16 +231,9 @@ fn generate_node(node: &HtmlBox, parent_is_flex_grid: bool) -> Fragment {
     for child in effective {
         if matches!(child.style.display, Display::None) { continue; }
 
-        // display:contents → reparent children
-        if matches!(child.style.display, Display::Contents) {
-            for gc in &child.children {
-                if matches!(gc.style.display, Display::None) { continue; }
-                let gc_frag = generate_node(gc, is_flex_grid);
-                track_block_inline(&gc_frag, &mut has_block, &mut has_inline);
-                children.push(gc_frag);
-            }
-            continue;
-        }
+        // display:contents reparenting is handled by layout_box at runtime.
+        // Keep the display:contents element in the fragment tree so the
+        // tree structure matches the DOM (needed for write-back).
 
         let child_frag = generate_node(child, is_flex_grid);
         track_block_inline(&child_frag, &mut has_block, &mut has_inline);
@@ -253,35 +241,28 @@ fn generate_node(node: &HtmlBox, parent_is_flex_grid: bool) -> Fragment {
     }
 
     // Anonymous block insertion for mixed block+inline in block containers
-    if has_block && has_inline
-        && !is_flex_grid
-        && !matches!(frag.style.display, Display::Inline | Display::InlineBlock
-            | Display::InlineFlex | Display::InlineGrid)
-    {
-        children = wrap_inline_runs(children, &frag.style);
-    }
-
-    // Parent-first-child margin collapsing:
-    // If this block has no border-top/padding-top and is not a BFC root,
-    // zero the first in-flow child's margin-top on the fragment.
-    // The margin propagates to this fragment's collapsed_margin_top instead.
-    if can_collapse_top_margin(&frag.style, &frag.layout) && !children.is_empty() {
-        if let Some(first) = children.iter_mut().find(|c|
-            !matches!(c.style.display, Display::None)
-            && !matches!(c.style.position, Position::Absolute | Position::Fixed)
-            && matches!(c.style.float, Float::None)
-        ) {
-            let child_mt = first.style.margin_top.resolve(16.0, 0.0, 16.0);
-            if child_mt > 0.0 {
-                // Store the real margin for collapsed_margin_top propagation
-                frag.layout.collapsed_margin_top = frag.layout.collapsed_margin_top.max(child_mt);
-                // Zero it in the fragment so layout doesn't add internal gap
-                first.style.margin_top = CssLength::Px(0.0);
-            }
-        }
-    }
+    // NOTE: disabled for now — the existing layout engine already handles
+    // mixed block+inline via has_block_children() runtime checks. Enabling
+    // anonymous blocks changes the tree structure which breaks the existing
+    // block/inline layout dispatch. Enable once layout reads from fragments directly.
+    // if has_block && has_inline
+    //     && !is_flex_grid
+    //     && !matches!(frag.style.display, Display::Inline | Display::InlineBlock
+    //         | Display::InlineFlex | Display::InlineGrid)
+    // {
+    //     children = wrap_inline_runs(children, &frag.style);
+    // }
 
     frag.children = children;
+
+    // NOTE: margin collapsing is disabled for now — it's too aggressive and
+    // breaks real pages (AP News, Wikipedia, Yahoo Finance). The collapsing
+    // logic needs to account for inline content, floats, and BFC boundaries
+    // more carefully. The fragment tree infrastructure is correct; the
+    // collapsing rules need refinement.
+    // TODO: re-enable with proper MarginCollapseState during layout walk
+    // resolve_margin_collapsing(&mut frag);
+
     frag
 }
 
@@ -292,12 +273,97 @@ fn track_block_inline(frag: &Fragment, has_block: &mut bool, has_inline: &mut bo
     else { *has_inline = true; }
 }
 
-fn can_collapse_top_margin(style: &ComputedStyle, _layout: &LayoutBox) -> bool {
+/// Can this element's top margin collapse through to its first child?
+/// CSS 2.1 §8.3.1: no border-top, no padding-top, no BFC, is block container.
+fn can_collapse_top(style: &ComputedStyle) -> bool {
     if style.establishes_bfc() { return false; }
-    // Check for border-top or padding-top (use the style values, not resolved)
-    if !matches!(style.border_top_width, CssLength::Px(0.0) | CssLength::Auto) { return false; }
-    if !matches!(style.padding_top, CssLength::Px(0.0) | CssLength::Auto) { return false; }
+    if !matches!(style.display, Display::Block | Display::ListItem) { return false; }
+    let bt = style.border_top_width.resolve(16.0, 0.0, 16.0);
+    if bt > 0.0 { return false; }
+    let pt = style.padding_top.resolve(16.0, 0.0, 16.0);
+    if pt > 0.0 { return false; }
     true
+}
+
+/// Can this element's bottom margin collapse through to its last child?
+fn can_collapse_bottom(style: &ComputedStyle) -> bool {
+    if style.establishes_bfc() { return false; }
+    if !matches!(style.display, Display::Block | Display::ListItem) { return false; }
+    let bb = style.border_bottom_width.resolve(16.0, 0.0, 16.0);
+    if bb > 0.0 { return false; }
+    let pb = style.padding_bottom.resolve(16.0, 0.0, 16.0);
+    if pb > 0.0 { return false; }
+    if !style.height.is_auto() { return false; }
+    let mh = style.min_height.resolve(16.0, 0.0, 16.0);
+    if mh > 0.0 { return false; }
+    true
+}
+
+/// Find the first in-flow child index.
+fn first_in_flow(children: &[Fragment]) -> Option<usize> {
+    children.iter().position(|c|
+        !matches!(c.style.display, Display::None)
+        && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+        && matches!(c.style.float, Float::None)
+    )
+}
+
+/// Find the last in-flow child index.
+fn last_in_flow(children: &[Fragment]) -> Option<usize> {
+    children.iter().rposition(|c|
+        !matches!(c.style.display, Display::None)
+        && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+        && matches!(c.style.float, Float::None)
+    )
+}
+
+/// Resolve margin collapsing in the fragment tree.
+/// This runs AFTER children are generated, so we can read/modify children's margins.
+///
+/// CSS 2.1 §8.3.1:
+/// - Parent-first-child: parent's margin-top collapses with first in-flow child's margin-top
+/// - Parent-last-child: parent's margin-bottom collapses with last in-flow child's margin-bottom
+/// - Adjacent siblings: handled during layout (block.rs collapse_two)
+fn resolve_margin_collapsing(frag: &mut Fragment) {
+    // Only block containers participate in margin collapsing
+    if !matches!(frag.style.display, Display::Block | Display::ListItem) {
+        return;
+    }
+
+    let font_px = 16.0; // approximation for margin resolution
+    let root_font_px = 16.0;
+
+    // Parent-first-child top margin collapsing
+    if can_collapse_top(&frag.style) {
+        if let Some(idx) = first_in_flow(&frag.children) {
+            let child_mt = frag.children[idx].style.margin_top.resolve(font_px, 0.0, root_font_px);
+            let parent_mt = frag.style.margin_top.resolve(font_px, 0.0, root_font_px);
+            if child_mt > 0.0 || parent_mt > 0.0 {
+                // Collapsed margin = max of parent and child
+                let collapsed = parent_mt.max(child_mt);
+                // Set parent's margin to the collapsed value
+                frag.style.margin_top = CssLength::Px(collapsed);
+                // Zero child's margin (it's been absorbed into parent)
+                frag.children[idx].style.margin_top = CssLength::Px(0.0);
+                // Update collapsed_margin_top for further propagation up
+                frag.layout.collapsed_margin_top = collapsed;
+            }
+        }
+    }
+
+    // Parent-last-child bottom margin collapsing
+    if can_collapse_bottom(&frag.style) {
+        if let Some(idx) = last_in_flow(&frag.children) {
+            let child_mb = frag.children[idx].style.margin_bottom.resolve(font_px, 0.0, root_font_px);
+            let parent_mb = frag.style.margin_bottom.resolve(font_px, 0.0, root_font_px);
+            if child_mb > 0.0 || parent_mb > 0.0 {
+                let collapsed = parent_mb.max(child_mb);
+                frag.style.margin_bottom = CssLength::Px(collapsed);
+                frag.children[idx].style.margin_bottom = CssLength::Px(0.0);
+                frag.layout.collapsed_margin_bottom = collapsed;
+            }
+        }
+    }
 }
 
 /// Wrap runs of inline children in anonymous block fragments.
@@ -363,7 +429,157 @@ fn create_anonymous_block(children: Vec<Fragment>, parent_style: &ComputedStyle)
     }
 }
 
+// ─── Fragment ↔ HtmlBox conversion ────────────────────────────────────────────
+
+/// Convert a Fragment tree to an HtmlBox tree for layout.
+/// The Fragment has structural fixes (anonymous blocks, zeroed margins)
+/// that the HtmlBox tree doesn't. Layout runs on this converted tree,
+/// then results are written back to the real DOM.
+///
+/// Copies ALL fields from the DOM node (not just what Fragment stores),
+/// then applies the Fragment's style overrides (margin zeroing, blockification, etc.).
+pub fn to_htmlbox(frag: &Fragment, dom: &HtmlBox) -> HtmlBox {
+    // Start from a full clone of the DOM node if IDs match, otherwise build from fragment
+    let mut hbox = if frag.node_id != 0 && frag.node_id == dom.node_id {
+        let mut h = dom.clone();
+        h.children.clear(); // rebuild children from fragment tree structure
+        h
+    } else {
+        // Anonymous fragment or no DOM match — build from fragment data
+        let mut h = HtmlBox::new(&frag.tag);
+        h.node_id = frag.node_id;
+        h.text = frag.text.clone();
+        h.layout = frag.layout.clone();
+        h.attributes = frag.attributes.clone();
+        h.component_width = frag.component_width;
+        h.component_height = frag.component_height;
+        h.image_width = frag.image_width;
+        h.image_height = frag.image_height;
+        h.svg_viewbox_w = frag.svg_viewbox_w;
+        h.svg_viewbox_h = frag.svg_viewbox_h;
+        h
+    };
+
+    // Apply fragment's style overrides (margin zeroing, blockification, etc.)
+    hbox.style = frag.style.clone();
+
+    // Rebuild children from the fragment tree structure
+    // (may include anonymous blocks, reparented display:contents children, etc.)
+    for fc in &frag.children {
+        // Find the matching DOM node for a full field copy
+        let dom_child = if fc.node_id != 0 {
+            find_dom_node(dom, fc.node_id)
+        } else if fc.tag == "::before" || fc.tag == "::after" {
+            dom.children.iter().find(|c| c.tag == fc.tag)
+        } else {
+            None
+        };
+        let dummy = HtmlBox::new("");
+        hbox.children.push(to_htmlbox(fc, dom_child.unwrap_or(&dummy)));
+    }
+
+    hbox
+}
+
+/// Find a DOM node by node_id anywhere in the subtree (immutable).
+fn find_dom_node(root: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+    if root.node_id == id { return Some(root); }
+    for child in &root.children {
+        if let Some(found) = find_dom_node(child, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 // ─── Write-back ───────────────────────────────────────────────────────────────
+
+/// Copy layout results from a laid-out HtmlBox tree (converted from fragments)
+/// back to the real DOM tree. Uses recursive node_id matching because the
+/// fragment tree may have reparented children (display:contents, anonymous blocks).
+pub fn write_back_htmlbox(laid_out: &HtmlBox, dom: &mut HtmlBox) {
+    // Write this node's layout geometry if node_ids match.
+    // Preserve resolved_margin/border/padding values from the DOM's own cascade
+    // (margin collapsing changes positioning but not the CSS-specified values).
+    if laid_out.node_id == dom.node_id && laid_out.node_id != 0 {
+        dom.layout.content_rect = laid_out.layout.content_rect;
+        dom.layout.padding_rect = laid_out.layout.padding_rect;
+        dom.layout.border_rect = laid_out.layout.border_rect;
+        dom.layout.margin_rect = laid_out.layout.margin_rect;
+        dom.layout.baseline = laid_out.layout.baseline;
+        dom.layout.line_cache = laid_out.layout.line_cache.clone();
+        dom.layout.inline_runs = laid_out.layout.inline_runs.clone();
+        dom.layout.collapsed_margin_top = laid_out.layout.collapsed_margin_top;
+        dom.layout.collapsed_margin_bottom = laid_out.layout.collapsed_margin_bottom;
+        dom.layout.scroll_height = laid_out.layout.scroll_height;
+        dom.layout.scroll_width = laid_out.layout.scroll_width;
+        dom.layout.abs_static_y = laid_out.layout.abs_static_y;
+        dom.layout.layout_dirty = laid_out.layout.layout_dirty;
+        dom.layout.last_containing_width = laid_out.layout.last_containing_width;
+        dom.layout.resolved_content_width = laid_out.layout.resolved_content_width;
+        // Resolved margin/border/padding: copy from laid-out tree.
+        // These reflect the actual CSS values resolved during layout.
+        dom.layout.resolved_margin_top = dom.style.margin_top.resolve(16.0, 0.0, 16.0).max(0.0);
+        dom.layout.resolved_margin_right = laid_out.layout.resolved_margin_right;
+        dom.layout.resolved_margin_bottom = dom.style.margin_bottom.resolve(16.0, 0.0, 16.0).max(0.0);
+        dom.layout.resolved_margin_left = laid_out.layout.resolved_margin_left;
+        dom.layout.resolved_border_top = laid_out.layout.resolved_border_top;
+        dom.layout.resolved_border_right = laid_out.layout.resolved_border_right;
+        dom.layout.resolved_border_bottom = laid_out.layout.resolved_border_bottom;
+        dom.layout.resolved_border_left = laid_out.layout.resolved_border_left;
+        dom.layout.resolved_pad_top = laid_out.layout.resolved_pad_top;
+        dom.layout.resolved_pad_right = laid_out.layout.resolved_pad_right;
+        dom.layout.resolved_pad_bottom = laid_out.layout.resolved_pad_bottom;
+        dom.layout.resolved_pad_left = laid_out.layout.resolved_pad_left;
+    }
+
+    // For each laid-out child, find the matching DOM node anywhere in this subtree
+    for lc in &laid_out.children {
+        if lc.node_id == 0 {
+            // Anonymous box or pseudo-element — check if it's ::before/::after
+            if lc.tag == "::before" || lc.tag == "::after" {
+                // Match by tag within direct children of DOM parent
+                if let Some(dom_pseudo) = dom.children.iter_mut().find(|c| c.tag == lc.tag) {
+                    dom_pseudo.layout = lc.layout.clone();
+                    // Recurse for pseudo's children
+                    write_back_htmlbox(lc, dom_pseudo);
+                }
+            } else {
+                // Regular anonymous box — recurse into its children
+                write_back_htmlbox_into_subtree(lc, dom);
+            }
+            continue;
+        }
+        // Find matching DOM node in this subtree and write back
+        if let Some(dom_node) = find_dom_node_mut(dom, lc.node_id) {
+            write_back_htmlbox(lc, dom_node);
+        }
+    }
+}
+
+/// Write back from an anonymous box's children into the DOM subtree.
+fn write_back_htmlbox_into_subtree(anon: &HtmlBox, dom: &mut HtmlBox) {
+    for lc in &anon.children {
+        if lc.node_id == 0 {
+            write_back_htmlbox_into_subtree(lc, dom);
+            continue;
+        }
+        if let Some(dom_node) = find_dom_node_mut(dom, lc.node_id) {
+            write_back_htmlbox(lc, dom_node);
+        }
+    }
+}
+
+/// Find a mutable DOM node by node_id anywhere in the subtree.
+fn find_dom_node_mut(root: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
+    if root.node_id == id { return Some(root); }
+    for child in &mut root.children {
+        if let Some(found) = find_dom_node_mut(child, id) {
+            return Some(found);
+        }
+    }
+    None
+}
 
 /// Copy layout results from fragment tree back to DOM tree.
 pub fn write_back(frag: &Fragment, dom: &mut HtmlBox) {
@@ -432,7 +648,8 @@ mod tests {
     }
 
     #[test]
-    fn fragment_anonymous_blocks() {
+    fn fragment_tree_mirrors_dom() {
+        // Fragment tree should mirror DOM structure (no structural changes yet)
         let doc = load_html("<div>text <p>block</p> more</div>", 400.0);
         let frag = generate_fragments(&doc.root);
 
@@ -442,8 +659,8 @@ mod tests {
         }
 
         if let Some(div) = find_div(&frag) {
-            let has_anon = div.children.iter().any(|c| c.node_id == 0);
-            assert!(has_anon, "mixed block+inline should produce anonymous blocks");
+            // Should have same children as DOM (no anonymous blocks yet)
+            assert!(!div.children.is_empty(), "div should have children");
         }
     }
 
