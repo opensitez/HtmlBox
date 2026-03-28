@@ -1194,7 +1194,10 @@ impl LayoutEngine {
                 let w = (h * iw / ih).round();
                 node.style.width = CssLength::Px(w);
             } else if node.style.height.is_auto() && !node.style.width.is_auto() {
-                let w = node.style.width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                let mut w = node.style.width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                // Apply max-width constraint before computing aspect ratio height
+                let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                if max_w > 0.0 && w > max_w { w = max_w; }
                 let h = (w * ih / iw).round();
                 node.style.height = CssLength::Px(h);
             } else if node.style.width.is_auto() && node.style.height.is_auto() {
