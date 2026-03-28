@@ -66,6 +66,7 @@ pub use layout::{LayoutEngine, Constraints, IntrinsicSizes, FormattingContext};
 pub use frame::{EngineFrame, EngineCallbacks};
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
 pub use renderer::{Renderer, draw_inspect_overlay};
+pub use renderer::compositor::{Compositor, CompositorLayer, LayerId, LayerReason};
 pub use dom::HtmlEventType;
 
 /// High-level convenience: parse HTML, layout, ready to render.

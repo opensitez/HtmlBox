@@ -1,6 +1,7 @@
 pub mod display_list;
 pub mod display_list_builder;
 pub mod display_list_replay;
+pub mod compositor;
 
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform};
 use cosmic_text::{Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache, Style as CTextStyle};
@@ -35,6 +36,8 @@ pub struct Renderer {
     cached_layout_generation: u64,
     dropdown_hover_idx: i32,
     pub content_offset_y: f32,
+    /// Compositor layer tree — built after layout, used for scroll/transform/opacity.
+    pub compositor: compositor::Compositor,
 }
 
 impl Renderer {
@@ -54,6 +57,7 @@ impl Renderer {
             cached_hovered_id: 0, display_list_dirty: true,
             cached_layout_generation: 0, dropdown_hover_idx: -1,
             content_offset_y: 0.0,
+            compositor: compositor::Compositor::new(),
         }
     }
 
@@ -324,6 +328,8 @@ impl Renderer {
             self.cached_hovered_id = doc.hovered_box;
             self.cached_layout_generation = doc.layout_generation;
             self.display_list_dirty = false;
+            // Rebuild compositor layer tree when layout changes
+            self.compositor.build_layers(&doc.root, view_w, view_h);
         }
         if let Some(ref list) = self.cached_display_list {
             display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
