@@ -510,4 +510,146 @@ impl EngineFrame {
     pub fn get_attribute(&self, id: u32, key: &str) -> Option<String> {
         self.doc.get_node(id).and_then(|n| n.attributes.get(key).cloned())
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Focus & Keyboard — the engine handles tab order, focus events, key routing
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Move focus to the next focusable element (Tab).
+    /// Returns true if focus changed.
+    pub fn focus_next(&mut self) -> bool {
+        let changed = self.doc.focus_next();
+        if changed {
+            self.mark_style_dirty(); // :focus styles may change
+        }
+        changed
+    }
+
+    /// Move focus to the previous focusable element (Shift+Tab).
+    pub fn focus_prev(&mut self) -> bool {
+        let changed = self.doc.focus_prev();
+        if changed {
+            self.mark_style_dirty();
+        }
+        changed
+    }
+
+    /// Focus a specific element by node ID.
+    pub fn focus(&mut self, node_id: u32) {
+        if self.doc.focused_box != node_id {
+            let old = self.doc.focused_box;
+            self.doc.focused_box = node_id;
+            self.doc.keyboard_focus = true;
+            // Fire blur on old, focus on new
+            if old != 0 {
+                let mut e = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Blur);
+                e.target = old;
+                e.related_target = node_id;
+                self.doc.events.dispatch(&mut self.doc.root, e);
+            }
+            if node_id != 0 {
+                let mut e = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Focus);
+                e.target = node_id;
+                e.related_target = old;
+                self.doc.events.dispatch(&mut self.doc.root, e);
+            }
+            self.mark_style_dirty();
+        }
+    }
+
+    /// Remove focus from the currently focused element.
+    pub fn blur(&mut self) {
+        self.focus(0);
+    }
+
+    /// Get the currently focused element's node ID (0 = none).
+    pub fn focused(&self) -> u32 {
+        self.doc.focused_box
+    }
+
+    /// Handle a keyboard event. Routes to the focused element.
+    /// Returns true if the event was handled (consumed).
+    pub fn key_down(&mut self, key: &str, modifiers: u8) -> bool {
+        // Tab / Shift+Tab → focus navigation
+        if key == "Tab" {
+            let shift = modifiers & 1 != 0;
+            return if shift { self.focus_prev() } else { self.focus_next() };
+        }
+
+        // Escape → blur
+        if key == "Escape" {
+            self.blur();
+            return true;
+        }
+
+        // Enter/Space → activate focused element (click)
+        if (key == "Enter" || key == " ") && self.doc.focused_box != 0 {
+            let focused = self.doc.focused_box;
+            let node = self.doc.get_node(focused);
+            if let Some(n) = node {
+                let pt = (n.layout.content_rect.x + 1.0, n.layout.content_rect.y + 1.0);
+                self.doc.process_mouse_event(crate::dom::HtmlEventType::Click, pt, 0);
+                self.mark_style_dirty();
+                return true;
+            }
+        }
+
+        // Route to focused element's event handler
+        if self.doc.focused_box != 0 {
+            // Check if focused element is a custom component
+            if let Some(node) = self.doc.get_node(self.doc.focused_box) {
+                let tag = node.tag.clone();
+                if let Some(component) = self.engine.component_registry.get_component(&tag) {
+                    let event = crate::types::ComponentEvent::KeyDown {
+                        key: key.to_string(),
+                        modifiers,
+                    };
+                    if let Some(node_mut) = self.doc.get_box_by_id_mut(self.doc.focused_box) {
+                        if component.handle_event(node_mut, &event) {
+                            self.mark_paint_dirty();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Handle text input (from IME or direct typing).
+    pub fn text_input(&mut self, text: &str) -> bool {
+        if self.doc.focused_box != 0 {
+            if let Some(node) = self.doc.get_node(self.doc.focused_box) {
+                let tag = node.tag.clone();
+                if let Some(component) = self.engine.component_registry.get_component(&tag) {
+                    let event = crate::types::ComponentEvent::TextInput {
+                        text: text.to_string(),
+                    };
+                    if let Some(node_mut) = self.doc.get_box_by_id_mut(self.doc.focused_box) {
+                        if component.handle_event(node_mut, &event) {
+                            self.mark_paint_dirty();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Accessibility — the engine provides an a11y tree for screen readers
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get accessibility announcements (from aria-live regions).
+    /// Call after update_frame() to get pending announcements.
+    pub fn take_announcements(&mut self) -> Vec<crate::types::Announcement> {
+        self.doc.take_announcements()
+    }
+
+    /// Check if there are pending accessibility announcements.
+    pub fn has_announcements(&self) -> bool {
+        !self.doc.pending_announcements.is_empty()
+    }
 }
