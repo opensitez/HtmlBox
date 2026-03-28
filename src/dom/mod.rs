@@ -815,6 +815,7 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
     tn.text = text.to_string();
     // Inherit style from parent so text rendering picks up font/color.
     tn.style = b.style.clone();
+    tn.style.display = Display::Inline; // #text nodes must remain inline
     tn.style.hover_style = None;
     tn.style.active_style = None;
     tn.style.visited_style = None;
@@ -1347,13 +1348,6 @@ impl Editor {
         // Add text content to the new block.
         if !after_text.is_empty() {
             set_text_content(&mut new_block, &after_text);
-            // Inherit style to text child too
-            if let Some(tc) = new_block.children.first_mut() {
-                if let Some(src) = find_box_mut(root, caret_nid) {
-                    tc.style = src.style.clone();
-                    tc.style.hover_style = None;
-                }
-            }
         }
         let new_block_id = new_block.node_id;
 

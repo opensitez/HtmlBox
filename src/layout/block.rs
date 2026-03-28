@@ -516,7 +516,7 @@ pub fn layout_block_with_fc(
             );
             // Shrink-to-fit for auto-width floats
             if grid_child_ref(node, path).style.width.is_auto() {
-                let intrinsic_w = compute_intrinsic_width(grid_child_ref(node, path));
+                let intrinsic_w = engine.max_content_width(grid_child_ref(node, path), font_px, root_font_px);
                 if intrinsic_w > 0.0 && intrinsic_w < child_content_w {
                     let irb = grid_child_ref(node, path);
                     let shrink_w = intrinsic_w
@@ -664,12 +664,9 @@ pub fn layout_block_with_fc(
                     grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
                     font_px, root_font_px
                 );
-                // Shrink-to-fit for auto-width InlineBlock children (CSS §10.3.9)
+                // Shrink-to-fit for inline children (inline, inline-block, inline-flex, inline-grid)
                 let ch = grid_child_ref(node, path);
-                if ch.style.width.is_auto()
-                    && matches!(ch.style.display,
-                        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
-                {
+                if ch.style.width.is_auto() {
                     let max_line_w = ch.layout.line_cache.iter()
                         .map(|l| l.width).fold(0.0_f32, f32::max);
                     let intrinsic_w = if max_line_w > 0.0 { max_line_w }

@@ -703,7 +703,9 @@ impl LayoutEngine {
         }
 
         // Column flex or block: max of children's max-content widths.
+        // Exception: floated children sit side by side, so sum their widths.
         let mut max_w = 0.0f32;
+        let mut float_sum = 0.0f32;
         for ch in &node.children {
             if matches!(ch.style.display, Display::None) { continue; }
             if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
@@ -713,9 +715,14 @@ impl LayoutEngine {
                 + child_rbox.border_left + child_rbox.border_right
                 + child_rbox.margin_left + child_rbox.margin_right;
             let cw = self.max_content_width(ch, font_px, root_font_px) + child_outer;
-            if cw > max_w { max_w = cw; }
+            if !matches!(ch.style.float, Float::None) {
+                float_sum += cw;
+            } else {
+                if cw > max_w { max_w = cw; }
+            }
         }
-        max_w + pad_border
+        // Container must be wide enough for both floats and normal flow
+        max_w.max(float_sum) + pad_border
     }
 
     /// Kick off non-blocking font loading. Base64 and local fonts are loaded
@@ -1339,8 +1346,22 @@ impl LayoutEngine {
                 table::layout_table(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
             }
             _ => {
-                // Determine if children are block-level or inline-level
-                if has_block_children(node) {
+                // Determine if children are block-level or inline-level.
+                // Also use block layout when ALL non-abs, non-hidden children are
+                // floated (no inline content to lay out). When floats and inline
+                // content coexist, inline layout handles them via Float items.
+                let children = node.effective_children();
+                let has_any_inline = children.iter().any(|c|
+                    !matches!(c.style.display, Display::None)
+                    && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                    && matches!(c.style.float, Float::None)
+                    && c.style.is_inline_level()
+                    && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace())));
+                let has_only_floats = !has_any_inline && children.iter().any(|c|
+                    !matches!(c.style.display, Display::None)
+                    && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                    && !matches!(c.style.float, Float::None));
+                if has_block_children(node) || has_only_floats {
                     block::layout_block_with_fc(self, node, &rbox, containing_w, x, y, font_px, root_font_px, fc)
                 } else {
                     // Pass parent float context so inline content wraps around

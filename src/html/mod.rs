@@ -1681,15 +1681,13 @@ fn collapse_whitespace(s: &str) -> String {
     out
 }
 
-/// Parse a `srcset` attribute value and return the first URL.
-/// `srcset` may contain entries like `url 320w, url 640w` or just `url`.
 /// Parse a `srcset` attribute and return the best URL.
-/// For `w` descriptors, picks the largest available (we render at high quality).
+/// For `w` descriptors, picks the smallest available (conservative choice when display size unknown).
 /// For `x` descriptors, picks the 1x version (or closest).
-/// Falls back to the last (typically largest) entry.
+/// Falls back to the first entry.
 fn parse_srcset_url(srcset: &str) -> Option<String> {
     let mut best_url: Option<String> = None;
-    let mut best_w: f32 = 0.0;
+    let mut best_w: f32 = f32::MAX;
     let mut best_x: f32 = 0.0;
     let mut has_w = false;
     let mut has_x = false;
@@ -1706,7 +1704,7 @@ fn parse_srcset_url(srcset: &str) -> Option<String> {
             if let Some(w_str) = descriptor.strip_suffix('w') {
                 has_w = true;
                 if let Ok(w) = w_str.parse::<f32>() {
-                    if w > best_w {
+                    if w < best_w {
                         best_w = w;
                         best_url = Some(url.to_string());
                     }
@@ -1757,10 +1755,10 @@ fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f3
                 if !crate::css::evaluate_media(media, vw, vh) {
                     continue;
                 }
+            } else {
+                // Viewport unknown — skip conditional sources
+                continue;
             }
-            // When viewport is unknown (vw==0), still try sources with media
-            // queries — better to show the higher-res image than the tiny fallback.
-            // The post-pass with real viewport will correct if needed.
         }
         // Extract URL from srcset
         if let Some(srcset) = child.attributes.get("srcset") {
@@ -2209,8 +2207,8 @@ fn parse_html_full(
     apply_details_summary_post_cascade(&mut doc.root);
     number_lists(&mut doc.root);
 
-    // Populate flat NodeArena from the tree
-    // Arena rebuilt lazily on first render
+    // Populate linked-list sibling pointers on every node
+    populate_sibling_links(&mut doc.root);
 
     doc
 }

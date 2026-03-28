@@ -781,7 +781,17 @@ pub fn layout_grid(
                 }
                 _ => {
                     let px = track_to_px(track, containing_w, font_px, root_font_px);
-                    if px > 0.0 && px > row_heights[ri] { row_heights[ri] = px; }
+                    if px > 0.0 {
+                        // Fixed/percent tracks set exact height; fr/auto use content
+                        match track.kind {
+                            GridTrackKind::Fixed | GridTrackKind::Percent | GridTrackKind::Calc => {
+                                row_heights[ri] = px;
+                            }
+                            _ => {
+                                if px > row_heights[ri] { row_heights[ri] = px; }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -890,6 +900,7 @@ pub fn layout_grid(
             };
             let saved_h = child.style.height.clone();
             child.style.height = CssLength::Px(css_h);
+            child.layout.layout_dirty = true;  // force re-layout with new height
             engine.layout_box(child, span_w, ix, iy, font_px, root_font_px);
             child.style.height = saved_h;
         } else {

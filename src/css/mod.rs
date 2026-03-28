@@ -895,7 +895,8 @@ fn try_parse_length(v: &str) -> Option<crate::types::CssLength> {
     let v = v.trim();
     if v == "auto" { return Some(crate::types::CssLength::Auto); }
     if v == "none" { return Some(crate::types::CssLength::None); }
-    if v == "0" || v == "0px" { return Some(crate::types::CssLength::Zero); }
+    if v == "0" { return Some(crate::types::CssLength::Zero); }
+    if v == "0px" { return Some(crate::types::CssLength::Px(0.0)); }
     // Use the existing parse_length which handles px, em, rem, %, vw, vh, calc, min, max, clamp
     let l = parse_length(v);
     // parse_length returns Auto for unrecognized values — only accept if it parsed to something specific

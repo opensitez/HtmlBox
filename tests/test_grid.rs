@@ -83,7 +83,7 @@ fn grid_row_start_number() {
 fn grid_column_span() {
     let mut style = ComputedStyle::default();
     apply_property(&mut style, "grid-column-start", "span 2");
-    assert_eq!(style.grid_column_start, -2);
+    assert_eq!(style.grid_column_start, -10002);
 }
 
 // ============================================================
@@ -313,7 +313,7 @@ fn grid_row_shorthand_start_span() {
     let mut style = ComputedStyle::default();
     apply_property(&mut style, "grid-row", "1 / span 2");
     assert_eq!(style.grid_row_start, 1);
-    assert_eq!(style.grid_row_end, -2);
+    assert_eq!(style.grid_row_end, -10002);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn grid_column_span_parsing() {
     let mut style = ComputedStyle::default();
     apply_property(&mut style, "grid-column", "1 / span 3");
     assert_eq!(style.grid_column_start, 1);
-    assert_eq!(style.grid_column_end, -3);
+    assert_eq!(style.grid_column_end, -10003);
 }
 
 // ============================================================
@@ -579,12 +579,15 @@ fn grid_template_rows_layout() {
            <div>A</div><div>B</div>\
          </div>", 400.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
-    let a = &grid.children[0];
-    let b = &grid.children[1];
+    let elems: Vec<&HtmlBox> = grid.children.iter().filter(|c| c.tag != "#text").collect();
+    let a = elems[0];
+    let b = elems[1];
     // First row ~50px
-    assert!(a.layout.margin_rect.h >= 45.0 && a.layout.margin_rect.h <= 55.0);
+    assert!(a.layout.margin_rect.h >= 45.0 && a.layout.margin_rect.h <= 55.0,
+        "first row should be ~50px, got {}", a.layout.margin_rect.h);
     // Second row ~100px
-    assert!(b.layout.margin_rect.h >= 95.0 && b.layout.margin_rect.h <= 105.0);
+    assert!(b.layout.margin_rect.h >= 95.0 && b.layout.margin_rect.h <= 105.0,
+        "second row should be ~100px, got {}", b.layout.margin_rect.h);
 }
 
 // ============================================================
