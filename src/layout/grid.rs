@@ -372,9 +372,10 @@ pub fn layout_grid(
     let col_gap = engine.res_len(&node.style.column_gap, font_px, content_w, root_font_px);
     let row_gap = engine.res_len(&node.style.row_gap, font_px, content_w, root_font_px);
 
-    // Resolve column track sizes
-    let col_tracks = resolve_track_sizes(&node.style.grid_template_columns,
-        &node.style.auto_repeat_columns, content_w, font_px, root_font_px);
+    // Resolve column track sizes (pass gap for auto-fill/fit count)
+    let col_gap_for_count = engine.res_len(&node.style.column_gap, font_px, content_w, root_font_px);
+    let col_tracks = resolve_track_sizes_with_gap(&node.style.grid_template_columns,
+        &node.style.auto_repeat_columns, content_w, font_px, root_font_px, col_gap_for_count);
     let row_tracks = node.style.grid_template_rows.clone();
 
     // Collect visible items (non-abs-positioned)
@@ -815,10 +816,59 @@ pub fn layout_grid(
     // Apply grid-auto-rows to implicit rows (rows beyond the explicit row count)
     {
         let n_explicit_rows = node.style.grid_template_rows.len();
-        let auto_h = track_to_px(&node.style.grid_auto_rows, containing_w, font_px, root_font_px);
-        if auto_h > 0.0 {
+        let ar = &node.style.grid_auto_rows;
+        if ar.kind == GridTrackKind::MinMax {
+            // minmax(min, max): enforce min as floor, max as ceiling
+            let min_h = track_to_px(
+                &GridTrackSize { kind: ar.min_kind, value: ar.min_value, ..Default::default() },
+                containing_w, font_px, root_font_px,
+            );
+            let max_h = track_to_px(
+                &GridTrackSize { kind: ar.max_kind, value: ar.max_value, ..Default::default() },
+                containing_w, font_px, root_font_px,
+            );
             for r in n_explicit_rows..n_rows {
-                if auto_h > row_heights[r] { row_heights[r] = auto_h; }
+                let mut h = row_heights[r].max(min_h);
+                if max_h > 0.0 { h = h.min(max_h); }
+                row_heights[r] = h.max(min_h);
+            }
+        } else {
+            let auto_h = track_to_px(ar, containing_w, font_px, root_font_px);
+            if auto_h > 0.0 {
+                for r in n_explicit_rows..n_rows {
+                    if auto_h > row_heights[r] { row_heights[r] = auto_h; }
+                }
+            }
+        }
+    }
+
+    // Distribute fr units and percentages for row tracks when container has explicit height
+    if let Some(container_h) = rbox.content_height {
+        let total_gap = row_gap * n_rows.saturating_sub(1) as f32;
+        // Resolve percentage rows
+        for (ri, track) in row_tracks.iter().enumerate() {
+            if ri < row_heights.len() && track.kind == GridTrackKind::Percent {
+                row_heights[ri] = (track.value / 100.0 * container_h).max(0.0);
+            }
+        }
+        // Distribute fractional rows
+        let mut fr_total = 0.0f32;
+        let mut fixed_total = 0.0f32;
+        for (ri, track) in row_tracks.iter().enumerate() {
+            if ri < row_heights.len() {
+                if track.kind == GridTrackKind::Fractional {
+                    fr_total += track.value;
+                } else {
+                    fixed_total += row_heights[ri];
+                }
+            }
+        }
+        if fr_total > 0.0 {
+            let available = (container_h - fixed_total - total_gap).max(0.0);
+            for (ri, track) in row_tracks.iter().enumerate() {
+                if ri < row_heights.len() && track.kind == GridTrackKind::Fractional {
+                    row_heights[ri] = (available * track.value / fr_total).max(0.0);
+                }
             }
         }
     }
@@ -1173,22 +1223,44 @@ fn resolve_track_sizes(
     font_px: f32,
     root_font_px: f32,
 ) -> Vec<GridTrackSize> {
+    resolve_track_sizes_with_gap(tracks, auto_repeat, container, font_px, root_font_px, 0.0)
+}
+
+fn resolve_track_sizes_with_gap(
+    tracks: &[GridTrackSize],
+    auto_repeat: &[GridTrackSize],
+    container: f32,
+    font_px: f32,
+    root_font_px: f32,
+    gap: f32,
+) -> Vec<GridTrackSize> {
     let mut result = Vec::new();
     for t in tracks {
         if t.kind == GridTrackKind::Auto && t.value == -1.0 {
             // Auto-fill/fit placeholder — expand using auto_repeat_columns
             if !auto_repeat.is_empty() {
-                // Estimate pattern width, accounting for all tracks in the pattern
-                let mut total_fixed = 0.0f32;
+                // For auto-fill/fit, use the minimum track size to determine count.
+                // minmax(200px, 1fr) → min is 200px, that determines how many fit.
+                let mut total_min = 0.0f32;
                 for rt in auto_repeat {
-                    let px = track_to_px(rt, container, font_px, root_font_px);
-                    if px > 0.0 { total_fixed += px; } else { total_fixed += 50.0; }
+                    let px = match rt.kind {
+                        GridTrackKind::MinMax => {
+                            let min_t = GridTrackSize { kind: rt.min_kind, value: rt.min_value, ..Default::default() };
+                            let min_px = track_to_px(&min_t, container, font_px, root_font_px);
+                            if min_px > 0.0 { min_px } else { track_to_px(rt, container, font_px, root_font_px).max(50.0) }
+                        }
+                        _ => {
+                            let px = track_to_px(rt, container, font_px, root_font_px);
+                            if px > 0.0 { px } else { 50.0 }
+                        }
+                    };
+                    total_min += px;
                 }
-                let pattern_w = total_fixed.max(1.0);
-                let _pat_size = auto_repeat.len() as f32;
-                // Repeat count accounts for gaps between pattern tracks
-                let avail = container;
-                let count = (avail / (pattern_w)).max(1.0).min(100.0) as usize;
+                let pattern_w = total_min.max(1.0);
+                // Repeat count: N patterns need N-1 gaps.
+                // N * pattern_w + (N-1) * gap <= container
+                // N <= (container + gap) / (pattern_w + gap)
+                let count = ((container + gap) / (pattern_w + gap)).floor().max(1.0).min(100.0) as usize;
                 for _ in 0..count {
                     for rt in auto_repeat {
                         result.push(rt.clone());
@@ -1200,14 +1272,24 @@ fn resolve_track_sizes(
         }
     }
     if result.is_empty() && !auto_repeat.is_empty() {
-        // Only auto-repeat
-        let mut total_fixed = 0.0f32;
+        // Only auto-repeat — use minimum track sizes
+        let mut total_min = 0.0f32;
         for rt in auto_repeat {
-            let px = track_to_px(rt, container, font_px, root_font_px);
-            if px > 0.0 { total_fixed += px; } else { total_fixed += 50.0; }
+            let px = match rt.kind {
+                GridTrackKind::MinMax => {
+                    let min_t = GridTrackSize { kind: rt.min_kind, value: rt.min_value, ..Default::default() };
+                    let min_px = track_to_px(&min_t, container, font_px, root_font_px);
+                    if min_px > 0.0 { min_px } else { track_to_px(rt, container, font_px, root_font_px).max(50.0) }
+                }
+                _ => {
+                    let px = track_to_px(rt, container, font_px, root_font_px);
+                    if px > 0.0 { px } else { 50.0 }
+                }
+            };
+            total_min += px;
         }
-        let pattern_w = total_fixed.max(1.0);
-        let count = (container / pattern_w).max(1.0).min(100.0) as usize;
+        let pattern_w = total_min.max(1.0);
+        let count = ((container + gap) / (pattern_w + gap)).floor().max(1.0).min(100.0) as usize;
         for _ in 0..count {
             for rt in auto_repeat {
                 result.push(rt.clone());
