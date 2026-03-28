@@ -1236,7 +1236,7 @@ impl Default for ComputedStyle {
             line_height:             CssLength::Em(1.2),
             letter_spacing:   CssLength::Zero,
             word_spacing:     CssLength::Zero,
-            text_align:       TextAlign::Left,
+            text_align:       TextAlign::Start,
             vertical_align:   VerticalAlign::Baseline,
             text_decoration:  TextDecoration::default(),
             text_indent:      CssLength::Zero,
@@ -3331,6 +3331,25 @@ impl Document {
         }
     }
 
+    /// Compute the full scrollable extent of the document.
+    /// Walks all elements and returns the maximum bottom/right edge,
+    /// ignoring containers with `height: 100vh` or similar constraints.
+    pub fn scroll_height(root: &HtmlBox) -> f32 {
+        let mut max_bottom = 0.0f32;
+        Self::walk_all(root, &mut |node| {
+            if matches!(node.style.display, Display::None) { return; }
+            if matches!(node.style.position, Position::Fixed) { return; }
+            let bottom = node.layout.margin_rect.y + node.layout.margin_rect.h;
+            if bottom > max_bottom { max_bottom = bottom; }
+            // Also check line_cache for text that extends beyond content_rect
+            for line in &node.layout.line_cache {
+                let lb = line.y + line.height;
+                if lb > max_bottom { max_bottom = lb; }
+            }
+        });
+        max_bottom
+    }
+
     // ── aria-live ──────────────────────────────────────────────────────────────
 
     /// Drain and return all pending aria-live announcements.
@@ -3716,7 +3735,7 @@ impl Document {
                     let new_scroll = (drag.start_scroll + dy * drag.scroll_per_px).max(0.0);
                     match drag.kind {
                         ScrollbarDragKind::Viewport => {
-                            let doc_h = self.root.layout.margin_rect.h;
+                            let doc_h = Document::scroll_height(&self.root).max(self.root.layout.margin_rect.h);
                             let max_s = (doc_h - viewport_h).max(0.0);
                             self.scroll_y = new_scroll.min(max_s);
                         }
@@ -3742,7 +3761,7 @@ impl Document {
             // ── MouseDown: hit-test scrollbars, start drag ────────────────────
             MouseDown => {
                 // Viewport scrollbar — right edge of window.
-                let doc_h = self.root.layout.margin_rect.h;
+                let doc_h = Document::scroll_height(&self.root).max(self.root.layout.margin_rect.h);
                 if doc_h > viewport_h && screen_x >= viewport_w - SBW {
                     let track_h = viewport_h;
                     let thumb_h = (track_h * track_h / doc_h).max(20.0);

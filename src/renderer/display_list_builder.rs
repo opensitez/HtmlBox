@@ -15,13 +15,16 @@ use super::display_list::{DisplayList, ImageRef, PaintCmd, TextDecoration};
 /// Build a display list from a laid-out box tree.
 pub fn build_display_list(root: &HtmlBox, viewport_w: f32, viewport_h: f32) -> DisplayList {
     let visited = std::collections::HashSet::new();
+    // Use full document extent as clip — viewport culling is done at replay time.
+    // Building with viewport clip causes scrolled-to content to be missing.
+    let doc_h = crate::types::Document::scroll_height(root).max(viewport_h);
     let ctx = BuildContext {
         scroll_x: 0.0,
         scroll_y: 0.0,
         hovered_id: 0,
         active_id: 0,
         visited_hrefs: &visited,
-        clip: Rect::new(0.0, 0.0, viewport_w, viewport_h),
+        clip: Rect::new(0.0, 0.0, viewport_w, doc_h),
     };
     let mut list = DisplayList::new();
     build_for_box(root, &mut list, &ctx);
@@ -39,13 +42,14 @@ pub fn build_display_list_full(
     active_id: u32,
     visited_hrefs: &std::collections::HashSet<String>,
 ) -> DisplayList {
+    let doc_h = crate::types::Document::scroll_height(root).max(viewport_h);
     let ctx = BuildContext {
         scroll_x,
         scroll_y,
         hovered_id,
         active_id,
         visited_hrefs,
-        clip: Rect::new(0.0, 0.0, viewport_w, viewport_h),
+        clip: Rect::new(0.0, 0.0, viewport_w, doc_h),
     };
     let mut list = DisplayList::new();
     build_for_box(root, &mut list, &ctx);
@@ -112,7 +116,13 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     let br = node.layout.border_rect;
 
     // ── Viewport culling ─────────────────────────────────────────────────────
-    if matches!(node.style.position, Position::Static | Position::Relative)
+    // Only cull elements that clip their children (overflow != visible).
+    // Elements with overflow:visible may have children that extend beyond
+    // the element's border_rect (e.g. height:100vh wrapper with overflowing content).
+    let clips_children = matches!(node.style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
+        || matches!(node.style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
+    if clips_children
+        && matches!(node.style.position, Position::Static | Position::Relative)
         && !node.style.is_inline_level()
         && !matches!(node.style.display, Display::Contents)
     {
@@ -964,8 +974,13 @@ fn build_inline_text(
                 .resolve(run_font_px, 0.0, 16.0)
                 .max(run_font_px * 1.2);
 
-            // Use char_x for exact x position if available
-            let x_pos = if !line.char_x.is_empty() {
+            // Use char_x for exact x position if available.
+            // For RTL chunks, char_x byte offsets don't correspond to visual
+            // position (logical byte 0 of Arabic maps to the rightmost glyph).
+            // Use cursor_x instead, which advances in visual order.
+            let x_pos = if chunk.rtl {
+                cursor_x
+            } else if !line.char_x.is_empty() {
                 let char_offset = s - line_start;
                 if char_offset < line.char_x.len() {
                     lx + line.text_x_offset + line.char_x[char_offset]
@@ -1093,7 +1108,14 @@ fn build_inline_text(
             });
 
             // Advance cursor using char_x if available
-            if !line.char_x.is_empty() {
+            if chunk.rtl {
+                // For RTL chunks, advance cursor_x by the visual segment width
+                let start_off = s.saturating_sub(line_start);
+                let end_off = e.saturating_sub(line_start);
+                if start_off < line.char_x.len() && end_off < line.char_x.len() {
+                    cursor_x += (line.char_x[end_off] - line.char_x[start_off]).abs();
+                }
+            } else if !line.char_x.is_empty() {
                 let end_off = e - line_start;
                 if end_off < line.char_x.len() {
                     cursor_x = lx + line.text_x_offset + line.char_x[end_off];

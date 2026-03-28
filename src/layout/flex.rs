@@ -54,8 +54,11 @@ pub fn layout_flex(
 
     let is_row = matches!(node.style.flex_direction,
         FlexDirection::Row | FlexDirection::RowReverse);
+    // In RTL context, flex-direction:row is visually reversed (items flow right-to-left)
+    let rtl_row = is_row && node.style.direction == crate::types::Direction::RTL;
     let is_reversed = matches!(node.style.flex_direction,
-        FlexDirection::RowReverse | FlexDirection::ColumnReverse);
+        FlexDirection::RowReverse | FlexDirection::ColumnReverse)
+        ^ rtl_row; // XOR: RTL flips row direction
     let can_wrap   = node.style.flex_wrap != FlexWrap::Nowrap;
     let wrap_reverse = node.style.flex_wrap == FlexWrap::WrapReverse;
 

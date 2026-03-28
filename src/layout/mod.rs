@@ -937,16 +937,10 @@ impl LayoutEngine {
         }
         // ──────────────────────────────────────────────────────────────────
 
-        // Progressive layout: on the very first layout pass, lay out only
-        // above-fold content first so the renderer can paint the first screen sooner.
-        if !self.initial_layout_done && self.viewport_h > 0.0 {
-            self.initial_layout_done = true;
-            self.progressive_cutoff = self.viewport_h * 1.5;
-            self.layout_geometry(doc, viewport_width, root_font_px);
-            doc.layout_generation = doc.layout_generation.wrapping_add(1);
-            self.progressive_cutoff = 0.0;
-            doc.root.layout.layout_dirty = true;
-        }
+        // Progressive layout is disabled for now — it causes blank content
+        // below the viewport. Full layout runs in a single pass.
+        // TODO: implement proper deferred layout with background completion.
+        self.initial_layout_done = true;
         self.layout_geometry(doc, viewport_width, root_font_px);
         self.last_geometry_viewport_h = self.viewport_h;
 

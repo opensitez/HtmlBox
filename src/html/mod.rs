@@ -1550,6 +1550,35 @@ impl HtmlParser {
             return;
         }
 
+        // SVG: collect raw markup and parse viewBox for intrinsic sizing
+        if tag == "svg" {
+            let svg_body = if !self_closing { self.collect_raw_text_until("svg") } else { String::new() };
+            let mut svg_tag_str = String::from("<svg");
+            for (k, v) in &attrs { svg_tag_str.push_str(&format!(" {}=\"{}\"", k, v)); }
+            if !svg_tag_str.contains("xmlns=") { svg_tag_str.push_str(" xmlns=\"http://www.w3.org/2000/svg\""); }
+            if svg_body.contains("xlink:") && !svg_tag_str.contains("xmlns:xlink") {
+                svg_tag_str.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+            }
+            svg_tag_str.push('>');
+            let svg_markup = format!("{}{}</svg>", svg_tag_str, svg_body);
+            let vb_str = attrs.get("viewBox").or_else(|| attrs.get("viewbox"));
+            let vb = parse_viewbox_value(vb_str.map(|s| s.as_str()));
+            let (vb_w, vb_h) = vb.unwrap_or((0, 0));
+            let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
+            let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
+            let mut node = self.new_box("svg");
+            node.attributes = attrs;
+            apply_property(&mut node.style, "display", "inline-block");
+            node.svg_markup = Some(svg_markup);
+            node.svg_viewbox_w = vb_w as f32;
+            node.svg_viewbox_h = vb_h as f32;
+            if let Some(w) = explicit_w { apply_property(&mut node.style, "width", &format!("{}px", w)); }
+            if let Some(h) = explicit_h { apply_property(&mut node.style, "height", &format!("{}px", h)); }
+            apply_presentational_attrs(&mut node);
+            children.push(node);
+            return;
+        }
+
         let mut node = self.new_box(&tag);
         node.attributes = attrs;
         apply_property(&mut node.style, "display", default_display(&tag));

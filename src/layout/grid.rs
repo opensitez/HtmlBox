@@ -703,12 +703,27 @@ pub fn layout_grid(
         compute_justify_content(node.style.justify_content, extra_x, n_cols_actual);
 
     // Column X positions (including justify-content offset)
+    let is_rtl = node.style.direction == crate::types::Direction::RTL;
     let col_x: Vec<f32> = {
-        let mut xs = Vec::with_capacity(n_cols_actual);
-        let mut cx = grid_offset_x;
-        for i in 0..n_cols_actual {
-            xs.push(cx);
-            cx += col_px[i] + col_gap + extra_gap_col;
+        let mut xs = vec![0.0f32; n_cols_actual];
+        if is_rtl {
+            // RTL: column 0 is at the RIGHT, column N-1 at the LEFT
+            // col_x values are relative to content_x (added later at positioning)
+            let total_gaps = col_gap * n_cols_actual.saturating_sub(1) as f32
+                + extra_gap_col * n_cols_actual.saturating_sub(1) as f32;
+            let total_cols: f32 = col_px.iter().sum::<f32>();
+            let mut cx = grid_offset_x + total_cols + total_gaps;
+            for i in 0..n_cols_actual {
+                cx -= col_px[i];
+                xs[i] = cx;
+                cx -= col_gap + extra_gap_col;
+            }
+        } else {
+            let mut cx = grid_offset_x;
+            for i in 0..n_cols_actual {
+                xs[i] = cx;
+                cx += col_px[i] + col_gap + extra_gap_col;
+            }
         }
         xs
     };
@@ -842,7 +857,14 @@ pub fn layout_grid(
         let cell_h = row_heights[rs..re].iter().sum::<f32>()
             + row_gap * (re - rs).saturating_sub(1) as f32;
 
-        let ix = content_x + col_x.get(cs).copied().unwrap_or(0.0);
+        // In RTL grids, col_x is reversed so col_x[cs] may be > col_x[ce-1].
+        // Use the minimum x across the span as the left edge.
+        let ix = if is_rtl && ce > cs {
+            let min_x = col_x[cs..ce].iter().copied().fold(f32::MAX, f32::min);
+            content_x + min_x
+        } else {
+            content_x + col_x.get(cs).copied().unwrap_or(0.0)
+        };
         let iy = content_y + row_y.get(rs).copied().unwrap_or(0.0);
 
         let child = grid_child_mut(node, path);
@@ -1207,7 +1229,15 @@ pub fn track_to_px(track: &GridTrackSize, container: f32, font_px: f32, root_fon
             let max_t = GridTrackSize { kind: track.max_kind, value: track.max_value, ..Default::default() };
             track_to_px(&max_t, container, font_px, root_font_px)
         }
-        GridTrackKind::FitContent => track.value,
+        GridTrackKind::FitContent => {
+            // fit-content(X) = min(max-content, max(min-content, X))
+            // For track_to_px we return the clamp limit (X resolved as length/percentage)
+            if track.max_kind == GridTrackKind::Percent {
+                track.max_value / 100.0 * container
+            } else {
+                track.value
+            }
+        }
         GridTrackKind::Subgrid    => 0.0,
         GridTrackKind::Calc => {
             if let Some(ref len) = track.calc_length {

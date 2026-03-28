@@ -2521,7 +2521,13 @@ pub fn apply_property(style: &mut ComputedStyle, prop: &str, value: &str) {
 pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, value: &crate::types::CssValue) {
     use crate::types::CssValue;
     match value {
-        CssValue::Inherit | CssValue::Initial | CssValue::Unset => return,
+        CssValue::Inherit => return,
+        CssValue::Initial | CssValue::Unset => {
+            // Reset property to its initial (default) value
+            let default_style = ComputedStyle::default();
+            (property_defs::get(id).copy)(style, &default_style);
+            return;
+        }
         CssValue::Length(l) => {
             if apply_length_value(style, id, l) { return; }
         }
@@ -2589,7 +2595,13 @@ pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, va
 pub fn apply_property_by_id_str(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
     let v = value.trim();
     if v == "inherit" { return; }
-    if matches!(v, "initial" | "revert" | "unset" | "revert-layer") { return; }
+    if matches!(v, "revert" | "revert-layer") { return; }
+    if matches!(v, "initial" | "unset") {
+        // Reset the property to its initial (default) value
+        let default_style = ComputedStyle::default();
+        (property_defs::get(id).copy)(style, &default_style);
+        return;
+    }
     (property_defs::get(id).apply)(style, v);
 }
 
@@ -5034,8 +5046,14 @@ fn swap_hover_inner(
                 | crate::types::Display::Flex | crate::types::Display::InlineFlex);
             let before_is_positioned = node.style.before_style.as_ref().map_or(false, |ps|
                 matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
-            if (is_grid_or_flex && !node.style.before_content.is_empty())
-                || (before_is_positioned && node.style.before_style.is_some())
+            // Create a ::before child element when content is non-empty.
+            // Previously only created for flex/grid/positioned parents, but
+            // block-display ::before pseudo-elements need DOM children too
+            // so they participate in block layout (e.g. displace text below).
+            let before_is_block = node.style.before_style.as_ref().map_or(false, |ps|
+                ps.is_block_level());
+            if !node.style.before_content.is_empty()
+                && (is_grid_or_flex || before_is_positioned || before_is_block)
             {
                 let existing = node.children.iter().position(|c| c.tag == "::before");
                 let mut pseudo_box = crate::types::HtmlBox::new("::before");
@@ -5055,8 +5073,11 @@ fn swap_hover_inner(
 
             let after_is_positioned = node.style.after_style.as_ref().map_or(false, |ps|
                 matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
+            let after_is_block = node.style.after_style.as_ref().map_or(false, |ps|
+                ps.is_block_level());
             if (is_grid_or_flex && !node.style.after_content.is_empty())
                 || (after_is_positioned && node.style.after_style.is_some())
+                || (after_is_block && !node.style.after_content.is_empty())
             {
                 let existing = node.children.iter().position(|c| c.tag == "::after");
                 let mut pseudo_box = crate::types::HtmlBox::new("::after");
@@ -5630,6 +5651,7 @@ fn apply_cascade_inner(
         if matched.is_empty() { return None; }
         matched.sort_by_key(|(sp, _)| *sp);
         let mut ps = base.clone();
+        ps.display = Display::Inline;  // pseudo-elements default to inline, not parent's display
         ps.before_style = None;   // pseudo-elements don't nest
         ps.after_style  = None;
         ps.before_content = String::new();
@@ -5724,8 +5746,11 @@ fn apply_cascade_inner(
     // - Block-level pseudo-elements need real boxes
     let before_is_positioned = root.style.before_style.as_ref().map_or(false, |ps|
         matches!(ps.position, Position::Absolute | Position::Fixed));
+    let before_is_block = root.style.before_style.as_ref().map_or(false, |ps|
+        ps.is_block_level());
     if (is_grid_or_flex && !root.style.before_content.is_empty())
         || (before_is_positioned && root.style.before_style.is_some())
+        || (before_is_block && !root.style.before_content.is_empty())
     {
         // Check if a ::before child already exists (from a prior cascade pass)
         let existing = root.children.iter().position(|c| c.tag == "::before");
@@ -5758,8 +5783,11 @@ fn apply_cascade_inner(
     }
     let after_is_positioned = root.style.after_style.as_ref().map_or(false, |ps|
         matches!(ps.position, Position::Absolute | Position::Fixed));
+    let after_is_block = root.style.after_style.as_ref().map_or(false, |ps|
+        ps.is_block_level());
     if (is_grid_or_flex && !root.style.after_content.is_empty())
         || (after_is_positioned && root.style.after_style.is_some())
+        || (after_is_block && !root.style.after_content.is_empty())
     {
         // Check if an ::after child already exists (from a prior cascade pass)
         let existing = root.children.iter().position(|c| c.tag == "::after");

@@ -286,12 +286,8 @@ impl Renderer {
         let view_w = w / zoom;
         let view_h = h / zoom;
         self.viewport_h = view_h;
-        let doc_h = {
-            let root_h = doc.root.layout.margin_rect.h;
-            doc.root.children.iter().find(|c| c.tag == "body")
-                .map(|b| root_h.max(b.layout.padding_rect.y + b.layout.padding_rect.h))
-                .unwrap_or(root_h)
-        };
+        let doc_h = crate::types::Document::scroll_height(&doc.root)
+            .max(doc.root.layout.margin_rect.h);
         let doc_w = doc.root.layout.margin_rect.w;
         doc.scroll_y = doc.scroll_y.max(0.0).min((doc_h - view_h).max(0.0));
         doc.scroll_x = doc.scroll_x.max(0.0).min((doc_w - view_w).max(0.0));

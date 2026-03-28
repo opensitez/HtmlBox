@@ -619,8 +619,10 @@ pub fn layout_inline_block(
 
         // Fill per-character x positions using real glyph metrics, shaped at
         // physical pixel size so positions match the renderer exactly.
-        // Skip for lines far below the viewport (they won't be rendered this frame).
-        let line_visible = ll.y < engine.viewport_h * 3.0; // 3 screens buffer
+        // Skip for lines very far below the viewport (they won't be rendered this frame).
+        // Use a generous threshold — BiDi text and scrollable content need char_x
+        // even when initially off-screen.
+        let line_visible = engine.viewport_h <= 0.0 || ll.y < engine.viewport_h * 10.0;
         if line_visible {
             if let Some(fs_ptr) = engine.font_system {
                 let fs = unsafe { &mut *fs_ptr };
@@ -1553,22 +1555,13 @@ pub fn fill_char_x_for_line(
     // One entry per byte boundary plus one for end-of-line.
     let mut positions = vec![f32::NAN; range_len + 1];
 
-    let mut cursor_x = 0.0f32; // x relative to line.x, advances across runs
+    let inv_scale = if scale > 0.0 { 1.0 / scale } else { 1.0 };
 
-    for run in runs {
-        let seg_s = line_start.max(run.text_offset);
-        let seg_e = line_end.min(run.text_offset + run.length);
-        if seg_s >= seg_e { continue; }
-
-        // Snap to char boundaries.
-        let mut s = seg_s;
-        while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
-        let mut e = seg_e;
-        while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
-        if s >= e { continue; }
-
+    // Helper: measure a text segment and fill char_x positions
+    let measure_segment = |fs: &mut cosmic_text::FontSystem, s: usize, e: usize,
+                           cursor_x: f32, run: &InlineRun, positions: &mut Vec<f32>| -> f32 {
         let seg_text = &flat[s..e];
-        let font_px  = run.style.font_size_px(16.0, 16.0);
+        let font_px = run.style.font_size_px(16.0, 16.0);
         let ct_w = weight_from_style(run.style.font_weight, &run.style.font_variation_settings);
         let ct_s = match run.style.font_style {
             FontStyle::Italic  => CTextStyle::Italic,
@@ -1576,40 +1569,23 @@ pub fn fill_char_x_for_line(
             FontStyle::Normal  => CTextStyle::Normal,
         };
         let ct_stretch = stretch_from_percent(run.style.font_stretch);
-
-        // Shape at physical pixel size (matching the renderer) so that char_x
-        // positions agree with what is actually drawn on screen. Positions are
-        // then converted back to logical pixels by dividing by scale.
-        let phys_px  = font_px * scale;
+        let phys_px = font_px * scale;
         let metrics = Metrics::new(phys_px, phys_px * 1.2);
         let mut buf = Buffer::new(fs, metrics);
-        let family  = css_family_to_cosmic(&run.style.font_family);
-        let attrs   = Attrs::new().weight(ct_w).style(ct_s).stretch(ct_stretch).family(family);
-        // Always use Advanced shaping: Basic reports word-relative byte offsets
-        // (glyph.start=0..4 for "world" in "Hello world") rather than buffer-relative
-        // (6..10). Only Advanced gives correct offsets needed to populate char_x.
-        let shaping = Shaping::Advanced;
-        buf.set_text(fs, seg_text, &attrs, shaping, None);
+        let family = css_family_to_cosmic(&run.style.font_family);
+        let attrs = Attrs::new().weight(ct_w).style(ct_s).stretch(ct_stretch).family(family);
+        buf.set_text(fs, seg_text, &attrs, Shaping::Advanced, None);
         buf.shape_until_scroll(fs, false);
 
-        // Glyphs are in physical pixels; divide by scale to get logical pixels.
-        let inv_scale = if scale > 0.0 { 1.0 / scale } else { 1.0 };
         let mut seg_advance = 0.0f32;
         for lr in buf.layout_runs() {
             for glyph in lr.glyphs {
-                // glyph.start / .end are byte offsets within seg_text.
                 let abs_s = s + glyph.start;
                 let abs_e = s + glyph.end;
-                let i_s   = abs_s.saturating_sub(line_start);
-                let i_e   = abs_e.saturating_sub(line_start).min(positions.len() - 1);
-                let x0    = cursor_x + glyph.x * inv_scale;
-                let x1    = cursor_x + (glyph.x + glyph.w) * inv_scale;
-                // Distribute position linearly across all byte boundaries in this glyph.
-                // Single-char glyphs: sets positions[i_s] and positions[i_e] exactly.
-                // Multi-char glyphs (Shaping::Basic word glyphs, ligatures): interpolates
-                // so that each character boundary gets a proportional x position rather
-                // than leaving intermediate bytes as NaN and forward-filling them all to
-                // the same value (which would make the whole word appear zero-width).
+                let i_s = abs_s.saturating_sub(line_start);
+                let i_e = abs_e.saturating_sub(line_start).min(positions.len() - 1);
+                let x0 = cursor_x + glyph.x * inv_scale;
+                let x1 = cursor_x + (glyph.x + glyph.w) * inv_scale;
                 let span = (i_e.saturating_sub(i_s)).max(1);
                 for k in 0..=span {
                     let idx = i_s + k;
@@ -1623,13 +1599,79 @@ pub fn fill_char_x_for_line(
             let lw = lr.line_w * inv_scale;
             if lw > seg_advance { seg_advance = lw; }
         }
-
-        // Advance cursor_x by the segment's actual advance + extra word spacing.
-        // Mirrors what the renderer does: actual_advance + n_spaces*(word_s+extra).
         let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
-        let extra  = line.extra_space_per_word;
-        let n_spc  = seg_text.chars().filter(|&c| c == ' ').count() as f32;
-        cursor_x += seg_advance + n_spc * (word_s + extra);
+        let extra = line.extra_space_per_word;
+        let n_spc = seg_text.chars().filter(|&c| c == ' ').count() as f32;
+        seg_advance + n_spc * (word_s + extra)
+    };
+
+    let mut cursor_x = 0.0f32;
+
+    if !line.visual_segments.is_empty() {
+        // BiDi: iterate in visual segment order so cursor_x advances
+        // left-to-right in visual order, and RTL text gets correct positions.
+        for vs_idx in 0..line.visual_segments.len() {
+            let vs_start = line.visual_segments[vs_idx].logical_start;
+            let vs_end = vs_start + line.visual_segments[vs_idx].length;
+
+            // Find the inline run(s) that cover this visual segment
+            for run in runs.iter() {
+                let rs = line_start.max(run.text_offset);
+                let re = line_end.min(run.text_offset + run.length);
+                let cs = vs_start.max(rs);
+                let ce = vs_end.min(re);
+                if cs >= ce { continue; }
+
+                let mut s = cs;
+                while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
+                let mut e = ce;
+                while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
+                if s >= e { continue; }
+
+                let advance = measure_segment(fs, s, e, cursor_x, run, &mut positions);
+                cursor_x += advance;
+            }
+
+            // Update visual segment x and width
+            line.visual_segments[vs_idx].x = cursor_x - (cursor_x - cursor_x); // will be set properly below
+        }
+
+        // Forward-fill NaN gaps
+        {
+            let mut last = 0.0f32;
+            for p in positions.iter_mut() {
+                if p.is_nan() { *p = last; } else { last = *p; }
+            }
+        }
+
+        // Set visual segment x/width
+        for vs in &mut line.visual_segments {
+            let vs_local_start = vs.logical_start.saturating_sub(line_start);
+            let vs_local_end = (vs.logical_start + vs.length).saturating_sub(line_start).min(positions.len().saturating_sub(1));
+            let x0 = if vs_local_start < positions.len() { positions[vs_local_start] } else { 0.0 };
+            let x1 = if vs_local_end < positions.len() { positions[vs_local_end] } else { x0 };
+            vs.x = x0.min(x1);
+            vs.width = (x1 - x0).abs();
+        }
+
+        line.char_x = positions;
+        return;
+    }
+
+    // No BiDi: iterate inline runs in DOM order (all LTR)
+    for run in runs {
+        let seg_s = line_start.max(run.text_offset);
+        let seg_e = line_end.min(run.text_offset + run.length);
+        if seg_s >= seg_e { continue; }
+
+        let mut s = seg_s;
+        while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
+        let mut e = seg_e;
+        while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
+        if s >= e { continue; }
+
+        let advance = measure_segment(fs, s, e, cursor_x, run, &mut positions);
+        cursor_x += advance;
     }
 
     // End-of-line position.
@@ -1654,7 +1696,15 @@ pub fn collect_flat_text(node: &HtmlBox) -> String {
 
 fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
     if node.is_text_node() {
-        out.push_str(&node.text);
+        // Normalize newlines/tabs to spaces in normal white-space mode
+        // so that flat text matches what tokenize_text rendered.
+        if matches!(node.style.white_space, WhiteSpace::Normal | WhiteSpace::Nowrap) {
+            for c in node.text.chars() {
+                out.push(if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c });
+            }
+        } else {
+            out.push_str(&node.text);
+        }
         return;
     }
     if matches!(node.style.display, Display::None) { return; }
