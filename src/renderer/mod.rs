@@ -321,22 +321,24 @@ impl Renderer {
         // Check what changed since last render
         let layout_changed = doc.layout_generation != self.cached_layout_generation;
         let hover_changed = doc.hovered_box != self.cached_hovered_id;
-        let scroll_changed = (doc.scroll_x - self.cached_scroll_x).abs() > 0.01
-            || (doc.scroll_y - self.cached_scroll_y).abs() > 0.01;
+        let scroll_only = !layout_changed && !hover_changed && !self.display_list_dirty
+            && self.cached_display_list.is_some();
+
+        // Only rebuild display list when layout/hover changed — NOT on scroll.
+        // Scroll is handled by replaying the cached list with a different offset.
         let needs_rebuild = self.display_list_dirty
             || self.cached_display_list.is_none()
-            || layout_changed || hover_changed || scroll_changed;
+            || layout_changed || hover_changed;
 
         if needs_rebuild {
-            // Build display list (needed for both tiled and non-tiled paths)
+            // Build display list with full document extent (not scroll-clipped)
+            // so it can be reused across scroll positions.
             let list = display_list_builder::build_display_list_full(
                 &doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h),
                 doc.scroll_x, doc.scroll_y,
                 doc.hovered_box, doc.active_box, &doc.visited_urls,
             );
             self.cached_display_list = Some(list);
-            self.cached_scroll_x = doc.scroll_x;
-            self.cached_scroll_y = doc.scroll_y;
             self.cached_hovered_id = doc.hovered_box;
             self.cached_layout_generation = doc.layout_generation;
             self.display_list_dirty = false;
@@ -345,36 +347,13 @@ impl Renderer {
             if layout_changed {
                 self.compositor.build_layers(&doc.root, view_w, view_h);
             }
-
-            // Tiled path: invalidate tiles on layout/hover change, composite on scroll
-            if self.use_tiles {
-                self.tile_manager.doc_width = doc_w;
-                self.tile_manager.doc_height = doc_h;
-                if layout_changed || hover_changed {
-                    self.tile_manager.invalidate_all();
-                }
-                // Update viewport and rasterize needed tiles
-                let needed = self.tile_manager.update_viewport(
-                    Rect::new(doc.scroll_x, doc.scroll_y, view_w, view_h), scale * zoom,
-                );
-                for (tx, ty) in needed {
-                    if self.tile_manager.ensure_tile(tx, ty) {
-                        // Rasterize this tile using the display list
-                        self.rasterize_tile(tx, ty, doc.scroll_x, doc.scroll_y, scale * zoom);
-                    }
-                }
-                self.tile_manager.evict_distant();
-            }
         }
+        self.cached_scroll_x = doc.scroll_x;
+        self.cached_scroll_y = doc.scroll_y;
 
-        if self.use_tiles {
-            // Fast path: composite pre-rasterized tiles
-            self.tile_manager.composite_to(pixmap, doc.scroll_x, doc.scroll_y, scale * zoom);
-        } else {
-            // Legacy path: replay full display list
-            if let Some(ref list) = self.cached_display_list {
-                display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
-            }
+        // Replay display list (cached — only rebuilt on layout/hover change)
+        if let Some(ref list) = self.cached_display_list {
+            display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
         }
         // Paint custom components on top of the display list
         if !self.component_registry.map.is_empty() || !self.component_registry.components.is_empty() {

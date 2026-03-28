@@ -3449,18 +3449,31 @@ impl Document {
     /// Walks all elements and returns the maximum bottom/right edge,
     /// ignoring containers with `height: 100vh` or similar constraints.
     pub fn scroll_height(root: &HtmlBox) -> f32 {
-        let mut max_bottom = 0.0f32;
-        Self::walk_all(root, &mut |node| {
+        fn walk_scroll(node: &HtmlBox, max_bottom: &mut f32) {
             if matches!(node.style.display, Display::None) { return; }
+            // Fixed elements don't contribute to scroll height
             if matches!(node.style.position, Position::Fixed) { return; }
-            let bottom = node.layout.margin_rect.y + node.layout.margin_rect.h;
-            if bottom > max_bottom { max_bottom = bottom; }
-            // Also check line_cache for text that extends beyond content_rect
-            for line in &node.layout.line_cache {
-                let lb = line.y + line.height;
-                if lb > max_bottom { max_bottom = lb; }
+            // Skip zero-size nodes (not yet laid out or collapsed)
+            if node.layout.margin_rect.w == 0.0 && node.layout.margin_rect.h == 0.0 { return; }
+            // Absolute elements contribute only if they're within the document flow area
+            // (some abs elements are positioned far off-screen as accessibility hacks)
+            if matches!(node.style.position, Position::Absolute) {
+                // Only count if within a reasonable range (2x the current max)
+                let bottom = node.layout.margin_rect.y + node.layout.margin_rect.h;
+                if bottom > 0.0 && bottom < *max_bottom * 3.0 + 2000.0 {
+                    if bottom > *max_bottom { *max_bottom = bottom; }
+                }
+                // Don't recurse into abs children — they position relative to their CB
+                return;
             }
-        });
+            let bottom = node.layout.margin_rect.y + node.layout.margin_rect.h;
+            if bottom > *max_bottom { *max_bottom = bottom; }
+            for child in &node.children {
+                walk_scroll(child, max_bottom);
+            }
+        }
+        let mut max_bottom = root.layout.margin_rect.h;
+        walk_scroll(root, &mut max_bottom);
         max_bottom
     }
 

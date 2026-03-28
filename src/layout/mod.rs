@@ -1089,14 +1089,18 @@ impl LayoutEngine {
         // bypassed here for performance. Enable per-node when needed.
         propagate_dirty(&mut doc.root);
 
-        // Set up root geometry
+        // Set up root geometry — only reset when content width changes or first layout.
         let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
-        doc.root.layout.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.layout.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.layout.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.layout.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
-        doc.root.layout.layout_dirty = true;
+        let root_w_changed = (doc.root.layout.content_rect.w - content_w).abs() > 0.5;
+        let is_first = doc.root.layout.margin_rect.h == 0.0;
+        if root_w_changed || is_first {
+            doc.root.layout.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+            doc.root.layout.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+            doc.root.layout.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+            doc.root.layout.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+            doc.root.layout.layout_dirty = true;
+        }
 
         // When viewport height changed, mark all nodes dirty
         if (self.viewport_h - self.last_geometry_viewport_h).abs() > 0.5
