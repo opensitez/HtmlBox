@@ -1,5 +1,6 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
+use super::Constraints;
 use crate::layout::block::apply_relative_offset;
 #[allow(unused_imports)]
 use crate::css::parse_single_track;
@@ -256,7 +257,7 @@ pub fn layout_grid_subgrid(
             let ce = ce.min(n_cols).max(cs + 1);
             let sw = span_width(&col_px, &col_x_local, cs, ce, col_gap, content_w);
             let child = grid_child_mut(node, path);
-            engine.layout_box(child, sw, content_x, 0.0, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(sw, content_x, 0.0, font_px, root_font_px));
             let cf = child.style.font_size_px(font_px, root_font_px);
             let cr = engine.res_box(&child.style, cf, sw, root_font_px);
             let h = child.layout.border_rect.h + cr.margin_top + cr.margin_bottom;
@@ -310,10 +311,10 @@ pub fn layout_grid_subgrid(
             };
             let saved = child.style.height.clone();
             child.style.height = CssLength::Px(css_h);
-            engine.layout_box(child, sw, ix, iy, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(sw, ix, iy, font_px, root_font_px));
             child.style.height = saved;
         } else {
-            engine.layout_box(child, sw, ix, iy, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(sw, ix, iy, font_px, root_font_px));
         }
 
         let cr = engine.res_box(&child.style, cf, sw, root_font_px);
@@ -356,12 +357,13 @@ pub fn layout_grid(
     engine:       &LayoutEngine,
     node:         &mut HtmlBox,
     rbox:         &ResolvedBox,
-    containing_w: f32,
-    x:            f32,
-    y:            f32,
-    font_px:      f32,
-    root_font_px: f32,
+    c:            &Constraints,
 ) -> f32 {
+    let containing_w = c.available_width;
+    let x = c.x;
+    let y = c.y;
+    let font_px = c.parent_font_px;
+    let root_font_px = c.root_font_px;
     let content_w = match rbox.content_width {
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
@@ -680,8 +682,8 @@ pub fn layout_grid(
         let (cs, ce, _rs, _re) = placements[ii];
         let child = grid_child_ref(node, path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        // Use max_content_width instead of layout_box(10000) to avoid leaking dummy widths
-        let intrinsic_w = engine.max_content_width(child, font_px, root_font_px);
+        // Use intrinsic_sizes (unified) instead of layout_box(10000) to avoid leaking dummy widths
+        let intrinsic_w = engine.intrinsic_sizes(child, font_px, root_font_px).max_content;
         let _ = child_font; // suppress warning
         let span = (ce - cs).max(1);
         let w_per_col = intrinsic_w / span as f32;
@@ -765,7 +767,7 @@ pub fn layout_grid(
             };
             layout_grid_subgrid(engine, child, &crbox, &sctx, content_x, 0.0, font_px, root_font_px);
         } else {
-            engine.layout_box(child, span_w, content_x, 0.0, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(span_w, content_x, 0.0, font_px, root_font_px));
         }
 
         let h = child.layout.border_rect.h + crbox.margin_top + crbox.margin_bottom;
@@ -973,10 +975,10 @@ pub fn layout_grid(
             let saved_h = child.style.height.clone();
             child.style.height = CssLength::Px(css_h);
             child.layout.layout_dirty = true;  // force re-layout with new height
-            engine.layout_box(child, span_w, ix, iy, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(span_w, ix, iy, font_px, root_font_px));
             child.style.height = saved_h;
         } else {
-            engine.layout_box(child, span_w, ix, iy, font_px, root_font_px);
+            engine.layout_box(child, &Constraints::new(span_w, ix, iy, font_px, root_font_px));
         }
 
         // Re-read crbox after potential re-layout

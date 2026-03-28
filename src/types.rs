@@ -1566,8 +1566,12 @@ pub struct LayoutBox {
     /// Static y position for absolutely positioned elements (set during parent layout).
     pub abs_static_y: Option<f32>,
 
-    // Dirty flag for incremental layout
+    // Dirty flags for incremental layout
     pub layout_dirty:          bool,
+    /// Intrinsic sizes need recomputation (propagates up to auto-width parents).
+    pub intrinsic_dirty:       bool,
+    /// Paint-only change (color/background) — skip layout, just repaint.
+    pub paint_dirty:           bool,
     pub last_containing_width: f32,
 
     // Resolved box-model cache (set by layout, read by parent layout)
@@ -1607,6 +1611,8 @@ impl Default for LayoutBox {
             scroll_left:   0.0,
             abs_static_y:  None,
             layout_dirty:          false,
+            intrinsic_dirty:       false,
+            paint_dirty:           false,
             last_containing_width: 0.0,
             resolved_margin_top:    0.0,
             resolved_margin_right:  0.0,
@@ -1699,6 +1705,9 @@ pub struct HtmlBox {
     pub cascade_dirty: bool,
     /// True means a descendant has `cascade_dirty` — must traverse children.
     pub has_dirty_descendant: bool,
+    /// True means a descendant has `layout_dirty` — must traverse into children during layout.
+    /// Allows skipping entire clean subtrees.
+    pub has_dirty_layout_descendant: bool,
 }
 
 /// Shadow DOM root — holds a scoped tree and stylesheet.
@@ -1972,6 +1981,7 @@ impl HtmlBox {
             hover_applied: false,
             cascade_dirty: false,
             has_dirty_descendant: false,
+            has_dirty_layout_descendant: false,
         }
     }
 

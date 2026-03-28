@@ -252,6 +252,8 @@ impl Document {
         if let Some(parent) = self.find_htmlbox_mut(parent_id) {
             parent.children.push(child_box);
             parent.layout.layout_dirty = true;
+            parent.layout.intrinsic_dirty = true;
+            parent.has_dirty_layout_descendant = true;
         }
     }
 
@@ -279,6 +281,8 @@ impl Document {
                 .unwrap_or(parent.children.len());
             parent.children.insert(idx, child_box);
             parent.layout.layout_dirty = true;
+            parent.layout.intrinsic_dirty = true;
+            parent.has_dirty_layout_descendant = true;
         }
     }
 
@@ -295,6 +299,8 @@ impl Document {
         if parent_id != 0 {
             if let Some(parent) = self.find_htmlbox_mut(parent_id) {
                 parent.layout.layout_dirty = true;
+                parent.layout.intrinsic_dirty = true;
+                parent.has_dirty_layout_descendant = true;
             }
         }
     }
@@ -306,6 +312,7 @@ impl Document {
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.attributes.insert(key.to_string(), value.to_string());
             node.layout.layout_dirty = true;
+            node.layout.intrinsic_dirty = true;
         }
     }
 

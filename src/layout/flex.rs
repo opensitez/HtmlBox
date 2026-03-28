@@ -1,5 +1,6 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
+use super::{Constraints, IntrinsicSizes};
 
 /// Resolve a child by path through `display: contents` wrappers.
 fn child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
@@ -38,12 +39,13 @@ pub fn layout_flex(
     engine:       &LayoutEngine,
     node:         &mut HtmlBox,
     rbox:         &ResolvedBox,
-    containing_w: f32,
-    x:            f32,
-    y:            f32,
-    font_px:      f32,
-    root_font_px: f32,
+    c:            &Constraints,
 ) -> f32 {
+    let containing_w = c.available_width;
+    let x = c.x;
+    let y = c.y;
+    let font_px = c.parent_font_px;
+    let root_font_px = c.root_font_px;
     let mut content_w = match rbox.content_width {
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
@@ -182,14 +184,21 @@ pub fn layout_flex(
         } else {
             // Content-based: compute max-content size on the main axis.
             if is_row {
-                // Use lightweight max_content_width to avoid exponential
+                // Use lightweight intrinsic_sizes to avoid exponential
                 // layout_box calls in deeply nested flex hierarchies.
-                engine.max_content_width(child, font_px, root_font_px)
+                engine.intrinsic_sizes(child, font_px, root_font_px).max_content
             } else {
                 // Column direction needs actual height — must do full layout.
-                engine.layout_box(child, content_w, content_x, content_y, font_px, root_font_px);
+                engine.layout_box(child, &Constraints::new(content_w, content_x, content_y, font_px, root_font_px));
                 child.layout.content_rect.h
             }
+        };
+
+        // Compute intrinsic sizes once for this child (cached, so second call is free).
+        let child_intrinsic = if is_row {
+            engine.intrinsic_sizes(child, font_px, root_font_px)
+        } else {
+            IntrinsicSizes::default()
         };
 
         // Apply min/max constraints on main axis.
@@ -211,7 +220,7 @@ pub fn layout_flex(
             } else {
                 // CSS spec: min-width:auto on flex items = min-content size
                 // (clamped to the item's specified size if any)
-                let mc = engine.min_content_width(child, font_px, root_font_px);
+                let mc = child_intrinsic.min_content;
                 let clamped = if !child.style.width.is_auto() {
                     mc.min(basis_main)
                 } else {
@@ -415,7 +424,7 @@ pub fn layout_flex(
             content_w
         };
 
-        engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+        engine.layout_box(child, &Constraints::new(item_containing, content_x, content_y, font_px, root_font_px));
 
         // Restore original CSS dimension so next layout pass computes correctly
         if is_row { child.style.width = saved_dim; } else { child.style.height = saved_dim; }
@@ -604,7 +613,7 @@ pub fn layout_flex(
                         } else { target_h };
                         let saved_h = child.style.height.clone();
                         child.style.height = CssLength::Px(css_h);
-                        engine.layout_box(child, item_containing, content_x, content_y, font_px, root_font_px);
+                        engine.layout_box(child, &Constraints::new(item_containing, content_x, content_y, font_px, root_font_px));
                         child.style.height = saved_h;
                         items[item_idx].cross_size = child.layout.margin_rect.h;
                     }
@@ -618,7 +627,7 @@ pub fn layout_flex(
                         } else { stretch_w };
                         let saved_w = child.style.width.clone();
                         child.style.width = CssLength::Px(css_w);
-                        engine.layout_box(child, css_w, content_x, content_y, font_px, root_font_px);
+                        engine.layout_box(child, &Constraints::new(css_w, content_x, content_y, font_px, root_font_px));
                         child.style.width = saved_w;
                         items[item_idx].cross_size = child.layout.margin_rect.w;
                     }
@@ -631,9 +640,9 @@ pub fn layout_flex(
                     let child_width_is_auto = child_ref(node, &items[item_idx].path).style.width.is_auto();
                     if child_width_is_auto {
                         let child = child_mut(node, &items[item_idx].path);
-                        let intrinsic_w = crate::layout::block::compute_intrinsic_width(child).min(content_w);
+                        let intrinsic_w = engine.max_content_width(child, font_px, root_font_px).min(content_w);
                         if intrinsic_w < items[item_idx].cross_size - 0.5 {
-                            engine.layout_box(child, intrinsic_w, content_x, content_y, font_px, root_font_px);
+                            engine.layout_box(child, &Constraints::new(intrinsic_w, content_x, content_y, font_px, root_font_px));
                             items[item_idx].cross_size = child.layout.margin_rect.w;
                         }
                     }

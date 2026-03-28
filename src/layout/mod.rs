@@ -3,11 +3,14 @@ pub mod inline_layout;
 pub mod text;
 pub mod flex;
 pub mod grid;
+pub mod constraints;
 
 use std::collections::HashMap;
 pub mod table;
 pub mod hit_test;
 pub mod layout_box;
+
+pub use constraints::{Constraints, IntrinsicSizes, FormattingContext};
 
 use std::cell::Cell;
 use crate::types::*;
@@ -306,16 +309,25 @@ fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
 fn propagate_dirty(node: &mut HtmlBox) -> bool {
-    // Fast path: if neither this node nor any descendant is dirty, skip entirely
-    if !node.layout.layout_dirty && !node.has_dirty_descendant {
+    // Fast path: if neither this node nor any descendant is dirty, skip entirely.
+    // Check both cascade-dirty descendants (hover → style → layout) and
+    // layout-dirty descendants (DOM mutation → layout_dirty set directly).
+    if !node.layout.layout_dirty && !node.has_dirty_descendant && !node.has_dirty_layout_descendant {
         return false;
     }
+    // Invalidate intrinsic width cache — a dirty descendant means our
+    // intrinsic size may have changed (needed by flex/grid/table parents).
     node.layout.cached_intrinsic_w.set(f32::NAN);
+    node.layout.intrinsic_dirty = true;
+
     let mut child_dirty = false;
     for child in &mut node.children {
         if propagate_dirty(child) { child_dirty = true; }
     }
-    if child_dirty { node.layout.layout_dirty = true; }
+    if child_dirty {
+        node.layout.layout_dirty = true;
+        node.has_dirty_layout_descendant = true;
+    }
     node.layout.layout_dirty
 }
 
@@ -573,9 +585,19 @@ impl LayoutEngine {
         len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
     }
 
-    /// Compute max-content width of a node WITHOUT calling layout_box.
-    /// This avoids the exponential blowup in nested flex layouts by measuring
-    /// text directly with the font system instead of doing full inline layout.
+    /// Compute both min-content and max-content intrinsic widths in one call.
+    /// This is the **unified intrinsic sizing API** — all callers (flex, grid,
+    /// table, float, absolute) should use this instead of the separate functions.
+    ///
+    /// Returns `IntrinsicSizes { min_content, max_content }`.
+    /// Results are cached via `cached_intrinsic_w` (max) on the node's LayoutBox.
+    pub fn intrinsic_sizes(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> IntrinsicSizes {
+        IntrinsicSizes {
+            min_content: self.min_content_width(node, parent_font_px, root_font_px),
+            max_content: self.max_content_width(node, parent_font_px, root_font_px),
+        }
+    }
+
     /// Compute the min-content width of a node (the smallest width it can take
     /// without overflowing).  For text, this is the width of the longest word.
     pub fn min_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
@@ -1041,6 +1063,8 @@ impl LayoutEngine {
         {
             fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
                 n.layout.layout_dirty = true;
+                n.layout.intrinsic_dirty = true;
+                n.has_dirty_layout_descendant = true;
                 for c in &mut n.children { mark_all_dirty(c); }
             }
             mark_all_dirty(&mut doc.root);
@@ -1052,7 +1076,7 @@ impl LayoutEngine {
         }
 
         self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
-        self.layout_box(&mut doc.root, content_w, 0.0, 0.0, root_font_px, root_font_px);
+        self.layout_box(&mut doc.root, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
 
         // Update root geometry with final height
         let h = doc.root.layout.margin_rect.h;
@@ -1076,25 +1100,22 @@ impl LayoutEngine {
     pub fn layout_box(
         &self,
         node:       &mut HtmlBox,
-        containing_w: f32,
-        x:    f32,
-        y:    f32,
-        parent_font_px: f32,
-        root_font_px:   f32,
+        c: &Constraints,
     ) -> f32 {
-        self.layout_box_with_fc(node, containing_w, x, y, parent_font_px, root_font_px, None)
+        self.layout_box_with_fc(node, c, None)
     }
 
     pub fn layout_box_with_fc(
         &self,
         node:       &mut HtmlBox,
-        containing_w: f32,
-        x:    f32,
-        y:    f32,
-        parent_font_px: f32,
-        root_font_px:   f32,
+        c: &Constraints,
         fc:  Option<&mut FloatContext>,
     ) -> f32 {
+        let containing_w = c.available_width;
+        let x = c.x;
+        let y = c.y;
+        let parent_font_px = c.parent_font_px;
+        let root_font_px = c.root_font_px;
         // Guard against infinite layout loops.
         let calls = self.layout_calls.get();
         self.layout_calls.set(calls + 1);
@@ -1354,15 +1375,37 @@ impl LayoutEngine {
             }
         }
 
+        // Build child constraints from resolved font size
+        let child_c = Constraints::new(containing_w, x, y, font_px, root_font_px);
+
         let h = match node.style.display {
             Display::Flex | Display::InlineFlex => {
-                flex::layout_flex(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
+                flex::layout_flex(self, node, &rbox, &child_c)
             }
             Display::Grid | Display::InlineGrid => {
-                grid::layout_grid(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
+                grid::layout_grid(self, node, &rbox, &child_c)
             }
             Display::Table => {
-                table::layout_table(self, node, &rbox, containing_w, x, y, font_px, root_font_px)
+                // Handle margin:auto centering for tables
+                let table_c = if !node.style.width.is_auto()
+                    && (node.style.margin_left.is_auto() || node.style.margin_right.is_auto())
+                {
+                    let tw = self.res_len(&node.style.width, font_px, containing_w, root_font_px);
+                    let non_margin = rbox.border_left + rbox.padding_left + tw + rbox.padding_right + rbox.border_right;
+                    let available = (containing_w - non_margin).max(0.0);
+                    let (ml, _mr) = if node.style.margin_left.is_auto() && node.style.margin_right.is_auto() {
+                        let ml = (available / 2.0).floor();
+                        (ml, available - ml)
+                    } else if node.style.margin_left.is_auto() {
+                        (available - rbox.margin_right, rbox.margin_right)
+                    } else {
+                        (rbox.margin_left, available - rbox.margin_left)
+                    };
+                    Constraints::new(containing_w, x + ml - rbox.margin_left, y, font_px, root_font_px)
+                } else {
+                    child_c
+                };
+                table::layout_table(self, node, &rbox, &table_c)
             }
             _ => {
                 // Determine if children are block-level or inline-level.
@@ -1381,11 +1424,11 @@ impl LayoutEngine {
                     && !matches!(c.style.position, Position::Absolute | Position::Fixed)
                     && !matches!(c.style.float, Float::None));
                 if has_block_children(node) || has_only_floats {
-                    block::layout_block_with_fc(self, node, &rbox, containing_w, x, y, font_px, root_font_px, fc)
+                    block::layout_block_with_fc(self, node, &rbox, &child_c, fc)
                 } else {
                     // Pass parent float context so inline content wraps around
                     // floats from ancestor block containers (CSS §9.5).
-                    inline_layout::layout_inline_block(self, node, &rbox, containing_w, x, y, font_px, root_font_px, fc)
+                    inline_layout::layout_inline_block(self, node, &rbox, &child_c, fc)
                 }
             }
         };
@@ -1401,6 +1444,9 @@ impl LayoutEngine {
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);
         node.layout.layout_dirty = false;
+        node.layout.intrinsic_dirty = false;
+        node.layout.paint_dirty = false;
+        node.has_dirty_layout_descendant = false;
         node.layout.last_containing_width = containing_w;
         h
     }
@@ -1417,7 +1463,7 @@ impl LayoutEngine {
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
         let _rbox = self.res_box(&node.style, font_px, max_w, root_font_px);
 
-        let h = self.layout_box(node, max_w, x, y, parent_font_px, root_font_px);
+        let h = self.layout_box(node, &Constraints::new(max_w, x, y, parent_font_px, root_font_px));
         let w = node.layout.border_rect.w;
         let baseline = node.layout.baseline;
         (w, h, baseline)
@@ -1533,19 +1579,19 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
 
     // Layout to get natural size (or constrained size)
     let layout_w = constrained_w.unwrap_or(containing_w);
-    engine.layout_box(node, layout_w, 0.0, 0.0, font_px, root_font_px);
+    engine.layout_box(node, &Constraints::new(layout_w, 0.0, 0.0, font_px, root_font_px));
 
     // Shrink-to-fit: width:auto absolutely-positioned elements wrap their content
     // (CSS 2.1 §10.3.7), just like floats — but only when width is not already
     // constrained by having both left and right set.
     if constrained_w.is_none() && node.style.width.is_auto() {
-        let intrinsic_w = block::compute_intrinsic_width(node);
+        let intrinsic_w = engine.max_content_width(node, font_px, root_font_px);
         if intrinsic_w > 0.0 && intrinsic_w < layout_w {
             let shrink_w = intrinsic_w
                 + node.layout.resolved_pad_left  + node.layout.resolved_pad_right
                 + node.layout.resolved_border_left + node.layout.resolved_border_right
                 + node.layout.resolved_margin_left + node.layout.resolved_margin_right;
-            engine.layout_box(node, shrink_w, 0.0, 0.0, font_px, root_font_px);
+            engine.layout_box(node, &Constraints::new(shrink_w, 0.0, 0.0, font_px, root_font_px));
         }
     }
 
@@ -1616,7 +1662,7 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     // If both sides set → we may need to re-layout with constrained size
     if let Some(cw) = constrained_w {
         if node.layout.content_rect.w != cw {
-            engine.layout_box(node, layout_w, x, y, font_px, root_font_px);
+            engine.layout_box(node, &Constraints::new(layout_w, x, y, font_px, root_font_px));
         }
     }
 

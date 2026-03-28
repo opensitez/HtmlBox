@@ -1,9 +1,10 @@
 use crate::types::*;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Stretch, Style as CTextStyle, Weight};
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
-use crate::layout::block::{collapse_two, compute_intrinsic_width};
+use crate::layout::block::collapse_two;
 use crate::layout::has_block_children;
 use crate::layout::text::resolve_bidi_line;
+use super::Constraints;
 
 /// Lay out a box whose children are inline-level (text runs, inline-block).
 /// Returns total outer height of the box.
@@ -12,13 +13,14 @@ pub fn layout_inline_block(
     engine:       &LayoutEngine,
     node:         &mut HtmlBox,
     rbox:         &ResolvedBox,
-    containing_w: f32,
-    x:            f32,
-    y:            f32,
-    font_px:      f32,
-    root_font_px: f32,
+    c:            &Constraints,
     parent_float_ctx: Option<&mut FloatContext>,
 ) -> f32 {
+    let containing_w = c.available_width;
+    let x = c.x;
+    let y = c.y;
+    let font_px = c.parent_font_px;
+    let root_font_px = c.root_font_px;
     // Create a local float context if the parent didn't provide one.
     // This ensures floated children inside inline containers are placed correctly.
     let mut fc_owned = FloatContext::default();
@@ -94,8 +96,8 @@ pub fn layout_inline_block(
     for ci in 0..node.children.len() {
         if matches!(node.children[ci].style.display,
                     Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
-            engine.layout_box(&mut node.children[ci], content_w,
-                               0.0, 0.0, font_px, root_font_px);
+            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
+                               0.0, 0.0, font_px, root_font_px));
             // Shrink-to-fit for auto-width inline-block (CSS §10.3.9):
             // InlineBlock with width:auto should size to content, not expand to fill container.
             if node.children[ci].style.width.is_auto() {
@@ -106,12 +108,12 @@ pub fn layout_inline_block(
                     .map(|l| l.width)
                     .fold(0.0_f32, f32::max);
                 // For block-container inline-blocks (e.g. ul/div with block children),
-                // line_cache is empty — fall back to compute_intrinsic_width which
+                // line_cache is empty — fall back to max_content_width which
                 // recurses into block children to find max content width.
                 let intrinsic_w = if max_line_w > 0.0 {
                     max_line_w
                 } else {
-                    compute_intrinsic_width(&node.children[ci])
+                    engine.max_content_width(&node.children[ci], font_px, root_font_px)
                 };
                 {
                     let irb = &node.children[ci];
@@ -120,8 +122,8 @@ pub fn layout_inline_block(
                         + irb.layout.resolved_border_left + irb.layout.resolved_border_right
                         + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
                     if shrink_w < content_w {
-                        engine.layout_box(&mut node.children[ci], shrink_w,
-                                           0.0, 0.0, font_px, root_font_px);
+                        engine.layout_box(&mut node.children[ci], &Constraints::new(shrink_w,
+                                           0.0, 0.0, font_px, root_font_px));
                     }
                 }
             }
@@ -130,23 +132,23 @@ pub fn layout_inline_block(
             // Inline element containing block-level children (e.g. <a><strong style="display:block">).
             // Per CSS, this creates an anonymous block formatting context. We approximate by
             // pre-laying the element out as a block container so its children get proper dimensions.
-            engine.layout_box(&mut node.children[ci], content_w,
-                               0.0, 0.0, font_px, root_font_px);
+            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
+                               0.0, 0.0, font_px, root_font_px));
         } else if !matches!(node.children[ci].style.float, crate::types::Float::None) {
             // Float children need to be laid out to get valid dimensions.
-            engine.layout_box(&mut node.children[ci], content_w,
-                               content_x, content_y, font_px, root_font_px);
+            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
+                               content_x, content_y, font_px, root_font_px));
             // Shrink-to-fit for auto-width floats
             if node.children[ci].style.width.is_auto() {
-                let intrinsic_w = compute_intrinsic_width(&node.children[ci]);
+                let intrinsic_w = engine.max_content_width(&node.children[ci], font_px, root_font_px);
                 if intrinsic_w > 0.0 && intrinsic_w < content_w {
                     let irb = &node.children[ci];
                     let shrink_w = intrinsic_w
                         + irb.layout.resolved_pad_left + irb.layout.resolved_pad_right
                         + irb.layout.resolved_border_left + irb.layout.resolved_border_right
                         + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
-                    engine.layout_box(&mut node.children[ci], shrink_w,
-                                       content_x, content_y, font_px, root_font_px);
+                    engine.layout_box(&mut node.children[ci], &Constraints::new(shrink_w,
+                                       content_x, content_y, font_px, root_font_px));
                 }
             }
         }
@@ -1755,13 +1757,13 @@ fn prelayout_nested_inline_blocks(
             if matches!(node.style.display, Display::Inline) {
                 engine.layout_box(
                     &mut node.children[ci],
-                    content_w, 0.0, 0.0, font_px, root_font_px,
+                    &Constraints::new(content_w, 0.0, 0.0, font_px, root_font_px),
                 );
                 if node.children[ci].style.width.is_auto() {
                     let max_line_w = node.children[ci].layout.line_cache.iter()
                         .map(|l| l.width).fold(0.0_f32, f32::max);
                     let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                        else { compute_intrinsic_width(&node.children[ci]) };
+                        else { engine.max_content_width(&node.children[ci], font_px, root_font_px) };
                     let gc = &node.children[ci];
                     let shrink_w = intrinsic_w
                         + gc.layout.resolved_pad_left + gc.layout.resolved_pad_right
@@ -1770,7 +1772,7 @@ fn prelayout_nested_inline_blocks(
                     if shrink_w < content_w {
                         engine.layout_box(
                             &mut node.children[ci],
-                            shrink_w, 0.0, 0.0, font_px, root_font_px,
+                            &Constraints::new(shrink_w, 0.0, 0.0, font_px, root_font_px),
                         );
                     }
                 }
@@ -1786,14 +1788,14 @@ fn prelayout_nested_inline_blocks(
                 if matches!(grandchild_display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
                     engine.layout_box(
                         &mut node.children[ci].children[gci],
-                        content_w, 0.0, 0.0, child_font_px, root_font_px,
+                        &Constraints::new(content_w, 0.0, 0.0, child_font_px, root_font_px),
                     );
                     // Shrink-to-fit for auto-width nested inline-blocks
                     if node.children[ci].children[gci].style.width.is_auto() {
                         let max_line_w = node.children[ci].children[gci].layout.line_cache.iter()
                             .map(|l| l.width).fold(0.0_f32, f32::max);
                         let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                            else { compute_intrinsic_width(&node.children[ci].children[gci]) };
+                            else { engine.max_content_width(&node.children[ci].children[gci], font_px, root_font_px) };
                         let gc = &node.children[ci].children[gci];
                         let shrink_w = intrinsic_w
                             + gc.layout.resolved_pad_left + gc.layout.resolved_pad_right
@@ -1802,7 +1804,7 @@ fn prelayout_nested_inline_blocks(
                         if shrink_w < content_w {
                             engine.layout_box(
                                 &mut node.children[ci].children[gci],
-                                shrink_w, 0.0, 0.0, child_font_px, root_font_px,
+                                &Constraints::new(shrink_w, 0.0, 0.0, child_font_px, root_font_px),
                             );
                         }
                     }

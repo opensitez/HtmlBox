@@ -1,6 +1,7 @@
 use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use crate::layout::block::apply_relative_offset;
+use super::Constraints;
 
 // ─── Border conflict resolution for border-collapse ───────────────────────────
 // CSS 2.1 §17.6.2.1: hidden > wider > style-priority > first cell wins.
@@ -171,12 +172,13 @@ pub fn layout_table(
     engine:       &LayoutEngine,
     node:         &mut HtmlBox,
     rbox:         &ResolvedBox,
-    containing_w: f32,
-    x:            f32,
-    y:            f32,
-    font_px:      f32,
-    root_font_px: f32,
+    c:            &Constraints,
 ) -> f32 {
+    let containing_w = c.available_width;
+    let x = c.x;
+    let y = c.y;
+    let font_px = c.parent_font_px;
+    let root_font_px = c.root_font_px;
     if node.children.is_empty() {
         return finish_table(node, rbox,
             x + rbox.margin_left + rbox.border_left + rbox.padding_left,
@@ -197,26 +199,8 @@ pub fn layout_table(
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
     };
-    // Auto margin centering for tables (CSS 2.1 §17.5.2)
-    let left_auto  = node.style.margin_left.is_auto();
-    let right_auto = node.style.margin_right.is_auto();
-    let (margin_left, margin_right) = if !node.style.width.is_auto() && (left_auto || right_auto) {
-        let tw = engine.res_len(&node.style.width, font_px, containing_w, root_font_px);
-        let non_margin = rbox.border_left + rbox.padding_left + tw + rbox.padding_right + rbox.border_right;
-        let available = (containing_w - non_margin).max(0.0);
-        if left_auto && right_auto {
-            let ml = (available / 2.0).floor();
-            (ml, available - ml)
-        } else if left_auto {
-            (available - rbox.margin_right, rbox.margin_right)
-        } else {
-            (rbox.margin_left, available - rbox.margin_left)
-        }
-    } else {
-        (rbox.margin_left, rbox.margin_right)
-    };
-
-    let content_x = x + margin_left + rbox.border_left + rbox.padding_left;
+    // x already includes auto margin offset (computed in layout_box_with_fc)
+    let content_x = x + rbox.margin_left + rbox.border_left + rbox.padding_left;
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
     // Apply max-width constraint
@@ -291,9 +275,44 @@ pub fn layout_table(
         }
     }
 
-    // ── Determine column widths ───────────────────────────────────────────────
+    // ── For auto-width tables, pre-measure content to shrink-to-fit ──────────
     let total_spacing = spacing * (num_cols + 1) as f32;
-    let cell_area     = (table_width - total_spacing).max(0.0);
+    // Auto-width tables: measure intrinsic content width, then clamp to containing width.
+    // This is the CSS shrink-to-fit algorithm (CSS 2.1 §10.3.5):
+    // width = min(max(preferred minimum width, available width), preferred width)
+    // For tables: preferred width = sum of column max-content widths.
+    if node.style.width.is_auto() {
+        // Measure each column's max-content width
+        let mut col_max_content: Vec<f32> = vec![0.0; num_cols];
+        for r in 0..num_rows {
+            for c in 0..num_cols {
+                let slot = &grid[r][c];
+                if slot.owner_row != r || slot.colspan != 1 { continue; }
+                if let Some((row_idx, ci)) = slot.box_path {
+                    if c > 0 && grid[r][c-1].box_path == Some((row_idx, ci)) { continue; }
+                    let cell = &row_ref(node, &row_refs[row_idx]).children[ci];
+                    let cw = if !cell.style.width.is_auto() {
+                        engine.res_len(&cell.style.width, font_px, containing_w, root_font_px)
+                    } else {
+                        engine.intrinsic_sizes(cell, font_px, root_font_px).max_content
+                    };
+                    if cw > col_max_content[c] { col_max_content[c] = cw; }
+                }
+            }
+        }
+        let intrinsic_w: f32 = col_max_content.iter().sum::<f32>() + total_spacing;
+        // Shrink-to-fit: use intrinsic width but don't exceed container
+        // and don't go below min-width
+        let mut shrunk = intrinsic_w.min(content_w).max(0.0);
+        if !node.style.min_width.is_auto() {
+            let min_w = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
+            if min_w > shrunk { shrunk = min_w; }
+        }
+        table_width = shrunk;
+    }
+
+    // ── Determine column widths ───────────────────────────────────────────────
+    let cell_area = (table_width - total_spacing).max(0.0);
 
     let mut col_widths: Vec<f32> = vec![0.0; num_cols];
     let mut col_has_explicit: Vec<bool> = vec![false; num_cols];
@@ -351,7 +370,9 @@ pub fn layout_table(
             for c in 0..num_cols { col_widths[c] = per; }
         }
     } else {
-        // Auto layout: explicit cell widths first, then equal distribution
+        // Auto layout: two-pass — measure content, then distribute
+        // Pass 1: Collect explicit widths AND measure content for auto columns
+        let mut col_content_widths: Vec<f32> = vec![0.0; num_cols];
         for r in 0..num_rows {
             for c in 0..num_cols {
                 let slot = &grid[r][c];
@@ -364,16 +385,35 @@ pub fn layout_table(
                             if !col_has_explicit[c] { col_has_explicit[c] = true; explicit_count += 1; }
                             col_widths[c] = w;
                         }
+                    } else {
+                        // Measure content width for auto columns
+                        let cw = engine.intrinsic_sizes(cell, font_px, root_font_px).max_content;
+                        if cw > col_content_widths[c] { col_content_widths[c] = cw; }
                     }
                 }
             }
         }
+        // Pass 2: Distribute remaining space proportionally to content widths
         let used: f32 = col_widths.iter().sum();
         let remaining = cell_area - used;
         let flex_cols = num_cols - explicit_count;
         if remaining > 0.0 && flex_cols > 0 {
-            let extra = remaining / flex_cols as f32;
-            for c in 0..num_cols { if !col_has_explicit[c] { col_widths[c] += extra; } }
+            let total_content: f32 = col_content_widths.iter().enumerate()
+                .filter(|(c, _)| !col_has_explicit[*c])
+                .map(|(_, w)| *w)
+                .sum();
+            if total_content > 0.0 {
+                // Distribute proportionally to content width
+                for c in 0..num_cols {
+                    if !col_has_explicit[c] {
+                        col_widths[c] = (remaining * col_content_widths[c] / total_content).max(1.0);
+                    }
+                }
+            } else {
+                // No content measured — equal distribution
+                let per = remaining / flex_cols as f32;
+                for c in 0..num_cols { if !col_has_explicit[c] { col_widths[c] = per; } }
+            }
         } else if remaining > 0.0 {
             let extra = remaining / num_cols as f32;
             for c in 0..num_cols { col_widths[c] += extra; }
@@ -406,7 +446,7 @@ pub fn layout_table(
         node.children[ci].style.caption_side == CaptionSide::Bottom
     );
     if let Some(ci) = caption_idx {
-        engine.layout_box(&mut node.children[ci], table_width, content_x, content_y, font_px, root_font_px);
+        engine.layout_box(&mut node.children[ci], &Constraints::new(table_width, content_x, content_y, font_px, root_font_px));
         caption_h = node.children[ci].layout.margin_rect.h;
         // Position at top for now; bottom case handled later
         let (dx, dy) = (content_x - node.children[ci].layout.margin_rect.x,
@@ -453,8 +493,8 @@ pub fn layout_table(
                     if matches!(row.children[ci].style.width, CssLength::Percent(_)) {
                         row.children[ci].style.width = CssLength::Auto;
                     }
-                    engine.layout_box(&mut row.children[ci], cell_w, content_x, content_y,
-                                      font_px, root_font_px);
+                    engine.layout_box(&mut row.children[ci], &Constraints::new(cell_w, content_x, content_y,
+                                      font_px, root_font_px));
                     row_ref_mut(node, &row_refs[row_idx]).children[ci].style.width = saved_w;
                 }
                 let (content_h, pad_top, pad_bottom, border_top, border_bottom) = {
@@ -586,6 +626,8 @@ pub fn layout_table(
                 cell.layout.margin_rect = cell.layout.border_rect;
                 cell.layout.padding_rect.w = cell_w - cell.layout.resolved_border_left - cell.layout.resolved_border_right;
                 cell.layout.padding_rect.h = cell_h - cell.layout.resolved_border_top - cell.layout.resolved_border_bottom;
+                cell.layout.content_rect.w = cell.layout.padding_rect.w - cell.layout.resolved_pad_left - cell.layout.resolved_pad_right;
+                cell.layout.content_rect.h = cell.layout.padding_rect.h - cell.layout.resolved_pad_top - cell.layout.resolved_pad_bottom;
 
                 // Apply vertical alignment offset to content and children.
                 // Use absolute positioning from the padding top to avoid
@@ -685,12 +727,6 @@ pub fn layout_table(
 
     // ── Finalize table box ────────────────────────────────────────────────────
     let result = finish_table(node, rbox, content_x, content_y, table_width, table_height);
-
-    // Fix margin_rect for auto margin centering
-    if left_auto || right_auto {
-        node.layout.margin_rect.x = node.layout.border_rect.x - margin_left;
-        node.layout.margin_rect.w = node.layout.border_rect.w + margin_left + margin_right;
-    }
 
     // Absolute children
     let containing_rect = if !matches!(node.style.position, Position::Static) {

@@ -3,6 +3,7 @@ use crate::types::*;
 use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide,
                     shift_rects, layout_positioned};
 use crate::layout::grid::{collect_grid_children, grid_child_ref, grid_child_mut};
+use super::Constraints;
 
 // ─── Margin collapsing helpers ────────────────────────────────────────────────
 
@@ -312,7 +313,7 @@ pub fn layout_block(
     font_px:      f32,
     root_font_px: f32,
 ) -> f32 {
-    layout_block_with_fc(engine, node, rbox, containing_w, x, y, font_px, root_font_px, None)
+    layout_block_with_fc(engine, node, rbox, &Constraints::new(containing_w, x, y, font_px, root_font_px), None)
 }
 
 /// Block formatting context layout with optional parent float context.
@@ -321,13 +322,14 @@ pub fn layout_block_with_fc(
     engine:       &LayoutEngine,
     node:         &mut HtmlBox,
     rbox:         &ResolvedBox,
-    containing_w: f32,
-    x:            f32,
-    y:            f32,
-    font_px:      f32,
-    root_font_px: f32,
+    c:            &Constraints,
     parent_fc:    Option<&mut FloatContext>,
 ) -> f32 {
+    let containing_w = c.available_width;
+    let x = c.x;
+    let y = c.y;
+    let font_px = c.parent_font_px;
+    let root_font_px = c.root_font_px;
     // Content width: respect box-sizing (already resolved in rbox via resolve_box).
     let raw_w = match rbox.content_width {
         Some(w) => w,
@@ -511,12 +513,12 @@ pub fn layout_block_with_fc(
             has_own_floats = true;
             // Layout float to get natural size
             engine.layout_box(
-                grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                font_px, root_font_px
+                grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
+                font_px, root_font_px)
             );
             // Shrink-to-fit for auto-width floats
             if grid_child_ref(node, path).style.width.is_auto() {
-                let intrinsic_w = engine.max_content_width(grid_child_ref(node, path), font_px, root_font_px);
+                let intrinsic_w = engine.intrinsic_sizes(grid_child_ref(node, path), font_px, root_font_px).max_content;
                 if intrinsic_w > 0.0 && intrinsic_w < child_content_w {
                     let irb = grid_child_ref(node, path);
                     let shrink_w = intrinsic_w
@@ -524,8 +526,8 @@ pub fn layout_block_with_fc(
                         + irb.layout.resolved_border_left + irb.layout.resolved_border_right
                         + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
                     engine.layout_box(
-                        grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
-                        font_px, root_font_px
+                        grid_child_mut(node, path), &Constraints::new(shrink_w, content_x, content_y + child_y,
+                        font_px, root_font_px)
                     );
                 }
             }
@@ -582,13 +584,13 @@ pub fn layout_block_with_fc(
                 let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
                 if child_is_bfc_pre || !seen_float {
                     engine.layout_box(
-                        grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                        font_px, root_font_px
+                        grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
+                        font_px, root_font_px)
                     );
                 } else {
                     engine.layout_box_with_fc(
-                        grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                        font_px, root_font_px, Some(&mut *fc)
+                        grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
+                        font_px, root_font_px), Some(&mut *fc)
                     );
                 }
             }
@@ -663,8 +665,8 @@ pub fn layout_block_with_fc(
                 && grid_child_ref(node, path).text.chars().all(|c| c.is_ascii_whitespace());
             if node.layout.line_cache.is_empty() && !is_whitespace_only_text {
                 engine.layout_box(
-                    grid_child_mut(node, path), child_content_w, content_x, content_y + child_y,
-                    font_px, root_font_px
+                    grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
+                    font_px, root_font_px)
                 );
                 // Shrink-to-fit for inline children (inline, inline-block, inline-flex, inline-grid)
                 let ch = grid_child_ref(node, path);
@@ -672,7 +674,7 @@ pub fn layout_block_with_fc(
                     let max_line_w = ch.layout.line_cache.iter()
                         .map(|l| l.width).fold(0.0_f32, f32::max);
                     let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                                      else { compute_intrinsic_width(ch) };
+                                      else { engine.max_content_width(ch, font_px, root_font_px) };
                     if intrinsic_w > 0.0 {
                         let shrink_w = intrinsic_w
                             + ch.layout.resolved_pad_left + ch.layout.resolved_pad_right
@@ -680,8 +682,8 @@ pub fn layout_block_with_fc(
                             + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
                         if shrink_w < child_content_w {
                             engine.layout_box(
-                                grid_child_mut(node, path), shrink_w, content_x, content_y + child_y,
-                                font_px, root_font_px
+                                grid_child_mut(node, path), &Constraints::new(shrink_w, content_x, content_y + child_y,
+                                font_px, root_font_px)
                             );
                         }
                     }
@@ -921,7 +923,7 @@ pub fn layout_columns(
     for child in node.children.iter_mut() {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
-        let h = engine.layout_box(child, col_w, content_x, content_y, font_px, root_font_px);
+        let h = engine.layout_box(child, &Constraints::new(col_w, content_x, content_y, font_px, root_font_px));
         child_heights.push((h, child.style.column_span_all));
     }
 
@@ -954,7 +956,7 @@ pub fn layout_columns(
             let span_y = content_y + span_all_y_offset + max_col_y;
             // Re-layout at full content_w to get correct height (first pass used col_w)
             let actual_span_h = engine.layout_box(
-                &mut node.children[i], content_w, content_x, span_y, font_px, root_font_px
+                &mut node.children[i], &Constraints::new(content_w, content_x, span_y, font_px, root_font_px)
             );
             span_all_y_offset += max_col_y + actual_span_h;
             col_cursor = vec![0.0; n_cols as usize];
@@ -975,7 +977,7 @@ pub fn layout_columns(
 
         // Re-layout child at its column position
         engine.layout_box(
-            &mut node.children[i], col_w, col_x, col_y, font_px, root_font_px
+            &mut node.children[i], &Constraints::new(col_w, col_x, col_y, font_px, root_font_px)
         );
 
         col_cursor[col_idx] += child_h;
