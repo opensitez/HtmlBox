@@ -1064,9 +1064,9 @@ fn apply_flex(s: &mut ComputedStyle, v: &str) {
         "none" => { s.flex_grow = 0.0; s.flex_shrink = 0.0; s.flex_basis = CssLength::Auto; }
         "auto" => { s.flex_grow = 1.0; s.flex_shrink = 1.0; s.flex_basis = CssLength::Auto; }
         _ => {
-            let toks: Vec<&str> = v.split_whitespace().collect();
+            let toks = super::split_css_shorthand_values(v);
             if toks.len() == 1 {
-                let t = toks[0];
+                let t = toks[0].as_str();
                 if t.ends_with('%') || t.ends_with("px") || t.ends_with("em")
                     || t.ends_with("rem") || t.ends_with("vw") || t.ends_with("vh")
                 {
@@ -1082,7 +1082,7 @@ fn apply_flex(s: &mut ComputedStyle, v: &str) {
                 if let Some(t0) = toks.first() { s.flex_grow = t0.parse().unwrap_or(0.0); }
                 if let Some(t1) = toks.get(1)  { s.flex_shrink = t1.parse().unwrap_or(1.0); }
                 else                            { s.flex_shrink = 1.0; s.flex_basis = CssLength::Px(0.0); }
-                if let Some(t2) = toks.get(2)  { s.flex_basis = parse_length(t2); }
+                if let Some(t2) = toks.get(2)  { s.flex_basis = parse_length(t2.as_str()); }
             }
         }
     }

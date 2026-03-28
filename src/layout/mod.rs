@@ -860,7 +860,12 @@ impl LayoutEngine {
         // Keep viewport in doc so focus-change recascades use the correct size.
         doc.viewport_w = self.viewport_w;
         doc.viewport_h = self.viewport_h;
-        let root_font_px = self.root_font_px;
+        // Compute root font-size from the <html> element's computed style.
+        // Used for `rem` unit resolution throughout layout.
+        let root_font_px = {
+            let html_fs = doc.root.style.font_size_px(self.root_font_px, self.root_font_px);
+            if html_fs > 0.0 { html_fs } else { self.root_font_px }
+        };
 
         // Rebuild selector index if rules changed (lazy, skips if already up-to-date).
         doc.stylesheet.rebuild_index();

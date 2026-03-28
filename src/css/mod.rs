@@ -3045,19 +3045,22 @@ pub fn apply_shorthand_4<F: Fn(&str) -> CssLength>(
     bottom: &mut CssLength, left: &mut CssLength,
     parse: F,
 ) {
-    let parts: Vec<&str> = v.split_whitespace().collect();
+    // Split on whitespace but keep calc()/clamp()/var() intact
+    let parts = split_css_values(v);
     match parts.len() {
-        1 => { let x = parse(parts[0]); *top = x.clone(); *right = x.clone(); *bottom = x.clone(); *left = x; }
-        2 => { let tb = parse(parts[0]); let rl = parse(parts[1]); *top = tb.clone(); *bottom = tb; *right = rl.clone(); *left = rl; }
-        3 => { *top = parse(parts[0]); let rl = parse(parts[1]); *right = rl.clone(); *left = rl; *bottom = parse(parts[2]); }
-        4 => { *top = parse(parts[0]); *right = parse(parts[1]); *bottom = parse(parts[2]); *left = parse(parts[3]); }
+        1 => { let x = parse(&parts[0]); *top = x.clone(); *right = x.clone(); *bottom = x.clone(); *left = x; }
+        2 => { let tb = parse(&parts[0]); let rl = parse(&parts[1]); *top = tb.clone(); *bottom = tb; *right = rl.clone(); *left = rl; }
+        3 => { *top = parse(&parts[0]); let rl = parse(&parts[1]); *right = rl.clone(); *left = rl; *bottom = parse(&parts[2]); }
+        4 => { *top = parse(&parts[0]); *right = parse(&parts[1]); *bottom = parse(&parts[2]); *left = parse(&parts[3]); }
         _ => {}
     }
 }
 
 pub fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
     // border: <width> <style> <color>
-    for part in v.split_whitespace() {
+    // Split on whitespace but keep calc()/var() expressions intact
+    for part in split_css_values(v).iter() {
+        let part = part.as_str();
         if let Some(bs) = try_parse_border_style(part) {
             style.border_top_style    = bs;
             style.border_right_style  = bs;
@@ -3086,7 +3089,8 @@ pub fn apply_border_side_shorthand(
     style: &mut BorderStyle,
     color: &mut Color,
 ) {
-    for part in v.split_whitespace() {
+    for part in split_css_values(v).iter() {
+        let part = part.as_str();
         if let Some(bs) = try_parse_border_style(part) {
             *style = bs;
         } else if let Some(c) = parse_color(part) {
@@ -3688,6 +3692,15 @@ fn calc_parse_atom(b: &[u8], pos: &mut usize) -> Coeffs {
     calc_skip_ws(b, pos);
     if *pos >= b.len() { return ZERO_COEFFS; }
 
+    // Nested calc() — strip the "calc(" prefix and parse inner expression
+    if *pos + 5 <= b.len() && &b[*pos..*pos+5] == b"calc(" {
+        *pos += 5; // skip "calc("
+        let result = calc_parse_additive(b, pos);
+        calc_skip_ws(b, pos);
+        if *pos < b.len() && b[*pos] == b')' { *pos += 1; }
+        return result;
+    }
+
     // Parenthesized sub-expression
     if b[*pos] == b'(' {
         *pos += 1; // skip '('
@@ -3754,6 +3767,32 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
         }
     }
     parts.push(&s[start..]);
+    parts
+}
+
+/// Split a CSS value on whitespace while keeping parenthesized expressions
+/// (calc, var, min, max, clamp, rgb, etc.) intact as single tokens.
+pub fn split_css_shorthand_values(s: &str) -> Vec<String> {
+    split_css_values(s)
+}
+fn split_css_values(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for c in s.chars() {
+        match c {
+            '(' => { depth += 1; current.push(c); }
+            ')' => { if depth > 0 { depth -= 1; } current.push(c); }
+            c if c.is_ascii_whitespace() && depth == 0 => {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() { parts.push(trimmed); }
+                current.clear();
+            }
+            _ => { current.push(c); }
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() { parts.push(trimmed); }
     parts
 }
 
@@ -5748,7 +5787,10 @@ fn apply_cascade_inner(
         matches!(ps.position, Position::Absolute | Position::Fixed));
     let before_is_block = root.style.before_style.as_ref().map_or(false, |ps|
         ps.is_block_level());
-    if (is_grid_or_flex && !root.style.before_content.is_empty())
+    // Create ::before child when content was declared (even empty '' for flex/grid items)
+    let before_has_content = !root.style.before_content.is_empty()
+        || (is_grid_or_flex && root.style.before_style.is_some());
+    if (is_grid_or_flex && before_has_content)
         || (before_is_positioned && root.style.before_style.is_some())
         || (before_is_block && !root.style.before_content.is_empty())
     {
@@ -5785,7 +5827,9 @@ fn apply_cascade_inner(
         matches!(ps.position, Position::Absolute | Position::Fixed));
     let after_is_block = root.style.after_style.as_ref().map_or(false, |ps|
         ps.is_block_level());
-    if (is_grid_or_flex && !root.style.after_content.is_empty())
+    let after_has_content = !root.style.after_content.is_empty()
+        || (is_grid_or_flex && root.style.after_style.is_some());
+    if (is_grid_or_flex && after_has_content)
         || (after_is_positioned && root.style.after_style.is_some())
         || (after_is_block && !root.style.after_content.is_empty())
     {
