@@ -48,14 +48,6 @@ path = "examples/transform_filter_demo.rs"
 name = "event_playground"
 path = "examples/event_playground.rs"
 
-[[example]]
-name = "snapshot"
-path = "examples/snapshot.rs"
-
-[[example]]
-name = "debugserver"
-path = "examples/debugserver.rs"
-
 [features]
 accessibility = ["dep:accesskit", "dep:accesskit_winit"]
 
@@ -75,3 +67,4 @@ encoding_rs = "0.8"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["blocking", "gzip", "brotli", "deflate"] }
 flate2 = "1"
+rayon = "1.10"
