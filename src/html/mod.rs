@@ -1,4 +1,5 @@
 pub mod serializer;
+pub mod streaming;
 
 use std::collections::HashMap;
 use crate::types::{HtmlBox, Document, Display, ListStyleType};

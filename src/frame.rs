@@ -715,4 +715,58 @@ impl EngineFrame {
             || !self.doc.active_animations.is_empty()
             || !self.doc.transition_states.is_empty()
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Streaming — progressive HTML loading for browser mode
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Start loading HTML progressively via streaming parser.
+    /// Feed chunks with `feed_html_chunk()`, finalize with `finish_loading()`.
+    pub fn start_streaming(&mut self, base_url: &str) {
+        self.doc = crate::html::parse_html("<html><head></head><body></body></html>");
+        self.doc.base_url = base_url.to_string();
+        self.needs_style = true;
+        self.needs_layout = true;
+        self.needs_paint = true;
+    }
+
+    /// Feed a chunk of HTML to the streaming parser.
+    /// Returns resource hints (URLs to fetch in parallel).
+    pub fn feed_html_chunk(&mut self, chunk: &[u8]) -> Vec<(String, crate::html::streaming::ResourceKind)> {
+        use crate::html::streaming::DomMutation;
+
+        let mut parser = crate::html::streaming::StreamingParser::new(&self.doc.base_url);
+        let mutations = parser.feed(chunk);
+
+        let mut resource_hints = Vec::new();
+
+        for mutation in &mutations {
+            match mutation {
+                DomMutation::AddStylesheet { css, .. } => {
+                    self.doc.stylesheet.parse_and_add(css);
+                    self.mark_style_dirty();
+                    self.engine.invalidate_cascade();
+                }
+                DomMutation::TitleChanged { title } => {
+                    self.callbacks.on_title_changed(title);
+                }
+                DomMutation::ResourceHint { kind, url } => {
+                    resource_hints.push((url.clone(), kind.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        if !mutations.is_empty() {
+            self.mark_style_dirty();
+        }
+
+        resource_hints
+    }
+
+    /// Signal that all HTML data has been received.
+    pub fn finish_loading(&mut self) {
+        self.mark_style_dirty();
+        self.callbacks.on_load_complete();
+    }
 }
