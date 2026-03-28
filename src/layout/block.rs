@@ -641,7 +641,7 @@ pub fn layout_block_with_fc(
                 content_height:Some(child_content_h),
             };
             let cx = content_x + left_edge + child_margin_left + child_rbox_copy.border_left + child_rbox_copy.padding_left;
-            let cy = content_y + child_y   + child_border_top  + child_pad_top;
+            let cy = content_y + child_y + child_border_top + child_pad_top;
             let ch = grid_child_ref(node, path);
             let dx = cx - ch.layout.content_rect.x;
             let dy = cy - ch.layout.content_rect.y;
