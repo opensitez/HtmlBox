@@ -4,6 +4,7 @@ pub mod text;
 pub mod flex;
 pub mod grid;
 pub mod constraints;
+pub mod fragment;
 
 use std::collections::HashMap;
 pub mod table;

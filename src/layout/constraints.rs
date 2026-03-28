@@ -23,6 +23,9 @@ pub struct Constraints {
     pub parent_font_px: f32,
     /// Root element's computed font-size in px (for rem units)
     pub root_font_px: f32,
+    // Future: collapse_margin_top for parent-first-child margin collapsing
+    // (requires fragment tree — current DOM=layout tree makes this impossible
+    //  without breaking absolute positioning)
 }
 
 impl Constraints {
