@@ -258,6 +258,11 @@ impl Renderer {
     pub fn register_component(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
         self.component_registry.register(tag, measure, paint);
     }
+
+    /// Register a trait-based custom component (new API).
+    pub fn register_trait_component(&mut self, tag: &str, component: impl crate::types::Component + 'static) {
+        self.component_registry.register_component(tag, component);
+    }
     pub fn set_scale(&mut self, scale: f32) { self.scale = scale; }
 
     pub fn layout_engine(&mut self) -> &mut crate::layout::LayoutEngine {
@@ -271,10 +276,15 @@ impl Renderer {
     pub fn load_html(&mut self, html: &str, viewport_width: f32) -> crate::Document { self.load_html_vp(html, viewport_width, 700.0) }
     pub fn load_html_vp(&mut self, html: &str, viewport_width: f32, viewport_height: f32) -> crate::Document { self.load_html_with_base(html, "", viewport_width, viewport_height) }
     pub fn load_html_with_base(&mut self, html: &str, base_url: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
-        let mut doc = crate::load_html_with_base(html, base_url, viewport_width, viewport_height);
+        // Pass our component registry so the initial layout uses the same
+        // intrinsic measurements as subsequent relayouts.
+        let doc = crate::load_html_with_registry(
+            html, base_url, viewport_width, viewport_height,
+            self.component_registry.clone(),
+        );
+        // Sync engine state so subsequent layout() calls use the right viewport
         let engine = self.layout_engine();
         engine.viewport_h = viewport_height;
-        engine.layout(&mut doc, viewport_width);
         doc
     }
 
@@ -317,6 +327,10 @@ impl Renderer {
         }
         if let Some(ref list) = self.cached_display_list {
             display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
+        }
+        // Paint custom components on top of the display list
+        if !self.component_registry.map.is_empty() || !self.component_registry.components.is_empty() {
+            self.paint_custom_components(&doc.root, pixmap, doc.scroll_x, doc.scroll_y, scale * zoom);
         }
         if doc.open_select != 0 {
             if let Some(sel_node) = doc.get_node(doc.open_select) {
@@ -427,6 +441,23 @@ impl Renderer {
         let mut pb = PathBuilder::new();
         pb.move_to(x, y); pb.line_to(x + w, y); pb.line_to(x + w, y + h); pb.line_to(x, y + h); pb.close();
         if let Some(path) = pb.finish() { let mut stroke = Stroke::default(); stroke.width = width; pixmap.stroke_path(&path, &paint, &stroke, ts, mask); }
+    }
+
+    /// Walk the DOM tree and paint any custom components.
+    fn paint_custom_components(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, scale: f32) {
+        // Trait-based component — same coordinate contract as legacy: logical coords, scale passed separately
+        if let Some(component) = self.component_registry.get_component(&node.tag) {
+            let r = &node.layout.content_rect;
+            component.paint(node, pixmap, r.x - sx, r.y - sy, r.w, r.h, scale);
+        }
+        // Legacy callback-based component
+        else if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
+            let r = &node.layout.content_rect;
+            (callbacks.paint)(node, pixmap, r.x - sx, r.y - sy, r.w, r.h, scale);
+        }
+        for child in &node.children {
+            self.paint_custom_components(child, pixmap, sx, sy, scale);
+        }
     }
 
     fn draw_caret(&mut self, root: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, caret_node_id: u32, caret_local: usize) {

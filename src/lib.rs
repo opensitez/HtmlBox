@@ -56,6 +56,7 @@ pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, Shadow
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState, MatchedRule,
                 FormEvent, FormEventKind, FormEventCallback, CanvasContext,
+                Component, ComponentEvent, ComponentRegistry,
                 is_text_input, input_value, process_form_input_key,
                 find_parent_form_action, collect_form_data, reset_form,
                 encode_form_urlencoded, build_form_submit_url, apply_autofocus};
@@ -161,11 +162,11 @@ pub fn load_html_with_registry(
 
     let t3 = std::time::Instant::now();
     let mut renderer = Renderer::new();
+    renderer.component_registry = registry;
     {
         let engine = renderer.layout_engine();
         engine.viewport_w = viewport_width;
         engine.viewport_h = viewport_height;
-        engine.component_registry = registry;
         engine.layout(&mut doc, viewport_width);
     }
     eprintln!("  Layout: {:.0}ms", t3.elapsed().as_millis());

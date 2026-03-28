@@ -616,6 +616,19 @@ impl LayoutEngine {
             return node.image_width as f32;
         }
 
+        // Custom component: use cached dimensions (like a replaced element)
+        if self.component_registry.get_component(&node.tag).is_some()
+            || self.component_registry.map.contains_key(&node.tag) {
+            return if node.component_width > 0.0 { node.component_width } else {
+                // First call before layout — measure to get initial size
+                if let Some(c) = self.component_registry.get_component(&node.tag) {
+                    c.measure(node, 0.0).0
+                } else if let Some(cb) = self.component_registry.map.get(&node.tag) {
+                    (cb.measure)(node, 0.0).0
+                } else { 0.0 }
+            };
+        }
+
         let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
         let pad_border = rbox.padding_left + rbox.padding_right
                        + rbox.border_left + rbox.border_right;
@@ -670,6 +683,18 @@ impl LayoutEngine {
         // Replaced elements (img): use natural dimensions.
         if node.tag == "img" && node.image_width > 0 {
             return node.image_width as f32;
+        }
+
+        // Custom component: use cached dimensions (like a replaced element)
+        if self.component_registry.get_component(&node.tag).is_some()
+            || self.component_registry.map.contains_key(&node.tag) {
+            return if node.component_width > 0.0 { node.component_width } else {
+                if let Some(c) = self.component_registry.get_component(&node.tag) {
+                    c.measure(node, f32::MAX).0
+                } else if let Some(cb) = self.component_registry.map.get(&node.tag) {
+                    (cb.measure)(node, f32::MAX).0
+                } else { 0.0 }
+            };
         }
 
         let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
@@ -1330,9 +1355,24 @@ impl LayoutEngine {
             }
         }
 
-        // Check for custom component measurement
-        if let Some(callbacks) = self.component_registry.map.get(&node.tag) {
-            let (cw, ch) = (callbacks.measure)(node, containing_w);
+        // Check for custom component — treated as replaced element with cached dimensions.
+        // Only re-measure when the node is dirty (attribute changed, explicit invalidation).
+        let is_trait_component = self.component_registry.get_component(&node.tag).is_some();
+        let is_legacy_component = !is_trait_component && self.component_registry.map.contains_key(&node.tag);
+        if is_trait_component || is_legacy_component {
+            // Measure only on first layout or when dirty — cache the result
+            if node.component_width == 0.0 || node.layout.layout_dirty {
+                let (cw, ch) = if is_trait_component {
+                    self.component_registry.get_component(&node.tag).unwrap().measure(node, containing_w)
+                } else {
+                    let cb = self.component_registry.map.get(&node.tag).unwrap();
+                    (cb.measure)(node, containing_w)
+                };
+                node.component_width = cw;
+                node.component_height = ch;
+            }
+            let cw = node.component_width;
+            let ch = node.component_height;
             let final_w = if node.style.width.is_auto() { cw } else { rbox.content_width.unwrap_or(cw) };
             let final_h = if node.style.height.is_auto() { ch } else { rbox.content_height.unwrap_or(ch) };
             block::build_box_rects(node, &rbox, x + rbox.margin_left + rbox.border_left + rbox.padding_left,
