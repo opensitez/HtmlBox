@@ -81,6 +81,7 @@ fn query_walk_first(
             html_box: Some(child),
             hover_chain,
             element_id: child.node_id,
+            prev_siblings: &[],
         };
 
         for sel in selectors {
@@ -122,6 +123,7 @@ fn query_walk_all(
             html_box: Some(child),
             hover_chain,
             element_id: child.node_id,
+            prev_siblings: &[],
         };
 
         for sel in selectors {

@@ -68,7 +68,17 @@ pub fn layout_flex(
     } else if let Some(ch) = rbox.content_height {
         ch
     } else {
-        0.0 // column with auto height: determined after items
+        // Column with auto height: use min-height if set (for holy grail layout pattern)
+        let min_h = node.style.min_height.resolve_vp(font_px, 0.0, root_font_px, engine.viewport_w, engine.viewport_h);
+        if min_h > 0.0 {
+            // Subtract padding+border to get content-box min-height
+            let bb = if node.style.box_sizing == crate::types::BoxSizing::BorderBox {
+                rbox.padding_top + rbox.padding_bottom + rbox.border_top + rbox.border_bottom
+            } else { 0.0 };
+            (min_h - bb).max(0.0)
+        } else {
+            0.0 // truly auto height
+        }
     };
 
     let gap_main  = if is_row {
@@ -317,7 +327,8 @@ pub fn layout_flex(
     }
 
     // For column flex with auto height, main size = sum of items
-    let effective_main_size = if !is_row && rbox.content_height.is_none() {
+    let effective_main_size = if !is_row && rbox.content_height.is_none() && main_size <= 0.0 {
+        // Truly auto column height: use content
         let mut ms = 0.0f32;
         for line in &lines {
             ms = ms.max(line.main_used);

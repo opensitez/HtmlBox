@@ -134,6 +134,9 @@ pub struct MatchContext<'a> {
     pub hover_chain:        &'a std::collections::HashSet<u32>,
     /// Node ID of the element currently being matched (for :hover on ancestors).
     pub element_id:         u32,
+    /// Previous non-text sibling info for `+` and `~` combinators.
+    /// Each entry: (tag, id, classes) of preceding element siblings.
+    pub prev_siblings:      &'a [(String, String, String)],
 }
 
 impl CssSelector {
@@ -212,6 +215,7 @@ impl CssSelector {
             html_box: Some(b),
             hover_chain: &empty_hover,
             element_id: b.node_id,
+            prev_siblings: &[],
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[], &ctx)
     }
@@ -233,6 +237,7 @@ impl CssSelector {
             html_box: Some(b),
             hover_chain: &empty_hover,
             element_id: b.node_id,
+            prev_siblings: &[],
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, &ctx)
     }
@@ -310,6 +315,7 @@ pub fn matches_selector_with_ancestors(
                             html_box: None,
                             hover_chain: ctx.hover_chain,
                             element_id: anc.node_id,
+            prev_siblings: &[],
                         };
                         if matches_selector_with_ancestors(
                             left_parts,
@@ -335,6 +341,7 @@ pub fn matches_selector_with_ancestors(
                             html_box: None,
                             hover_chain: ctx.hover_chain,
                             element_id: parent.node_id,
+            prev_siblings: &[],
                         };
                         matches_selector_with_ancestors(
                             left_parts,
@@ -347,10 +354,29 @@ pub fn matches_selector_with_ancestors(
                         false
                     }
                 }
-                Combinator::AdjacentSibling | Combinator::GeneralSibling => {
-                    // We don't have sibling element data in the ancestor chain,
-                    // so we can't fully resolve these — skip for now.
-                    false
+                Combinator::AdjacentSibling => {
+                    // Match left_parts against the immediately previous non-text sibling
+                    if let Some(last) = ctx.prev_siblings.last() {
+                        let mut sib_attrs = HashMap::new();
+                        if !last.1.is_empty() { sib_attrs.insert("id".to_string(), last.1.clone()); }
+                        if !last.2.is_empty() { sib_attrs.insert("class".to_string(), last.2.clone()); }
+                        left_parts.iter().all(|p| matches_part_with_context(
+                            p, &last.0, &sib_attrs, 0, 0, ancestors, ctx,
+                        ))
+                    } else {
+                        false
+                    }
+                }
+                Combinator::GeneralSibling => {
+                    // Match left_parts against ANY previous non-text sibling
+                    ctx.prev_siblings.iter().any(|sib| {
+                        let mut sib_attrs = HashMap::new();
+                        if !sib.1.is_empty() { sib_attrs.insert("id".to_string(), sib.1.clone()); }
+                        if !sib.2.is_empty() { sib_attrs.insert("class".to_string(), sib.2.clone()); }
+                        left_parts.iter().all(|p| matches_part_with_context(
+                            p, &sib.0, &sib_attrs, 0, 0, ancestors, ctx,
+                        ))
+                    })
                 }
             }
         }
@@ -542,6 +568,7 @@ fn has_descendant_matching(
             html_box: Some(child),
             hover_chain: &empty_hover,
             element_id: child.node_id,
+            prev_siblings: &[],
         };
         if matches_selector_with_ancestors(&sel.parts, &child.tag, &child.attributes, 0, 1, &[], &ctx) {
             return true;
@@ -4656,6 +4683,7 @@ fn apply_container_cascade_inner(
             html_box: Some(node),
             hover_chain: &empty_hover,
             element_id: node.node_id,
+            prev_siblings: &[],
         };
         let mut cont_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
         for rule in &stylesheet.rules {
@@ -4815,7 +4843,7 @@ pub fn apply_cascade_vp_hover(
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain);
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain, &[]);
 }
 
 // ─── Incremental Hover Cascade ──────────────────────────────────────────────
@@ -4952,7 +4980,7 @@ fn apply_cascade_incremental_walk(
             node, stylesheet, parent_style, root_font_px,
             ancestors, child_index, sibling_count, type_child_index, type_sibling_count,
             vw, vh, focused_box, keyboard_focus,
-            inherited_vars, candidates_buf, counters, hover_chain,
+            inherited_vars, candidates_buf, counters, hover_chain, &[],
         );
         return;
     }
@@ -5168,6 +5196,7 @@ fn apply_cascade_inner(
     candidates_buf: &mut Vec<usize>,
     counters: &mut HashMap<String, Vec<i32>>,
     hover_chain: &std::collections::HashSet<u32>,
+    prev_siblings: &[(String, String, String)],
 ) {
     // Guard against stack overflow on deeply nested DOMs.
     if ancestors.len() >= MAX_CASCADE_DEPTH {
@@ -5296,7 +5325,7 @@ fn apply_cascade_inner(
         type_sibling_count,
         html_box: Some(root),
         hover_chain,
-        element_id: root.node_id,
+        element_id: root.node_id, prev_siblings,
     };
 
     // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
@@ -5904,6 +5933,8 @@ fn apply_cascade_inner(
         let elem_indices: Vec<usize> = children.iter().map(|c| {
             if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
         }).collect();
+        // Track previous siblings for `+` and `~` combinator matching
+        let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
         for (i, child) in children.iter_mut().enumerate() {
             let (ci, ns) = if child.tag == "#text" {
                 (i, n_children)
@@ -5916,8 +5947,14 @@ fn apply_cascade_inner(
                 type_counts[i], type_totals[i],
                 vw, vh, focused_box, keyboard_focus,
                 inherited_vars, candidates_buf, counters,
-                hover_chain,
+                hover_chain, &prev_siblings,
             );
+            // Record this child as a previous sibling (skip text nodes)
+            if child.tag != "#text" {
+                let id = child.attributes.get("id").cloned().unwrap_or_default();
+                let cls = child.attributes.get("class").cloned().unwrap_or_default();
+                prev_siblings.push((child.tag.clone(), id, cls));
+            }
         }
     }
 
@@ -6095,6 +6132,7 @@ fn parallel_selector_match(
             html_box: None, // Not available in parallel pass; :has()/:focus-within degrade gracefully
             hover_chain,
             element_id: item.node_id,
+            prev_siblings: &[],
         };
 
         let mut matched:           Vec<(u32, usize)> = Vec::new();
@@ -6851,7 +6889,7 @@ fn cascade_children_sequential(
             type_counts[i], type_totals[i],
             vw, vh, focused_box, keyboard_focus,
             inherited_vars, candidates_buf, counters,
-            hover_chain,
+            hover_chain, &[],
         );
     }
 }
