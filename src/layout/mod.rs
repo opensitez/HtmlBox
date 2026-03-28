@@ -5,6 +5,7 @@ pub mod flex;
 pub mod grid;
 pub mod constraints;
 pub mod fragment;
+pub mod perf;
 
 use std::collections::HashMap;
 pub mod table;
@@ -553,8 +554,10 @@ impl LayoutEngine {
 
         // Check cache
         if let Some(&w) = self.text_width_cache.borrow().get(&key) {
+            perf::record_text_measure(true);
             return w;
         }
+        perf::record_text_measure(false);
 
         // Measure and cache
         let w = if let Some(fs_ptr) = self.font_system {
@@ -948,6 +951,7 @@ impl LayoutEngine {
         let dom_style_dirty = doc.style_dirty;
         doc.style_dirty = false;
 
+        perf::start_phase();
         let did_cascade = if needs_cascade || dom_style_dirty {
             // Full cascade needed (initial, viewport change, etc.)
             let hover_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
@@ -999,6 +1003,7 @@ impl LayoutEngine {
         // Progressive layout is disabled for now — it causes blank content
         // below the viewport. Full layout runs in a single pass.
         // TODO: implement proper deferred layout with background completion.
+        perf::end_cascade();
         self.initial_layout_done = true;
         self.layout_geometry(doc, viewport_width, root_font_px);
         self.last_geometry_viewport_h = self.viewport_h;
@@ -1070,6 +1075,8 @@ impl LayoutEngine {
     fn layout_geometry(&self, doc: &mut Document, viewport_width: f32, root_font_px: f32) {
         self.layout_calls.set(0);
         self.layout_start.set(Some(std::time::Instant::now()));
+        perf::reset();
+        perf::start_phase();
 
         // Resolve shadow DOM slots before layout (only if any shadow roots exist)
         if has_shadow_roots(&doc.root) {
@@ -1112,6 +1119,12 @@ impl LayoutEngine {
         doc.root.layout.content_rect.h = h;
         doc.root.layout.padding_rect.h = h;
         doc.root.layout.border_rect.h  = h;
+
+        perf::end_layout();
+        perf::set_counts(
+            count_nodes(&doc.root) as u32,
+            doc.stylesheet.rules.len() as u32,
+        );
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);
@@ -1199,6 +1212,7 @@ impl LayoutEngine {
             && vh_ok
             && !matches!(node.style.display, Display::None | Display::Contents)
         {
+            perf::record_layout_skip();
             let dx = x - node.layout.margin_rect.x;
             let dy = y - node.layout.margin_rect.y;
             if dx.abs() > 0.01 || dy.abs() > 0.01 {
@@ -1210,6 +1224,8 @@ impl LayoutEngine {
 
         self.layout_depth.set(depth + 1);
 
+        perf::record_layout_call();
+        perf::record_depth(depth as u32);
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
         // <img>/<svg> aspect ratio: when one dimension is auto and the natural
@@ -1547,6 +1563,10 @@ fn resolve_all_slots(node: &mut HtmlBox) {
             resolve_all_slots(child);
         }
     }
+}
+
+fn count_nodes(node: &HtmlBox) -> usize {
+    1 + node.children.iter().map(|c| count_nodes(c)).sum::<usize>()
 }
 
 pub fn has_block_children(node: &HtmlBox) -> bool {

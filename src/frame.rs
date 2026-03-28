@@ -769,4 +769,31 @@ impl EngineFrame {
         self.mark_style_dirty();
         self.callbacks.on_load_complete();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Performance — measure and report rendering pipeline timing
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Enable performance tracking. Call before update_frame().
+    pub fn enable_perf(&mut self) {
+        crate::layout::perf::enable();
+    }
+
+    /// Disable performance tracking.
+    pub fn disable_perf(&mut self) {
+        crate::layout::perf::disable();
+    }
+
+    /// Get performance counters from the last update_frame().
+    pub fn perf_counters(&self) -> crate::layout::perf::PerfCounters {
+        crate::layout::perf::counters()
+    }
+
+    /// Print a perf summary to stderr.
+    pub fn print_perf(&self) {
+        let c = crate::layout::perf::counters();
+        if c.layout_calls > 0 || c.layout_ms > 0.0 {
+            eprintln!("[perf] {}", c.summary());
+        }
+    }
 }

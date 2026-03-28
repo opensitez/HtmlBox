@@ -64,6 +64,7 @@ pub use markdown::{parse_markdown, serializer::serialize_markdown};
 pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base, resolve_url};
 pub use html::streaming::{StreamingParser, DomMutation, ResourceKind};
 pub use layout::{LayoutEngine, Constraints, IntrinsicSizes, FormattingContext};
+pub use layout::perf::PerfCounters;
 pub use frame::{EngineFrame, EngineCallbacks};
 pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
 pub use renderer::{Renderer, draw_inspect_overlay};
