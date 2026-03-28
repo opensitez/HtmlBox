@@ -3549,7 +3549,7 @@ loadTree();
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut initial_url = None;
-    let mut cache_dir = None;
+    let mut cache_dir = Some(String::from("snapshot_cache"));
     let mut debug_port: Option<u16> = None;
     let mut headless = false;
     let mut width: f32 = 1280.0;
@@ -3747,7 +3747,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
     let result = match cmd.as_str() {
         "screenshot" => {
             let path = dbg_json_str(line, "out").unwrap_or_else(|| "snapshot.png".to_string());
-            let doc_h = doc.root.layout.margin_rect.h.ceil() as u32;
+            let doc_h = Document::scroll_height(&doc.root).max(doc.root.layout.margin_rect.h).ceil() as u32;
             let rh = doc_h.max(1).min(4000);
             if let Some(mut pm) = tiny_skia::Pixmap::new(width as u32, rh) {
                 pm.fill(tiny_skia::Color::WHITE);
@@ -3921,7 +3921,10 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             sw(&doc.root, &q, &mut results);
             format!(r#"{{"ok":true,"count":{},"results":[{}]}}"#, results.len(), results.join(","))
         }
-        "viewport" => format!(r#"{{"ok":true,"width":{:.0},"height":{:.0},"doc_height":{:.0}}}"#, width, height, doc.root.layout.margin_rect.h),
+        "viewport" => {
+            let doc_h = Document::scroll_height(&doc.root).max(doc.root.layout.margin_rect.h);
+            format!(r#"{{"ok":true,"width":{:.0},"height":{:.0},"doc_height":{:.0}}}"#, width, height, doc_h)
+        }
         "network" => {
             let mut img = 0u32;
             rhtmledit::Document::walk_all(&doc.root, &mut |b| { if b.image_data.is_some() { img += 1; } });
@@ -3997,6 +4000,288 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let above = t1.elapsed().as_micros() as f64 / 1000.0;
             renderer.layout_engine().layout_remainder(doc, width);
             format!(r#"{{"ok":true,"full_ms":{:.1},"above_fold_ms":{:.1}}}"#, full, above)
+        }
+        // ── Inspect (by selector or nid) ─────────────────────────────────
+        "inspect" => {
+            let sel = dbg_json_str(line, "selector").unwrap_or_default();
+            let mut parts = Vec::new();
+            Document::walk_all(&doc.root, &mut |node| {
+                if dbg_matches_query(node, &sel) { parts.push(dbg_inspect_json(node)); }
+            });
+            format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, parts.len(), parts.join(","))
+        }
+        // ── Computed styles ──────────────────────────────────────────────
+        "computed" => {
+            let sel = dbg_json_str(line, "selector").unwrap_or_default();
+            let mut parts = Vec::new();
+            Document::walk_all(&doc.root, &mut |node| {
+                if dbg_matches_query(node, &sel) { parts.push(dbg_computed_json(node)); }
+            });
+            format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, parts.len(), parts.join(","))
+        }
+        // ── Matched CSS rules ────────────────────────────────────────────
+        "rules" | "matched-rules" => {
+            let sel = dbg_json_str(line, "selector").unwrap_or_default();
+            let mut results = Vec::new();
+            Document::walk_all(&doc.root, &mut |node| {
+                if dbg_matches_query(node, &sel) {
+                    let rules: Vec<String> = node.matched_rules.iter().map(|r| {
+                        let decls: Vec<String> = r.declarations.iter()
+                            .filter(|(k, _)| !k.starts_with("--"))
+                            .map(|(k, v)| format!("{}:{}", dbg_json_escape(k), dbg_json_escape(v)))
+                            .collect();
+                        format!(r#"{{"selector":{},"specificity":{},"source":{},"declarations":{{{}}}}}"#,
+                            dbg_json_escape(&r.selector), r.specificity,
+                            dbg_json_escape(&r.source), decls.join(","))
+                    }).collect();
+                    let id  = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
+                    let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
+                    results.push(format!(r#"{{"tag":{},"id":{},"class":{},"rules":[{}]}}"#,
+                        dbg_json_escape(&node.tag), dbg_json_escape(id), dbg_json_escape(cls),
+                        rules.join(",")));
+                }
+            });
+            format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, results.len(), results.join(","))
+        }
+        // ── Deep inspect ─────────────────────────────────────────────────
+        "deep" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+            let mut items: Vec<String> = Vec::new();
+            for node in nodes {
+                let cr = node.layout.content_rect;
+                let pr = node.layout.padding_rect;
+                let mr = node.layout.margin_rect;
+                let cls = node.attributes.get("class").cloned().unwrap_or_default();
+                let id = node.attributes.get("id").cloned().unwrap_or_default();
+                let children: Vec<String> = node.children.iter()
+                    .filter(|c| c.tag != "#text" || !c.text.trim().is_empty())
+                    .map(|c| {
+                        let cc = c.layout.content_rect;
+                        format!(r#"{{"tag":"{}","id":"{}","class":"{}","display":"{:?}","float":"{:?}","c":[{:.0},{:.0},{:.0},{:.0}]}}"#,
+                            c.tag, c.attributes.get("id").unwrap_or(&String::new()),
+                            c.attributes.get("class").unwrap_or(&String::new()),
+                            c.style.display, c.style.float, cc.x, cc.y, cc.w, cc.h)
+                    }).collect();
+                items.push(format!(
+                    r#"{{"tag":"{}","id":"{}","class":"{}","content":[{:.0},{:.0},{:.0},{:.0}],"padding":[{:.0},{:.0},{:.0},{:.0}],"margin":[{:.0},{:.0},{:.0},{:.0}],"display":"{:?}","float":"{:?}","children":[{}]}}"#,
+                    node.tag, id, cls,
+                    cr.x, cr.y, cr.w, cr.h,
+                    pr.x, pr.y, pr.w, pr.h,
+                    mr.x, mr.y, mr.w, mr.h,
+                    node.style.display, node.style.float,
+                    children.join(",")
+                ));
+            }
+            format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, items.len(), items.join(","))
+        }
+        // ── CSS property query ───────────────────────────────────────────
+        "css" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let props_str = dbg_json_str(line, "props").unwrap_or_default();
+            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+            let mut items: Vec<String> = Vec::new();
+            for node in nodes {
+                let mut kv: Vec<String> = Vec::new();
+                kv.push(format!(r#""tag":"{}""#, node.tag));
+                kv.push(format!(r#""id":"{}""#, node.attributes.get("id").unwrap_or(&String::new())));
+                kv.push(format!(r#""class":"{}""#, node.attributes.get("class").unwrap_or(&String::new())));
+                for prop in props_str.split(',') {
+                    let prop = prop.trim();
+                    if prop.is_empty() { continue; }
+                    let val = match prop {
+                        "display" => format!("{:?}", node.style.display),
+                        "position" => format!("{:?}", node.style.position),
+                        "float" => format!("{:?}", node.style.float),
+                        "width" => format!("{:?}", node.style.width),
+                        "height" => format!("{:?}", node.style.height),
+                        "visibility" => format!("{:?}", node.style.visibility),
+                        "overflow-x" => format!("{:?}", node.style.overflow_x),
+                        "overflow-y" => format!("{:?}", node.style.overflow_y),
+                        "white-space" => format!("{:?}", node.style.white_space),
+                        "flex-direction" => format!("{:?}", node.style.flex_direction),
+                        "flex-wrap" => format!("{:?}", node.style.flex_wrap),
+                        "align-items" => format!("{:?}", node.style.align_items),
+                        "justify-content" => format!("{:?}", node.style.justify_content),
+                        "font-size" => format!("{:.1}", node.style.font_size_px(16.0, 16.0)),
+                        "opacity" => format!("{:.2}", node.style.opacity),
+                        "content-rect" => { let r = node.layout.content_rect; format!("{:.1},{:.1} {:.1}x{:.1}", r.x, r.y, r.w, r.h) }
+                        "padding-rect" => { let r = node.layout.padding_rect; format!("{:.1},{:.1} {:.1}x{:.1}", r.x, r.y, r.w, r.h) }
+                        "margin-rect" => { let r = node.layout.margin_rect; format!("{:.1},{:.1} {:.1}x{:.1}", r.x, r.y, r.w, r.h) }
+                        "border-rect" => { let r = node.layout.border_rect; format!("{:.1},{:.1} {:.1}x{:.1}", r.x, r.y, r.w, r.h) }
+                        "line-count" => format!("{}", node.layout.line_cache.len()),
+                        _ => format!("(unknown: {})", prop),
+                    };
+                    kv.push(format!(r#""{}":"{}""#, prop, val));
+                }
+                items.push(format!("{{{}}}", kv.join(",")));
+            }
+            format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, items.len(), items.join(","))
+        }
+        // ── Benchmark ────────────────────────────────────────────────────
+        "bench" => {
+            let n = dbg_json_num(line, "n").unwrap_or(1.0) as u32;
+            let n = n.max(1).min(100);
+            let mut layout_times = Vec::new();
+            for _ in 0..n {
+                let t = std::time::Instant::now();
+                renderer.layout_engine().layout(doc, width);
+                layout_times.push(t.elapsed().as_micros() as f64 / 1000.0);
+            }
+            let avg = layout_times.iter().sum::<f64>() / layout_times.len() as f64;
+            format!(r#"{{"ok":true,"iterations":{},"layout_avg_ms":{:.1}}}"#, n, avg)
+        }
+        "perf" => {
+            let rules = doc.stylesheet.rules.len();
+            let mut node_count = 0u32;
+            Document::walk_all(&doc.root, &mut |_| { node_count += 1; });
+            format!(r#"{{"ok":true,"nodes":{},"css_rules":{},"doc_height":{:.0}}}"#, node_count, rules, doc.root.layout.margin_rect.h)
+        }
+        // ── Click ────────────────────────────────────────────────────────
+        "click" => {
+            let coords = if let Some(sel) = dbg_json_str(line, "selector") {
+                dbg_selector_center(doc, &sel)
+                    .ok_or_else(|| format!(r#"{{"ok":false,"error":"no element matches {}"}}"#, dbg_json_escape(&sel)))
+            } else if let (Some(x), Some(y)) = (dbg_json_num(line, "x"), dbg_json_num(line, "y")) {
+                Ok((x, y))
+            } else {
+                return r#"{"ok":false,"error":"click needs x,y or selector"}"#.to_string();
+            };
+            let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
+            let pt = (x, y + doc.scroll_y);
+            doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseDown, pt, 0);
+            doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseUp, pt, 0);
+            renderer.layout_engine().layout(doc, width);
+            format!(r#"{{"ok":true,"x":{:.0},"y":{:.0}}}"#, x, y)
+        }
+        // ── Hover ────────────────────────────────────────────────────────
+        "hover" => {
+            let coords = if let Some(sel) = dbg_json_str(line, "selector") {
+                dbg_selector_center(doc, &sel)
+                    .ok_or_else(|| format!(r#"{{"ok":false,"error":"no element matches {}"}}"#, dbg_json_escape(&sel)))
+            } else if let (Some(x), Some(y)) = (dbg_json_num(line, "x"), dbg_json_num(line, "y")) {
+                Ok((x, y))
+            } else {
+                return r#"{"ok":false,"error":"hover needs x,y or selector"}"#.to_string();
+            };
+            let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
+            let pt = (x, y + doc.scroll_y);
+            let changed = doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseMove, pt, 0);
+            if changed { renderer.layout_engine().layout(doc, width); }
+            format!(r#"{{"ok":true,"changed":{}}}"#, changed)
+        }
+        // ── Type text ────────────────────────────────────────────────────
+        "type" => {
+            match dbg_json_str(line, "text") {
+                Some(text) => {
+                    let mut any = false;
+                    for ch in text.chars() {
+                        if doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false) { any = true; }
+                    }
+                    if any { renderer.layout_engine().layout(doc, width); }
+                    format!(r#"{{"ok":true,"typed":{}}}"#, any)
+                }
+                None => r#"{"ok":false,"error":"type needs text"}"#.to_string(),
+            }
+        }
+        // ── Send key ─────────────────────────────────────────────────────
+        "key" => {
+            match dbg_json_str(line, "key") {
+                Some(k) => {
+                    let (code, ch) = match k.as_str() {
+                        "Enter"      => (13, Some('\r')),
+                        "Tab"        => (9,  Some('\t')),
+                        "Backspace"  => (8,  None),
+                        "Delete"     => (46, None),
+                        "Escape"     => (27, None),
+                        "ArrowLeft"  => (37, None),
+                        "ArrowRight" => (39, None),
+                        "ArrowUp"    => (38, None),
+                        "ArrowDown"  => (40, None),
+                        "Home"       => (36, None),
+                        "End"        => (35, None),
+                        "Space"      => (32, Some(' ')),
+                        s if s.len() == 1 => (s.chars().next().unwrap() as u32, s.chars().next()),
+                        _ => return format!(r#"{{"ok":false,"error":"unknown key: {}"}}"#, dbg_json_escape(&k)),
+                    };
+                    let changed = doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, code, ch, false, false, false, false);
+                    if changed { renderer.layout_engine().layout(doc, width); }
+                    format!(r#"{{"ok":true,"changed":{}}}"#, changed)
+                }
+                None => r#"{"ok":false,"error":"key needs key name"}"#.to_string(),
+            }
+        }
+        // ── Force element state ──────────────────────────────────────────
+        "force-state" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let state = dbg_json_str(line, "state").unwrap_or_default();
+            if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
+                let nid = node.node_id;
+                match state.as_str() {
+                    "hover" => { doc.hovered_box = nid; doc.hover_changed = true; }
+                    "focus" => { doc.focused_box = nid; }
+                    "active" => { doc.active_box = nid; }
+                    _ => {}
+                }
+            }
+            doc.style_dirty = true;
+            renderer.layout_engine().layout(doc, width);
+            r#"{"ok":true}"#.to_string()
+        }
+        // ── Set attribute ────────────────────────────────────────────────
+        "setattr" => {
+            match (dbg_json_str(line, "selector"), dbg_json_str(line, "name"), dbg_json_str(line, "value")) {
+                (Some(sel), Some(name), Some(val)) => {
+                    let mut count = 0usize;
+                    Document::walk_all_mut(&mut doc.root, &mut |node| {
+                        if dbg_matches_query(node, &sel) { node.attributes.insert(name.clone(), val.clone()); count += 1; }
+                    });
+                    if count > 0 { renderer.layout_engine().layout(doc, width); }
+                    format!(r#"{{"ok":true,"modified":{}}}"#, count)
+                }
+                _ => r#"{"ok":false,"error":"setattr needs selector, name, value"}"#.to_string(),
+            }
+        }
+        // ── Set text content ─────────────────────────────────────────────
+        "set-text" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let text = dbg_json_str(line, "text").unwrap_or_default();
+            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
+                rhtmledit::dom::set_text_content(node, &text);
+            }
+            renderer.layout_engine().layout(doc, width);
+            r#"{"ok":true}"#.to_string()
+        }
+        // ── Add/remove/toggle class ──────────────────────────────────────
+        "add-class" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let cls = dbg_json_str(line, "class").unwrap_or_default();
+            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
+                rhtmledit::dom::add_class(node, &cls);
+            }
+            doc.style_dirty = true;
+            renderer.layout_engine().layout(doc, width);
+            r#"{"ok":true}"#.to_string()
+        }
+        "remove-class" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let cls = dbg_json_str(line, "class").unwrap_or_default();
+            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
+                rhtmledit::dom::remove_class(node, &cls);
+            }
+            doc.style_dirty = true;
+            renderer.layout_engine().layout(doc, width);
+            r#"{"ok":true}"#.to_string()
+        }
+        "toggle-class" => {
+            let selector = dbg_json_str(line, "selector").unwrap_or_default();
+            let cls = dbg_json_str(line, "class").unwrap_or_default();
+            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
+                rhtmledit::dom::toggle_class(node, &cls);
+            }
+            doc.style_dirty = true;
+            renderer.layout_engine().layout(doc, width);
+            r#"{"ok":true}"#.to_string()
         }
         "quit" => std::process::exit(0),
         _ => format!(r#"{{"ok":false,"error":"unknown: {}"}}"#, cmd),
