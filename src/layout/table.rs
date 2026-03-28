@@ -197,14 +197,38 @@ pub fn layout_table(
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
     };
-    let content_x = x + rbox.margin_left + rbox.border_left + rbox.padding_left;
+    // Auto margin centering for tables (CSS 2.1 §17.5.2)
+    let left_auto  = node.style.margin_left.is_auto();
+    let right_auto = node.style.margin_right.is_auto();
+    let (margin_left, margin_right) = if !node.style.width.is_auto() && (left_auto || right_auto) {
+        let tw = engine.res_len(&node.style.width, font_px, containing_w, root_font_px);
+        let non_margin = rbox.border_left + rbox.padding_left + tw + rbox.padding_right + rbox.border_right;
+        let available = (containing_w - non_margin).max(0.0);
+        if left_auto && right_auto {
+            let ml = (available / 2.0).floor();
+            (ml, available - ml)
+        } else if left_auto {
+            (available - rbox.margin_right, rbox.margin_right)
+        } else {
+            (rbox.margin_left, available - rbox.margin_left)
+        }
+    } else {
+        (rbox.margin_left, rbox.margin_right)
+    };
+
+    let content_x = x + margin_left + rbox.border_left + rbox.padding_left;
     let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
 
-    let table_width = if !node.style.width.is_auto() {
+    // Apply max-width constraint
+    let mut table_width = if !node.style.width.is_auto() {
         engine.res_len(&node.style.width, font_px, containing_w, root_font_px)
     } else {
         content_w
     };
+    if !node.style.max_width.is_none() && !node.style.max_width.is_auto() {
+        let max_w = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
+        if max_w > 0.0 && table_width > max_w { table_width = max_w; }
+    }
 
     // ── Collect rows ─────────────────────────────────────────────────────────
     let mut abs_children: Vec<usize> = Vec::new();
@@ -421,11 +445,17 @@ pub fn layout_table(
                     if is_ua_default(&cell.style.padding_bottom) { cell.style.padding_bottom = cellpad.clone(); }
                 }
 
-                // Layout cell
+                // Layout cell — replace percentage width with resolved pixel value
+                // so it doesn't get double-resolved against the column width.
                 {
                     let row = row_ref_mut(node, &row_refs[row_idx]);
+                    let saved_w = row.children[ci].style.width.clone();
+                    if matches!(row.children[ci].style.width, CssLength::Percent(_)) {
+                        row.children[ci].style.width = CssLength::Auto;
+                    }
                     engine.layout_box(&mut row.children[ci], cell_w, content_x, content_y,
                                       font_px, root_font_px);
+                    row_ref_mut(node, &row_refs[row_idx]).children[ci].style.width = saved_w;
                 }
                 let (content_h, pad_top, pad_bottom, border_top, border_bottom) = {
                     let row = row_ref(node, &row_refs[row_idx]);
@@ -655,6 +685,12 @@ pub fn layout_table(
 
     // ── Finalize table box ────────────────────────────────────────────────────
     let result = finish_table(node, rbox, content_x, content_y, table_width, table_height);
+
+    // Fix margin_rect for auto margin centering
+    if left_auto || right_auto {
+        node.layout.margin_rect.x = node.layout.border_rect.x - margin_left;
+        node.layout.margin_rect.w = node.layout.border_rect.w + margin_left + margin_right;
+    }
 
     // Absolute children
     let containing_rect = if !matches!(node.style.position, Position::Static) {
