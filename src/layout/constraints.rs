@@ -15,6 +15,9 @@ use super::{LayoutEngine, ResolvedBox};
 pub struct Constraints {
     /// Available width from containing block
     pub available_width: f32,
+    /// Available height from containing block (None = auto).
+    /// Used for percentage height resolution (CSS 2.1 §10.5).
+    pub available_height: Option<f32>,
     /// Position X in parent's coordinate space
     pub x: f32,
     /// Position Y in parent's coordinate space
@@ -23,15 +26,34 @@ pub struct Constraints {
     pub parent_font_px: f32,
     /// Root element's computed font-size in px (for rem units)
     pub root_font_px: f32,
-    // Future: collapse_margin_top for parent-first-child margin collapsing
-    // (requires fragment tree — current DOM=layout tree makes this impossible
-    //  without breaking absolute positioning)
+    /// Forced content width (overrides style.width in resolve_box_vp).
+    /// Used by flex layout to set the resolved main/cross size WITHOUT
+    /// mutating the DOM style. None = use style.width as normal.
+    pub forced_width: Option<f32>,
+    /// Forced content height (overrides style.height in resolve_box_vp).
+    pub forced_height: Option<f32>,
 }
 
 impl Constraints {
     #[inline]
     pub fn new(available_width: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32) -> Self {
-        Self { available_width, x, y, parent_font_px, root_font_px }
+        Self { available_width, available_height: None, x, y, parent_font_px, root_font_px,
+               forced_width: None, forced_height: None }
+    }
+
+    /// Create constraints with an explicit available height.
+    #[inline]
+    pub fn with_height(available_width: f32, available_height: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32) -> Self {
+        Self { available_width, available_height: Some(available_height), x, y, parent_font_px, root_font_px,
+               forced_width: None, forced_height: None }
+    }
+
+    /// Create constraints with forced content dimensions (for flex items).
+    #[inline]
+    pub fn with_forced(available_width: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32,
+                       forced_width: Option<f32>, forced_height: Option<f32>) -> Self {
+        Self { available_width, available_height: None, x, y, parent_font_px, root_font_px,
+               forced_width, forced_height }
     }
 }
 

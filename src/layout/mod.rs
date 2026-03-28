@@ -1076,52 +1076,42 @@ impl LayoutEngine {
             resolve_all_slots(&mut doc.root);
         }
 
-        // ── Phase 1: Generate fragment tree from DOM ──────────────────────────
-        // The fragment tree has structural fixes:
-        // - Anonymous blocks for mixed block+inline
-        // - display:contents removed (children reparented)
-        // - Flex/grid children blockified
-        // - Parent-first-child margin-top zeroed (collapses through parent)
-        let frag_tree = fragment::generate_fragments(&doc.root);
-
-        // ── Phase 2: Convert to HtmlBox tree for layout ──────────────────────
-        // The converted tree has the same field names as HtmlBox so existing
-        // layout functions work unchanged. The DOM is not mutated.
-        let mut layout_tree = fragment::to_htmlbox(&frag_tree, &doc.root);
-
-        // Mark ENTIRE layout tree as dirty — the fragment tree is fresh and
-        // all nodes need layout. This prevents the subtree pruning cache from
-        // skipping nodes that have stale geometry from a previous DOM layout.
-        fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
-            n.layout.layout_dirty = true;
-            n.layout.intrinsic_dirty = true;
-            n.has_dirty_layout_descendant = true;
-            n.layout.last_containing_width = 0.0; // invalidate cache
-            for c in &mut n.children { mark_all_dirty(c); }
-        }
-        mark_all_dirty(&mut layout_tree);
-        propagate_dirty(&mut layout_tree);
+        // Direct layout on the DOM tree — fast path, no cloning.
+        // The fragment tree infrastructure (fragment.rs) is available for
+        // structural fixes (anonymous blocks, margin collapsing) but is
+        // bypassed here for performance. Enable per-node when needed.
+        propagate_dirty(&mut doc.root);
 
         // Set up root geometry
-        let rbox = self.res_box(&layout_tree.style, root_font_px, viewport_width, root_font_px);
+        let rbox = self.res_box(&doc.root.style, root_font_px, viewport_width, root_font_px);
         let content_w = rbox.content_width.unwrap_or(viewport_width);
-        layout_tree.layout.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        layout_tree.layout.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
-        layout_tree.layout.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
-        layout_tree.layout.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.layout.content_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.layout.padding_rect = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.layout.border_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.layout.margin_rect  = Rect::new(0.0, 0.0, content_w, 0.0);
+        doc.root.layout.layout_dirty = true;
 
-        // ── Phase 3: Layout the converted tree ───────────────────────────────
+        // When viewport height changed, mark all nodes dirty
+        if (self.viewport_h - self.last_geometry_viewport_h).abs() > 0.5
+            && !self.last_geometry_viewport_h.is_nan()
+        {
+            fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
+                n.layout.layout_dirty = true;
+                n.layout.intrinsic_dirty = true;
+                n.has_dirty_layout_descendant = true;
+                for c in &mut n.children { mark_all_dirty(c); }
+            }
+            mark_all_dirty(&mut doc.root);
+        }
+
         self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
-        self.layout_box(&mut layout_tree, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
+        self.layout_box(&mut doc.root, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
 
         // Update root geometry with final height
-        let h = layout_tree.layout.margin_rect.h;
-        layout_tree.layout.content_rect.h = h;
-        layout_tree.layout.padding_rect.h = h;
-        layout_tree.layout.border_rect.h  = h;
-
-        // ── Phase 4: Write layout results back to DOM ────────────────────────
-        fragment::write_back_htmlbox(&layout_tree, &mut doc.root);
+        let h = doc.root.layout.margin_rect.h;
+        doc.root.layout.content_rect.h = h;
+        doc.root.layout.padding_rect.h = h;
+        doc.root.layout.border_rect.h  = h;
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);
@@ -1248,23 +1238,22 @@ impl LayoutEngine {
         } else {
             (false, 0.0, 0.0)
         };
-        if has_intrinsic {
+        // Compute intrinsic aspect ratio dimensions WITHOUT mutating style.
+        // The resolved values are applied to rbox after resolve_box_vp.
+        let (intrinsic_w_override, intrinsic_h_override) = if has_intrinsic {
             if node.style.width.is_auto() && !node.style.height.is_auto() {
                 let h = node.style.height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
                 let w = (h * iw / ih).round();
-                node.style.width = CssLength::Px(w);
+                (Some(w), None)
             } else if node.style.height.is_auto() && !node.style.width.is_auto() {
                 let mut w = node.style.width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
-                // Apply max-width constraint before computing aspect ratio height
                 let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
                 if max_w > 0.0 && w > max_w { w = max_w; }
                 let h = (w * ih / iw).round();
-                node.style.height = CssLength::Px(h);
+                (None, Some(h))
             } else if node.style.width.is_auto() && node.style.height.is_auto() {
-                // Start with natural dimensions
                 let mut w = iw;
                 let mut h = ih;
-                // Apply max-width/max-height constraints, maintaining aspect ratio
                 let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
                 if max_w > 0.0 && w > max_w {
                     h = (max_w * ih / iw).round();
@@ -1275,27 +1264,39 @@ impl LayoutEngine {
                     w = (max_h * iw / ih).round();
                     h = max_h;
                 }
-                node.style.width  = CssLength::Px(w);
-                node.style.height = CssLength::Px(h);
+                (Some(w), Some(h))
+            } else {
+                (None, None)
             }
+        } else {
+            (None, None)
+        };
+
+        let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, c.available_height);
+
+        // Apply intrinsic aspect ratio overrides to rbox (not to style)
+        if let Some(w) = intrinsic_w_override {
+            rbox.content_width = Some(w);
+        }
+        if let Some(h) = intrinsic_h_override {
+            rbox.content_height = Some(h);
         }
 
-        let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, None);
+        // Apply forced dimensions from Constraints (used by flex layout).
+        // These override style.width/height without mutating the DOM.
+        if let Some(fw) = c.forced_width {
+            rbox.content_width = Some(fw);
+        }
+        if let Some(fh) = c.forced_height {
+            rbox.content_height = Some(fh);
+        }
 
         // CSS 2.1 §10.5: when this element has a definite content height,
-        // children with percentage heights can resolve against it.
-        // Pre-resolve them here so layout_box (which passes containing_h=None
-        // to resolve_box_vp) gets the right values.
-        if let Some(parent_h) = rbox.content_height {
-            if parent_h > 0.0 {
-                for child in &mut node.children {
-                    if matches!(child.style.height, CssLength::Percent(_)) {
-                        let h = child.style.height.resolve_vp(font_px, parent_h, root_font_px, self.viewport_w, self.viewport_h);
-                        child.style.height = CssLength::Px(h.max(0.0));
-                    }
-                }
-            }
-        }
+        // children with percentage heights need to resolve against it.
+        // Instead of mutating child.style.height, we'll pass the parent's
+        // content height via Constraints.available_height when laying out children.
+        // This is handled by the layout functions (block, flex, grid) that
+        // create child Constraints with available_height set.
 
         // Auto-margin centering (CSS 2.1 §10.3.3) — applies to any element with an
         // explicit width and at least one auto horizontal margin.  Block layout has
@@ -1415,24 +1416,27 @@ impl LayoutEngine {
         };
 
         // Replaced elements (input, select, textarea, img) cannot be flex/grid
-        // containers per CSS spec — blockify so parent flex/grid also sees correct display.
-        // Exception: button-type inputs (submit/button/reset) use inline-flex for centering.
+        // containers per CSS spec — blockify for dispatch WITHOUT mutating style.
         let is_button_input = node.tag == "input" && matches!(
             node.attributes.get("type").map(|s| s.as_str()),
             Some("submit") | Some("button") | Some("reset")
         );
-        if !is_button_input && matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe") {
+        let effective_display = if !is_button_input
+            && matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe")
+        {
             match node.style.display {
-                Display::Flex | Display::Grid => { node.style.display = Display::Block; }
-                Display::InlineFlex | Display::InlineGrid => { node.style.display = Display::InlineBlock; }
-                _ => {}
+                Display::Flex | Display::Grid => Display::Block,
+                Display::InlineFlex | Display::InlineGrid => Display::InlineBlock,
+                other => other,
             }
-        }
+        } else {
+            node.style.display
+        };
 
         // Build child constraints from resolved font size
         let child_c = Constraints::new(containing_w, x, y, font_px, root_font_px);
 
-        let h = match node.style.display {
+        let h = match effective_display {
             Display::Flex | Display::InlineFlex => {
                 flex::layout_flex(self, node, &rbox, &child_c)
             }
@@ -1614,26 +1618,15 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
         None
     };
 
-    // Resolve percentage height against the containing block height.
-    // layout_box normally passes containing_h = None, which makes percentage
-    // heights auto.  For abs/fixed elements the containing block height IS
-    // known (it's the positioned ancestor's padding-box height).
-    if matches!(node.style.height, CssLength::Percent(_)) && containing_h > 0.0 {
-        let h = node.style.height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        node.style.height = CssLength::Px(h.max(0.0));
-    }
-    if matches!(node.style.min_height, CssLength::Percent(_)) && containing_h > 0.0 {
-        let h = node.style.min_height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        node.style.min_height = CssLength::Px(h.max(0.0));
-    }
-    if matches!(node.style.max_height, CssLength::Percent(_)) && containing_h > 0.0 {
-        let h = node.style.max_height.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        node.style.max_height = CssLength::Px(h.max(0.0));
-    }
-
-    // Layout to get natural size (or constrained size)
+    // Pass containing_h through Constraints so layout_box can resolve
+    // percentage heights without mutating style.
     let layout_w = constrained_w.unwrap_or(containing_w);
-    engine.layout_box(node, &Constraints::new(layout_w, 0.0, 0.0, font_px, root_font_px));
+    let layout_c = if containing_h > 0.0 {
+        Constraints::with_height(layout_w, containing_h, 0.0, 0.0, font_px, root_font_px)
+    } else {
+        Constraints::new(layout_w, 0.0, 0.0, font_px, root_font_px)
+    };
+    engine.layout_box(node, &layout_c);
 
     // Shrink-to-fit: width:auto absolutely-positioned elements wrap their content
     // (CSS 2.1 §10.3.7), just like floats — but only when width is not already

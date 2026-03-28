@@ -485,17 +485,11 @@ pub fn layout_table(
                     if is_ua_default(&cell.style.padding_bottom) { cell.style.padding_bottom = cellpad.clone(); }
                 }
 
-                // Layout cell — replace percentage width with resolved pixel value
-                // so it doesn't get double-resolved against the column width.
+                // Layout cell — cell_w is already the resolved column width,
+                // so percentage widths resolve correctly against it via Constraints.
                 {
-                    let row = row_ref_mut(node, &row_refs[row_idx]);
-                    let saved_w = row.children[ci].style.width.clone();
-                    if matches!(row.children[ci].style.width, CssLength::Percent(_)) {
-                        row.children[ci].style.width = CssLength::Auto;
-                    }
-                    engine.layout_box(&mut row.children[ci], &Constraints::new(cell_w, content_x, content_y,
-                                      font_px, root_font_px));
-                    row_ref_mut(node, &row_refs[row_idx]).children[ci].style.width = saved_w;
+                    engine.layout_box(&mut row_ref_mut(node, &row_refs[row_idx]).children[ci],
+                        &Constraints::new(cell_w, content_x, content_y, font_px, root_font_px));
                 }
                 let (content_h, pad_top, pad_bottom, border_top, border_bottom) = {
                     let row = row_ref(node, &row_refs[row_idx]);
