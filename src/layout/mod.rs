@@ -620,8 +620,11 @@ impl LayoutEngine {
         let pad_border = rbox.padding_left + rbox.padding_right
                        + rbox.border_left + rbox.border_right;
 
-        // Text node: measure the longest word
-        if node.is_text_node() {
+        // Text node or pseudo-element (::before/::after) with direct text content.
+        // Pseudo-elements store content in node.text, not as #text children.
+        let is_pseudo = matches!(node.tag.as_str(), "::before" | "::after");
+        let has_direct_text = node.is_text_node() || (is_pseudo && !node.text.is_empty());
+        if has_direct_text {
             let text = &node.text;
             if text.is_empty() { return 0.0; }
             let mut max_word = 0.0f32;
@@ -673,8 +676,10 @@ impl LayoutEngine {
         let pad_border = rbox.padding_left + rbox.padding_right
                        + rbox.border_left + rbox.border_right;
 
-        // Text node: measure text width directly.
-        if node.is_text_node() {
+        // Text node or pseudo-element (::before/::after) with direct text content.
+        let is_pseudo = matches!(node.tag.as_str(), "::before" | "::after");
+        let has_direct_text = node.is_text_node() || (is_pseudo && !node.text.is_empty());
+        if has_direct_text {
             let text = &node.text;
             if text.is_empty() { return 0.0; }
             // Collapse whitespace for normal white-space mode (CSS §4.1.1)
@@ -685,11 +690,12 @@ impl LayoutEngine {
                 text.clone()
             };
             if text.is_empty() { return 0.0; }
-            return self.measure_text_cached(
+            let w = self.measure_text_cached(
                 &text, font_px,
                 node.style.font_weight, node.style.font_style,
                 &node.style.font_family,
             );
+            return w;
         }
 
         let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
