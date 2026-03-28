@@ -1168,6 +1168,21 @@ impl LayoutEngine {
         // For <svg>, intrinsic dimensions come from viewBox.
         let (has_intrinsic, iw, ih) = if node.tag == "img" && node.image_width > 0 && node.image_height > 0 {
             (true, node.image_width as f32, node.image_height as f32)
+        } else if node.tag == "img" {
+            // No loaded image data — use HTML width/height attributes as intrinsic dimensions
+            // for aspect ratio computation. Attributes were parsed into style.width/height.
+            let attr_w = node.attributes.get("width").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            let attr_h = node.attributes.get("height").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            if attr_w > 0.0 && attr_h > 0.0 {
+                (true, attr_w, attr_h)
+            } else if attr_w > 0.0 {
+                // Only width attr — set a default aspect ratio (4:3)
+                (true, attr_w, attr_w * 0.75)
+            } else if attr_h > 0.0 {
+                (true, attr_h * 1.333, attr_h)
+            } else {
+                (false, 0.0, 0.0)
+            }
         } else if node.tag == "svg" && node.svg_viewbox_w > 0.0 && node.svg_viewbox_h > 0.0 {
             (true, node.svg_viewbox_w, node.svg_viewbox_h)
         } else {
@@ -1299,7 +1314,9 @@ impl LayoutEngine {
 
         // Track the nearest positioned ancestor's padding rect for abs children.
         let old_pos_cb = self.pos_cb.get();
-        if !matches!(node.style.position, Position::Static) {
+        // CSS spec: positioned elements AND elements with transform/filter/will-change
+        // create a containing block for absolute/fixed descendants.
+        if !matches!(node.style.position, Position::Static) || !node.style.transform.is_empty() {
             let est_padding_x = x + rbox.margin_left + rbox.border_left;
             let est_padding_y = y + rbox.margin_top  + rbox.border_top;
             let est_content_w = rbox.content_width.unwrap_or((containing_w - rbox.h_space()).max(0.0));
@@ -1558,7 +1575,20 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
         containing_x + rbox.margin_left
     };
 
-    let y = if !top_auto {
+    let y = if !top_auto && !bot_auto
+        && (node.style.margin_top.is_auto() || node.style.margin_bottom.is_auto())
+        && !node.style.height.is_auto()
+    {
+        // Both top and bottom set with auto margins — center vertically
+        let avail = containing_h - res_t - res_b - node.layout.border_rect.h;
+        if node.style.margin_top.is_auto() && node.style.margin_bottom.is_auto() {
+            containing_y + res_t + (avail / 2.0).max(0.0)
+        } else if node.style.margin_top.is_auto() {
+            containing_y + res_t + avail.max(0.0) - rbox.margin_bottom
+        } else {
+            containing_y + res_t + rbox.margin_top
+        }
+    } else if !top_auto {
         containing_y + res_t + rbox.margin_top
     } else if !bot_auto {
         (containing_y + containing_h) - res_b - node.layout.border_rect.h - rbox.margin_bottom

@@ -645,16 +645,18 @@ pub fn layout_block_with_fc(
             let dy = cy - ch.layout.content_rect.y;
             shift_rects(grid_child_mut(node, path), dx, dy);
 
-            if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
-                let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
-                apply_relative_offset(grid_child_mut(node, path), rel_font_px, child_content_w, root_font_px);
-            }
-
+            // Compute child_y from normal flow position BEFORE relative offset,
+            // so that relative positioning doesn't shift subsequent siblings.
             let ch = grid_child_ref(node, path);
             child_y = ch.layout.margin_rect.y - content_y + ch.layout.margin_rect.h;
             prev_bottom_margin = child_bottom_margin;
             last_in_flow_path = Some(path.clone());
             is_first_in_flow = false;
+
+            if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
+                let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
+                apply_relative_offset(grid_child_mut(node, path), rel_font_px, child_content_w, root_font_px);
+            }
 
         } else if grid_child_ref(node, path).style.is_inline_level() {
             let is_whitespace_only_text = grid_child_ref(node, path).is_text_node()
