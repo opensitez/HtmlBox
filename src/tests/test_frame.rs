@@ -18,7 +18,7 @@ fn initial_frame_runs_cascade_and_layout() {
 
     // After initial frame, layout should produce valid geometry
     let div = frame.doc.query_selector("div").unwrap();
-    assert!(frame.doc.dom_offset_width(div) > 0.0, "div should have width after layout");
+    assert!(frame.doc.offset_width(div) > 0.0, "div should have width after layout");
 }
 
 #[test]
@@ -37,12 +37,12 @@ fn viewport_resize_triggers_relayout() {
     frame.update_frame(); // initial
 
     let div = frame.doc.query_selector("div").unwrap();
-    let w1 = frame.doc.dom_offset_width(div);
+    let w1 = frame.doc.offset_width(div);
 
     frame.set_viewport(400.0, 600.0);
     assert!(frame.update_frame(), "resize should trigger redraw");
 
-    let w2 = frame.doc.dom_offset_width(div);
+    let w2 = frame.doc.offset_width(div);
     // Width should change since viewport halved
     assert!(w2 < w1, "div should be narrower after viewport shrink: {} vs {}", w2, w1);
 }
@@ -58,22 +58,22 @@ fn multiple_mutations_single_frame() {
 
     // Add 5 items — all batched before next frame
     for i in 0..5 {
-        let li = frame.doc.dom_create_element("li");
-        let text = frame.doc.dom_create_text(&format!("Item {}", i));
-        frame.doc.dom_append_child(li, text);
-        frame.doc.dom_append_child(list, li);
+        let li = frame.doc.create_element("li");
+        let text = frame.doc.create_text_node(&format!("Item {}", i));
+        frame.doc.append_child(li, text);
+        frame.doc.append_child(list, li);
     }
     frame.mark_style_dirty(); // batch: one dirty mark for all mutations
 
     // Single frame update processes all 5 items
     assert!(frame.update_frame(), "mutations should trigger redraw");
 
-    let children = frame.doc.dom_children(list);
+    let children = frame.doc.child_nodes(list);
     assert_eq!(children.len(), 5, "list should have 5 children");
 
     // All items should have valid layout
     for &child_id in &children {
-        assert!(frame.doc.dom_offset_height(child_id) > 0.0,
+        assert!(frame.doc.offset_height(child_id) > 0.0,
             "list item should have height after layout");
     }
 }
@@ -104,10 +104,10 @@ fn set_inner_html_replaces_content() {
 
     assert!(frame.update_frame(), "innerHTML should trigger redraw");
 
-    let children = frame.doc.dom_children(container);
+    let children = frame.doc.child_nodes(container);
     assert_eq!(children.len(), 2);
-    assert_eq!(frame.doc.dom_tag(children[0]), Some("p"));
-    assert_eq!(frame.doc.dom_tag(children[1]), Some("span"));
+    assert_eq!(frame.doc.tag_name(children[0]), Some("p"));
+    assert_eq!(frame.doc.tag_name(children[1]), Some("span"));
 }
 
 // ─── Style changes ──────────────────────────────────────────────────────────
@@ -118,15 +118,15 @@ fn inline_style_change_triggers_relayout() {
     frame.update_frame();
 
     let div = frame.doc.get_element_by_id("box").unwrap();
-    let h1 = frame.doc.dom_offset_height(div);
+    let h1 = frame.doc.offset_height(div);
 
     frame.set_style(div, "padding", "50px");
     // Verify the attribute was set
-    let style_attr = frame.doc.dom_get_attribute(div, "style").unwrap_or_default();
+    let style_attr = frame.doc.get_attribute(div, "style").unwrap_or_default();
     assert!(style_attr.contains("padding"), "style attr should contain padding: {}", style_attr);
     assert!(frame.update_frame(), "style change should trigger redraw");
 
-    let h2 = frame.doc.dom_offset_height(div);
+    let h2 = frame.doc.offset_height(div);
     // padding: 50px adds 100px total (top + bottom) to the border rect
     assert!(h2 > h1 + 50.0, "padding should increase height significantly: {} → {}", h1, h2);
 }
@@ -146,9 +146,9 @@ fn block_elements_stack_vertically() {
     let b = frame.doc.get_element_by_id("b").unwrap();
     let c = frame.doc.get_element_by_id("c").unwrap();
 
-    let ra = frame.doc.dom_get_bounding_rect(a).unwrap();
-    let rb = frame.doc.dom_get_bounding_rect(b).unwrap();
-    let rc = frame.doc.dom_get_bounding_rect(c).unwrap();
+    let ra = frame.doc.get_bounding_client_rect(a).unwrap();
+    let rb = frame.doc.get_bounding_client_rect(b).unwrap();
+    let rc = frame.doc.get_bounding_client_rect(c).unwrap();
 
     assert!(rb.y >= ra.y + ra.h, "B should be below A: B.y={} A.bottom={}", rb.y, ra.y + ra.h);
     assert!(rc.y >= rb.y + rb.h, "C should be below B: C.y={} B.bottom={}", rc.y, rb.y + rb.h);
@@ -164,8 +164,8 @@ fn inline_elements_flow_horizontally() {
     let a = frame.doc.get_element_by_id("a").unwrap();
     let b = frame.doc.get_element_by_id("b").unwrap();
 
-    let ra = frame.doc.dom_get_bounding_rect(a).unwrap();
-    let rb = frame.doc.dom_get_bounding_rect(b).unwrap();
+    let ra = frame.doc.get_bounding_client_rect(a).unwrap();
+    let rb = frame.doc.get_bounding_client_rect(b).unwrap();
 
     // Inline spans should be on the same line (same y)
     assert!((ra.y - rb.y).abs() < 5.0, "spans should be on same line: a.y={} b.y={}", ra.y, rb.y);
@@ -182,8 +182,8 @@ fn display_none_has_zero_size() {
     frame.update_frame();
 
     let hidden = frame.doc.get_element_by_id("hidden").unwrap();
-    assert_eq!(frame.doc.dom_offset_width(hidden), 0.0);
-    assert_eq!(frame.doc.dom_offset_height(hidden), 0.0);
+    assert_eq!(frame.doc.offset_width(hidden), 0.0);
+    assert_eq!(frame.doc.offset_height(hidden), 0.0);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn percentage_width_resolves_to_parent() {
     frame.update_frame();
 
     let half = frame.doc.get_element_by_id("half").unwrap();
-    let w = frame.doc.dom_offset_width(half);
+    let w = frame.doc.offset_width(half);
     assert!((w - 200.0).abs() < 2.0, "50% of 400px should be ~200px, got {}", w);
 }
 
@@ -208,7 +208,7 @@ fn margin_auto_centers_block() {
     frame.update_frame();
 
     let c = frame.doc.get_element_by_id("centered").unwrap();
-    let rect = frame.doc.dom_get_bounding_rect(c).unwrap();
+    let rect = frame.doc.get_bounding_client_rect(c).unwrap();
     // Should be centered: (800 - 200) / 2 = 300
     assert!((rect.x - 300.0).abs() < 5.0, "margin:auto should center. x={}", rect.x);
 }
@@ -225,8 +225,8 @@ fn flex_row_distributes_children() {
 
     let a = frame.doc.get_element_by_id("a").unwrap();
     let b = frame.doc.get_element_by_id("b").unwrap();
-    let wa = frame.doc.dom_offset_width(a);
-    let wb = frame.doc.dom_offset_width(b);
+    let wa = frame.doc.offset_width(a);
+    let wb = frame.doc.offset_width(b);
 
     // B should be roughly 2x the width of A
     assert!(wb > wa, "flex:2 should be wider than flex:1: {}px vs {}px", wb, wa);
@@ -240,13 +240,13 @@ fn dynamic_dom_mutation_updates_layout() {
     frame.update_frame();
 
     let container = frame.doc.get_element_by_id("container").unwrap();
-    let h1 = frame.doc.dom_offset_height(container);
+    let h1 = frame.doc.offset_height(container);
 
     // Add content dynamically
     frame.set_inner_html(container, r#"<p style="height: 100px">Big block</p>"#);
     frame.update_frame();
 
-    let h2 = frame.doc.dom_offset_height(container);
+    let h2 = frame.doc.offset_height(container);
     assert!(h2 > h1, "container should grow after adding content: {} → {}", h1, h2);
 }
 
@@ -261,11 +261,11 @@ fn remove_child_shrinks_layout() {
 
     let parent = frame.doc.get_element_by_id("parent").unwrap();
     let child = frame.doc.get_element_by_id("child").unwrap();
-    let h1 = frame.doc.dom_offset_height(parent);
+    let h1 = frame.doc.offset_height(parent);
 
     frame.remove_child(child);
     frame.update_frame();
 
-    let h2 = frame.doc.dom_offset_height(parent);
+    let h2 = frame.doc.offset_height(parent);
     assert!(h2 < h1, "parent should shrink after removing child: {} → {}", h1, h2);
 }

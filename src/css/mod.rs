@@ -5338,6 +5338,20 @@ fn apply_cascade_inner(
         return;
     }
 
+    // ── Style sharing: if a previous sibling has the same tag + classes + no
+    // id + no inline style, they'll match the same CSS rules. Skip the full
+    // cascade and clone the sibling's style (much cheaper).
+    let class_attr = root.attributes.get("class").cloned().unwrap_or_default();
+    let has_id = root.attributes.contains_key("id");
+    let has_inline_style = root.attributes.contains_key("style");
+    let is_hovered = hover_chain.contains(&root.node_id);
+    if !has_id && !has_inline_style && !is_hovered && !prev_siblings.is_empty() {
+        // prev_siblings is (tag, class, node_id) — check for matching tag+class
+        // We need to find the sibling's node to clone its style, but prev_siblings
+        // only has metadata. The actual style sharing happens in cascade_children
+        // where we have access to the sibling HtmlBox objects.
+    }
+
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();
     if let Some(p) = parent_style {
@@ -5990,12 +6004,37 @@ fn apply_cascade_inner(
         }).collect();
         // Track previous siblings for `+` and `~` combinator matching
         let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
+        // Style sharing: cache computed styles by (tag, class_attr).
+        // When a child has the same tag+class as a previous sibling (and no id/inline style),
+        // clone the cached style instead of running the full cascade.
+        let mut style_cache: HashMap<(String, String), ComputedStyle> = HashMap::new();
         for (i, child) in children.iter_mut().enumerate() {
             let (ci, ns) = if child.tag == "#text" {
                 (i, n_children)
             } else {
                 (elem_indices[i], n_elem_children)
             };
+
+            // Try style sharing before full cascade
+            let child_class = child.attributes.get("class").cloned().unwrap_or_default();
+            let can_share = child.tag != "#text"
+                && child.tag != "::before" && child.tag != "::after"
+                && !child.attributes.contains_key("id")
+                && !child.attributes.contains_key("style")
+                && !hover_chain.contains(&child.node_id)
+                && child.children.is_empty(); // only for leaf elements (no pseudo-elements to worry about)
+            let share_key = (child.tag.clone(), child_class.clone());
+
+            if can_share {
+                if let Some(cached) = style_cache.get(&share_key) {
+                    child.style = cached.clone();
+                    // Still need to update prev_siblings for combinator matching
+                    let id = child.attributes.get("id").cloned().unwrap_or_default();
+                    prev_siblings.push((child.tag.to_ascii_lowercase(), child_class, id));
+                    continue;
+                }
+            }
+
             apply_cascade_inner(
                 child, stylesheet, Some(parent_style), root_font_px,
                 ancestors, ci, ns,
@@ -6004,6 +6043,10 @@ fn apply_cascade_inner(
                 inherited_vars, candidates_buf, counters,
                 hover_chain, &prev_siblings,
             );
+            // Cache style for sharing with future siblings
+            if can_share && !style_cache.contains_key(&share_key) {
+                style_cache.insert(share_key, child.style.clone());
+            }
             // Record this child as a previous sibling (skip text nodes)
             if child.tag != "#text" {
                 let id = child.attributes.get("id").cloned().unwrap_or_default();

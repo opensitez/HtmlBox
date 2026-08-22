@@ -156,7 +156,7 @@ fn min_width_in_layout() {
     frame.update_frame();
 
     let id = frame.doc.get_element_by_id("box").unwrap();
-    let w = frame.doc.dom_offset_width(id);
+    let w = frame.doc.offset_width(id);
     // 80% of ~800 = 640, min(300, 640) = 300
     assert!((w - 300.0).abs() < 5.0, "min(300px, 80%) at 800px viewport should be ~300px, got {}", w);
 }
@@ -170,7 +170,7 @@ fn clamp_width_in_layout() {
     frame.update_frame();
 
     let id = frame.doc.get_element_by_id("box").unwrap();
-    let w = frame.doc.dom_offset_width(id);
+    let w = frame.doc.offset_width(id);
     // 50% of containing block (~784px after body margins), clamp(200, ~392, 600) → ~392
     assert!(w > 200.0 && w < 600.0, "clamp(200,50%,600) should be between bounds, got {}", w);
 }

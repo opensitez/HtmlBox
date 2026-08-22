@@ -328,7 +328,39 @@ pub fn layout_inline_block(
         return node.layout.margin_rect.h;
     }
 
-    // ── 4. Line-by-line layout (float-aware) ──────────────────────────────────
+    // ── 4. Paragraph cache: skip line-breaking if text + width unchanged ────
+    // If content hasn't changed since last layout, the old line_cache is valid.
+    // Just reposition and return.
+    if !old_lines.is_empty()
+        && !node.layout.layout_dirty
+        && (node.layout.last_containing_width - content_w).abs() < 0.5
+        && float_ctx.is_none()
+    {
+        // Reuse old lines — just shift to new position
+        node.layout.line_cache = old_lines;
+        let dy = content_y - node.layout.line_cache.first().map_or(content_y, |l| l.y);
+        if dy.abs() > 0.01 {
+            for line in &mut node.layout.line_cache {
+                line.y += dy;
+            }
+        }
+        let bottom = node.layout.line_cache.last()
+            .map(|l| l.y + l.height)
+            .unwrap_or(content_y);
+        let raw_h = (bottom - content_y).max(0.0);
+        let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
+        let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
+        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
+                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+        let content_h = content_h.max(min_h).min(max_h).max(0.0);
+        crate::layout::block::build_box_rects(node, rbox, content_x, content_y, content_w, content_h,
+            margin_left, margin_right);
+        node.layout.layout_dirty = false;
+        node.layout.last_containing_width = c.available_width;
+        return node.layout.margin_rect.h;
+    }
+
+    // ── Line-by-line layout (float-aware) ────────────────────────────────────
     let floats_before = float_ctx.as_ref().map_or(0, |fc| fc.floats.len());
     let text_indent = engine.res_len(&node.style.text_indent, font_px, content_w, root_font_px);
     let is_rtl = node.style.direction == Direction::RTL;

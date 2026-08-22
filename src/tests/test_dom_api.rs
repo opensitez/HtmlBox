@@ -10,7 +10,7 @@ fn get_element_by_id_finds_element() {
     let doc = parse_html(r#"<div id="main"><span id="inner">text</span></div>"#);
     let inner = doc.get_element_by_id("inner");
     assert!(inner.is_some());
-    assert_eq!(doc.dom_tag(inner.unwrap()), Some("span"));
+    assert_eq!(doc.tag_name(inner.unwrap()), Some("span"));
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn query_selector_by_tag() {
     let doc = parse_html("<div><p>one</p><p>two</p><span>three</span></div>");
     let p = doc.query_selector("p");
     assert!(p.is_some());
-    assert_eq!(doc.dom_tag(p.unwrap()), Some("p"));
+    assert_eq!(doc.tag_name(p.unwrap()), Some("p"));
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn query_selector_by_class() {
     let doc = parse_html(r#"<div><span class="a">x</span><span class="b">y</span></div>"#);
     let b = doc.query_selector(".b");
     assert!(b.is_some());
-    assert_eq!(doc.dom_get_attribute(b.unwrap(), "class"), Some("b".to_string()));
+    assert_eq!(doc.get_attribute(b.unwrap(), "class"), Some("b".to_string()));
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn query_selector_by_id() {
     let doc = parse_html(r#"<div><p id="target">hello</p></div>"#);
     let target = doc.query_selector("#target");
     assert!(target.is_some());
-    assert_eq!(doc.dom_tag(target.unwrap()), Some("p"));
+    assert_eq!(doc.tag_name(target.unwrap()), Some("p"));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn query_selector_descendant() {
     let doc = parse_html(r#"<div><ul><li>item</li></ul></div>"#);
     let li = doc.query_selector("div li");
     assert!(li.is_some());
-    assert_eq!(doc.dom_tag(li.unwrap()), Some("li"));
+    assert_eq!(doc.tag_name(li.unwrap()), Some("li"));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn query_selector_all_returns_all_matches() {
     let items = doc.query_selector_all("li");
     assert_eq!(items.len(), 3);
     for &id in &items {
-        assert_eq!(doc.dom_tag(id), Some("li"));
+        assert_eq!(doc.tag_name(id), Some("li"));
     }
 }
 
@@ -74,23 +74,23 @@ fn query_selector_returns_none_for_no_match() {
 fn dom_tag_returns_tag_name() {
     let doc = parse_html("<div><p>hi</p></div>");
     let p = doc.query_selector("p").unwrap();
-    assert_eq!(doc.dom_tag(p), Some("p"));
+    assert_eq!(doc.tag_name(p), Some("p"));
 }
 
 #[test]
 fn dom_get_attribute_returns_value() {
     let doc = parse_html(r#"<a href="/link" title="tip">click</a>"#);
     let a = doc.query_selector("a").unwrap();
-    assert_eq!(doc.dom_get_attribute(a, "href"), Some("/link".to_string()));
-    assert_eq!(doc.dom_get_attribute(a, "title"), Some("tip".to_string()));
-    assert_eq!(doc.dom_get_attribute(a, "missing"), None);
+    assert_eq!(doc.get_attribute(a, "href"), Some("/link".to_string()));
+    assert_eq!(doc.get_attribute(a, "title"), Some("tip".to_string()));
+    assert_eq!(doc.get_attribute(a, "missing"), None);
 }
 
 #[test]
 fn dom_text_content_collects_all_text() {
     let doc = parse_html("<div>Hello <span>World</span>!</div>");
     let div = doc.query_selector("div").unwrap();
-    let text = doc.dom_text_content(div);
+    let text = doc.text_content(div);
     assert!(text.contains("Hello"));
     assert!(text.contains("World"));
 }
@@ -99,11 +99,11 @@ fn dom_text_content_collects_all_text() {
 fn dom_parent_and_children() {
     let doc = parse_html("<ul><li>a</li><li>b</li></ul>");
     let ul = doc.query_selector("ul").unwrap();
-    let children = doc.dom_children(ul);
+    let children = doc.child_nodes(ul);
     assert_eq!(children.len(), 2);
 
     for &child_id in &children {
-        assert_eq!(doc.dom_parent(child_id), ul);
+        assert_eq!(doc.parent_node(child_id), ul);
     }
 }
 
@@ -114,13 +114,13 @@ fn dom_sibling_navigation() {
     let p = doc.query_selector("p").unwrap();
     let em = doc.query_selector("em").unwrap();
 
-    assert_eq!(doc.dom_next_sibling(span), p);
-    assert_eq!(doc.dom_next_sibling(p), em);
-    assert_eq!(doc.dom_next_sibling(em), 0);
+    assert_eq!(doc.next_sibling(span), p);
+    assert_eq!(doc.next_sibling(p), em);
+    assert_eq!(doc.next_sibling(em), 0);
 
-    assert_eq!(doc.dom_prev_sibling(em), p);
-    assert_eq!(doc.dom_prev_sibling(p), span);
-    assert_eq!(doc.dom_prev_sibling(span), 0);
+    assert_eq!(doc.previous_sibling(em), p);
+    assert_eq!(doc.previous_sibling(p), span);
+    assert_eq!(doc.previous_sibling(span), 0);
 }
 
 // ── Mutate ─────────────────────────────────────────────────────────────────
@@ -130,15 +130,15 @@ fn create_and_append_element() {
     let mut doc = parse_html("<div></div>");
     let div = doc.query_selector("div").unwrap();
 
-    let p = doc.dom_create_element("p");
+    let p = doc.create_element("p");
     assert!(p != 0);
-    doc.dom_append_child(div, p);
+    doc.append_child(div, p);
 
     // Verify in arena
-    let children = doc.dom_children(div);
+    let children = doc.child_nodes(div);
     assert_eq!(children.len(), 1);
     assert_eq!(children[0], p);
-    assert_eq!(doc.dom_tag(p), Some("p"));
+    assert_eq!(doc.tag_name(p), Some("p"));
 
     // Verify in HtmlBox tree
     let div_box = doc.get_box_by_id(div).unwrap();
@@ -152,10 +152,10 @@ fn create_and_append_text() {
     let mut doc = parse_html("<p></p>");
     let p = doc.query_selector("p").unwrap();
 
-    let text = doc.dom_create_text("Hello World");
-    doc.dom_append_child(p, text);
+    let text = doc.create_text_node("Hello World");
+    doc.append_child(p, text);
 
-    assert_eq!(doc.dom_text_content(p), "Hello World");
+    assert_eq!(doc.text_content(p), "Hello World");
 
     let p_box = doc.get_box_by_id(p).unwrap();
     assert_eq!(p_box.children.len(), 1);
@@ -168,10 +168,10 @@ fn insert_before_works() {
     let ul = doc.query_selector("ul").unwrap();
     let li_b = doc.query_selector("li").unwrap();
 
-    let li_a = doc.dom_create_element("li");
-    doc.dom_insert_before(ul, li_a, li_b);
+    let li_a = doc.create_element("li");
+    doc.insert_before(ul, li_a, li_b);
 
-    let children = doc.dom_children(ul);
+    let children = doc.child_nodes(ul);
     assert_eq!(children.len(), 2);
     assert_eq!(children[0], li_a);
     assert_eq!(children[1], li_b);
@@ -191,9 +191,9 @@ fn remove_child_works() {
     assert_eq!(items.len(), 3);
 
     // Remove middle item
-    doc.dom_remove_child(items[1]);
+    doc.remove_child(items[1]);
 
-    let remaining = doc.dom_children(ul);
+    let remaining = doc.child_nodes(ul);
     assert_eq!(remaining.len(), 2);
     assert_eq!(remaining[0], items[0]);
     assert_eq!(remaining[1], items[2]);
@@ -208,10 +208,10 @@ fn set_attribute_updates_both_trees() {
     let mut doc = parse_html(r#"<div id="target"></div>"#);
     let div = doc.get_element_by_id("target").unwrap();
 
-    doc.dom_set_attribute(div, "data-value", "42");
+    doc.set_attribute(div, "data-value", "42");
 
     // Arena updated
-    assert_eq!(doc.dom_get_attribute(div, "data-value"), Some("42".to_string()));
+    assert_eq!(doc.get_attribute(div, "data-value"), Some("42".to_string()));
 
     // HtmlBox updated
     let div_box = doc.get_box_by_id(div).unwrap();
@@ -223,9 +223,9 @@ fn remove_attribute_updates_both_trees() {
     let mut doc = parse_html(r#"<div id="target" data-x="old"></div>"#);
     let div = doc.get_element_by_id("target").unwrap();
 
-    doc.dom_remove_attribute(div, "data-x");
+    doc.remove_attribute(div, "data-x");
 
-    assert_eq!(doc.dom_get_attribute(div, "data-x"), None);
+    assert_eq!(doc.get_attribute(div, "data-x"), None);
     let div_box = doc.get_box_by_id(div).unwrap();
     assert!(!div_box.attributes.contains_key("data-x"));
 }
@@ -235,10 +235,10 @@ fn set_text_content_replaces_children() {
     let mut doc = parse_html("<div><p>old</p><span>stuff</span></div>");
     let div = doc.query_selector("div").unwrap();
 
-    doc.dom_set_text_content(div, "new text only");
+    doc.set_text_content(div, "new text only");
 
-    assert_eq!(doc.dom_text_content(div), "new text only");
-    assert_eq!(doc.dom_children(div).len(), 0); // arena children removed
+    assert_eq!(doc.text_content(div), "new text only");
+    assert_eq!(doc.child_nodes(div).len(), 0); // arena children removed
 
     let div_box = doc.get_box_by_id(div).unwrap();
     assert_eq!(div_box.children.len(), 0);
@@ -250,12 +250,12 @@ fn set_inner_html_parses_and_replaces() {
     let mut doc = parse_html(r#"<div id="container">old</div>"#);
     let div = doc.get_element_by_id("container").unwrap();
 
-    doc.dom_set_inner_html(div, "<p>new</p><span>content</span>");
+    doc.set_inner_html(div, "<p>new</p><span>content</span>");
 
-    let children = doc.dom_children(div);
+    let children = doc.child_nodes(div);
     assert_eq!(children.len(), 2);
-    assert_eq!(doc.dom_tag(children[0]), Some("p"));
-    assert_eq!(doc.dom_tag(children[1]), Some("span"));
+    assert_eq!(doc.tag_name(children[0]), Some("p"));
+    assert_eq!(doc.tag_name(children[1]), Some("span"));
 
     let div_box = doc.get_box_by_id(div).unwrap();
     assert_eq!(div_box.children.len(), 2);
@@ -276,7 +276,7 @@ fn class_list_add_and_contains() {
 
     // Adding again doesn't duplicate
     doc.class_list_add(div, "active");
-    assert_eq!(doc.dom_get_attribute(div, "class"), Some("active".to_string()));
+    assert_eq!(doc.get_attribute(div, "class"), Some("active".to_string()));
 }
 
 #[test]
@@ -346,8 +346,8 @@ fn dom_offset_returns_zero_without_layout() {
     let doc = parse_html("<div>hi</div>");
     let div = doc.query_selector("div").unwrap();
     // Without layout pass, dimensions are 0
-    assert_eq!(doc.dom_offset_width(div), 0.0);
-    assert_eq!(doc.dom_offset_height(div), 0.0);
+    assert_eq!(doc.offset_width(div), 0.0);
+    assert_eq!(doc.offset_height(div), 0.0);
 }
 
 // ── Move existing node ─────────────────────────────────────────────────────
@@ -360,15 +360,15 @@ fn append_child_moves_existing_node() {
     let div = doc.query_selector("div").unwrap();
 
     // Move <p> from <div> to <section>
-    doc.dom_append_child(section, p);
+    doc.append_child(section, p);
 
     // div should have 0 children
-    assert_eq!(doc.dom_children(div).len(), 0);
+    assert_eq!(doc.child_nodes(div).len(), 0);
     // section should have 1 child
-    let sec_children = doc.dom_children(section);
+    let sec_children = doc.child_nodes(section);
     assert_eq!(sec_children.len(), 1);
     assert_eq!(sec_children[0], p);
-    assert_eq!(doc.dom_parent(p), section);
+    assert_eq!(doc.parent_node(p), section);
 }
 
 // ── Dirty flags ────────────────────────────────────────────────────────────
@@ -381,8 +381,845 @@ fn attribute_mutation_sets_dirty_flag() {
     // Clear dirty flags
     doc.arena.get_mut(NodeId(div)).dirty = crate::dom::arena::DirtyFlags::NONE;
 
-    doc.dom_set_attribute(div, "class", "active");
+    doc.set_attribute(div, "class", "active");
 
     // Should be style-dirty now
     assert!(doc.arena.get(NodeId(div)).dirty.contains(crate::dom::arena::DirtyFlags::STYLE));
+}
+
+// ─── WHATWG conformance ─────────────────────────────────────────────────────
+//
+// These pin the parts of the DOM this engine has to answer the same way any
+// browser does, because the target is running the same programs under a real
+// one. Written against the IDL, not against whatever we happened to implement.
+
+#[test]
+fn node_type_uses_the_dom_numbering() {
+    let mut doc = parse_html("<div id='d'>text</div>");
+    let div = doc.get_element_by_id("d").unwrap();
+    assert_eq!(doc.node_type(div), 1, "an element is 1");
+
+    let t = doc.create_text_node("plain");
+    assert_eq!(doc.node_type(t), 3, "a text node is 3");
+
+    let c = doc.create_cdata_section("raw");
+    assert_eq!(doc.node_type(c), 4, "CDATA is 4");
+
+    let pi = doc.create_processing_instruction("xml-stylesheet", "href='a.css'");
+    assert_eq!(doc.node_type(pi), 7, "a processing instruction is 7");
+
+    let comment = doc.create_comment("hi");
+    assert_eq!(doc.node_type(comment), 8, "a comment is 8");
+}
+
+#[test]
+fn node_value_is_null_for_an_element_and_data_for_the_rest() {
+    let mut doc = parse_html("<div id='d'>text</div>");
+    let div = doc.get_element_by_id("d").unwrap();
+    assert_eq!(doc.node_value(div), None, "an element has no nodeValue");
+
+    let comment = doc.create_comment("hi");
+    assert_eq!(doc.node_value(comment).as_deref(), Some("hi"));
+    assert_eq!(doc.node_name(comment), "#comment");
+
+    let cdata = doc.create_cdata_section("a < b");
+    assert_eq!(doc.node_value(cdata).as_deref(), Some("a < b"));
+    assert_eq!(doc.node_name(cdata), "#cdata-section");
+
+    // A processing instruction's nodeName is its TARGET, not a tag.
+    let pi = doc.create_processing_instruction("xml-stylesheet", "href='a.css'");
+    assert_eq!(doc.node_name(pi), "xml-stylesheet");
+    assert_eq!(doc.node_value(pi).as_deref(), Some("href='a.css'"));
+}
+
+#[test]
+fn text_content_is_text_only_and_skips_comments() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let div = doc.get_element_by_id("d").unwrap();
+    let visible = doc.create_text_node("visible");
+    let hidden = doc.create_comment("hidden");
+    doc.append_child(div, visible);
+    doc.append_child(div, hidden);
+
+    // DOM §4.4: textContent concatenates TEXT descendants. Comments carry data
+    // but are not text, so they must not leak into it.
+    assert_eq!(doc.text_content(div), "visible");
+}
+
+#[test]
+fn a_namespaced_element_reports_its_parts() {
+    const SVG: &str = "http://www.w3.org/2000/svg";
+    let mut doc = parse_html("<div id='d'></div>");
+    let rect = doc.create_element_ns(SVG, "svg:rect");
+
+    assert_eq!(doc.namespace_uri(rect).as_deref(), Some(SVG));
+    assert_eq!(doc.prefix(rect).as_deref(), Some("svg"));
+    assert_eq!(doc.local_name(rect), "rect");
+    // nodeName is the QUALIFIED name, prefix included.
+    assert_eq!(doc.node_name(rect), "svg:rect");
+
+    // An unprefixed HTML element has no prefix — null, not "".
+    let div = doc.get_element_by_id("d").unwrap();
+    assert_eq!(doc.prefix(div), None);
+    assert_eq!(doc.local_name(div), "div");
+}
+
+#[test]
+fn get_attribute_ns_tells_apart_two_attributes_sharing_a_local_name() {
+    const XLINK: &str = "http://www.w3.org/1999/xlink";
+    let mut doc = parse_html("<a id='a'></a>");
+    let a = doc.get_element_by_id("a").unwrap();
+
+    doc.set_attribute(a, "href", "plain");
+    doc.set_attribute_ns(a, XLINK, "xlink:href", "linked");
+
+    assert_eq!(doc.get_attribute_ns(a, XLINK, "href").as_deref(), Some("linked"));
+    // The null namespace is a DIFFERENT attribute, not a fallback.
+    assert_eq!(doc.get_attribute_ns(a, "", "href").as_deref(), Some("plain"));
+    // A namespace nothing was written under matches nothing.
+    assert_eq!(doc.get_attribute_ns(a, "http://example.invalid/ns", "href"), None);
+}
+
+#[test]
+fn an_html_document_folds_names_but_an_xml_document_does_not() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let upper = doc.create_element("DIV");
+    assert_eq!(doc.tag_name(upper), Some("div"), "HTML lowercases tag names");
+
+    let d = doc.get_element_by_id("d").unwrap();
+    doc.set_attribute(d, "DATA-X", "1");
+    assert_eq!(doc.get_attribute(d, "data-x").as_deref(), Some("1"));
+    assert_eq!(doc.get_attribute(d, "Data-X").as_deref(), Some("1"));
+
+    // XML is case-SENSITIVE: <Rect> and <rect> are two different elements, and
+    // folding one into the other would silently merge them.
+    let mut xml = parse_html("<div></div>");
+    xml.kind = crate::types::DocumentKind::Xml;
+    let rect = xml.create_element("Rect");
+    assert_eq!(xml.tag_name(rect), Some("Rect"));
+    xml.set_attribute(rect, "viewBox", "0 0 1 1");
+    assert_eq!(xml.get_attribute(rect, "viewBox").as_deref(), Some("0 0 1 1"));
+    assert_eq!(xml.get_attribute(rect, "viewbox"), None);
+}
+
+#[test]
+fn clone_node_is_detached_and_deep_only_when_asked() {
+    let mut doc = parse_html("<div id='host'><span>child</span></div>");
+    let host = doc.get_element_by_id("host").unwrap();
+    doc.set_attribute(host, "data-k", "v");
+
+    let shallow = doc.clone_node(host, false);
+    assert_ne!(shallow, host, "a clone is a NEW node");
+    assert!(!doc.is_connected(shallow), "a clone has no parent until inserted");
+    assert_eq!(
+        doc.get_attribute(shallow, "data-k").as_deref(),
+        Some("v"),
+        "attributes are copied even by a shallow clone"
+    );
+    assert!(doc.child_nodes(shallow).is_empty(), "shallow copies no children");
+
+    let deep = doc.clone_node(host, true);
+    assert!(!doc.child_nodes(deep).is_empty(), "a deep clone copies the subtree");
+}
+
+#[test]
+fn replace_child_swaps_in_place() {
+    let mut doc = parse_html("<div id='host'></div>");
+    let host = doc.get_element_by_id("host").unwrap();
+    let first = doc.create_element("span");
+    let second = doc.create_element("b");
+    doc.append_child(host, first);
+    doc.append_child(host, second);
+
+    let fresh = doc.create_element("i");
+    assert!(doc.replace_child(host, fresh, first));
+
+    let kids = doc.child_nodes(host);
+    assert_eq!(kids.len(), 2, "replace must not change the child count");
+    assert_eq!(kids[0], fresh, "the replacement takes the old node's PLACE");
+    assert_eq!(kids[1], second);
+}
+
+#[test]
+fn select_value_is_the_selected_options_value_not_its_index() {
+    let mut doc = parse_html("<select id='s'></select>");
+    let s = doc.get_element_by_id("s").unwrap();
+    doc.add_item(s, "one");
+    doc.add_item(s, "two");
+
+    assert_eq!(doc.item_text(s, 0), "one");
+    assert_eq!(doc.item_text(s, 1), "two");
+
+    // HTML §4.10.7: assigning to `value` selects the option WORTH that value.
+    // The index is `selectedIndex`, its own IDL member.
+    doc.set_value(s, "two");
+    assert_eq!(doc.value(s), "two");
+    assert_eq!(doc.selected_index(s), 1);
+}
+
+#[test]
+fn a_dialog_is_closed_until_shown_and_only_a_modal_is_fixed() {
+    let mut doc = parse_html("<dialog id='d'></dialog><dialog id='m'></dialog>");
+    let plain = doc.get_element_by_id("d").unwrap();
+    let modal = doc.get_element_by_id("m").unwrap();
+    assert!(!doc.dialog_open(plain), "a fresh dialog is not open");
+
+    doc.show_dialog(plain, false);
+    assert!(doc.dialog_open(plain), "show() sets the open attribute");
+
+    doc.show_dialog(modal, true);
+    // The UA stylesheet's own distinction: `dialog:modal` is position:fixed,
+    // a non-modal stays in flow. If both looked alike, showModal() would be
+    // show() under another name.
+    assert_eq!(doc.get_style_property(modal, "position").as_deref(), Some("fixed"));
+    assert_ne!(doc.get_style_property(plain, "position").as_deref(), Some("fixed"));
+
+    doc.close_dialog(plain);
+    assert!(!doc.dialog_open(plain), "close() clears the open attribute");
+}
+
+// ─── Traversal, selectors and the ChildNode/ParentNode mixins ───────────────
+//
+// The DOM offers the same tree through several vocabularies and a browser must
+// answer every one. The distinction these pin down is the one that bites:
+// `childNodes` counts text and comments, `children` counts only elements — a
+// page walking the wrong one sees whitespace as a node.
+
+#[test]
+fn children_counts_elements_and_child_nodes_counts_everything() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let span = doc.create_element("span");
+    let text = doc.create_text_node("between");
+    let comment = doc.create_comment("hidden");
+    doc.append_child(d, span);
+    doc.append_child(d, text);
+    doc.append_child(d, comment);
+
+    assert_eq!(doc.child_nodes(d).len(), 3, "childNodes counts every kind");
+    assert_eq!(doc.children(d).len(), 1, "children counts only elements");
+    assert_eq!(doc.child_element_count(d), 1);
+    assert!(doc.has_child_nodes(d));
+
+    assert_eq!(doc.first_child(d), Some(span));
+    assert_eq!(doc.last_child(d), Some(comment), "lastChild is the comment");
+    assert_eq!(doc.first_element_child(d), Some(span));
+    assert_eq!(
+        doc.last_element_child(d),
+        Some(span),
+        "lastElementChild skips the comment"
+    );
+}
+
+#[test]
+fn element_siblings_skip_text_and_comments() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let a = doc.create_element("a");
+    let text = doc.create_text_node("x");
+    let b = doc.create_element("b");
+    for child in [a, text, b] {
+        doc.append_child(d, child);
+    }
+
+    // The plain sibling walk sees the text node…
+    assert_eq!(doc.next_sibling(a), text);
+    assert_eq!(doc.previous_sibling(b), text);
+    // …the element walk does not. That is the whole difference.
+    assert_eq!(doc.next_element_sibling(a), Some(b));
+    assert_eq!(doc.previous_element_sibling(b), Some(a));
+    assert_eq!(doc.next_element_sibling(b), None, "none at the end");
+    assert_eq!(doc.previous_element_sibling(a), None);
+}
+
+#[test]
+fn parent_element_is_none_when_the_parent_is_not_an_element() {
+    let mut doc = parse_html("<div id='d'><span id='s'>t</span></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let s = doc.get_element_by_id("s").unwrap();
+    assert_eq!(doc.parent_element(s), Some(d));
+
+    // A detached node has no parent at all.
+    let loose = doc.create_element("i");
+    assert_eq!(doc.parent_element(loose), None);
+}
+
+#[test]
+fn contains_includes_the_node_itself() {
+    let doc = parse_html("<div id='outer'><span id='inner'>t</span></div>");
+    let outer = doc.get_element_by_id("outer").unwrap();
+    let inner = doc.get_element_by_id("inner").unwrap();
+
+    assert!(doc.contains(outer, inner), "an ancestor contains a descendant");
+    // DOM §4.4: a node contains ITSELF. The part that surprises.
+    assert!(doc.contains(outer, outer));
+    assert!(!doc.contains(inner, outer), "not the other way round");
+}
+
+#[test]
+fn matches_and_closest_start_at_the_element_itself() {
+    let doc = parse_html(
+        r#"<div id="outer" class="box"><p id="mid"><span id="inner">t</span></p></div>"#,
+    );
+    let outer = doc.get_element_by_id("outer").unwrap();
+    let inner = doc.get_element_by_id("inner").unwrap();
+
+    assert!(doc.matches(inner, "span"));
+    assert!(!doc.matches(inner, "div"));
+
+    // `closest` is ancestor-OR-SELF, so a matching element answers itself.
+    assert_eq!(doc.closest(inner, "span"), Some(inner));
+    assert_eq!(doc.closest(inner, ".box"), Some(outer));
+    assert_eq!(doc.closest(inner, "table"), None);
+}
+
+#[test]
+fn get_elements_by_class_name_requires_every_named_class() {
+    let doc = parse_html(
+        r#"<div><i id="a" class="x"></i><i id="b" class="x y"></i><i id="c" class="y"></i></div>"#,
+    );
+    let b = doc.get_element_by_id("b").unwrap();
+
+    assert_eq!(doc.get_elements_by_class_name("x").len(), 2);
+    // ALL of them, not any — "x y" is an intersection.
+    assert_eq!(doc.get_elements_by_class_name("x y"), vec![b]);
+    assert!(doc.get_elements_by_class_name("").is_empty());
+    assert!(doc.get_elements_by_class_name("nope").is_empty());
+}
+
+#[test]
+fn toggle_attribute_reports_presence_afterwards() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    assert!(!doc.has_attributes(d) || !doc.has_attribute(d, "hidden"));
+
+    assert!(doc.toggle_attribute(d, "hidden"), "returns the NEW state");
+    assert!(doc.has_attribute(d, "hidden"));
+    assert!(doc.has_attributes(d));
+
+    assert!(!doc.toggle_attribute(d, "hidden"));
+    assert!(!doc.has_attribute(d, "hidden"));
+}
+
+#[test]
+fn class_name_and_id_are_the_attributes() {
+    let mut doc = parse_html("<div id='d' class='a b'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    assert_eq!(doc.class_name(d), "a b");
+    assert_eq!(doc.id(d), "d");
+
+    doc.set_class_name(d, "c");
+    assert_eq!(doc.get_attribute(d, "class").as_deref(), Some("c"));
+    doc.set_id(d, "renamed");
+    assert_eq!(doc.get_element_by_id("renamed"), Some(d));
+}
+
+#[test]
+fn document_element_and_body_resolve() {
+    let doc = parse_html("<html><head><title>t</title></head><body><p>x</p></body></html>");
+    assert!(doc.document_element().is_some());
+    assert!(doc.body().is_some(), "body resolves");
+    assert_eq!(doc.title(), "t", "the title survives parsing");
+
+    // `<head>` is optional in the MARKUP and mandatory in the TREE — HTML
+    // §13.2.6 inserts one whether or not the source wrote it.
+    assert!(doc.head().is_some(), "head resolves");
+}
+
+#[test]
+fn head_is_synthesised_even_when_the_markup_omits_it() {
+    // No `<html>`, no `<head>`, no `<body>` in the source. All three must
+    // still be in the tree, which is what makes `document.head` a safe thing
+    // for a page to reach for.
+    let doc = parse_html("<div>bare fragment</div>");
+    assert!(doc.document_element().is_some(), "html is implied");
+    assert!(doc.head().is_some(), "head is implied");
+    assert!(doc.body().is_some(), "body is implied");
+
+    // …and the implied head renders nothing. Asked of the RESOLVED style, not
+    // `get_style_property` — that one answers the declared (inline `style`)
+    // value per CSSOM §6.4.2, and a UA default was never declared anywhere.
+    let head_box = doc.root.children.iter().find(|c| c.tag == "head").unwrap();
+    assert_eq!(
+        head_box.style.display,
+        crate::types::Display::None,
+        "head is in the tree but draws nothing"
+    );
+}
+
+#[test]
+fn a_misplaced_head_does_not_move_the_head_element() {
+    // The parser never fails on bad markup, it NORMALISES it. HTML §13.2.6
+    // runs one "before head" insertion mode: the head element is created the
+    // moment content is seen, so it is html's first child no matter where —
+    // or whether — the source wrote the tag. A later `<head>` is a parse error
+    // and cannot relocate it.
+    //
+    // This is why `head` is the first child and `body` the second in EVERY
+    // document, and why nothing downstream has to cope with a third order.
+    for source in [
+        "<div>x</div>",                                    // no head at all
+        "<head><title>t</title></head><div>x</div>",       // head where it belongs
+        "<div>x</div><head><title>t</title></head>",       // head at the END
+        "<body><div>x</div></body><head></head>",          // after an explicit body
+    ] {
+        let doc = parse_html(source);
+        let tags: Vec<&str> = doc.root.children.iter().map(|c| c.tag.as_str()).collect();
+        assert_eq!(
+            tags,
+            vec!["head", "body"],
+            "html's children should normalise to head,body for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn a_late_head_token_is_ignored_and_its_contents_stay_in_the_body() {
+    // The other half of §13.2.6's rule. Ignoring a misplaced `<head>` means
+    // ignoring the TOKEN — the markup it wrapped is still content and is
+    // still parsed. Before the insertion-mode flag existed, the parser
+    // re-entered head parsing here and `parse_head_content` ate the `<p>`,
+    // because head parsing discards everything it does not recognise.
+    let doc = parse_html("<p>first</p><head><p>second</p></head><p>third</p>");
+    let body = doc.root.children.iter().find(|c| c.tag == "body").unwrap();
+    let paragraphs: Vec<&str> = body
+        .children
+        .iter()
+        .filter(|c| c.tag == "p")
+        .map(|c| c.children.first().map(|t| t.text.trim()).unwrap_or(""))
+        .collect();
+    assert_eq!(
+        paragraphs,
+        vec!["first", "second", "third"],
+        "content wrapped in a stray <head> is body content, not head content"
+    );
+}
+
+#[test]
+fn focus_and_blur_move_active_element() {
+    let mut doc = parse_html(r#"<input id="a"><input id="b">"#);
+    let a = doc.get_element_by_id("a").unwrap();
+    let b = doc.get_element_by_id("b").unwrap();
+
+    doc.focus(a);
+    assert_eq!(doc.active_element(), Some(a));
+    doc.focus(b);
+    assert_eq!(doc.active_element(), Some(b), "focus MOVES, it does not add");
+    doc.blur(b);
+    assert_eq!(doc.active_element(), None);
+}
+
+#[test]
+fn node_kind_predicates_agree_with_node_type() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let t = doc.create_text_node("x");
+    let c = doc.create_comment("x");
+
+    assert!(doc.is_element(d) && !doc.is_text_node(d) && !doc.is_character_data(d));
+    assert!(doc.is_text_node(t) && doc.is_character_data(t) && !doc.is_element(t));
+    assert!(doc.is_comment_node(c) && doc.is_character_data(c));
+}
+
+#[test]
+fn text_data_is_the_nodes_own_data_not_its_subtree() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let t = doc.create_text_node("hello");
+    doc.append_child(d, t);
+
+    // `textContent` concatenates the subtree; `data` is the node's own.
+    assert_eq!(doc.text_content(d), "hello");
+    assert_eq!(doc.text_data(t), "hello");
+    assert_eq!(doc.text_data(d), "", "an element has no data of its own");
+
+    doc.set_text_data(t, "changed");
+    assert_eq!(doc.text_content(d), "changed");
+}
+
+#[test]
+fn select_items_can_be_read_replaced_removed_and_cleared() {
+    let mut doc = parse_html("<select id='s'></select>");
+    let s = doc.get_element_by_id("s").unwrap();
+    doc.add_item(s, "one");
+    doc.add_item(s, "two");
+    doc.add_item(s, "three");
+    assert_eq!(doc.item_count(s), 3);
+
+    doc.set_item_text(s, 1, "TWO");
+    assert_eq!(doc.item_text(s, 1), "TWO");
+
+    doc.set_selected_index(s, 2);
+    assert_eq!(doc.selected_index(s), 2);
+
+    doc.remove_item(s, 0);
+    assert_eq!(doc.item_count(s), 2);
+    assert_eq!(doc.item_text(s, 0), "TWO");
+
+    doc.clear_items(s);
+    assert_eq!(doc.item_count(s), 0);
+    assert_eq!(doc.selected_index(s), -1, "empty select selects nothing");
+}
+
+#[test]
+fn checked_is_presence_and_setting_false_removes_it() {
+    let mut doc = parse_html(r#"<input id="c" type="checkbox">"#);
+    let c = doc.get_element_by_id("c").unwrap();
+    assert!(!doc.checked(c));
+
+    doc.set_checked(c, true);
+    assert!(doc.checked(c));
+    assert!(doc.has_attribute(c, "checked"));
+
+    // Writing "false" would read back as TRUE — a boolean attribute is present
+    // or absent, so the false case must REMOVE it.
+    doc.set_checked(c, false);
+    assert!(!doc.checked(c));
+    assert!(!doc.has_attribute(c, "checked"));
+}
+
+#[test]
+fn get_attribute_names_lists_what_was_set() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    doc.set_attribute(d, "data-a", "1");
+    doc.set_attribute(d, "data-b", "2");
+
+    let names = doc.get_attribute_names(d);
+    assert!(names.iter().any(|n| n == "data-a"));
+    assert!(names.iter().any(|n| n == "data-b"));
+    assert!(names.iter().any(|n| n == "id"));
+}
+
+#[test]
+fn set_title_writes_through_to_the_title_element() {
+    let mut doc = parse_html("<html><head><title>old</title></head><body></body></html>");
+    assert_eq!(doc.title(), "old");
+    doc.set_title("new");
+    assert_eq!(doc.title(), "new");
+}
+
+#[test]
+fn inner_html_serialises_children_only() {
+    let doc = parse_html(r#"<div id="d"><p>a</p><span>b</span></div>"#);
+    let d = doc.get_element_by_id("d").unwrap();
+    let html = doc.inner_html(d);
+    assert!(html.contains("<p"), "innerHTML holds the children: {html:?}");
+    assert!(html.contains("span"));
+    assert!(
+        !html.starts_with("<div"),
+        "and NOT the element itself: {html:?}"
+    );
+}
+
+#[test]
+fn document_kind_is_html_unless_asked_otherwise() {
+    let doc = parse_html("<div></div>");
+    assert_eq!(doc.kind(), crate::types::DocumentKind::Html);
+}
+
+#[test]
+fn computed_style_property_resolves_geometry_after_layout() {
+    let mut doc = parse_html(r#"<div id="d" style="width: 120px; height: 40px">x</div>"#);
+    doc.set_viewport(800.0, 600.0);
+    let d = doc.get_element_by_id("d").unwrap();
+
+    // The DECLARED value is what was authored…
+    assert_eq!(doc.get_style_property(d, "width").as_deref(), Some("120px"));
+    // …and the COMPUTED value comes off the laid-out box.
+    let w = doc.computed_style_property(d, "width");
+    assert!(w.ends_with("px"), "computed width should be in px: {w:?}");
+}
+
+#[test]
+fn get_elements_by_tag_name_is_case_insensitive_and_star_means_elements() {
+    let doc = parse_html("<div><P>a</P><p>b</p><span>c</span></div>");
+
+    // HTML tag matching is ASCII case-insensitive, so `<P>` and `<p>` are one
+    // tag asked for either way.
+    assert_eq!(doc.get_elements_by_tag_name("p").len(), 2);
+    assert_eq!(doc.get_elements_by_tag_name("P").len(), 2);
+    assert_eq!(doc.get_elements_by_tag_name("span").len(), 1);
+    assert!(doc.get_elements_by_tag_name("table").is_empty());
+
+    // `*` collects ELEMENTS — not the text nodes inside them.
+    let all = doc.get_elements_by_tag_name("*");
+    assert!(all.len() >= 4, "html/div/p/p/span at least: {}", all.len());
+    assert!(
+        all.iter().all(|id| doc.is_element(*id)),
+        "`*` must not collect text or comment nodes"
+    );
+}
+
+// ── The methods that arrived with the second engine ────────────────────────
+//
+// `vybe_widgets` carries the same tests under the same names, because the two
+// engines are meant to be swappable and a shared SIGNATURE proves nothing
+// about shared BEHAVIOUR. Anything asserted here should be asserted there.
+
+#[test]
+fn appending_a_fragment_moves_its_children_and_not_itself() {
+    let mut doc = parse_html("<div id='d'><i>keep</i></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+
+    let fragment = doc.create_document_fragment();
+    assert!(doc.is_document_fragment(fragment));
+    assert_eq!(doc.node_type(fragment), 11);
+    assert_eq!(doc.node_name(fragment), "#document-fragment");
+    for tag in ["a", "b"] {
+        let child = doc.create_element(tag);
+        doc.append_child(fragment, child);
+    }
+
+    doc.append_child(d, fragment);
+
+    // The fragment is NOT in the tree — its children are, in order, and at the
+    // level the caller asked for rather than one deeper.
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["i", "a", "b"]);
+    assert!(
+        !tags.iter().any(|t| t == "#document-fragment"),
+        "the fragment itself must not land in the tree"
+    );
+    // …and it is empty afterwards, having handed its children over.
+    assert!(doc.child_nodes(fragment).is_empty());
+}
+
+#[test]
+fn inserting_a_fragment_splices_it_in_order() {
+    let mut doc = parse_html("<div id='d'><i id='pivot'>z</i></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let pivot = doc.get_element_by_id("pivot").unwrap();
+
+    let fragment = doc.create_document_fragment();
+    for tag in ["a", "b"] {
+        let child = doc.create_element(tag);
+        doc.append_child(fragment, child);
+    }
+
+    doc.insert_before(d, fragment, pivot);
+
+    // Each child goes before the SAME reference, so they arrive in the order
+    // they were in — not reversed.
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["a", "b", "i"]);
+}
+
+#[test]
+fn normalize_merges_adjacent_text_and_drops_empties() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    for part in ["a", "", "b"] {
+        let t = doc.create_text_node(part);
+        doc.append_child(d, t);
+    }
+    let span = doc.create_element("span");
+    doc.append_child(d, span);
+    let tail = doc.create_text_node("c");
+    doc.append_child(d, tail);
+
+    doc.normalize(d);
+
+    // "a" and "b" merge THROUGH the empty node between them — a zero-length
+    // text node is removed, and removing it does not break adjacency. "c" is
+    // separated by an element, so it stays its own node.
+    let kinds: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| {
+            if doc.is_text_node(c) {
+                doc.text_data(c)
+            } else {
+                format!("<{}>", doc.node_name(c))
+            }
+        })
+        .collect();
+    assert_eq!(kinds, vec!["ab", "<span>", "c"]);
+}
+
+#[test]
+fn is_equal_node_ignores_identity_and_attribute_order() {
+    let doc = parse_html(
+        "<div><p id='a' class='x'>hi</p><p class='x' id='a'>hi</p><p id='a'>bye</p></div>",
+    );
+    let ps = doc.get_elements_by_tag_name("p");
+    assert_eq!(ps.len(), 3);
+
+    // Two distinct nodes, written with their attributes in opposite orders.
+    assert_ne!(ps[0], ps[1], "these must be different NODES");
+    assert!(doc.is_equal_node(ps[0], ps[1]), "attribute order is not part of equality");
+
+    // Same attributes, different text.
+    assert!(!doc.is_equal_node(ps[0], ps[2]));
+
+    // A node always equals itself; nothing equals a node that is not there.
+    assert!(doc.is_equal_node(ps[0], ps[0]));
+    assert!(!doc.is_equal_node(ps[0], 0));
+}
+
+#[test]
+fn compare_document_position_reports_containment_and_order() {
+    let doc = parse_html("<div id='outer'><p id='first'>a</p><p id='second'>b</p></div>");
+    let outer = doc.get_element_by_id("outer").unwrap();
+    let first = doc.get_element_by_id("first").unwrap();
+    let second = doc.get_element_by_id("second").unwrap();
+
+    assert_eq!(doc.compare_document_position(outer, outer), 0);
+    // CONTAINED_BY | FOLLOWING — containment always carries a direction.
+    assert_eq!(doc.compare_document_position(outer, first), 0x10 | 0x04);
+    // CONTAINS | PRECEDING, the exact mirror.
+    assert_eq!(doc.compare_document_position(first, outer), 0x08 | 0x02);
+    assert_eq!(doc.compare_document_position(first, second), 0x04);
+    assert_eq!(doc.compare_document_position(second, first), 0x02);
+}
+
+#[test]
+fn prepend_keeps_the_given_order() {
+    let mut doc = parse_html("<div id='d'><i>z</i></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let a = doc.create_element("a");
+    let b = doc.create_element("b");
+
+    doc.prepend(d, &[a, b]);
+
+    // The naive implementation — insert each before the CURRENT first child —
+    // yields b, a, z. The nodes must arrive in the order they were given.
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["a", "b", "i"]);
+}
+
+#[test]
+fn before_after_and_replace_with_place_nodes_around_a_sibling() {
+    let mut doc = parse_html("<div id='d'><i id='pivot'>z</i></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let pivot = doc.get_element_by_id("pivot").unwrap();
+
+    let a = doc.create_element("a");
+    let b = doc.create_element("b");
+    doc.before(pivot, &[a]);
+    doc.after(pivot, &[b]);
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["a", "i", "b"]);
+
+    let u = doc.create_element("u");
+    doc.replace_with(pivot, &[u]);
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["a", "u", "b"], "the pivot is gone and `u` sits where it was");
+}
+
+#[test]
+fn insert_adjacent_element_places_at_all_four_positions() {
+    let mut doc = parse_html("<div id='d'><p id='p'>x</p></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    let p = doc.get_element_by_id("p").unwrap();
+
+    for (position, tag) in [
+        ("beforebegin", "a"),
+        ("afterbegin", "b"),
+        ("beforeend", "u"),
+        ("afterend", "s"),
+    ] {
+        let node = doc.create_element(tag);
+        assert_eq!(
+            doc.insert_adjacent_element(p, position, node),
+            Some(node),
+            "{position} should return the inserted element"
+        );
+    }
+
+    // `beforebegin`/`afterend` are p's SIBLINGS…
+    let outer: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(outer, vec!["a", "p", "s"]);
+    // …and `afterbegin`/`beforeend` are its children, around the text.
+    let inner: Vec<String> = doc.child_nodes(p).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(inner, vec!["b", "#text", "u"]);
+
+    assert_eq!(doc.insert_adjacent_element(p, "sideways", d), None);
+}
+
+#[test]
+fn dataset_maps_camel_case_to_data_attributes() {
+    let mut doc = parse_html("<div id='d' data-user-name='ada' data-id='7' class='c'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+
+    // The attribute is `data-user-name`; the IDL name is `userName`.
+    assert_eq!(doc.dataset_get(d, "userName").as_deref(), Some("ada"));
+    assert_eq!(doc.dataset_get(d, "id").as_deref(), Some("7"));
+    // `class` is not `data-*` and must not appear.
+    assert_eq!(
+        doc.dataset(d),
+        vec![
+            ("id".to_string(), "7".to_string()),
+            ("userName".to_string(), "ada".to_string()),
+        ]
+    );
+
+    doc.set_dataset(d, "roleName", "admin");
+    assert_eq!(doc.get_attribute(d, "data-role-name").as_deref(), Some("admin"));
+    doc.remove_dataset(d, "roleName");
+    assert_eq!(doc.dataset_get(d, "roleName"), None);
+}
+
+#[test]
+fn inner_text_skips_hidden_subtrees() {
+    let doc = parse_html(
+        "<div id='d'><p>shown</p><p style='display:none'>hidden</p><span>tail</span></div>",
+    );
+    let d = doc.get_element_by_id("d").unwrap();
+
+    let text = doc.inner_text(d);
+    assert!(text.contains("shown"), "got {text:?}");
+    assert!(text.contains("tail"), "got {text:?}");
+    assert!(
+        !text.contains("hidden"),
+        "innerText is the RENDERED text — this is the whole difference from textContent: {text:?}"
+    );
+    // …and textContent still reports everything, unchanged.
+    assert!(doc.text_content(d).contains("hidden"));
+}
+
+#[test]
+fn tab_index_defaults_by_element_kind() {
+    let doc = parse_html(
+        "<div id='d'></div><button id='b'></button><a id='bare'>x</a><a id='link' href='/'>y</a><i id='t' tabindex='3'></i>",
+    );
+    let by = |id: &str| doc.tab_index(doc.get_element_by_id(id).unwrap());
+
+    assert_eq!(by("d"), -1, "a div is not in the tab sequence by default");
+    assert_eq!(by("b"), 0, "a button is");
+    assert_eq!(by("bare"), -1, "an anchor with nowhere to go is not");
+    assert_eq!(by("link"), 0, "an anchor with an href is");
+    assert_eq!(by("t"), 3, "an explicit tabindex wins over any default");
+}
+
+#[test]
+fn outer_html_includes_the_element_itself() {
+    let doc = parse_html("<div id='d'><p>x</p></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+
+    let inner = doc.inner_html(d);
+    let outer = doc.outer_html(d);
+    assert!(inner.contains("<p>"), "got {inner:?}");
+    assert!(!inner.contains("<div"), "innerHTML is the CHILDREN only: {inner:?}");
+    assert!(outer.contains("<div"), "outerHTML includes the element: {outer:?}");
+    assert!(outer.contains("<p>"), "…and its children: {outer:?}");
+}
+
+#[test]
+fn has_and_remove_attribute_ns_match_by_local_name() {
+    let mut doc = parse_html("<div id='d'></div>");
+    let d = doc.get_element_by_id("d").unwrap();
+    doc.set_attribute_ns(d, "http://www.w3.org/1999/xlink", "xlink:href", "/there");
+    doc.set_attribute(d, "href", "/here");
+
+    assert!(doc.has_attribute_ns(d, "http://www.w3.org/1999/xlink", "href"));
+    assert!(!doc.has_attribute_ns(d, "urn:other", "href"));
+
+    doc.remove_attribute_ns(d, "http://www.w3.org/1999/xlink", "href");
+    assert!(!doc.has_attribute_ns(d, "http://www.w3.org/1999/xlink", "href"));
+    assert_eq!(
+        doc.get_attribute(d, "href").as_deref(),
+        Some("/here"),
+        "the un-namespaced attribute shares a local name and must survive"
+    );
 }

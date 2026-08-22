@@ -1822,6 +1822,17 @@ pub struct ShadowRoot {
     pub mode: ShadowMode,
 }
 
+/// Which grammar a document was built from.
+///
+/// The DOM's own distinction, and the only thing it changes here is whether
+/// names FOLD: HTML is ASCII-case-insensitive for tag and attribute names, XML
+/// is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentKind {
+    Html,
+    Xml,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShadowMode {
     Open,
@@ -2094,9 +2105,14 @@ impl HtmlBox {
     pub fn attach_shadow(&mut self, mode: ShadowMode, html: &str) {
         let doc = crate::html::parse_html(html);
         let mut children = doc.root.children;
-        // Move <body> children up if the parser wrapped in <html><body>
-        if children.len() == 1 && children[0].tag == "body" {
-            children = std::mem::take(&mut children[0].children);
+        // Move <body> children up: the parser wraps a fragment in
+        // `<html><head></head><body>…`, and a shadow tree wants the CONTENT.
+        //
+        // Found by TAG, not by index. This asked whether body was the only
+        // child, which stopped being true the moment the parser started
+        // synthesising `<head>` as HTML §13.2.6 requires.
+        if let Some(at) = children.iter().position(|c| c.tag == "body") {
+            children = std::mem::take(&mut children[at].children);
         }
         // Start with UA stylesheet so shadow tree gets default styles
         let mut stylesheet = crate::css::ua_stylesheet();
@@ -2550,6 +2566,16 @@ pub struct Document {
     /// Rebuilt by `rebuild_node_index()` after layout. Pointers are valid only
     /// until the next tree mutation (layout, DOM change).
     pub node_index: HashMap<u32, *const HtmlBox>,
+    /// Which grammar this document was built from — HTML or XML.
+    ///
+    /// The difference the DOM actually draws is CASE. An HTML document
+    /// ASCII-lowercases tag and attribute names, so `createElement("DIV")`
+    /// makes a `div` and `getAttribute("HREF")` finds `href`; an XML document
+    /// is case-sensitive, where `<Rect>` and `<rect>` are two elements.
+    ///
+    /// Everything htmlbox parses is HTML, so this only becomes anything other
+    /// than `Html` when a caller asks for an XML document explicitly.
+    pub kind: DocumentKind,
     /// Separated layout data indexed by node_id (bridge: duplicates HtmlBox geometry).
     pub layout_store:    crate::layout::layout_box::LayoutStore,
     /// Nodes created by dom_create_element/dom_create_text that haven't been
@@ -2679,6 +2705,7 @@ impl Document {
             arena:           DomArena::new(),
             next_node_id:    1,  // 0 = NodeId::NONE (reserved)
             node_index:      HashMap::new(),
+            kind:            DocumentKind::Html,
             layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             base_url:        String::new(),
@@ -3030,6 +3057,12 @@ impl Document {
                         if hit_node_id != 0 && button == 0 {
                             if let Some(form_redraw) = handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event) {
                                 if form_redraw { redraw = true; }
+                                // `handle_form_click` takes `&mut HtmlBox`, so it
+                                // wrote `checked` to the render tree only. Push it
+                                // into the arena before anything reads the DOM
+                                // through the WHATWG accessors — see
+                                // `Document::sync_form_state_to_arena`.
+                                self.sync_form_state_to_arena();
                             }
                             // Handle select dropdown
                             if self.open_select != 0 {
@@ -3422,6 +3455,12 @@ impl Document {
 
             if form_handled {
                 redraw = true;
+                // Typing went through `process_form_input_key`, which takes
+                // `&mut HtmlBox` and so updated `value` on the render tree
+                // only. Reconcile before the DOM is read. Deferred to here
+                // rather than done at the call site because `input` borrows
+                // `self.root` for the whole block above.
+                self.sync_form_state_to_arena();
             } else if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
                 redraw = true;
             }
@@ -4729,6 +4768,10 @@ impl Clone for Document {
             arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
             next_node_id:    self.next_node_id,
             node_index:      HashMap::new(),   // rebuilt on demand
+            // A copy of an XML document is still an XML document — carried
+            // over rather than reset, or the copy would start folding names
+            // the original does not.
+            kind:            self.kind,
             layout_store:    crate::layout::layout_box::LayoutStore::new(),
             pending_nodes:   HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),

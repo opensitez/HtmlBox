@@ -255,8 +255,9 @@ fn render_display_list_text_produces_dark_pixels() {
 
     let data = pixmap.data();
     let mut has_dark = false;
-    for y in 5..35 {
-        for x in 5..200 {
+    // Scan a wider area — absolute positioning + font metrics may shift text
+    for y in 0..150 {
+        for x in 0..300 {
             let idx = (y * 400 + x) as usize * 4;
             if data[idx] < 100 && data[idx+1] < 100 && data[idx+2] < 100 {
                 has_dark = true;

@@ -44,7 +44,10 @@ pub mod layout;
 pub mod renderer;
 pub mod platform;
 pub mod dom;
+/// WHATWG HTML §7 — browsing contexts and the `Window` interface.
+pub mod window;
 pub mod frame;
+pub mod widgets;
 pub mod markdown;
 #[cfg(feature = "accessibility")]
 pub mod accessibility;

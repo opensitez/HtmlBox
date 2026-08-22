@@ -8,6 +8,21 @@
 
 use crate::html::parse_html;
 use crate::dom::arena::NodeId;
+use crate::types::{Document, HtmlBox};
+
+/// The `<body>` box, found by TAG.
+///
+/// Never `root.children[0]`. The parser synthesises the whole `html > head,
+/// body` skeleton (HTML §13.2.6), so body is the *second* child — and any
+/// fixed index goes wrong again the moment the tree gains anything else.
+/// A test that means "the body" should say so.
+fn body_of(doc: &Document) -> &HtmlBox {
+    doc.root
+        .children
+        .iter()
+        .find(|c| c.tag == "body")
+        .expect("every parsed document has a body")
+}
 
 /// Helper: collect all node_ids from an HtmlBox tree into a Vec.
 fn collect_node_ids(node: &crate::types::HtmlBox) -> Vec<u32> {
@@ -51,7 +66,7 @@ fn arena_mirrors_tree_structure() {
     assert_eq!(arena.get(html_id).tag, "html");
 
     // html > body
-    let body = &doc.root.children[0];
+    let body = body_of(&doc);
     let body_id = NodeId(body.node_id);
     assert!(arena.is_alive(body_id));
     assert_eq!(arena.get(body_id).tag, "body");
@@ -82,7 +97,7 @@ fn arena_text_nodes_have_content() {
     let arena = &doc.arena;
 
     // Find the text node (html > body > p > #text)
-    let p = &doc.root.children[0].children[0]; // body > p
+    let p = &body_of(&doc).children[0]; // body > p
     assert_eq!(p.tag, "p");
 
     let text = &p.children[0];
@@ -100,7 +115,7 @@ fn arena_attributes_copied() {
     let doc = parse_html(r#"<div id="main" class="container"><a href="/link">click</a></div>"#);
     let arena = &doc.arena;
 
-    let div = &doc.root.children[0].children[0]; // body > div
+    let div = &body_of(&doc).children[0]; // body > div
     assert_eq!(div.tag, "div");
     let div_id = NodeId(div.node_id);
 
@@ -212,7 +227,7 @@ fn arena_sibling_links_consistent() {
     let doc = parse_html("<ul><li>a</li><li>b</li><li>c</li></ul>");
     let arena = &doc.arena;
 
-    let ul = &doc.root.children[0].children[0]; // body > ul
+    let ul = &body_of(&doc).children[0]; // body > ul
     let ul_id = NodeId(ul.node_id);
 
     let children: Vec<NodeId> = arena.children(ul_id).collect();
@@ -255,7 +270,7 @@ fn arena_get_element_by_id_works() {
     assert_eq!(arena.get(inner_id).attributes.get("id").map(|s| s.as_str()), Some("inner"));
 
     // Verify it matches the HtmlBox
-    let span = &doc.root.children[0].children[0].children[0]; // body > div > span
+    let span = &body_of(&doc).children[0].children[0]; // body > div > span
     assert_eq!(span.node_id, inner_id.0);
 }
 
@@ -274,7 +289,7 @@ fn rebuild_arena_from_tree_works() {
     assert!(doc.arena.is_alive(html_id));
     assert_eq!(doc.arena.get(html_id).tag, "html");
 
-    let body_id = NodeId(doc.root.children[0].node_id);
+    let body_id = NodeId(body_of(&doc).node_id);
     assert_eq!(doc.arena.get(body_id).parent, html_id);
 
     // Verify all parent-child links

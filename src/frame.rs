@@ -152,7 +152,7 @@ impl EngineFrame {
     /// Lighter than load_html for app-style content updates.
     pub fn set_body_html(&mut self, html: &str) {
         if let Some(body_id) = self.doc.query_selector("body") {
-            self.doc.dom_set_inner_html(body_id, html);
+            self.doc.set_inner_html(body_id, html);
             self.mark_style_dirty();
         }
     }
@@ -372,33 +372,33 @@ impl EngineFrame {
 
     /// Create an element and mark style dirty.
     pub fn create_element(&mut self, tag: &str) -> u32 {
-        let id = self.doc.dom_create_element(tag);
+        let id = self.doc.create_element(tag);
         self.mark_style_dirty();
         id
     }
 
     /// Create a text node and mark style dirty.
     pub fn create_text(&mut self, text: &str) -> u32 {
-        let id = self.doc.dom_create_text(text);
+        let id = self.doc.create_text_node(text);
         self.mark_style_dirty();
         id
     }
 
     /// Append child and mark dirty.
     pub fn append_child(&mut self, parent: u32, child: u32) {
-        self.doc.dom_append_child(parent, child);
+        self.doc.append_child(parent, child);
         self.mark_style_dirty();
     }
 
     /// Remove child and mark dirty.
     pub fn remove_child(&mut self, child: u32) {
-        self.doc.dom_remove_child(child);
+        self.doc.remove_child(child);
         self.mark_style_dirty();
     }
 
     /// Set attribute and mark dirty.
     pub fn set_attribute(&mut self, id: u32, key: &str, val: &str) {
-        self.doc.dom_set_attribute(id, key, val);
+        self.doc.set_attribute(id, key, val);
         self.mark_style_dirty();
     }
 
@@ -433,13 +433,13 @@ impl EngineFrame {
 
     /// Set text content and mark dirty.
     pub fn set_text_content(&mut self, id: u32, text: &str) {
-        self.doc.dom_set_text_content(id, text);
+        self.doc.set_text_content(id, text);
         self.mark_style_dirty();
     }
 
     /// Set inner HTML and mark dirty.
     pub fn set_inner_html(&mut self, id: u32, html: &str) {
-        self.doc.dom_set_inner_html(id, html);
+        self.doc.set_inner_html(id, html);
         self.mark_style_dirty();
     }
 

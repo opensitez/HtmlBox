@@ -43,6 +43,20 @@ pub enum NodeType {
     Text,
     Comment,
     Document,
+    /// `<![CDATA[…]]>`. Character data that is NOT parsed as markup — its
+    /// `data` is the text between the delimiters. Only reachable in XML.
+    CData,
+    /// `<?target data?>`. Carries a TARGET, which is what `nodeName` answers
+    /// for it, and which is why `tag` holds the target rather than a tag name.
+    ProcessingInstruction,
+    /// A `DocumentFragment` — a parent with no place in the document.
+    ///
+    /// The point of it is what INSERTING one does: the fragment's children move
+    /// into the target and the fragment itself does not (DOM §4.2.1). That is
+    /// what makes building a subtree off-tree and attaching it in one step a
+    /// single reflow instead of one per node, and it is why a fragment cannot
+    /// be modelled as "an element nobody appended".
+    DocumentFragment,
 }
 
 // ─── Node ───────────────────────────────────────────────────────────────────
@@ -65,6 +79,26 @@ pub struct Node {
     pub attributes: HashMap<String, String>,
     pub text: String,
 
+    /// The node's namespace URI, or `None` for the null namespace.
+    ///
+    /// `tag` holds the QUALIFIED name (`svg:rect`), because that is what
+    /// `nodeName` answers; `prefix` and `localName` are derived from it by
+    /// splitting on the colon, exactly as DOM §4.9 defines them. Storing the
+    /// three separately would be three chances to disagree.
+    ///
+    /// HTML elements leave this `None`. Nothing in the HTML parser sets it —
+    /// only `create_element_ns` does — so no existing behaviour changes.
+    pub namespace: Option<String>,
+
+    /// Namespace URI per ATTRIBUTE, keyed by qualified name. Only namespaced
+    /// attributes appear; an absent key is the null namespace.
+    ///
+    /// Needed because `xlink:href` and `href` share a local name and are two
+    /// DIFFERENT attributes — `getAttributeNS` asks a question a flat
+    /// name→value map cannot answer. Kept beside `attributes` rather than
+    /// replacing it so every existing read stays a plain map lookup.
+    pub attribute_ns: HashMap<String, String>,
+
     // ── Flags ──
     pub dirty: DirtyFlags,
 
@@ -83,7 +117,30 @@ impl Node {
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
             attributes: HashMap::new(),
+            namespace: None,
+            attribute_ns: HashMap::new(),
             text: String::new(),
+            dirty: DirtyFlags::ALL,
+            alive: true,
+        }
+    }
+
+    /// A comment node. `NodeType::Comment` existed from the start but nothing
+    /// built one — the parser drops comments and `dom_create_*` had no spelling
+    /// for it. WHATWG's `createComment()` needs both.
+    fn new_comment(text: impl Into<String>) -> Self {
+        Node {
+            node_type: NodeType::Comment,
+            tag: "#comment".to_string(),
+            parent: NodeId::NONE,
+            first_child: NodeId::NONE,
+            last_child: NodeId::NONE,
+            next_sibling: NodeId::NONE,
+            prev_sibling: NodeId::NONE,
+            attributes: HashMap::new(),
+            namespace: None,
+            attribute_ns: HashMap::new(),
+            text: text.into(),
             dirty: DirtyFlags::ALL,
             alive: true,
         }
@@ -99,6 +156,8 @@ impl Node {
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
             attributes: HashMap::new(),
+            namespace: None,
+            attribute_ns: HashMap::new(),
             text: text.into(),
             dirty: DirtyFlags::ALL,
             alive: true,
@@ -158,6 +217,8 @@ impl DomArena {
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
             attributes: HashMap::new(),
+            namespace: None,
+            attribute_ns: HashMap::new(),
             text: String::new(),
             dirty: DirtyFlags::NONE,
             alive: false,
@@ -178,6 +239,52 @@ impl DomArena {
     /// Create a new text node.
     pub fn create_text(&mut self, text: &str) -> NodeId {
         self.alloc(Node::new_text(text))
+    }
+
+    /// Create a new comment node — `document.createComment()`.
+    pub fn create_comment(&mut self, text: &str) -> NodeId {
+        self.alloc(Node::new_comment(text))
+    }
+
+    /// `document.createElementNS(namespace, qualifiedName)`.
+    ///
+    /// The qualified name is stored verbatim as the tag — `nodeName` answers
+    /// it whole, and `prefix`/`localName` split it on demand. An empty
+    /// namespace string is the NULL namespace, per DOM §4.5.4, and is not the
+    /// same as the empty-string namespace (there is no such thing).
+    pub fn create_element_ns(&mut self, namespace: &str, qualified_name: &str) -> NodeId {
+        let id = self.alloc(Node::new_element(qualified_name));
+        if !namespace.is_empty() {
+            self.get_mut(id).namespace = Some(namespace.to_string());
+        }
+        id
+    }
+
+    /// `document.createCDATASection(data)`.
+    pub fn create_cdata(&mut self, data: &str) -> NodeId {
+        let mut node = Node::new_text(data);
+        node.node_type = NodeType::CData;
+        node.tag = "#cdata-section".to_string();
+        self.alloc(node)
+    }
+
+    /// `document.createProcessingInstruction(target, data)`. The TARGET lands
+    /// in `tag` because that is what `nodeName` reports for a PI.
+    pub fn create_processing_instruction(&mut self, target: &str, data: &str) -> NodeId {
+        let mut node = Node::new_text(data);
+        node.node_type = NodeType::ProcessingInstruction;
+        node.tag = target.to_string();
+        self.alloc(node)
+    }
+
+    /// `document.createDocumentFragment()`.
+    ///
+    /// Built on the element node because a fragment is a PARENT — it needs the
+    /// child links and nothing a text node has.
+    pub fn create_document_fragment(&mut self) -> NodeId {
+        let mut node = Node::new_element("#document-fragment");
+        node.node_type = NodeType::DocumentFragment;
+        self.alloc(node)
     }
 
     fn alloc(&mut self, node: Node) -> NodeId {

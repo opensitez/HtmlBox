@@ -84,26 +84,26 @@ fn add_class_triggers_style_update() {
 fn set_style_property_updates_layout() {
     let mut f = frame(r#"<div id="box" style="width: 100px; height: 50px">x</div>"#);
     let box_id = f.doc.get_element_by_id("box").unwrap();
-    assert!((f.doc.dom_offset_width(box_id) - 100.0).abs() < 2.0);
+    assert!((f.doc.offset_width(box_id) - 100.0).abs() < 2.0);
 
     f.set_style(box_id, "width", "200px");
     f.update_frame();
 
-    assert!((f.doc.dom_offset_width(box_id) - 200.0).abs() < 2.0,
-        "width should update to 200px, got {}", f.doc.dom_offset_width(box_id));
+    assert!((f.doc.offset_width(box_id) - 200.0).abs() < 2.0,
+        "width should update to 200px, got {}", f.doc.offset_width(box_id));
 }
 
 #[test]
 fn append_child_updates_parent_height() {
     let mut f = frame(r#"<div id="container" style="border: 1px solid black"></div>"#);
     let container = f.doc.get_element_by_id("container").unwrap();
-    let h1 = f.doc.dom_offset_height(container);
+    let h1 = f.doc.offset_height(container);
 
     // Add a tall child via innerHTML (ensures proper cascade)
     f.set_inner_html(container, r#"<div style="height: 100px">tall</div>"#);
     f.update_frame();
 
-    let h2 = f.doc.dom_offset_height(container);
+    let h2 = f.doc.offset_height(container);
     assert!(h2 > h1 + 50.0, "container should grow: {} → {}", h1, h2);
 }
 
@@ -217,8 +217,8 @@ fn border_box_sizing() {
     let a = f.doc.get_element_by_id("a").unwrap();
     let b = f.doc.get_element_by_id("b").unwrap();
 
-    let wa = f.doc.dom_offset_width(a);
-    let wb = f.doc.dom_offset_width(b);
+    let wa = f.doc.offset_width(a);
+    let wb = f.doc.offset_width(b);
 
     // content-box: width = content, so total = 200 + 40 padding = 240
     assert!((wa - 240.0).abs() < 5.0, "content-box should be ~240px, got {}", wa);
@@ -236,7 +236,7 @@ fn nested_percentage_resolves_correctly() {
         </div>
     "#);
     let inner = f.doc.get_element_by_id("inner").unwrap();
-    let w = f.doc.dom_offset_width(inner);
+    let w = f.doc.offset_width(inner);
     // 50% of 50% of 600 = 150
     assert!((w - 150.0).abs() < 5.0, "nested 50% of 50% of 600 should be ~150, got {}", w);
 }
@@ -248,14 +248,14 @@ fn nested_percentage_resolves_correctly() {
 #[test]
 fn max_width_constrains_element() {
     let mut f = frame(r#"<div id="box" style="max-width: 300px">content</div>"#);
-    let w = f.doc.dom_offset_width(f.doc.get_element_by_id("box").unwrap());
+    let w = f.doc.offset_width(f.doc.get_element_by_id("box").unwrap());
     assert!(w <= 301.0, "max-width 300px should constrain: got {}", w);
 }
 
 #[test]
 fn min_function_in_width() {
     let mut f = frame(r#"<div id="box" style="width: min(300px, 50%)">x</div>"#);
-    let w = f.doc.dom_offset_width(f.doc.get_element_by_id("box").unwrap());
+    let w = f.doc.offset_width(f.doc.get_element_by_id("box").unwrap());
     // 50% of ~784 (body) = ~392, min(300, 392) = 300
     assert!((w - 300.0).abs() < 5.0, "min(300px, 50%) should be ~300, got {}", w);
 }
@@ -271,20 +271,20 @@ fn multiple_mutations_one_frame() {
 
     // Multiple mutations without frame update
     for i in 0..10 {
-        let p = f.doc.dom_create_element("p");
-        let t = f.doc.dom_create_text(&format!("Item {}", i));
-        f.doc.dom_append_child(p, t);
-        f.doc.dom_append_child(app, p);
+        let p = f.doc.create_element("p");
+        let t = f.doc.create_text_node(&format!("Item {}", i));
+        f.doc.append_child(p, t);
+        f.doc.append_child(app, p);
     }
     f.mark_style_dirty();
 
     // Single frame processes all
     f.update_frame();
 
-    let children = f.doc.dom_children(app);
+    let children = f.doc.child_nodes(app);
     assert_eq!(children.len(), 10, "all 10 items should be in DOM");
     for &child in &children {
-        assert!(f.doc.dom_offset_height(child) > 0.0, "each item should have layout");
+        assert!(f.doc.offset_height(child) > 0.0, "each item should have layout");
     }
 }
 

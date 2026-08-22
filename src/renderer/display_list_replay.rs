@@ -463,88 +463,36 @@ fn replay_inner(
 
                 match (tag.as_str(), input_type.as_str()) {
                     ("input", "checkbox") => {
-                        // Draw checkbox box
+                        // Use Checkbox widget
                         let sz = rect.w.min(rect.h);
                         let bx = rect.x + (rect.w - sz) / 2.0;
                         let by = rect.y + (rect.h - sz) / 2.0;
-                        // Background
-                        let mut paint = Paint::default();
-                        paint.set_color_rgba8(255, 255, 255, 255);
-                        paint.anti_alias = true;
-                        if let Some(path) = rounded_rect_path(bx, by, sz, sz, 2.0) {
-                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
-                        }
-                        // Border
-                        paint.set_color_rgba8(118, 118, 118, 255);
-                        let mut stroke = tiny_skia::Stroke::default();
-                        stroke.width = 1.0;
-                        if let Some(path) = rounded_rect_path(bx, by, sz, sz, 2.0) {
-                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
-                        }
-                        // Check mark
-                        if *checked {
-                            let cx = bx + sz / 2.0;
-                            let cy = by + sz / 2.0;
-                            let s = sz * 0.3;
-                            paint.set_color_rgba8(51, 51, 51, 255);
-                            stroke.width = 2.0;
-                            let mut pb = PathBuilder::new();
-                            pb.move_to(cx - s, cy);
-                            pb.line_to(cx - s * 0.3, cy + s * 0.7);
-                            pb.line_to(cx + s, cy - s * 0.6);
-                            if let Some(path) = pb.finish() {
-                                target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
-                            }
-                        }
+                        let mut cb = crate::widgets::Checkbox::new("");
+                        cb.checked = *checked;
+                        cb.size = sz;
+                        cb.paint(target, bx, by, scale);
                     }
                     ("input", "radio") => {
-                        // Draw radio circle
+                        // Use Radio widget
                         let sz = rect.w.min(rect.h);
-                        let cx = rect.x + rect.w / 2.0;
-                        let cy = rect.y + rect.h / 2.0;
-                        let r = sz / 2.0;
-                        let mut paint = Paint::default();
-                        paint.anti_alias = true;
-                        // Outer circle (white fill + gray border)
-                        if let Some(path) = circle_path_4q(cx, cy, r) {
-                            paint.set_color_rgba8(255, 255, 255, 255);
-                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
-                            paint.set_color_rgba8(118, 118, 118, 255);
-                            let mut stroke = tiny_skia::Stroke::default();
-                            stroke.width = 1.0;
-                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
-                        }
-                        // Inner dot if checked
-                        if *checked {
-                            let ir = r * 0.45;
-                            if let Some(path) = circle_path_4q(cx, cy, ir) {
-                                paint.set_color_rgba8(51, 51, 51, 255);
-                                target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
-                            }
-                        }
+                        let bx = rect.x + (rect.w - sz) / 2.0;
+                        let by = rect.y + (rect.h - sz) / 2.0;
+                        let mut rb = crate::widgets::Radio::new("");
+                        rb.selected = *checked;
+                        rb.size = sz;
+                        rb.paint(target, bx, by, scale);
                     }
                     ("select", _) => {
-                        // Draw dropdown arrow
-                        let arrow_x = rect.x + rect.w - 16.0;
-                        let arrow_y = rect.y + rect.h / 2.0;
-                        let mut paint = Paint::default();
-                        paint.set_color(to_sk_color(&apply_opacity(color, a2)));
-                        paint.anti_alias = true;
-                        let mut pb = PathBuilder::new();
-                        pb.move_to(arrow_x - 4.0, arrow_y - 2.0);
-                        pb.line_to(arrow_x, arrow_y + 2.0);
-                        pb.line_to(arrow_x + 4.0, arrow_y - 2.0);
-                        let mut stroke = tiny_skia::Stroke::default();
-                        stroke.width = 1.5;
-                        if let Some(path) = pb.finish() {
-                            target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
-                        }
+                        // Use Select widget for the arrow
+                        let mut sel = crate::widgets::Select::new(vec![]);
+                        sel.width = rect.w;
+                        sel.height = rect.h;
+                        sel.paint(target, rect.x, rect.y, scale);
                         // Draw selected value text
                         let display_text = if value.is_empty() { placeholder } else { value };
                         if !display_text.is_empty() {
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 let c = apply_opacity(color, a2);
-                                // Vertically center the text in the element
                                 let line_h = *font_size * 1.2;
                                 let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
@@ -586,23 +534,14 @@ fn replay_inner(
                         }
                     }
                     ("input", "range") => {
-                        // Draw track
-                        let track_y = rect.y + rect.h / 2.0;
-                        let mut paint = Paint::default();
-                        paint.set_color_rgba8(128, 128, 128, 180);
-                        if let Some(r) = SkRect::from_xywh(rect.x, track_y - 2.0, rect.w, 4.0) {
-                            target.fill_rect(r, &paint, ts, clip_mask);
-                        }
-                        // Draw thumb
+                        // Use Slider widget
                         let val: f32 = value.parse().unwrap_or(50.0);
                         let min: f32 = attributes.iter().find(|(k,_)| k == "min").map(|(_,v)| v.parse().unwrap_or(0.0)).unwrap_or(0.0);
                         let max: f32 = attributes.iter().find(|(k,_)| k == "max").map(|(_,v)| v.parse().unwrap_or(100.0)).unwrap_or(100.0);
-                        let pct = ((val - min) / (max - min).max(0.001)).clamp(0.0, 1.0);
-                        let thumb_x = rect.x + pct * rect.w;
-                        paint.set_color(to_sk_color(&apply_opacity(color, a2)));
-                        if let Some(r) = SkRect::from_xywh(thumb_x - 6.0, track_y - 6.0, 12.0, 12.0) {
-                            target.fill_rect(r, &paint, ts, clip_mask);
-                        }
+                        let mut slider = crate::widgets::Slider::new(min, max, val);
+                        slider.width = rect.w;
+                        slider.height = rect.h;
+                        slider.paint(target, rect.x, rect.y, scale);
                     }
                     ("input", "submit") | ("input", "button") | ("input", "reset") | ("button", _) => {
                         // Button text is rendered by the inline text pipeline — nothing to do here

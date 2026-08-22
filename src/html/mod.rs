@@ -990,6 +990,15 @@ struct HtmlParser {
     /// If None or returns false: `<noscript>` content is parsed as HTML (shown to
     /// the user as fallback), `<script>` is discarded.
     on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
+    /// Whether the head has been closed — the one bit of HTML §13.2.6's
+    /// insertion-mode state this parser needs.
+    ///
+    /// The spec runs "before head" exactly ONCE. After the head closes, a
+    /// `<head>` start tag is a parse error and the TOKEN is ignored; what
+    /// follows keeps being parsed as body content. Without this the parser
+    /// would happily re-enter head parsing halfway down a page and swallow
+    /// markup that belongs in the body.
+    head_closed: bool,
 }
 
 impl HtmlParser {
@@ -1005,6 +1014,7 @@ impl HtmlParser {
             arena: crate::dom::arena::DomArena::new(),
             on_open_tag: None,
             on_script: None,
+            head_closed: false,
         }
     }
 
@@ -1515,6 +1525,13 @@ impl HtmlParser {
         children: &mut Vec<HtmlBox>,
         ol_counter: &mut i32,
     ) {
+        // Reaching here at all means the token was not `<html>`, `<head>` or
+        // `<body>` — it is content, and content closes the head (§13.2.6:
+        // "anything else" in "before head" / "in head" pops out to the body).
+        // Both of this method's callers are the skeleton parser's fallback
+        // arm, so this is the one place that has to say it.
+        self.head_closed = true;
+
         // Script/noscript: give host first chance, else show noscript as HTML.
         if matches!(tag.as_str(), "script" | "noscript") {
             let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
@@ -1932,6 +1949,10 @@ fn parse_html_children(
                 parser.pos += 1;
                 let collapsed = collapse_whitespace(&t);
                 if !collapsed.trim().is_empty() {
+                    // Non-blank text is content, so it closes the head too.
+                    // Blank text does NOT — whitespace is ignored in "before
+                    // head", which is why this sits inside the guard.
+                    parser.head_closed = true;
                     let mut node = parser.new_box("#text");
                     node.text = collapsed;
                     body_children.push(node);
@@ -1941,11 +1962,17 @@ fn parse_html_children(
                 parser.pos += 1;
                 match tag.as_str() {
                     "head" => {
-                        if !self_closing {
-                            parse_head_content(parser);
+                        if !parser.head_closed {
+                            if !self_closing {
+                                parse_head_content(parser);
+                            }
+                            parser.head_closed = true;
                         }
+                        // else: parse error, token ignored — see the sibling
+                        // arm in `parse_html_document`.
                     }
                     "body" => {
+                        parser.head_closed = true;
                         body_box.attributes = attrs;
                         apply_property(&mut body_box.style, "display", "block");
                         apply_presentational_attrs(body_box);
@@ -2081,6 +2108,10 @@ fn parse_html_full(
                 parser.pos += 1;
                 let collapsed = collapse_whitespace(&t);
                 if !collapsed.trim().is_empty() {
+                    // Non-blank text is content, so it closes the head too.
+                    // Blank text does NOT — whitespace is ignored in "before
+                    // head", which is why this sits inside the guard.
+                    parser.head_closed = true;
                     let mut node = parser.new_box("#text");
                     node.text = collapsed;
                     body_children.push(node);
@@ -2110,11 +2141,18 @@ fn parse_html_full(
                         }
                     }
                     "head" => {
-                        if !self_closing {
-                            parse_head_content(&mut parser);
+                        if !parser.head_closed {
+                            if !self_closing {
+                                parse_head_content(&mut parser);
+                            }
+                            parser.head_closed = true;
                         }
+                        // else: parse error, token ignored. Whatever follows
+                        // is body content and falls through to the arms below
+                        // on the next iteration.
                     }
                     "body" => {
+                        parser.head_closed = true;
                         // Apply attrs to body box
                         body_box.attributes = attrs;
                         apply_property(&mut body_box.style, "display", "block");
@@ -2134,7 +2172,23 @@ fn parse_html_full(
     }
 
     body_box.children = body_children;
-    html_box.children = vec![body_box];
+
+    // `<head>` is optional in the MARKUP and mandatory in the TREE. HTML
+    // §13.2.6's "before head" insertion mode inserts one whether or not the
+    // source wrote it, which is why `document.head` always answers an element
+    // in a browser — and why it answered `None` here for every document.
+    //
+    // It takes its display from the UA table like every other element — head
+    // is already listed there as `none`, so nothing new is being decided here.
+    // The element exists so the DOM can name it; the box draws nothing and
+    // takes no space. Its CONTENTS are still consumed by the parser as before
+    // — the title is lifted into `Document.title`, stylesheets into the
+    // cascade — so this adds the container the spec requires without changing
+    // what is rendered.
+    let mut head_box = parser.new_box("head");
+    apply_property(&mut head_box.style, "display", default_display("head"));
+
+    html_box.children = vec![head_box, body_box];
 
     // Wire arena parent-child relationships to mirror the HtmlBox tree.
     wire_arena_children(&mut parser.arena, &html_box);
@@ -2167,6 +2221,9 @@ fn parse_html_full(
         arena: parser.arena,
         next_node_id: parser.next_node_id,
         node_index: std::collections::HashMap::new(),
+        // This function IS the HTML parser, so whatever it produces is an HTML
+        // document by construction.
+        kind: crate::types::DocumentKind::Html,
         layout_store: crate::layout::layout_box::LayoutStore::new(),
         pending_nodes: std::collections::HashMap::new(),
         linked_stylesheets,
