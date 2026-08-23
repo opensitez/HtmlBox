@@ -169,12 +169,12 @@ fn height_100vh_wrapper_children_overflow() {
 #[test]
 fn calc_simple_subtraction() {
     let d = load_html(
-        "<div id='t' style='width:calc(100% - 40px);height:50px' ><div style='width:800px'></div></div>",
+        "<body style='margin:0'><div id='t' style='width:calc(100% - 40px);height:50px'>X</div></body>",
         800.0,
     );
     let t = by_id(&d.root,"t").unwrap();
-    // calc(100% - 40px) of 800px parent = 760
-    assert!((t.layout.content_rect.w - 760.0).abs() < 10.0, "calc w={:.0}", t.layout.content_rect.w);
+    // calc(100% - 40px) of 800px parent (no body margin) = 760
+    assert!((t.layout.content_rect.w - 760.0).abs() < 5.0, "calc w={:.0}", t.layout.content_rect.w);
 }
 
 #[test]
@@ -302,7 +302,118 @@ fn before_after_in_flex() {
         "</div>",
     ), 500.0);
     let mid = by_id(&d.root,"mid").unwrap();
-    assert!(mid.layout.content_rect.w > 0.0, "flex with before/after");
+    assert!(mid.layout.content_rect.w > 0.0, "flex with before/after mid.w={:.0}", mid.layout.content_rect.w);
+}
+
+/// Bootstrap-style navbar: ::before/::after clearfix on a flex container
+/// with descendant selector setting child display:flex.
+/// Reproduces younelan.com navbar regression where menu items stack vertically.
+#[test]
+fn bootstrap_navbar_flex_with_pseudo() {
+    let d = load_html(concat!(
+        "<style>",
+        ".navbar { display: flex; width: 800px; }",
+        ".navbar::before, .navbar::after { display: table; content: ' '; }",
+        ".navbar::after { clear: both; }",
+        ".navbar-expand .navbar-nav { display: flex; flex-direction: row; }",
+        ".nav-item { padding: 0 10px; }",
+        "</style>",
+        "<nav class='navbar navbar-expand'>",
+        "  <div class='container'>",
+        "    <ul id='nav' class='navbar-nav'>",
+        "      <li class='nav-item'><a>Home</a></li>",
+        "      <li class='nav-item'><a>About</a></li>",
+        "      <li class='nav-item'><a>Contact</a></li>",
+        "    </ul>",
+        "  </div>",
+        "</nav>",
+    ), 800.0);
+    let nav = by_id(&d.root, "nav").unwrap();
+    // navbar-nav should have display:flex from the descendant selector
+    assert!(matches!(nav.style.display, Display::Flex),
+        "navbar-nav should be flex, got {:?}", nav.style.display);
+    // nav items should be laid out horizontally (second item x > first item x)
+    let items: Vec<&HtmlBox> = nav.children.iter()
+        .filter(|c| c.tag == "li")
+        .collect();
+    assert!(items.len() >= 2, "need at least 2 nav items");
+    assert!(items[1].layout.content_rect.x > items[0].layout.content_rect.x,
+        "nav items should be horizontal: item0.x={:.0} item1.x={:.0}",
+        items[0].layout.content_rect.x, items[1].layout.content_rect.x);
+}
+
+/// Bootstrap navbar-expand-md with @media query: descendant selector inside media
+/// query should apply display:flex to .navbar-nav when viewport >= 768px.
+#[test]
+fn bootstrap_navbar_media_query_descendant() {
+    let d = load_html(concat!(
+        "<style>",
+        ".navbar { display: flex; }",
+        ".navbar::before, .navbar::after { display: table; content: ' '; }",
+        ".navbar-collapse { display: block; }",
+        ".navbar-nav { display: block; }",
+        "@media (min-width: 768px) {",
+        "  .navbar-expand-md .navbar-nav { display: flex; flex-direction: row; }",
+        "  .navbar-expand-md .navbar-collapse { display: flex; }",
+        "}",
+        "</style>",
+        "<nav class='navbar navbar-expand-md' style='width:1000px'>",
+        "  <div class='container-fluid'>",
+        "    <div class='navbar-collapse'>",
+        "      <ul id='nav' class='navbar-nav'>",
+        "        <li class='nav-item'><a>Home</a></li>",
+        "        <li class='nav-item'><a>About</a></li>",
+        "        <li class='nav-item'><a>Contact</a></li>",
+        "      </ul>",
+        "    </div>",
+        "  </div>",
+        "</nav>",
+    ), 1000.0);
+    let nav = by_id(&d.root, "nav").unwrap();
+    assert!(matches!(nav.style.display, Display::Flex),
+        "navbar-nav should be flex via @media descendant rule, got {:?}", nav.style.display);
+}
+
+/// Pseudo-element with position:absolute should not disrupt parent layout.
+/// The 1x1 accessibility skip-link pattern should remain tiny.
+#[test]
+fn pseudo_absolute_tiny() {
+    let d = load_html(concat!(
+        "<style>",
+        ".container::before { content: ''; display: block; position: absolute; ",
+        "  width: 1px; height: 1px; margin: -1px; overflow: hidden; }",
+        "</style>",
+        "<div class='container' style='width:400px'>",
+        "  <div id='content'>Hello World</div>",
+        "</div>",
+    ), 800.0);
+    let content = by_id(&d.root, "content").unwrap();
+    // content should start near the top, not pushed down by a giant ::before
+    assert!(content.layout.content_rect.y < 50.0,
+        "content pushed down to y={:.0} by ::before", content.layout.content_rect.y);
+    assert!(content.layout.content_rect.w > 100.0,
+        "content should have width, got {:.0}", content.layout.content_rect.w);
+}
+
+/// ::before in flex should not inherit parent's width
+#[test]
+fn pseudo_no_inherit_parent_width() {
+    let d = load_html(concat!(
+        "<style>.box::before { content: 'X'; }</style>",
+        "<div class='box' style='display:flex;width:500px'>",
+        "  <div id='main' style='flex:1'>Content</div>",
+        "</div>",
+    ), 800.0);
+    // The ::before should be tiny (just the text 'X'), not 500px
+    let container = find(&d.root, &|n| n.attributes.get("class").map(|c| c == "box").unwrap_or(false)).unwrap();
+    let before = container.children.iter().find(|c| c.tag == "::before");
+    if let Some(b) = before {
+        assert!(b.layout.content_rect.w < 100.0,
+            "::before should be small, got w={:.0}", b.layout.content_rect.w);
+    }
+    let main = by_id(&d.root, "main").unwrap();
+    assert!(main.layout.content_rect.w > 200.0,
+        "main should get most of the width with flex:1, got {:.0}", main.layout.content_rect.w);
 }
 
 // ╔══════════════════════════════════════════════════════════════╗

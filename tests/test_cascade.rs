@@ -416,9 +416,13 @@ fn cascade_parent_first_child_top_collapse() {
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
-    // Child's content_rect.y should be at top of parent content area (margin absorbed)
-    assert_eq!(child.layout.content_rect.y, 0.0);
-    // Parent's collapsed margin = max(10, 40) = 40
+    // Parent-first-child collapse: child's margin-top (40px) collapses with parent's (10px).
+    // Collapsed margin = max(10, 40) = 40. Body margin (8px) also collapses with parent.
+    // Final: child.y = max(8, 10, 40) = 40 (all margins collapse through).
+    // Child should be at same y as parent (no internal gap from margin).
+    assert!((child.layout.content_rect.y - parent.layout.content_rect.y).abs() < 5.0,
+        "child should be at parent's content edge, child.y={:.0} parent.y={:.0}",
+        child.layout.content_rect.y, parent.layout.content_rect.y);
     assert!(parent.layout.collapsed_margin_top >= 35.0);
 }
 
