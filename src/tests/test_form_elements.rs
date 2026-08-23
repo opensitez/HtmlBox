@@ -1124,12 +1124,20 @@ fn click_and_type_password() {
 fn click_checkbox_toggles() {
     let mut doc = layout_html(r#"<input type="checkbox" id="c">"#, 400.0);
     let cb = find_by_id(&doc.root, "c").unwrap();
-    assert!(!cb.attributes.contains_key("checked"));
+    assert!(!cb.checkedness);
     let center = (cb.layout.border_rect.x + cb.layout.border_rect.w / 2.0, cb.layout.border_rect.y + cb.layout.border_rect.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let cb = find_by_id(&doc.root, "c").unwrap();
-    assert!(cb.attributes.contains_key("checked"), "clicking checkbox should check it");
+    // A click changes CHECKEDNESS and leaves the markup alone (HTML §4.10.5.3)
+    // — the user did not edit the document. This asserted the attribute,
+    // because ticking a box used to rewrite it.
+    assert!(cb.checkedness, "clicking checkbox should check it");
+    assert!(
+        !cb.attributes.contains_key("checked"),
+        "the click wrote a `checked` attribute into the document"
+    );
+    assert!(cb.dirty_checked, "a user interaction raises the dirty flag");
 }
 
 #[test]
@@ -1140,9 +1148,13 @@ fn click_radio_selects() {
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let r2 = find_by_id(&doc.root, "r2").unwrap();
-    assert!(r2.attributes.contains_key("checked"), "clicking r2 should check it");
+    assert!(r2.checkedness, "clicking r2 should check it");
+    assert!(
+        !r2.attributes.contains_key("checked"),
+        "the click wrote a `checked` attribute into the document"
+    );
     let r1 = find_by_id(&doc.root, "r1").unwrap();
-    assert!(!r1.attributes.contains_key("checked"), "r1 should be unchecked");
+    assert!(!r1.checkedness, "r1 should be unchecked");
 }
 
 // ── All button types ─────────────────────────────────────────────────────────

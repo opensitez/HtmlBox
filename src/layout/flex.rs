@@ -396,7 +396,6 @@ pub fn layout_flex(
     for item in &mut items {
         let child = child_mut(node, &item.path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
-        let irb = engine.res_box(&child.style, child_font, content_w, root_font_px);
 
         // Pass resolved flex size via Constraints.forced_width/height.
         // No style mutation — forced dimensions override rbox.content_width/height.

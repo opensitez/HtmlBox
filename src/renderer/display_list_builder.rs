@@ -686,8 +686,15 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // ── (o) Form elements (content only — box decoration handled by CSS steps above)
     build_form_element(node, list, eff_sx, eff_sy);
 
-    // ── (p) Image / SVG ──────────────────────────────────────────────────────
-    if node.tag == "img" || node.tag == "svg" {
+    // ── (p) Image / SVG / Canvas ─────────────────────────────────────────────
+    //
+    // `<canvas>` joins `<img>` here because by this point it IS one: a canvas
+    // keeps its bitmap in `image_data` exactly as a decoded image does, and
+    // both are premultiplied RGBA, which is what `PixmapRef::from_bytes` at
+    // replay reads. Everything the 2D context drew is already in those bytes,
+    // so painting a canvas is painting its bitmap and nothing else — which is
+    // also what the spec says a canvas is.
+    if node.tag == "img" || node.tag == "svg" || node.tag == "canvas" {
         if let Some(ref data) = node.image_data {
             if node.image_width > 0 && node.image_height > 0 {
                 let cr = node.layout.content_rect;
@@ -1321,13 +1328,7 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
         node.children.iter()
             .find(|c| c.tag == "option" && c.attributes.get("selected").is_some())
             .or_else(|| node.children.iter().find(|c| c.tag == "option"))
-            .map(|opt| {
-                opt.children.iter()
-                    .filter(|c| c.tag == "#text")
-                    .map(|c| c.text.trim())
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
+            .map(|opt| option_label(opt))
             .unwrap_or_default()
     } else {
         crate::types::input_value(node)
@@ -1337,17 +1338,49 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
         .get("placeholder")
         .cloned()
         .unwrap_or_default();
-    let checked = node
-        .attributes
-        .get("checked")
-        .map(|_| true)
-        .unwrap_or(false);
+    // What is PAINTED is the live checkedness, not the author's default —
+    // otherwise a box the user ticked draws empty, and one they unticked keeps
+    // its tick because the markup still says `checked`.
+    let checked = node.checkedness;
 
     let attrs: Vec<(String, String)> = node
         .attributes
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+
+    // A `<select>` carries its option labels and which one is selected: a list
+    // box paints the options itself, and only the element knows them.
+    // Selectedness is the `selected` ATTRIBUTE here, which is where
+    // `set_selected_index` records it.
+    let (options, selected) = if tag == "select" {
+        let mut labels = Vec::new();
+        let mut chosen = -1i32;
+        for child in &node.children {
+            match child.tag.as_str() {
+                "option" => {
+                    if child.attributes.contains_key("selected") {
+                        chosen = labels.len() as i32;
+                    }
+                    labels.push(option_label(child));
+                }
+                "optgroup" => {
+                    for gc in &child.children {
+                        if gc.tag == "option" {
+                            if gc.attributes.contains_key("selected") {
+                                chosen = labels.len() as i32;
+                            }
+                            labels.push(option_label(gc));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (labels, chosen)
+    } else {
+        (Vec::new(), -1)
+    };
 
     list.push(PaintCmd::FormElement {
         tag: tag.to_string(),
@@ -1363,6 +1396,8 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
         value,
         placeholder,
         input_cursor: node.input_cursor,
+        options,
+        selected,
     });
 }
 
@@ -1418,6 +1453,36 @@ fn emit_text(
         letter_spacing: letter_sp,
         small_caps: style.small_caps,
     });
+}
+
+/// An `<option>`'s label — HTML §4.11.3.5: "the value of the option element's
+/// `label` attribute, if there is one, or else the option element's DESCENDANT
+/// TEXT CONTENT, with ASCII whitespace stripped and collapsed."
+///
+/// The descendant part is what was missing: this collected the option's DIRECT
+/// `#text` children only, so a label wrapped in any element — which is what a
+/// framework that nests a text widget produces — rendered as an empty entry.
+/// The wrapper is invalid markup on the author's side and a browser still shows
+/// the word, because the label is defined over descendants.
+pub(crate) fn option_label(opt: &HtmlBox) -> String {
+    if let Some(label) = opt.attributes.get("label") {
+        return label.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+    let mut text = String::new();
+    descendant_text(opt, &mut text);
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Every text node under `node`, in tree order — DOM's "descendant text
+/// content". Unlike `collect_flat_text` this does NOT filter by `display`: the
+/// label of an option is defined over the tree, not over what is rendered.
+fn descendant_text(node: &HtmlBox, out: &mut String) {
+    if node.tag == "#text" {
+        out.push_str(&node.text);
+    }
+    for child in &node.children {
+        descendant_text(child, out);
+    }
 }
 
 fn collect_flat_text(node: &HtmlBox, out: &mut String) {

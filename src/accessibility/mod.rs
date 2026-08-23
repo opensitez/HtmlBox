@@ -299,7 +299,9 @@ fn walk(
 
     // ── Checked / toggled (checkbox, radio, switch) ───────────────────────────
     let checked_attr = node.attributes.get("aria-checked").map(|s| s.as_str())
-        .or_else(|| if node.attributes.contains_key("checked") { Some("true") } else { None });
+        // A screen reader announces the CURRENT state, so this is checkedness
+        // and not the markup's default — the same reason the painter reads it.
+        .or_else(|| if node.checkedness { Some("true") } else { None });
     match checked_attr {
         Some("true")  => ak.set_toggled(Toggled::True),
         Some("mixed") => ak.set_toggled(Toggled::Mixed),

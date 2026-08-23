@@ -42,6 +42,12 @@ pub mod css;
 pub mod html;
 pub mod layout;
 pub mod renderer;
+/// HTML §4.12.5 — the `<canvas>` element's 2D rendering context.
+///
+/// The engine owns its own rasteriser, the way a browser engine does. It is a
+/// sibling of `renderer` rather than a part of it: `renderer` paints the boxes
+/// the cascade produced, this paints whatever a script asks for inside one box.
+pub mod canvas;
 pub mod platform;
 pub mod dom;
 /// WHATWG HTML §7 — browsing contexts and the `Window` interface.

@@ -238,11 +238,26 @@ fn set_text_content_replaces_children() {
     doc.set_text_content(div, "new text only");
 
     assert_eq!(doc.text_content(div), "new text only");
-    assert_eq!(doc.child_nodes(div).len(), 0); // arena children removed
+    // **DOM §4.4 "string replace all": the children are replaced by ONE Text
+    // node** — not by a string parked on the element.
+    //
+    // This asserted `0` and `div_box.text`, which is what the implementation
+    // did and not what the DOM says. It matters beyond tidiness: layout reads a
+    // box's own `text` only for a text node and a pseudo-element, so text
+    // written this way was in the DOM, in `textContent` and in `outerHTML` and
+    // painted NOWHERE. Every caption of every .NET control arrives exactly this
+    // way, and every one of them rendered as an empty rectangle.
+    let children = doc.child_nodes(div);
+    assert_eq!(children.len(), 1);
+    assert_eq!(doc.node_type(children[0]), 3, "the child is a Text node");
 
     let div_box = doc.get_box_by_id(div).unwrap();
-    assert_eq!(div_box.children.len(), 0);
-    assert_eq!(div_box.text, "new text only");
+    assert_eq!(div_box.children.len(), 1);
+    assert_eq!(div_box.children[0].text, "new text only");
+
+    // Empty text is the spec's null case: children removed, nothing inserted.
+    doc.set_text_content(div, "");
+    assert_eq!(doc.child_nodes(div).len(), 0);
 }
 
 #[test]
@@ -862,20 +877,40 @@ fn select_items_can_be_read_replaced_removed_and_cleared() {
 }
 
 #[test]
-fn checked_is_presence_and_setting_false_removes_it() {
+fn setting_checked_changes_the_state_and_not_the_markup() {
+    // HTML §4.10.5.3: `input.checked` is CHECKEDNESS; the `checked` content
+    // attribute is `defaultChecked`, what a form reset restores to. Setting
+    // the IDL member must not rewrite the document.
+    //
+    // This test asserted the opposite — that `set_checked(true)` adds the
+    // attribute — because state and markup were one store. That is exactly the
+    // conflation the dirty checkedness flag exists to prevent: with one store
+    // the reset algorithm has nothing left to restore to, and
+    // `getAttribute("checked")` reports the user's last click.
     let mut doc = parse_html(r#"<input id="c" type="checkbox">"#);
     let c = doc.get_element_by_id("c").unwrap();
     assert!(!doc.checked(c));
+    assert!(!doc.has_attribute(c, "checked"));
 
     doc.set_checked(c, true);
-    assert!(doc.checked(c));
-    assert!(doc.has_attribute(c, "checked"));
+    assert!(doc.checked(c), "checkedness follows the IDL setter");
+    assert!(
+        !doc.has_attribute(c, "checked"),
+        "setting `checked` wrote into the markup"
+    );
 
-    // Writing "false" would read back as TRUE — a boolean attribute is present
-    // or absent, so the false case must REMOVE it.
     doc.set_checked(c, false);
     assert!(!doc.checked(c));
     assert!(!doc.has_attribute(c, "checked"));
+
+    // And the attribute is the DEFAULT: it no longer reaches a control whose
+    // checkedness something has already claimed.
+    doc.set_attribute(c, "checked", "");
+    assert!(doc.has_attribute(c, "checked"));
+    assert!(
+        !doc.checked(c),
+        "the attribute overwrote checkedness the caller had already set"
+    );
 }
 
 #[test]
@@ -958,6 +993,26 @@ fn get_elements_by_tag_name_is_case_insensitive_and_star_means_elements() {
 // about shared BEHAVIOUR. Anything asserted here should be asserted there.
 
 #[test]
+fn a_removed_node_survives_and_can_be_inserted_elsewhere() {
+    // `removeChild` DETACHES; it does not destroy (DOM §4.2.3). Removing then
+    // appending elsewhere is how every "move this node" is written, and it
+    // read a freed arena slot until the node was kept.
+    let mut doc = parse_html("<div id='from'><p id='moved'>text</p></div><div id='to'></div>");
+    let from = doc.get_element_by_id("from").unwrap();
+    let to = doc.get_element_by_id("to").unwrap();
+    let moved = doc.get_element_by_id("moved").unwrap();
+
+    doc.remove_child(moved);
+    assert!(doc.child_nodes(from).is_empty(), "it left its old parent");
+    assert_eq!(doc.node_name(moved), "p", "…and is still a <p>, not a dead slot");
+
+    doc.append_child(to, moved);
+    let tags: Vec<String> = doc.child_nodes(to).iter().map(|&c| doc.node_name(c)).collect();
+    assert_eq!(tags, vec!["p"]);
+    assert_eq!(doc.text_content(moved), "text", "the subtree came with it");
+}
+
+#[test]
 fn appending_a_fragment_moves_its_children_and_not_itself() {
     let mut doc = parse_html("<div id='d'><i>keep</i></div>");
     let d = doc.get_element_by_id("d").unwrap();
@@ -966,7 +1021,8 @@ fn appending_a_fragment_moves_its_children_and_not_itself() {
     assert!(doc.is_document_fragment(fragment));
     assert_eq!(doc.node_type(fragment), 11);
     assert_eq!(doc.node_name(fragment), "#document-fragment");
-    for tag in ["a", "b"] {
+    // A BLOCK and an inline — see the widgets twin of this test.
+    for tag in ["div", "b"] {
         let child = doc.create_element(tag);
         doc.append_child(fragment, child);
     }
@@ -976,7 +1032,7 @@ fn appending_a_fragment_moves_its_children_and_not_itself() {
     // The fragment is NOT in the tree — its children are, in order, and at the
     // level the caller asked for rather than one deeper.
     let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
-    assert_eq!(tags, vec!["i", "a", "b"]);
+    assert_eq!(tags, vec!["i", "div", "b"]);
     assert!(
         !tags.iter().any(|t| t == "#document-fragment"),
         "the fragment itself must not land in the tree"
@@ -992,7 +1048,8 @@ fn inserting_a_fragment_splices_it_in_order() {
     let pivot = doc.get_element_by_id("pivot").unwrap();
 
     let fragment = doc.create_document_fragment();
-    for tag in ["a", "b"] {
+    // A BLOCK and an inline — see the widgets twin of this test.
+    for tag in ["div", "b"] {
         let child = doc.create_element(tag);
         doc.append_child(fragment, child);
     }
@@ -1002,7 +1059,7 @@ fn inserting_a_fragment_splices_it_in_order() {
     // Each child goes before the SAME reference, so they arrive in the order
     // they were in — not reversed.
     let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
-    assert_eq!(tags, vec!["a", "b", "i"]);
+    assert_eq!(tags, vec!["div", "b", "i"]);
 }
 
 #[test]

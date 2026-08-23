@@ -9,7 +9,7 @@
 //! This means scrolling is always instant — we just move pre-rasterized
 //! tiles around. Only content changes trigger rasterization.
 
-use crate::types::{Rect, HtmlBox, Color};
+use crate::types::{Rect, HtmlBox};
 
 /// Unique layer identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -331,12 +331,13 @@ fn parse_transform_basic(transform: &str, w: f32, h: f32) -> [f32; 6] {
 
         if let Some(args) = part.strip_prefix("translate(").or_else(|| part.strip_prefix("translateX(")) {
             let vals: Vec<f32> = args.split(',')
-                .filter_map(|s| s.trim().trim_end_matches("px").parse().ok())
+                .enumerate()
+                .filter_map(|(axis, s)| length(s, if axis == 0 { w } else { h }))
                 .collect();
             if !vals.is_empty() { result[4] += vals[0]; }
             if vals.len() > 1 { result[5] += vals[1]; }
         } else if let Some(args) = part.strip_prefix("translateY(") {
-            if let Ok(v) = args.trim().trim_end_matches("px").parse::<f32>() {
+            if let Some(v) = length(args, h) {
                 result[5] += v;
             }
         } else if let Some(args) = part.strip_prefix("scale(") {
@@ -353,10 +354,39 @@ fn parse_transform_basic(transform: &str, w: f32, h: f32) -> [f32; 6] {
     result
 }
 
+/// One `<length-percentage>` from a transform function.
+///
+/// **A percentage translate resolves against the element's OWN box** — the
+/// reference box, per css-transforms-1 §3: `translateX(50%)` is half this
+/// element's width, not half the viewport's. That is what the `w`/`h`
+/// parameters are for, and this is the piece that was missing: they were
+/// accepted, passed down from the layer builder, and never read, so every
+/// percentage translate silently parsed as nothing and the element did not
+/// move at all.
+fn length(text: &str, reference: f32) -> Option<f32> {
+    let text = text.trim();
+    match text.strip_suffix('%') {
+        Some(pct) => pct.trim().parse::<f32>().ok().map(|p| p / 100.0 * reference),
+        None => text.trim_end_matches("px").trim().parse::<f32>().ok(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::load_html;
+
+    #[test]
+    fn a_percentage_translate_resolves_against_the_elements_own_box() {
+        // css-transforms-1 §3 — the reference box is this element's border box.
+        let t = parse_transform_basic("translate(50%, 25%)", 200.0, 80.0);
+        assert_eq!(t[4], 100.0);
+        assert_eq!(t[5], 20.0);
+        // Pixels keep working, and the two spellings can be mixed.
+        let t = parse_transform_basic("translate(10px, 50%)", 200.0, 80.0);
+        assert_eq!(t[4], 10.0);
+        assert_eq!(t[5], 40.0);
+    }
 
     #[test]
     fn compositor_basic() {

@@ -1115,7 +1115,18 @@ impl LayoutEngine {
         }
 
         self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
-        self.layout_box(&mut doc.root, &Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px));
+        // **The root's containing block is the VIEWPORT, height included.**
+        // CSS 2.1 §10.1: the initial containing block has the viewport's
+        // dimensions. Passing only the width made `html { height: 100% }`
+        // resolve to `auto`, and since a percentage height is auto whenever its
+        // containing block's is, the whole chain below it collapsed — which is
+        // every app shell ever written.
+        let root_c = if self.viewport_h > 0.0 {
+            Constraints::with_height(content_w, self.viewport_h, 0.0, 0.0, root_font_px, root_font_px)
+        } else {
+            Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px)
+        };
+        self.layout_box(&mut doc.root, &root_c);
 
         // Update root geometry with final height
         let h = doc.root.layout.margin_rect.h;
@@ -1138,7 +1149,14 @@ impl LayoutEngine {
         // Rebuild O(1) node index (pointers stable until next mutation)
         doc.rebuild_node_index();
 
-        // Bump generation so renderer knows to rebuild display list
+        // Bump generation so renderer knows to rebuild display list.
+        //
+        // ⚠ UNCONDITIONAL, and that costs a full display-list rebuild on every
+        // frame a host repaints — which for a window on a 60Hz tick is every
+        // frame, however still the page is. Gating it needs the signals
+        // `layout()` has (`did_cascade`, the previous viewport) and this
+        // function is `&self` and does not, so the fix is a real change to who
+        // owns that decision rather than a condition bolted on here.
         doc.layout_generation = doc.layout_generation.wrapping_add(1);
     }
 

@@ -268,7 +268,12 @@ impl Document {
             {
                 out.push((
                     node.node_id,
-                    node.attributes.get("checked").cloned(),
+                    // `checked` is NOT here any more: interaction writes
+                    // CHECKEDNESS on the render-tree box, and the attribute it
+                    // used to overwrite is the author's default, which no
+                    // click may touch. Syncing it would put the old conflation
+                    // back one level down.
+                    None,
                     node.attributes.get("value").cloned(),
                     node.attributes.get("selected").cloned(),
                 ));
@@ -471,18 +476,40 @@ impl Document {
 
     /// `input.checked` — a BOOLEAN ATTRIBUTE: present is true, absent is false.
     /// Its value is irrelevant, which is why this asks `has_attribute`.
+    /// `input.checked` — CHECKEDNESS, the live state (HTML §4.10.5.3).
+    ///
+    /// Not `hasAttribute("checked")`: that is `defaultChecked`, the value a
+    /// form reset restores to. They start equal and part company the moment
+    /// anything ticks the box.
     pub fn checked(&self, id: u32) -> bool {
-        self.has_attribute(id, "checked")
+        self.find_htmlbox(id).map(|n| n.checkedness).unwrap_or(false)
     }
 
-    /// `input.checked = …`. Writing `"false"` would read back as TRUE, so the
-    /// false case REMOVES the attribute.
+    /// `input.checked = b` — the IDL setter.
+    ///
+    /// Sets checkedness and raises the dirty checkedness flag, which is what
+    /// stops a later `setAttribute("checked", …)` moving the box back. It does
+    /// NOT touch the attribute: script ticking a box no more rewrites the
+    /// document than a user clicking one does.
+    ///
+    /// This used to add and remove the `checked` ATTRIBUTE, which made the
+    /// markup and the state one store — so `getAttribute("checked")` reported
+    /// clicks, and the reset algorithm had nothing left to restore to.
     pub fn set_checked(&mut self, id: u32, checked: bool) {
-        if checked {
-            self.set_attribute(id, "checked", "");
-        } else {
-            self.remove_attribute(id, "checked");
+        if let Some(node) = self.find_htmlbox_mut(id) {
+            node.checkedness = checked;
+            node.dirty_checked = true;
+            // **Invalidate what this changed.** The old body wrote the
+            // attribute through `set_attribute`, which marked the node dirty as
+            // a side effect; writing the state field directly loses that, and a
+            // cached cascade then keeps answering `:checked` from before the
+            // change.
+            node.layout.layout_dirty = true;
+            node.layout.intrinsic_dirty = true;
         }
+        // `:checked` is a SELECTOR, so checkedness is an input to the cascade,
+        // not just to the painter — and the cascade is cached per element.
+        self.style_dirty = true;
     }
 
     /// `element.focus()`.
@@ -507,6 +534,34 @@ impl Document {
         self.find_htmlbox(id).map(|node| &node.style)
     }
 
+    /// `font-size` on the root element — what `rem` resolves against.
+    fn root_font_px(&self) -> f32 {
+        self.root.style.font_size.resolve(16.0, 16.0, 16.0)
+    }
+
+    /// The origin a POSITIONED box's insets are measured from: the nearest
+    /// positioned ancestor, or the initial containing block at the page origin.
+    ///
+    /// CSS 2.1 §10.1. Two boxes with the same `top: 10px` sit at different page
+    /// coordinates when their containing blocks differ, and `getComputedStyle`
+    /// has to answer `10px` for both.
+    fn containing_origin(&self, id: u32) -> (f32, f32) {
+        let mut current = self.parent_node(id);
+        while current != 0 {
+            let positioned = self
+                .get_computed_style(current)
+                .map(|s| !matches!(s.position, crate::types::Position::Static))
+                .unwrap_or(false);
+            if positioned {
+                if let Some(rect) = self.get_bounding_client_rect(current) {
+                    return (rect.x, rect.y);
+                }
+            }
+            current = self.parent_node(current);
+        }
+        (0.0, 0.0)
+    }
+
     /// `getComputedStyle(element).getPropertyValue(property)` — the RESOLVED
     /// value, in used units.
     ///
@@ -519,16 +574,59 @@ impl Document {
         let width = self.viewport_w;
         crate::layout::LayoutEngine::new().layout(self, width);
         let rect = self.get_bounding_client_rect(id);
-        let resolved = match (property.to_ascii_lowercase().as_str(), rect) {
-            ("left", Some(r)) => Some(format!("{}px", r.x)),
-            ("top", Some(r)) => Some(format!("{}px", r.y)),
+        let property = property.to_ascii_lowercase();
+        // **An inset is the used value only when the element is POSITIONED**
+        // (CSSOM §6.6.1). For a static box `top` has no effect at all, so its
+        // resolved value is the COMPUTED one — `1em` on a 16px font is `16px`,
+        // wherever the box happens to sit on the page.
+        //
+        // Answering the bounding rect for every element made `top` mean "how
+        // far down the page you are", so a static box inside a body with the
+        // UA's 8px margin reported `8px` for a declared `1em` — and moving the
+        // box changed a value the box never set.
+        let inset = matches!(property.as_str(), "left" | "top" | "right" | "bottom");
+        let positioned = self
+            .get_computed_style(id)
+            .map(|s| !matches!(s.position, crate::types::Position::Static))
+            .unwrap_or(false);
+        if inset && !positioned {
+            let style = match self.get_computed_style(id) {
+                Some(style) => style,
+                None => return String::new(),
+            };
+            let declared = match property.as_str() {
+                "left" => style.left.clone(),
+                "top" => style.top.clone(),
+                "right" => style.right.clone(),
+                _ => style.bottom.clone(),
+            };
+            let font_px = style.font_size.resolve(16.0, 16.0, 16.0);
+            // `auto` is the initial value and stays the word — it is not a
+            // length and serialising it as `0px` would claim the box was
+            // placed. Percentages stay percentages, as the spec's computed
+            // value for an inset does.
+            return match declared {
+                crate::types::CssLength::Auto => "auto".to_string(),
+                crate::types::CssLength::Percent(p) => format!("{p}%"),
+                other => format!(
+                    "{}px",
+                    other.resolve(font_px, self.viewport_w, self.root_font_px())
+                ),
+            };
+        }
+        let resolved = match (property.as_str(), rect) {
+            // A positioned box's inset IS its used value — the offset from the
+            // containing block, not from the page. Same number whenever that
+            // block is the initial one, which is why this went unnoticed.
+            ("left", Some(r)) => Some(format!("{}px", r.x - self.containing_origin(id).0)),
+            ("top", Some(r)) => Some(format!("{}px", r.y - self.containing_origin(id).1)),
             ("width", Some(r)) => Some(format!("{}px", r.w)),
             ("height", Some(r)) => Some(format!("{}px", r.h)),
             _ => None,
         };
         match resolved {
             Some(v) => v,
-            None => self.get_style_property(id, property).unwrap_or_default(),
+            None => self.get_style_property(id, &property).unwrap_or_default(),
         }
     }
 }
@@ -1039,6 +1137,22 @@ impl Document {
                     None => String::new(),
                 }
             }
+            // A checkbox or radio with no `value` attribute submits `"on"`,
+            // not the empty string — HTML §4.10.5.1.15 spells that default out
+            // because a form needs SOMETHING to send for a ticked box. Every
+            // other control's `value` does default to empty.
+            "input"
+                if matches!(
+                    self.get_attribute(id, "type")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "checkbox" | "radio"
+                ) =>
+            {
+                self.get_attribute(id, "value")
+                    .unwrap_or_else(|| "on".to_string())
+            }
             _ => self.get_attribute(id, "value").unwrap_or_default(),
         }
     }
@@ -1378,8 +1492,19 @@ impl Document {
         // Get parent before removing
         let parent_id = self.arena.get(NodeId(child_id)).parent.0;
         self.arena.remove_child(NodeId(child_id));
-        self.arena.free(NodeId(child_id));
-        self.detach_htmlbox(child_id);
+        // **A removed node is DETACHED, not destroyed** (DOM §4.2.3):
+        // `removeChild` hands the node back and the caller may insert it
+        // somewhere else, which is how every "move this node" is written.
+        // Freeing the arena slot here made that idiom read a dead node —
+        // `remove` then `appendChild` elsewhere lost the subtree silently, and
+        // `replaceWith` left the replaced node unusable.
+        //
+        // It goes where a freshly CREATED node goes, because it is now in the
+        // same state: detached, with an id, waiting to be attached. That is
+        // the map `append_child` and `insert_before` already look in.
+        if let Some(detached) = self.detach_htmlbox(child_id) {
+            self.pending_nodes.insert(child_id, detached);
+        }
         // Mark parent dirty for layout
         if parent_id != 0 {
             if let Some(parent) = self.find_htmlbox_mut(parent_id) {
@@ -1395,10 +1520,37 @@ impl Document {
         if id == 0 { return; }
         let key = &self.fold_name(key);
         self.arena.set_attribute(NodeId(id), key, value);
+        let mut canvas_resized = None;
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.attributes.insert(key.to_string(), value.to_string());
             node.layout.layout_dirty = true;
             node.layout.intrinsic_dirty = true;
+            // "When the `checked` content attribute is added, if the control
+            // does not have dirty checkedness, the user agent must set the
+            // checkedness of the element to true" (HTML §4.10.5.3). The
+            // attribute is `defaultChecked`, so it only reaches the live state
+            // while nothing has claimed that state yet.
+            if key == "checked" && !node.dirty_checked {
+                node.checkedness = true;
+            }
+            // §4.12.5: `<canvas>`'s `width`/`height` IDL attributes REFLECT
+            // these content attributes, and setting either one reinitialises
+            // the bitmap and the drawing state. Reached this way — rather than
+            // only through `set_canvas_size` — because `setAttribute` is a
+            // route a page has to the same value, and two ways to set one
+            // thing must not differ in what they do.
+            if node.tag == "canvas" && (key == "width" || key == "height") {
+                if let Ok(n) = value.trim().parse::<u32>() {
+                    canvas_resized = Some(if key == "width" {
+                        (n, node.image_height)
+                    } else {
+                        (node.image_width, n)
+                    });
+                }
+            }
+        }
+        if let Some((w, h)) = canvas_resized {
+            self.set_canvas_size(id, w, h);
         }
     }
 
@@ -1409,6 +1561,13 @@ impl Document {
         self.arena.remove_attribute(NodeId(id), key);
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.attributes.remove(key);
+            // The other half of the same sentence: "when the `checked` content
+            // attribute is removed, if the control does not have dirty
+            // checkedness, the user agent must set the checkedness of the
+            // element to false."
+            if key == "checked" && !node.dirty_checked {
+                node.checkedness = false;
+            }
         }
     }
 
@@ -1425,12 +1584,38 @@ impl Document {
             self.arena.free(child);
             child = next;
         }
-        self.arena.set_text(nid, text);
-
         // Update HtmlBox tree
         if let Some(node) = self.find_htmlbox_mut(id) {
             node.children.clear();
-            node.text = text.to_string();
+            node.text.clear();
+        }
+
+        // **The replacement is a TEXT NODE, not a string on the element**
+        // (DOM §4.4: "string replace all"). An element's own `text` field is
+        // read by layout for a text node and for a pseudo-element and nowhere
+        // else — `has_direct_text` in `layout/mod.rs` — so writing it here put
+        // the words in the DOM, in `textContent` and in `outerHTML` while
+        // laying out and painting NOTHING.
+        //
+        // That is what emptied the .NET forms: a label's caption, a button's
+        // face and a form's title all arrive as `textContent`, so every control
+        // rendered as a bare rectangle. Markup that came through the parser was
+        // unaffected — it builds real `#text` boxes — which is exactly why a
+        // page written in HTML showed its words and a page built through the
+        // DOM did not.
+        //
+        // Empty text is the spec's null case: children are removed and NO node
+        // is inserted, which is also what keeps `<p></p>` from gaining a child
+        // the markup never had.
+        if !text.is_empty() {
+            let node = self.create_text_node(text);
+            self.append_child(id, node);
+            // A node that has just JOINED the tree has no computed style —
+            // `append_child` marks layout dirty but nothing re-runs the
+            // cascade, and a text run with no inherited font measures to
+            // nothing. `:empty` also stops matching the parent, which is a
+            // second reason this is a style change and not only a layout one.
+            self.style_dirty = true;
         }
     }
 
@@ -2250,5 +2435,116 @@ impl Document {
         for name in doomed {
             self.remove_attribute(id, &name);
         }
+    }
+}
+
+// ─── Canvas ─────────────────────────────────────────────────────────────────
+//
+// `canvas.getContext("2d")` — HTML §4.12.5.
+//
+// A page reaches a canvas the way it reaches anything else: it looks the
+// element up, asks it for a context, and draws. Nothing above this layer names
+// an engine, which is the same contract the rest of this file keeps — the
+// identical surface exists on `vybe_widgets`, so which one is compiled in stays
+// a build-time choice.
+
+impl Document {
+    /// `canvas.getContext("2d")` — HTML §4.12.5.1.
+    ///
+    /// Answers whether `id` is a `<canvas>` that now has a 2D context,
+    /// allocating its bitmap if it does not have one yet. An element built by
+    /// `createElement("canvas")` has never been through the parser, so this is
+    /// where it gets the transparent-black bitmap the spec says a canvas
+    /// starts with.
+    ///
+    /// There is no context OBJECT to return here on purpose. The context's
+    /// identity is the element — every call arrives naming the node — so a
+    /// handle would be a second name for something that already has one.
+    pub fn get_context_2d(&mut self, id: u32) -> bool {
+        self.ensure_canvas_bitmap(id)
+    }
+
+    /// Give `id` the bitmap a `<canvas>` element is defined to have, and say
+    /// whether it is a canvas at all.
+    ///
+    /// §4.12.5 gives the ELEMENT the bitmap, not the context — a `<canvas>`
+    /// has one from the moment it exists, and `getContext` hands out a way to
+    /// draw on what is already there. So this is what `getContext` does and
+    /// also what drawing does, rather than two paths that could disagree about
+    /// whether a surface exists. The parser allocates the same buffer for a
+    /// parsed `<canvas>`; an element from `createElement("canvas")` has never
+    /// been through it, and gets its bitmap here.
+    fn ensure_canvas_bitmap(&mut self, id: u32) -> bool {
+        let Some(node) = self.find_htmlbox_mut(id) else { return false };
+        if node.tag != "canvas" {
+            return false;
+        }
+        // §4.12.5: a canvas with no `width`/`height` attribute is 300 × 150.
+        if node.image_width == 0 || node.image_height == 0 {
+            node.image_width = 300;
+            node.image_height = 150;
+        }
+        let want = (node.image_width as usize) * (node.image_height as usize) * 4;
+        match node.image_data {
+            Some(ref data) if data.len() == want => {}
+            // Transparent black, which is what the spec initialises the
+            // bitmap to — and what a zeroed RGBA buffer already is.
+            _ => node.image_data = Some(vec![0u8; want]),
+        }
+        true
+    }
+
+    /// Draw on the canvas `id` through the WHATWG 2D context.
+    ///
+    /// The context state persists across calls; see `canvas::CanvasSurfaces`.
+    /// `None` when `id` is not a `<canvas>` — which is the only thing that can
+    /// fail here, because the element owns its bitmap and
+    /// [`ensure_canvas_bitmap`](Self::ensure_canvas_bitmap) is the same
+    /// allocation `getContext` performs.
+    pub fn with_canvas_2d<R>(
+        &mut self,
+        id: u32,
+        f: impl FnOnce(&mut dyn crate::canvas::Canvas) -> R,
+    ) -> Option<R> {
+        if !self.ensure_canvas_bitmap(id) {
+            return None;
+        }
+        // The bitmap is MOVED out of the element and back, so the element and
+        // the surface store are never borrowed at the same time — and a canvas
+        // is never copied to be drawn on.
+        let (mut pixels, w, h) = {
+            let node = self.find_htmlbox_mut(id)?;
+            (
+                node.image_data.take()?,
+                node.image_width,
+                node.image_height,
+            )
+        };
+        let out = self.canvas_surfaces.with_context(id, &mut pixels, w, h, f);
+        if let Some(node) = self.find_htmlbox_mut(id) {
+            node.image_data = Some(pixels);
+        }
+        out
+    }
+
+    /// `canvas.width` / `canvas.height` — HTML §4.12.5.
+    ///
+    /// Assigning either one **reinitialises the bitmap to transparent black
+    /// and resets the drawing state**, and the spec is explicit that this
+    /// happens even when the value assigned is the one already there. So this
+    /// is not a resize that preserves content: `canvas.width = canvas.width`
+    /// is the documented way a page clears a canvas, and an implementation
+    /// that kept the pixels would break it silently.
+    pub fn set_canvas_size(&mut self, id: u32, width: u32, height: u32) {
+        let Some(node) = self.find_htmlbox_mut(id) else { return };
+        if node.tag != "canvas" {
+            return;
+        }
+        node.image_width = width;
+        node.image_height = height;
+        node.image_data = Some(vec![0u8; (width as usize) * (height as usize) * 4]);
+        node.attributes.insert("width".to_string(), width.to_string());
+        node.attributes.insert("height".to_string(), height.to_string());
+        self.canvas_surfaces.reset(id);
     }
 }

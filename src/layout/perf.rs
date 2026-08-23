@@ -3,7 +3,7 @@
 //! Measures time spent in each phase of the rendering pipeline.
 //! Enable with `LayoutEngine::enable_perf_tracking()`.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::cell::RefCell;
 
 /// Performance counters for one layout pass.
@@ -70,7 +70,8 @@ impl PerfCounters {
     }
 }
 
-/// Thread-local perf tracking state.
+// Thread-local perf tracking state. A `//` comment, not `///`: a doc comment
+// on a macro invocation is silently dropped, which is what the warning says.
 thread_local! {
     static PERF: RefCell<PerfState> = RefCell::new(PerfState::default());
 }

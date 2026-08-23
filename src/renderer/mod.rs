@@ -562,14 +562,17 @@ impl Renderer {
         let mut opt_idx = 0usize;
         for child in &node.children {
             if child.tag == "option" {
-                let text: String = child.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                // The option's LABEL, which HTML §4.11.3.5 defines over DESCENDANT text —
+                // so a label wrapped in an element still reads. Collecting direct
+                // `#text` children only is what made those entries blank.
+                let text: String = crate::renderer::display_list_builder::option_label(child);
                 items.push(DropdownItem { node: child, is_group: false, text: text.trim().to_string(), index: opt_idx }); opt_idx += 1;
             } else if child.tag == "optgroup" {
                 let label = child.attributes.get("label").cloned().unwrap_or_default();
                 items.push(DropdownItem { node: child, is_group: true, text: label, index: usize::MAX });
                 for gc in &child.children {
                     if gc.tag == "option" {
-                        let text: String = gc.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
+                        let text: String = crate::renderer::display_list_builder::option_label(gc);
                         items.push(DropdownItem { node: gc, is_group: false, text: text.trim().to_string(), index: opt_idx }); opt_idx += 1;
                     }
                 }

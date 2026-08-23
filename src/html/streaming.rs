@@ -27,7 +27,6 @@
 //! let final_mutations = parser.finish();
 //! ```
 
-use crate::types::{Document, HtmlBox};
 use std::collections::HashMap;
 
 /// A DOM mutation produced by the streaming parser.

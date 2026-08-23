@@ -153,6 +153,16 @@ pub enum PaintCmd {
         value: String,
         placeholder: String,
         input_cursor: usize,
+        /// A `<select>`'s option LABELS, in tree order. Empty for every other
+        /// control.
+        ///
+        /// A list box draws its options itself — it is not a closed control
+        /// with one visible value — so the labels have to reach the painter.
+        /// The closed dropdown needs only `value`, which is why this was not
+        /// here before.
+        options: Vec<String>,
+        /// The index of the selected option, or `-1` for none.
+        selected: i32,
     },
 
     /// Draw a text shadow (separate from main text for layering).

@@ -1780,6 +1780,24 @@ pub struct HtmlBox {
     pub svg_viewbox_h: f32,
 
     // ── Form input editing state ─────────────────────────────────────────
+    /// **Checkedness** — whether the box is ticked RIGHT NOW.
+    ///
+    /// HTML §4.10.5.3 keeps this apart from the `checked` CONTENT ATTRIBUTE,
+    /// which is `defaultChecked` — the value a form reset restores to. They
+    /// start equal and diverge the moment anything ticks the box: a user
+    /// clicking a checkbox must NOT rewrite the document, and
+    /// `getAttribute("checked")` must keep answering what the markup says.
+    ///
+    /// This used to BE the attribute (`attributes.contains_key("checked")`), so
+    /// clicking a box edited the page's own markup and a program reading the
+    /// attribute back got the user's last click instead of its own default.
+    /// One store cannot answer both questions, which is also why the reset
+    /// algorithm was impossible to write.
+    pub checkedness: bool,
+    /// The **dirty checkedness flag** (HTML §4.10.5.3). Raised by a user
+    /// interaction or by setting the `checked` IDL member; while it is false
+    /// the content attribute still drives checkedness.
+    pub dirty_checked: bool,
     /// Cursor position (char index) within the input's value string.
     pub input_cursor: usize,
     /// Selection anchor (char index). When equal to input_cursor, no selection.
@@ -2087,6 +2105,8 @@ impl HtmlBox {
             svg_viewbox_w: 0.0,
             svg_viewbox_h: 0.0,
 
+            checkedness: false,
+            dirty_checked: false,
             input_cursor: 0,
             input_sel_anchor: 0,
 
@@ -2589,6 +2609,10 @@ pub struct Document {
     /// print support.
     pub linked_stylesheets: Vec<(String, String)>,
     pub editor:          Editor,
+    /// Drawing state for the document's `<canvas>` elements, keyed by node id.
+    /// The pixels stay on the element in `HtmlBox::image_data`; this is what
+    /// persists between two calls from a page. See `canvas::CanvasSurfaces`.
+    pub canvas_surfaces: crate::canvas::CanvasSurfaces,
     pub events:          EventListeners,
     /// NodeId-based event system with capture/bubble phases.
     pub event_targets:   crate::dom::events::EventTargetMap,
@@ -2711,6 +2735,7 @@ impl Document {
             base_url:        String::new(),
             linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
+            canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
             events:          EventListeners::new(),
             event_targets:   crate::dom::events::EventTargetMap::new(),
             scroll_x:        0.0,
@@ -3063,6 +3088,15 @@ impl Document {
                                 // through the WHATWG accessors — see
                                 // `Document::sync_form_state_to_arena`.
                                 self.sync_form_state_to_arena();
+                                // **A state change is a STYLE change.** The
+                                // cascade is cached, so `:checked` (and
+                                // `:checked + label`, and every rule keyed off
+                                // it) keeps whatever it computed BEFORE the
+                                // click until something says otherwise. Ticking
+                                // a box changed the state, painted the tick and
+                                // left the styling on the previous frame's
+                                // answer.
+                                self.style_dirty = true;
                             }
                             // Handle select dropdown
                             if self.open_select != 0 {
@@ -3461,6 +3495,9 @@ impl Document {
                 // rather than done at the call site because `input` borrows
                 // `self.root` for the whole block above.
                 self.sync_form_state_to_arena();
+                // Typing changes `:in-range`, `:valid` and friends the same way
+                // a click changes `:checked` — see the note at the click path.
+                self.style_dirty = true;
             } else if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
                 redraw = true;
             }
@@ -4124,12 +4161,16 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
             match input_type.as_str() {
                 "checkbox" => {
                     let node = find_mut(root, target)?;
-                    let was_checked = node.attributes.contains_key("checked");
-                    if was_checked {
-                        node.attributes.remove("checked");
-                    } else {
-                        node.attributes.insert("checked".into(), String::new());
-                    }
+                    // **A click changes STATE, not markup** (HTML §4.10.5.3).
+                    // This used to add and remove the `checked` ATTRIBUTE, so
+                    // ticking a box edited the document and
+                    // `getAttribute("checked")` answered the user's last click
+                    // instead of the author's default.
+                    let was_checked = node.checkedness;
+                    node.checkedness = !was_checked;
+                    // "must be set to true whenever the user interacts with the
+                    // control in a way that changes the checkedness."
+                    node.dirty_checked = true;
                     let new_checked = !was_checked;
                     if let Some(cb) = callback {
                         cb(&FormEvent {
@@ -4149,7 +4190,8 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
                                 && node.attributes.get("name").map(|s| s.as_str()) == Some(name)
                                 && node.node_id != except_id
                             {
-                                node.attributes.remove("checked");
+                                node.checkedness = false;
+                                node.dirty_checked = true;
                             }
                             for child in &mut node.children {
                                 uncheck_radios(child, name, except_id);
@@ -4158,7 +4200,8 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
                         uncheck_radios(root, &name, target);
                     }
                     let node = find_mut(root, target)?;
-                    node.attributes.insert("checked".into(), String::new());
+                    node.checkedness = true;
+                    node.dirty_checked = true;
                     if let Some(cb) = callback {
                         cb(&FormEvent {
                             tag: tag.clone(), id, name,
@@ -4344,13 +4387,16 @@ fn collect_form_data_inner(node: &HtmlBox, data: &mut std::collections::HashMap<
             let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
             match input_type {
                 "checkbox" => {
-                    if node.attributes.contains_key("checked") {
+                    // What gets SUBMITTED is the current checkedness, not the
+                    // author's default — a box the user unticked must not be
+                    // in the form data because the markup still says `checked`.
+                    if node.checkedness {
                         let val = node.attributes.get("value").cloned().unwrap_or_else(|| "on".to_string());
                         data.insert(name, val);
                     }
                 }
                 "radio" => {
-                    if node.attributes.contains_key("checked") {
+                    if node.checkedness {
                         let val = node.attributes.get("value").cloned().unwrap_or_default();
                         data.insert(name, val);
                     }
@@ -4438,12 +4484,19 @@ fn reset_form_inner(node: &mut HtmlBox) {
                     node.input_cursor = 0;
                 }
                 "checkbox" | "radio" => {
-                    // Reset to initial checked state
-                    if node.attributes.contains_key("defaultChecked") {
-                        node.attributes.insert("checked".into(), String::new());
-                    } else {
-                        node.attributes.remove("checked");
-                    }
+                    // HTML §4.10.5, the reset algorithm, verbatim: "set its
+                    // ... dirty checkedness flag back to false, ... set the
+                    // checkedness of the element to true if the element has a
+                    // `checked` content attribute and false if it does not".
+                    //
+                    // This used to look for a `defaultChecked` ATTRIBUTE, which
+                    // is not a content attribute at all — `defaultChecked` is
+                    // the IDL name FOR the `checked` attribute. Nothing ever
+                    // wrote it, so reset unticked every box unconditionally.
+                    // With checkedness and the attribute finally being two
+                    // different things, the real algorithm is expressible.
+                    node.checkedness = node.attributes.contains_key("checked");
+                    node.dirty_checked = false;
                 }
                 _ => {}
             }
@@ -4776,6 +4829,11 @@ impl Clone for Document {
             pending_nodes:   HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),
             editor:          self.editor.clone(),
+            // The canvas BITMAPS come along inside `root.clone()`, because
+            // they live on the elements. The drawing STATE does not: a copy of
+            // a document starts from the default context, the same way it
+            // starts with no event listeners.
+            canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
             events:          self.events.clone(),
             event_targets:   crate::dom::events::EventTargetMap::new(), // listeners not cloned
             scroll_x:        self.scroll_x,

@@ -1759,7 +1759,9 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) 
                 new_children.push(an);
             }
             // Insert at the position where the old node was
-            for (i, child) in new_children.into_iter().rev().enumerate() {
+            // Reversed and all inserted at `idx`, so each one lands in front
+            // of the last — the index is not needed and never was.
+            for child in new_children.into_iter().rev() {
                 node.children.insert(idx, child);
             }
             // Update linked-list pointers

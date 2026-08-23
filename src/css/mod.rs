@@ -474,7 +474,19 @@ fn matches_part_with_context(
                     } else { false }
                 }
                 // Form state
-                "checked"    => attrs.contains_key("checked") || attrs.contains_key("selected"),
+                // `:checked` matches CHECKEDNESS (Selectors §11.1: "elements
+                // that are checked"), not the `checked` attribute. Matching the
+                // attribute meant a box the user ticked kept the unchecked
+                // styling while the painter drew a tick — the selector and the
+                // paint disagreeing about one box.
+                "checked"    => {
+                    // The BOX's state when the matcher was given one; the
+                    // attribute is the fallback for the paths that match
+                    // against a bare tag+attrs (an `<option selected>` has no
+                    // checkedness of its own).
+                    ctx.html_box.map(|b| b.checkedness).unwrap_or_else(|| attrs.contains_key("checked"))
+                        || attrs.contains_key("selected")
+                }
                 "disabled"   => attrs.contains_key("disabled"),
                 "enabled"    => !attrs.contains_key("disabled") && matches!(tag, "input" | "button" | "select" | "textarea"),
                 "read-only"  => attrs.contains_key("readonly") || !matches!(tag, "input" | "textarea" | "select" | "button"),
@@ -5338,19 +5350,12 @@ fn apply_cascade_inner(
         return;
     }
 
-    // ── Style sharing: if a previous sibling has the same tag + classes + no
-    // id + no inline style, they'll match the same CSS rules. Skip the full
-    // cascade and clone the sibling's style (much cheaper).
-    let class_attr = root.attributes.get("class").cloned().unwrap_or_default();
-    let has_id = root.attributes.contains_key("id");
-    let has_inline_style = root.attributes.contains_key("style");
-    let is_hovered = hover_chain.contains(&root.node_id);
-    if !has_id && !has_inline_style && !is_hovered && !prev_siblings.is_empty() {
-        // prev_siblings is (tag, class, node_id) — check for matching tag+class
-        // We need to find the sibling's node to clone its style, but prev_siblings
-        // only has metadata. The actual style sharing happens in cascade_children
-        // where we have access to the sibling HtmlBox objects.
-    }
+    // ⚠ A style-sharing stub stood here: four bindings feeding an EMPTY `if`,
+    // whose own comment said the sharing "actually happens in cascade_children
+    // where we have access to the sibling HtmlBox objects". It computed a class
+    // string and a hover lookup on every element and did nothing with them.
+    // Removed rather than annotated — a reader greps `class_attr` and lands on
+    // machinery that never ran.
 
     // Start with default style and inherit from parent
     let mut style = ComputedStyle::default();

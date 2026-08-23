@@ -1472,8 +1472,13 @@ impl HtmlParser {
             if let Some(val) = node.attributes.get("value").cloned() {
                 node.attributes.entry("defaultValue".to_string()).or_insert(val);
             }
+            // `<input checked>` in the markup seeds CHECKEDNESS, and the
+            // attribute stays as the default a reset restores to. The
+            // `defaultChecked` attribute this used to invent was never a
+            // content attribute — `defaultChecked` is the IDL name for the
+            // `checked` attribute, which is right here.
             if node.attributes.contains_key("checked") {
-                node.attributes.insert("defaultChecked".into(), String::new());
+                node.checkedness = true;
             }
             let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
             match input_type {
@@ -2228,6 +2233,7 @@ fn parse_html_full(
         pending_nodes: std::collections::HashMap::new(),
         linked_stylesheets,
         editor: crate::dom::Editor::new(),
+        canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
         events: crate::dom::EventListeners::new(),
         event_targets: crate::dom::events::EventTargetMap::new(),
         scroll_x: 0.0,

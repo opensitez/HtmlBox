@@ -332,6 +332,26 @@ pub fn layout_block_with_fc(
     let y = c.y;
     let font_px = c.parent_font_px;
     let root_font_px = c.root_font_px;
+    // **This block IS its children's containing block, height included.**
+    //
+    // CSS 2.1 §10.5: a percentage height resolves against the containing
+    // block's height when that height is definite, and is `auto` when it is
+    // not. `resolve_box_vp` implements exactly that and reads the height from
+    // `Constraints::available_height` — which block layout never set, so every
+    // child of every block saw `None` and every percentage height in the
+    // engine collapsed to zero.
+    //
+    // The tell was an app shell: `html, body { height: 100% }` with a
+    // `height: 100%` root box rendered a blank page, and Flutter — whose
+    // `Scaffold` is `height: 100%` and whose `Expanded` is `flex: 1` — laid
+    // every row out at zero height inside a full-width row that was placed
+    // perfectly. Horizontal was right and vertical was empty, which is what
+    // "widths resolve against a width nobody forgot to pass" looks like.
+    let child_h = rbox.content_height;
+    let child_c = |available_width: f32, cx: f32, cy: f32| match child_h {
+        Some(h) => Constraints::with_height(available_width, h, cx, cy, font_px, root_font_px),
+        None => Constraints::new(available_width, cx, cy, font_px, root_font_px),
+    };
     // Content width: respect box-sizing (already resolved in rbox via resolve_box).
     let raw_w = match rbox.content_width {
         Some(w) => w,
@@ -515,8 +535,7 @@ pub fn layout_block_with_fc(
             has_own_floats = true;
             // Layout float to get natural size
             engine.layout_box(
-                grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
-                font_px, root_font_px)
+                grid_child_mut(node, path), &child_c(child_content_w, content_x, content_y + child_y)
             );
             // Shrink-to-fit for auto-width floats
             if grid_child_ref(node, path).style.width.is_auto() {
@@ -528,8 +547,7 @@ pub fn layout_block_with_fc(
                         + irb.layout.resolved_border_left + irb.layout.resolved_border_right
                         + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
                     engine.layout_box(
-                        grid_child_mut(node, path), &Constraints::new(shrink_w, content_x, content_y + child_y,
-                        font_px, root_font_px)
+                        grid_child_mut(node, path), &child_c(shrink_w, content_x, content_y + child_y)
                     );
                 }
             }
@@ -586,13 +604,11 @@ pub fn layout_block_with_fc(
                 let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
                 if child_is_bfc_pre || !seen_float {
                     engine.layout_box(
-                        grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
-                        font_px, root_font_px)
+                        grid_child_mut(node, path), &child_c(child_content_w, content_x, content_y + child_y)
                     );
                 } else {
                     engine.layout_box_with_fc(
-                        grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
-                        font_px, root_font_px), Some(&mut *fc)
+                        grid_child_mut(node, path), &child_c(child_content_w, content_x, content_y + child_y), Some(&mut *fc)
                     );
                 }
             }
@@ -667,8 +683,7 @@ pub fn layout_block_with_fc(
                 && grid_child_ref(node, path).text.chars().all(|c| c.is_ascii_whitespace());
             if node.layout.line_cache.is_empty() && !is_whitespace_only_text {
                 engine.layout_box(
-                    grid_child_mut(node, path), &Constraints::new(child_content_w, content_x, content_y + child_y,
-                    font_px, root_font_px)
+                    grid_child_mut(node, path), &child_c(child_content_w, content_x, content_y + child_y)
                 );
                 // Shrink-to-fit for inline children (inline, inline-block, inline-flex, inline-grid)
                 let ch = grid_child_ref(node, path);
@@ -684,8 +699,7 @@ pub fn layout_block_with_fc(
                             + ch.layout.resolved_margin_left + ch.layout.resolved_margin_right;
                         if shrink_w < child_content_w {
                             engine.layout_box(
-                                grid_child_mut(node, path), &Constraints::new(shrink_w, content_x, content_y + child_y,
-                                font_px, root_font_px)
+                                grid_child_mut(node, path), &child_c(shrink_w, content_x, content_y + child_y)
                             );
                         }
                     }

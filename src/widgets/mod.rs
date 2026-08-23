@@ -28,7 +28,7 @@ pub use select::Select;
 pub use button::Button;
 pub use slider::Slider;
 
-use tiny_skia::{Pixmap, Transform, FillRule, Paint, PathBuilder, Stroke};
+use tiny_skia::PathBuilder;
 
 /// Colors used by widgets.
 #[derive(Clone, Copy, Debug)]

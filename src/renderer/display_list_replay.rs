@@ -454,12 +454,12 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor } => {
+            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, options, selected } => {
                 // CSS background/border/padding are drawn by the normal pipeline.
                 // FormElement only draws the CONTENT: value text, check marks, radio dots, etc.
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                let _ = (node_id, attributes, input_cursor); // suppress warnings
+                let _ = (node_id, attributes, input_cursor, &options, selected); // suppress warnings
 
                 match (tag.as_str(), input_type.as_str()) {
                     ("input", "checkbox") => {
@@ -508,8 +508,27 @@ fn replay_inner(
                     ("input", "text") | ("input", "tel") | ("input", "email") |
                     ("input", "password") | ("input", "search") | ("input", "url") |
                     ("input", "number") | ("textarea", _) => {
-                        // Draw value or placeholder text
-                        let display_text = if value.is_empty() { placeholder } else { value };
+                        // Draw value or placeholder text.
+                        //
+                        // ⛔ **A password field must not draw what it holds.**
+                        // HTML §4.10.5.1.5: the value is "obscured so that
+                        // people cannot read it" — so the characters are
+                        // replaced one for one, which keeps the caret and the
+                        // measured width honest. This arm drew the value
+                        // verbatim, so `<input type=password value="hunter2">`
+                        // rendered the password on screen.
+                        //
+                        // The PLACEHOLDER is not obscured: it is not the value,
+                        // and every browser shows it.
+                        let masked: String;
+                        let display_text = if value.is_empty() {
+                            placeholder
+                        } else if input_type == "password" {
+                            masked = value.chars().map(|_| '\u{2022}').collect();
+                            &masked
+                        } else {
+                            value
+                        };
                         if !display_text.is_empty() {
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 let c = if value.is_empty() {
@@ -653,6 +672,65 @@ fn apply_opacity(c: &Color, alpha: f32) -> Color {
     Color::rgba(c.r, c.g, c.b, (c.a as f32 * alpha) as u8)
 }
 
+/// Blit an ALREADY-SHAPED cosmic-text buffer onto the pixmap at a physical
+/// origin, source-over.
+///
+/// Extracted from `draw_text_cmd` so the canvas can share it. The two callers
+/// need the same last step and nothing before it: `draw_text_cmd` shapes from a
+/// display-list command, `<canvas>`'s `fillText` shapes from the 2D context's
+/// own font state, and only then do both want these exact glyphs composited.
+///
+/// `color`'s alpha scales every glyph on top of whatever cosmic-text resolves
+/// per glyph — a span carrying its own colour keeps it, and the parameter still
+/// controls the overall opacity.
+pub(crate) fn blit_shaped_buffer(
+    pixmap: &mut Pixmap,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    buf: &mut Buffer,
+    phys_x: f32,
+    phys_y: f32,
+    color: CTextColor,
+) {
+    let color_a = color.a() as u32;
+
+    let pix_w = pixmap.width() as i32;
+    let pix_h = pixmap.height() as i32;
+    let stride = pix_w as usize;
+    let pixels = pixmap.pixels_mut();
+
+    buf.draw(font_system, swash_cache, color, |gx, gy, gw, gh, gc| {
+        let ga = gc.a();
+        if ga == 0 { return; }
+        let eff_a = ga as u32 * color_a / 255;
+        if eff_a == 0 { return; }
+        let bx = phys_x as i32 + gx;
+        let by = phys_y as i32 + gy;
+        let sa = eff_a;
+        let ia = 255 - sa;
+        let pr = gc.r() as u32 * sa / 255;
+        let pg = gc.g() as u32 * sa / 255;
+        let pb = gc.b() as u32 * sa / 255;
+        for dy in 0..gh as i32 {
+            let py = by + dy;
+            if py < 0 || py >= pix_h { continue; }
+            let row = py as usize * stride;
+            for dx in 0..gw as i32 {
+                let px_x = bx + dx;
+                if px_x < 0 || px_x >= pix_w { continue; }
+                let dst = &mut pixels[row + px_x as usize];
+                let r = (pr + dst.red()   as u32 * ia / 255) as u8;
+                let g = (pg + dst.green() as u32 * ia / 255) as u8;
+                let b = (pb + dst.blue()  as u32 * ia / 255) as u8;
+                let a = (sa + dst.alpha() as u32 * ia / 255) as u8;
+                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
+                    *dst = p;
+                }
+            }
+        }
+    });
+}
+
 fn draw_text_cmd(
     pixmap: &mut Pixmap,
     font_system: &mut FontSystem,
@@ -695,43 +773,8 @@ fn draw_text_cmd(
     let phys_x = x * sc;
     let phys_y = y * sc;
     let ct_color = CTextColor::rgba(color.r, color.g, color.b, color.a);
-    let color_a = color.a as u32;
 
-    let pix_w = pixmap.width() as i32;
-    let pix_h = pixmap.height() as i32;
-    let stride = pix_w as usize;
-    let pixels = pixmap.pixels_mut();
-
-    buf.draw(font_system, swash_cache, ct_color, |gx, gy, gw, gh, gc| {
-        let ga = gc.a();
-        if ga == 0 { return; }
-        let eff_a = ga as u32 * color_a / 255;
-        if eff_a == 0 { return; }
-        let bx = phys_x as i32 + gx;
-        let by = phys_y as i32 + gy;
-        let sa = eff_a;
-        let ia = 255 - sa;
-        let pr = gc.r() as u32 * sa / 255;
-        let pg = gc.g() as u32 * sa / 255;
-        let pb = gc.b() as u32 * sa / 255;
-        for dy in 0..gh as i32 {
-            let py = by + dy;
-            if py < 0 || py >= pix_h { continue; }
-            let row = py as usize * stride;
-            for dx in 0..gw as i32 {
-                let px_x = bx + dx;
-                if px_x < 0 || px_x >= pix_w { continue; }
-                let dst = &mut pixels[row + px_x as usize];
-                let r = (pr + dst.red()   as u32 * ia / 255) as u8;
-                let g = (pg + dst.green() as u32 * ia / 255) as u8;
-                let b = (pb + dst.blue()  as u32 * ia / 255) as u8;
-                let a = (sa + dst.alpha() as u32 * ia / 255) as u8;
-                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
-                    *dst = p;
-                }
-            }
-        }
-    });
+    blit_shaped_buffer(pixmap, font_system, swash_cache, &mut buf, phys_x, phys_y, ct_color);
 
     // Draw text decorations (underline, overline, strikethrough)
     let line_w = buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0);
@@ -911,7 +954,13 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
 
 /// Apply a CSS filter to a pixmap's pixels in-place.
 /// filter_type: 0=blur,1=brightness,2=contrast,3=grayscale,4=hue-rotate,5=invert,6=opacity,7=saturate,8=sepia
-fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
+///
+/// `pub(crate)` so `canvas::effects` can reach the colour maths instead of
+/// keeping a second copy of it. Blur is still `0 => {}` here; the canvas side
+/// now has a real one (`canvas::effects::blur_pixmap`) and dispatches to it
+/// before ever reaching this function, so the two are not in disagreement —
+/// this one is simply not the caller that can do it yet.
+pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
     let pixels = pm.pixels_mut();
 
     // Helper: un-premultiply, apply transform, re-premultiply
