@@ -1004,10 +1004,10 @@ fn a_removed_node_survives_and_can_be_inserted_elsewhere() {
 
     doc.remove_child(moved);
     assert!(doc.child_nodes(from).is_empty(), "it left its old parent");
-    assert_eq!(doc.node_name(moved), "p", "…and is still a <p>, not a dead slot");
+    assert_eq!(doc.local_name(moved), "p", "…and is still a <p>, not a dead slot");
 
     doc.append_child(to, moved);
-    let tags: Vec<String> = doc.child_nodes(to).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(to).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["p"]);
     assert_eq!(doc.text_content(moved), "text", "the subtree came with it");
 }
@@ -1031,7 +1031,7 @@ fn appending_a_fragment_moves_its_children_and_not_itself() {
 
     // The fragment is NOT in the tree — its children are, in order, and at the
     // level the caller asked for rather than one deeper.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["i", "div", "b"]);
     assert!(
         !tags.iter().any(|t| t == "#document-fragment"),
@@ -1058,7 +1058,7 @@ fn inserting_a_fragment_splices_it_in_order() {
 
     // Each child goes before the SAME reference, so they arrive in the order
     // they were in — not reversed.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["div", "b", "i"]);
 }
 
@@ -1087,7 +1087,7 @@ fn normalize_merges_adjacent_text_and_drops_empties() {
             if doc.is_text_node(c) {
                 doc.text_data(c)
             } else {
-                format!("<{}>", doc.node_name(c))
+                format!("<{}>", doc.local_name(c))
             }
         })
         .collect();
@@ -1141,7 +1141,7 @@ fn prepend_keeps_the_given_order() {
 
     // The naive implementation — insert each before the CURRENT first child —
     // yields b, a, z. The nodes must arrive in the order they were given.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["a", "b", "i"]);
 }
 
@@ -1155,12 +1155,12 @@ fn before_after_and_replace_with_place_nodes_around_a_sibling() {
     let b = doc.create_element("b");
     doc.before(pivot, &[a]);
     doc.after(pivot, &[b]);
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["a", "i", "b"]);
 
     let u = doc.create_element("u");
     doc.replace_with(pivot, &[u]);
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(tags, vec!["a", "u", "b"], "the pivot is gone and `u` sits where it was");
 }
 
@@ -1185,10 +1185,10 @@ fn insert_adjacent_element_places_at_all_four_positions() {
     }
 
     // `beforebegin`/`afterend` are p's SIBLINGS…
-    let outer: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.node_name(c)).collect();
+    let outer: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(outer, vec!["a", "p", "s"]);
     // …and `afterbegin`/`beforeend` are its children, around the text.
-    let inner: Vec<String> = doc.child_nodes(p).iter().map(|&c| doc.node_name(c)).collect();
+    let inner: Vec<String> = doc.child_nodes(p).iter().map(|&c| doc.local_name(c)).collect();
     assert_eq!(inner, vec!["b", "#text", "u"]);
 
     assert_eq!(doc.insert_adjacent_element(p, "sideways", d), None);

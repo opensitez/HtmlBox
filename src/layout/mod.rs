@@ -616,7 +616,7 @@ impl LayoutEngine {
         }
 
         // Replaced elements (img): use natural dimensions
-        if node.tag == "img" && node.image_width > 0 {
+        if node.is_image_element() && node.image_width > 0 {
             return node.image_width as f32;
         }
 
@@ -685,8 +685,44 @@ impl LayoutEngine {
         }
 
         // Replaced elements (img): use natural dimensions.
-        if node.tag == "img" && node.image_width > 0 {
+        if node.is_image_element() && node.image_width > 0 {
             return node.image_width as f32;
+        }
+
+        // **An `<input>` button is sized by its LABEL, which is an attribute.**
+        //
+        // `submit`/`reset`/`button` are void elements: no children, no line
+        // boxes, so the walk below measures nothing and an auto-width button
+        // collapsed to its padding — a pill a few pixels wide with the label
+        // spilling out beside it. `<button>` is unaffected because its label is
+        // real content and gets measured like any other text.
+        //
+        // The UA-supplied default matters here too: a bare `<input
+        // type=submit>` reads "Submit" in a browser and must be sized for that
+        // word, not for the empty string.
+        if node.tag == "input" {
+            let input_type = node
+                .attributes
+                .get("type")
+                .map(|t| t.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if matches!(input_type.as_str(), "submit" | "reset" | "button") {
+                let label = match node.attributes.get("value").map(String::as_str) {
+                    Some(v) if !v.is_empty() => v,
+                    _ => match input_type.as_str() {
+                        "submit" => "Submit",
+                        "reset" => "Reset",
+                        _ => "",
+                    },
+                };
+                return self.measure_text_cached(
+                    label,
+                    font_px,
+                    node.style.font_weight,
+                    node.style.font_style,
+                    &node.style.font_family,
+                );
+            }
         }
 
         // Custom component: use cached dimensions (like a replaced element)
@@ -1253,9 +1289,9 @@ impl LayoutEngine {
         // dimensions are known, compute the auto dimension to preserve the
         // image's intrinsic aspect ratio (CSS Images §5.1).
         // For <svg>, intrinsic dimensions come from viewBox.
-        let (has_intrinsic, iw, ih) = if node.tag == "img" && node.image_width > 0 && node.image_height > 0 {
+        let (has_intrinsic, iw, ih) = if node.is_image_element() && node.image_width > 0 && node.image_height > 0 {
             (true, node.image_width as f32, node.image_height as f32)
-        } else if node.tag == "img" {
+        } else if node.is_image_element() {
             // No loaded image data — use HTML width/height attributes as intrinsic dimensions
             // for aspect ratio computation. Attributes were parsed into style.width/height.
             let attr_w = node.attributes.get("width").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);

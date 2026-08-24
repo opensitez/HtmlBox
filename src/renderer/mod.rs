@@ -365,6 +365,13 @@ impl Renderer {
                 self.draw_select_dropdown(sel_node, pixmap, doc.scroll_x, doc.scroll_y);
             }
         }
+        // The colour picker sits on the SAME overlay surface as the dropdown,
+        // drawn after the page for the same reason: a popup is not in the flow
+        // and must paint over whatever it covers.
+        if doc.open_picker != 0 {
+            self.scale = scale * zoom;
+            self.draw_color_picker(doc, pixmap, doc.scroll_x, doc.scroll_y);
+        }
         if doc.editor.caret_visible {
             if let Some((caret_id, caret_local)) = doc.editor.caret_info() {
                 if crate::dom::is_in_contenteditable_by_id(&doc.root, caret_id) {
@@ -551,6 +558,120 @@ impl Renderer {
             if self.draw_caret_walk(child, pixmap, sx, sy, caret_node_id, caret_local) { return true; }
         }
         false
+    }
+
+    /// The open colour picker: the palette, over the page.
+    ///
+    /// Geometry comes from `Document::picker_rect`, which the hit test also
+    /// uses — one source, so a click cannot land on a swatch the paint drew
+    /// somewhere else.
+    fn draw_color_picker(&mut self, doc: &crate::types::Document, pixmap: &mut Pixmap, sx: f32, sy: f32) {
+        let Some((px, py, pw, ph)) = doc.picker_rect(doc.open_picker) else {
+            return;
+        };
+        let (x, y) = (px - sx, py - sy);
+        let ts = tiny_skia::Transform::from_scale(self.scale, self.scale);
+        let mut paint = tiny_skia::Paint::default();
+        paint.anti_alias = true;
+
+        // A card under the swatches: the popup has to read as a surface of its
+        // own, not as colours floating on the page.
+        paint.set_color_rgba8(250, 250, 250, 255);
+        if let Some(r) = tiny_skia::Rect::from_xywh(x - 4.0, y - 4.0, pw + 8.0, ph + 8.0) {
+            pixmap.fill_rect(r, &paint, ts, None);
+        }
+        paint.set_color_rgba8(150, 150, 150, 255);
+        if let Some(r) = tiny_skia::Rect::from_xywh(x - 4.0, y - 4.0, pw + 8.0, ph + 8.0) {
+            pixmap.stroke_path(
+                &tiny_skia::PathBuilder::from_rect(r),
+                &paint,
+                &tiny_skia::Stroke { width: 1.0, ..Default::default() },
+                ts,
+                None,
+            );
+        }
+
+        // A calendar is the same popup with a different face: the card above
+        // is already drawn, so only the contents differ.
+        if matches!(
+            doc.picker_kind(doc.open_picker),
+            Some(crate::types::PickerKind::Calendar)
+        ) {
+            self.draw_calendar(doc, pixmap, x, y);
+            return;
+        }
+
+        let cell = crate::widgets::PALETTE_CELL;
+        let cols = crate::widgets::PALETTE_COLUMNS;
+        for (i, (r, g, b)) in crate::widgets::PALETTE.iter().enumerate() {
+            let cx = x + (i % cols) as f32 * cell;
+            let cy = y + (i / cols) as f32 * cell;
+            paint.set_color_rgba8(*r, *g, *b, 255);
+            // Inset by a pixel so each swatch is separated — a grid of touching
+            // colours reads as one smear.
+            if let Some(rect) = tiny_skia::Rect::from_xywh(cx + 1.0, cy + 1.0, cell - 2.0, cell - 2.0) {
+                pixmap.fill_rect(rect, &paint, ts, None);
+            }
+        }
+    }
+
+    /// The month grid of an open date picker.
+    ///
+    /// Geometry is `widgets::Calendar`'s, which the hit test also uses — one
+    /// source, so a click cannot land on a day the paint drew elsewhere.
+    fn draw_calendar(&mut self, doc: &crate::types::Document, pixmap: &mut Pixmap, x: f32, y: f32) {
+        const MONTHS: [&str; 12] = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ];
+        // Monday first, matching `first_weekday`'s zero.
+        const DAYS: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
+
+        let (year, month, selected) = doc.picker_month(doc.open_picker);
+        let first = crate::widgets::first_weekday(year, month);
+        let count = crate::widgets::days_in_month(year, month);
+        let cell = crate::widgets::Calendar::CELL;
+        let font_px = 12.0;
+
+        let caption = format!("{} {year}", MONTHS[(month as usize - 1).min(11)]);
+        self.draw_text_run(
+            &caption, x + 6.0, y + 6.0, font_px, font_px,
+            crate::types::FontWeight::Bold, crate::types::FontStyle::Normal,
+            "sans-serif", CTextColor::rgba(30, 30, 30, 255), pixmap, None,
+        );
+        for (i, d) in DAYS.iter().enumerate() {
+            self.draw_text_run(
+                d, x + i as f32 * cell + cell / 2.0 - 3.0, y + 24.0, font_px, font_px,
+                crate::types::FontWeight::Normal, crate::types::FontStyle::Normal,
+                "sans-serif", CTextColor::rgba(120, 120, 120, 255), pixmap, None,
+            );
+        }
+
+        let ts = tiny_skia::Transform::from_scale(self.scale, self.scale);
+        let mut paint = tiny_skia::Paint::default();
+        paint.anti_alias = true;
+        for day in 1..=count {
+            let index = first + day as usize - 1;
+            let cx = x + (index % 7) as f32 * cell;
+            let cy = y + crate::widgets::Calendar::HEADER + (index / 7) as f32 * cell;
+            let mut ink = CTextColor::rgba(30, 30, 30, 255);
+            if selected == Some(day) {
+                paint.set_color_rgba8(0, 120, 215, 255);
+                if let Some(r) = tiny_skia::Rect::from_xywh(cx + 1.0, cy + 1.0, cell - 2.0, cell - 2.0) {
+                    pixmap.fill_rect(r, &paint, ts, None);
+                }
+                ink = CTextColor::rgba(255, 255, 255, 255);
+            }
+            let label = day.to_string();
+            // Nudged for the width of a two-digit day, so the column reads
+            // straight rather than drifting after the 9th.
+            let dx = if day < 10 { cell / 2.0 - 3.0 } else { cell / 2.0 - 6.0 };
+            self.draw_text_run(
+                &label, cx + dx, cy + 4.0, font_px, font_px,
+                crate::types::FontWeight::Normal, crate::types::FontStyle::Normal,
+                "sans-serif", ink, pixmap, None,
+            );
+        }
     }
 
     fn draw_select_dropdown(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {

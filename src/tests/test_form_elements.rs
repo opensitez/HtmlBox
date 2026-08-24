@@ -986,6 +986,27 @@ fn select_with_size_is_taller() {
     let s2 = find_by_tag(&doc2.root, "select").unwrap();
     assert!(s2.layout.margin_rect.h > s1.layout.margin_rect.h,
         "select size=4 height {} should be > default height {}", s2.layout.margin_rect.h, s1.layout.margin_rect.h);
+
+    // ⚠ It has to be taller FOR THE RIGHT REASON — roughly four rows, not one
+    // row in a bigger font.
+    //
+    // This passed before the list box existed, and it passed by accident: the
+    // presentational-attribute pass read `size="4"` as `<font size=4>` and set
+    // `font-size: 18px`, so the one-row height of `2.2em` grew with the font.
+    // `size` means three different things by element (rows on a `<select>`,
+    // characters on an `<input>`, a font step on `<font>`) and only the last
+    // was implemented.
+    assert!(
+        (s2.style.font_size_px(16.0, 16.0) - s1.style.font_size_px(16.0, 16.0)).abs() < 0.01,
+        "`size` changed the FONT of a select: {} vs {}",
+        s2.style.font_size_px(16.0, 16.0),
+        s1.style.font_size_px(16.0, 16.0)
+    );
+    assert!(
+        s2.layout.margin_rect.h > s1.layout.margin_rect.h * 2.0,
+        "four rows should be well over twice the one-row height, got {} vs {}",
+        s2.layout.margin_rect.h, s1.layout.margin_rect.h
+    );
 }
 
 // ── Multiple select ──────────────────────────────────────────────────────────
@@ -1908,4 +1929,149 @@ fn submit_input_explicit_height_stretches() {
     assert!(sub.layout.padding_rect.h >= 58.0,
         "submit padding_rect.h {} should be >= 58 with height:60px",
         sub.layout.padding_rect.h);
+}
+
+// ── Colour picker popup ──────────────────────────────────────────────────────
+
+#[test]
+fn clicking_a_colour_input_opens_its_picker_and_a_swatch_sets_the_value() {
+    // HTML §4.10.5.1.15 leaves the picker's FORM to the user agent and says
+    // only that one is offered. What it does pin down is the value: a "valid
+    // simple colour", `#rrggbb`, which is what a pick has to write back.
+    //
+    // The picker rides the same overlay the `<select>` dropdown uses —
+    // `open_picker` beside `open_select` — so this is a second thing on one
+    // popup surface rather than a second mechanism.
+    let mut doc = layout_html(
+        // `r##` because the markup contains `"#` — a plain `r#"…"#` ends
+        // right there, at the value's own hash.
+        r##"<input type="color" id="c" value="#000000">"##,
+        400.0,
+    );
+    let c = doc.get_element_by_id("c").unwrap();
+    let br = find_by_id(&doc.root, "c").unwrap().layout.border_rect;
+    let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
+
+    assert_eq!(doc.open_picker, 0, "nothing is open before the click");
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
+    assert_eq!(doc.open_picker, c, "activating the control opens its picker");
+
+    // The palette sits below the control; pick the first swatch of the second
+    // row, whatever the palette holds there.
+    let (px, py, _, _) = doc.picker_rect(c).expect("an open picker has geometry");
+    let cell = crate::widgets::PALETTE_CELL;
+    let point = (px + cell / 2.0, py + cell * 1.5);
+    let expected = doc.picker_hit(c, point).expect("that point is a swatch");
+
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, point, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, point, 0);
+
+    assert_eq!(doc.open_picker, 0, "picking closes the picker");
+    assert_eq!(
+        doc.value(c),
+        crate::widgets::to_simple_colour(expected),
+        "the pick writes a valid simple colour back into the value"
+    );
+}
+
+#[test]
+fn clicking_away_closes_the_picker_without_changing_the_value() {
+    let mut doc = layout_html(
+        r##"<input type="color" id="c" value="#123456">"##,
+        400.0,
+    );
+    let c = doc.get_element_by_id("c").unwrap();
+    let br = find_by_id(&doc.root, "c").unwrap().layout.border_rect;
+    let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
+    assert_eq!(doc.open_picker, c);
+
+    // Far from both the control and its palette.
+    let away = (br.x + 300.0, br.y + 200.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, away, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, away, 0);
+    assert_eq!(doc.open_picker, 0, "clicking away closes it");
+    assert_eq!(doc.value(c), "#123456", "and picks nothing");
+}
+
+#[test]
+fn a_dropdown_row_can_be_picked_where_no_element_lies_beneath() {
+    // The list is drawn OVER the page and is not in the tree, so a row that
+    // hangs past the end of the content has nothing under it. The click path
+    // is gated on having hit an element, which silently dropped exactly those
+    // picks — the ones furthest down the list, on a short page.
+    //
+    // Same fault the colour picker had, which is why both are now allowed
+    // through: a popup's click is about the POPUP's geometry, not about
+    // whatever the hit test finds below it.
+    let mut doc = layout_html(
+        r#"<select id="s"><option>A</option><option>B</option><option>C</option></select>"#,
+        400.0,
+    );
+    let s = doc.get_element_by_id("s").unwrap();
+    let br = find_by_id(&doc.root, "s").unwrap().layout.border_rect;
+    let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
+    assert_eq!(doc.open_select, s, "clicking the select opens the list");
+
+    // The THIRD row, which sits below the select — and on a document this
+    // short, below the body's content entirely.
+    //
+    // Row geometry is the engine's: `font-size * 1.8` per row, and the list is
+    // inset 4px from the control's bottom edge. Derived rather than guessed —
+    // a hardcoded 20px lands on row 1 and the test then "fails" over its own
+    // arithmetic.
+    let font_px = 16.0;
+    let row_h = font_px * 1.8;
+    let third = (br.x + br.w / 2.0, br.y + br.h + 4.0 + row_h * 2.5);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, third, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, third, 0);
+
+    assert_eq!(doc.open_select, 0, "picking closes the list");
+    assert_eq!(
+        doc.selected_index(s),
+        2,
+        "the third row is what was clicked, and it is what got selected"
+    );
+}
+
+#[test]
+fn a_date_input_opens_a_calendar_and_a_day_sets_the_value() {
+    // Same popup surface as the dropdown and the colour picker: `open_picker`
+    // holds the node, the renderer draws the month over the page, and the
+    // click is taken before hit testing. What differs is only what a pick
+    // MEANS — a day, written back as `yyyy-mm-dd`, the format the spec
+    // requires of this control's value.
+    let mut doc = layout_html(
+        r#"<input type="date" id="d" value="2026-08-24">"#,
+        400.0,
+    );
+    let d = doc.get_element_by_id("d").unwrap();
+    let br = find_by_id(&doc.root, "d").unwrap().layout.border_rect;
+    let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
+    assert_eq!(doc.open_picker, d, "activating a date control opens its calendar");
+
+    // August 2026 starts on a Saturday, so the 1st sits in column 5 of row 0.
+    let (px, py, _, _) = doc.picker_rect(d).expect("an open picker has geometry");
+    let cell = crate::widgets::Calendar::CELL;
+    let first = crate::widgets::first_weekday(2026, 8);
+    let day_10_index = first + 9;
+    let point = (
+        px + (day_10_index % 7) as f32 * cell + cell / 2.0,
+        py + crate::widgets::Calendar::HEADER + (day_10_index / 7) as f32 * cell + cell / 2.0,
+    );
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, point, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, point, 0);
+
+    assert_eq!(doc.open_picker, 0, "picking closes the calendar");
+    assert_eq!(
+        doc.value(d),
+        "2026-08-10",
+        "the pick writes the date in the format the control's value takes"
+    );
 }

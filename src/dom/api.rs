@@ -1260,7 +1260,32 @@ impl Document {
     /// it is meant to replace.
     pub fn node_name(&self, id: u32) -> String {
         if id == 0 || !self.arena.is_alive(NodeId(id)) { return String::new(); }
-        self.arena.get(NodeId(id)).tag.clone()
+        let node = self.arena.get(NodeId(id));
+        let name = node.tag.clone();
+        // **An element's `nodeName` is its HTML-UPPERCASED qualified name**
+        // (DOM §4.9): "Let qualifiedName be this's qualified name. If this is
+        // in the HTML namespace and its node document is an HTML document,
+        // then return qualifiedName in ASCII uppercase. Return qualifiedName."
+        //
+        // This answered the STORED tag, which HTML folds to lowercase on the
+        // way in, so `el.nodeName == "DIV"` — the check a page actually writes
+        // — was false for every element. `local_name` is the lowercase half.
+        //
+        // ⛔ BOTH conditions, not just the document. An `<svg:rect>` inside an
+        // HTML page is in the SVG namespace and keeps its case; uppercasing on
+        // the document kind alone renamed it to `SVG:RECT`, which the
+        // namespace test here caught.
+        let html_namespace = match node.namespace.as_deref() {
+            None => true,
+            Some(ns) => ns == crate::dom::HTML_NAMESPACE,
+        };
+        if matches!(self.kind, crate::types::DocumentKind::Html)
+            && matches!(node.node_type, crate::dom::arena::NodeType::Element)
+            && html_namespace
+        {
+            return name.to_ascii_uppercase();
+        }
+        name
     }
 
     /// `node.nodeValue` — the data of a text or comment node. `None` for an
@@ -1791,7 +1816,7 @@ impl Document {
     /// between moves boxes inside their parent's `Vec<HtmlBox>` and leaves
     /// those pointers dangling, and the fast path would hand one back. The DOM
     /// API mutates without laying out, so it must not use that index.
-    fn find_htmlbox(&self, id: u32) -> Option<&HtmlBox> {
+    pub(crate) fn find_htmlbox(&self, id: u32) -> Option<&HtmlBox> {
         // `pending_nodes` FIRST. A node created but not yet inserted is not in
         // the tree, and the ordinary DOM idiom writes to it before it ever is:
         //

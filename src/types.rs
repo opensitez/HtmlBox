@@ -2070,6 +2070,28 @@ pub struct MatchedRule {
 }
 
 impl HtmlBox {
+    /// Does this element DISPLAY an image — `<img>`, or `<input type=image>`?
+    ///
+    /// HTML §4.10.5.1.19: the Image Button state "represents an image and a
+    /// submit button", and it takes `src`, `alt` and its dimensions exactly as
+    /// `<img>` does. So every path that renders an image has to accept both,
+    /// and gating on the TAG alone left an image input rendering as a text
+    /// field — the parser even resolved its `src` and nothing read it.
+    ///
+    /// `type` is an ENUMERATED attribute, so its value is ASCII
+    /// case-insensitive: `type="IMAGE"` is the same state.
+    pub fn is_image_element(&self) -> bool {
+        if self.tag == "img" {
+            return true;
+        }
+        self.tag == "input"
+            && self
+                .attributes
+                .get("type")
+                .map(|t| t.trim().eq_ignore_ascii_case("image"))
+                .unwrap_or(false)
+    }
+
     pub fn new(tag: impl Into<String>) -> Self {
         use std::sync::atomic::{AtomicU32, Ordering};
         static NEXT_ID: AtomicU32 = AtomicU32::new(500_000);
@@ -2564,6 +2586,13 @@ impl std::fmt::Debug for NodeArena {
 }
 
 /// The root document: box tree + stylesheet + metadata.
+/// Which popup an element opens on activation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickerKind {
+    Color,
+    Calendar,
+}
+
 pub struct Document {
     pub root:            HtmlBox,
     /// Flat node storage — all HtmlBox nodes indexed by node_id.
@@ -2651,6 +2680,14 @@ pub struct Document {
     pub caret_blink_epoch: std::time::Instant,
     /// Currently open select dropdown (node_id, 0 if none open).
     pub open_select: u32,
+    /// The element whose PICKER is open — `<input type=color>` today.
+    ///
+    /// The same shape `open_select` has: one node, drawn as an overlay after
+    /// the page and hit-tested before anything else while it is open. A picker
+    /// is user-agent chrome that appears on activation, which is exactly what
+    /// the dropdown already is; there is one popup surface here and this is a
+    /// second thing on it, not a new mechanism.
+    pub open_picker: u32,
     /// Hovered option index in open dropdown (-1 = none).
     pub dropdown_hover_idx: i32,
     /// Form event callback — set by the host to handle form interactions.
@@ -2755,7 +2792,7 @@ impl Document {
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
-            caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: 0, open_picker: 0, dropdown_hover_idx: -1,
             on_form_event:     None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
@@ -2894,6 +2931,135 @@ impl Document {
     }
 
     /// High-level mouse event entry point.
+    /// The palette geometry of an open picker — one place, so the hit test and
+    /// the paint cannot disagree about where the swatches are.
+    ///
+    /// Returns the popup's origin and cell size. `None` when the element has no
+    /// laid-out box, which is also when there is nothing to click.
+    /// The `<details>` a click belongs to, when the click is on its `<summary>`.
+    ///
+    /// Walks UP from the hit node, because a click lands on whatever is
+    /// innermost — the text inside the summary, or an element the author put
+    /// there — and the summary itself is often not what was hit.
+    pub(crate) fn summary_details(&self, hit: u32) -> Option<u32> {
+        // ⛔ Walks the RENDER TREE, not the arena. A hit id comes from hit
+        // testing over boxes, and `Document::parent_node` is the ARENA's
+        // parent — it asserts on an id the arena does not hold, which took the
+        // whole process down on the first click of a submit button. Every
+        // other click-path walk here (`find_form_parent_id`) goes over boxes
+        // for the same reason.
+        fn walk<'a>(node: &'a HtmlBox, hit: u32, chain: &mut Vec<&'a HtmlBox>) -> bool {
+            chain.push(node);
+            if node.node_id == hit {
+                return true;
+            }
+            for child in &node.children {
+                if walk(child, hit, chain) {
+                    return true;
+                }
+            }
+            chain.pop();
+            false
+        }
+        let mut chain = Vec::new();
+        if !walk(&self.root, hit, &mut chain) {
+            return None;
+        }
+        // Innermost first: the click lands on the text inside the summary, or
+        // on whatever the author put there, rather than on the summary itself.
+        for i in (0..chain.len()).rev() {
+            if chain[i].tag == "summary" {
+                return chain
+                    .get(i.checked_sub(1)?)
+                    .filter(|p| p.tag == "details")
+                    .map(|p| p.node_id);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn picker_rect(&self, id: u32) -> Option<(f32, f32, f32, f32)> {
+        let node = self.find_htmlbox(id)?;
+        let br = node.layout.border_rect;
+        // Below the control, as the dropdown opens below its select.
+        let (w, h) = match self.picker_kind(id) {
+            Some(PickerKind::Calendar) => {
+                (crate::widgets::Calendar::width(), crate::widgets::Calendar::height())
+            }
+            _ => {
+                let cols = crate::widgets::PALETTE_COLUMNS as f32;
+                let rows = (crate::widgets::PALETTE.len() as f32 / cols).ceil();
+                let cell = crate::widgets::PALETTE_CELL;
+                (cols * cell, rows * cell)
+            }
+        };
+        Some((br.x, br.y + br.h, w, h))
+    }
+
+    /// Which picker an element opens, if any — the one place that decides, so
+    /// the geometry, the paint and the hit test cannot disagree.
+    pub(crate) fn picker_kind(&self, id: u32) -> Option<PickerKind> {
+        let node = self.find_htmlbox(id)?;
+        if node.tag != "input" {
+            return None;
+        }
+        match node.attributes.get("type")?.trim().to_ascii_lowercase().as_str() {
+            "color" => Some(PickerKind::Color),
+            // `month` and `week` open a calendar too in a browser, but they
+            // pick a MONTH and a WEEK, not a day — a day grid would write a
+            // value their format cannot hold. Until each has its own grid,
+            // only `date` opens one.
+            "date" => Some(PickerKind::Calendar),
+            _ => None,
+        }
+    }
+
+    /// The month a date picker is showing: the element's own value, or the
+    /// current month when it has none — which is what a browser opens on.
+    pub(crate) fn picker_month(&self, id: u32) -> (i32, u32, Option<u32>) {
+        let value = self
+            .find_htmlbox(id)
+            .and_then(|n| n.attributes.get("value"))
+            .map(String::as_str)
+            .unwrap_or("");
+        match crate::widgets::parse_date(value) {
+            Some((y, m, d)) => (y, m, Some(d)),
+            // No date library here, and none needed: an empty control opens on
+            // a fixed, obviously-neutral month rather than pretending to know
+            // today. The value it writes is a real date either way.
+            None => (2026, 1, None),
+        }
+    }
+
+    /// Which palette colour a point lands on, if any.
+    /// Which day an open calendar's point lands on, and the month it belongs to.
+    pub(crate) fn calendar_hit(&self, id: u32, doc_pt: (f32, f32)) -> Option<(i32, u32, u32)> {
+        let (x, y, w, h) = self.picker_rect(id)?;
+        if doc_pt.0 < x || doc_pt.0 >= x + w || doc_pt.1 < y || doc_pt.1 >= y + h {
+            return None;
+        }
+        let (year, month, _) = self.picker_month(id);
+        let day = crate::widgets::Calendar::day_at(
+            (doc_pt.0 - x, doc_pt.1 - y),
+            crate::widgets::first_weekday(year, month),
+            crate::widgets::days_in_month(year, month),
+        )?;
+        Some((year, month, day))
+    }
+
+    pub(crate) fn picker_hit(&self, id: u32, doc_pt: (f32, f32)) -> Option<(u8, u8, u8)> {
+        let (x, y, w, h) = self.picker_rect(id)?;
+        if doc_pt.0 < x || doc_pt.0 >= x + w || doc_pt.1 < y || doc_pt.1 >= y + h {
+            return None;
+        }
+        let cell = crate::widgets::PALETTE_CELL;
+        let col = ((doc_pt.0 - x) / cell) as usize;
+        let row = ((doc_pt.1 - y) / cell) as usize;
+        crate::widgets::PALETTE
+            .get(row * crate::widgets::PALETTE_COLUMNS + col)
+            .copied()
+    }
+
     pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
         use crate::dom::{HtmlEventType, HtmlEvent};
         // client_pos = screen-space logical coordinates (doc coords minus scroll).
@@ -3071,16 +3237,85 @@ impl Document {
                     self.drag_source = 0;
                     self.drag_active = false;
 
+                    // ⛔ **An open popup takes the click FIRST.**
+                    //
+                    // It is drawn over the page and is not in the tree, so the
+                    // hit test below finds whatever happens to be UNDER it —
+                    // and finds nothing at all where no element lies, which is
+                    // most of the page. Gating a popup's click on that dropped
+                    // every pick that landed past the end of the content.
+                    //
+                    // Either outcome closes it: a swatch picks, anywhere else
+                    // dismisses, and neither reaches the page beneath.
+                    if self.open_picker != 0 {
+                        let picker_id = self.open_picker;
+                        // What a pick MEANS depends on the control: a swatch is
+                        // a colour, a cell is a date. Both write a value in the
+                        // format that control's spec requires, and both close.
+                        let picked = match self.picker_kind(picker_id) {
+                            Some(PickerKind::Calendar) => self
+                                .calendar_hit(picker_id, doc_pt)
+                                .map(|(y, m, d)| crate::widgets::to_date_value(y, m, d)),
+                            _ => self
+                                .picker_hit(picker_id, doc_pt)
+                                .map(crate::widgets::to_simple_colour),
+                        };
+                        if let Some(value) = picked {
+                            self.set_value(picker_id, &value);
+                            let (id, name) = self
+                                .find_htmlbox(picker_id)
+                                .map(|n| {
+                                    (
+                                        n.attributes.get("id").cloned().unwrap_or_default(),
+                                        n.attributes.get("name").cloned().unwrap_or_default(),
+                                    )
+                                })
+                                .unwrap_or_default();
+                            if let Some(ref mut cb) = self.on_form_event {
+                                cb(&FormEvent {
+                                    tag: "input".to_string(),
+                                    id,
+                                    name,
+                                    kind: FormEventKind::Change(value),
+                                    element: picker_id,
+                                });
+                            }
+                        }
+                        self.open_picker = 0;
+                        self.mousedown_target = 0;
+                        return true;
+                    }
                     // Click only if no drag occurred and released on same element as pressed.
-                    if hit_node_id != 0 && hit_node_id == self.mousedown_target && !was_dragging {
+                    //
+                    // ⚠ An OPEN DROPDOWN relaxes the first half, for the reason
+                    // the picker above is handled before this gate at all: the
+                    // list is drawn over the page and is not in the tree, so a
+                    // row that happens to hang past the end of the content had
+                    // nothing under it, `hit_node_id` was 0, and the pick was
+                    // dropped. It worked only where an element lay beneath.
+                    //
+                    // The branch it guards reads the click's Y against the
+                    // select's own geometry and never consults `hit_node_id`,
+                    // so letting it through costs nothing when the list is up.
+                    if (hit_node_id != 0 && hit_node_id == self.mousedown_target || self.open_select != 0)
+                        && !was_dragging
+                    {
                         let mut click = HtmlEvent::new(HtmlEventType::Click);
                         click.target = hit_node_id; click.doc_pos = doc_pt; click.client_pos = client_pos;
                         click.button = button;
                         if self.events.dispatch(&mut self.root, click) { redraw = true; }
 
                         // Form element interactions
-                        if hit_node_id != 0 && button == 0 {
-                            if let Some(form_redraw) = handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event) {
+                        // The second half of the popup rule: an OPEN DROPDOWN
+                        // is handled in here, and this gate excluded it for the
+                        // same reason the outer one did — a row with no element
+                        // beneath it has `hit_node_id == 0`. The form-click call
+                        // still needs a real node and keeps its own check.
+                        if (hit_node_id != 0 || self.open_select != 0) && button == 0 {
+                            if let Some(form_redraw) = (hit_node_id != 0)
+                                .then(|| handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event))
+                                .flatten()
+                            {
                                 if form_redraw { redraw = true; }
                                 // `handle_form_click` takes `&mut HtmlBox`, so it
                                 // wrote `checked` to the render tree only. Push it
@@ -3098,7 +3333,31 @@ impl Document {
                                 // answer.
                                 self.style_dirty = true;
                             }
-                            // Handle select dropdown
+                            // **Activating a `<summary>` toggles its `<details>`**
+                        // (HTML §4.11.1). The summary already draws a pointer
+                        // cursor and a disclosure marker, so the control looked
+                        // interactive and did nothing — the cursor promised an
+                        // interaction that was never wired.
+                        if hit_node_id != 0 && button == 0 {
+                            if let Some(details_id) = self.summary_details(hit_node_id) {
+                                let open = self
+                                    .find_htmlbox(details_id)
+                                    .map(|n| n.attributes.contains_key("open"))
+                                    .unwrap_or(false);
+                                if open {
+                                    self.remove_attribute(details_id, "open");
+                                } else {
+                                    self.set_attribute(details_id, "open", "");
+                                }
+                                // `details:not([open])` is a SELECTOR, so what
+                                // is shown is a cascade decision — the same
+                                // reason ticking a checkbox marks style dirty.
+                                self.style_dirty = true;
+                                redraw = true;
+                            }
+                        }
+
+                        // Handle select dropdown
                             if self.open_select != 0 {
                                 // Collect options from DOM children
                                 let sel = self.get_node(self.open_select).unwrap();
@@ -3206,6 +3465,13 @@ impl Document {
                                 let effective_id = find_form_parent_id(&self.root, hit_node_id);
                                 if self.get_node(effective_id).map(|n| n.tag == "select").unwrap_or(false) {
                                     self.open_select = effective_id;
+                                    redraw = true;
+                                } else if self.picker_kind(effective_id).is_some() {
+                                    // Activating the control opens its picker —
+                                    // HTML leaves each picker's FORM to the
+                                    // user agent and says only that one is
+                                    // offered.
+                                    self.open_picker = effective_id;
                                     redraw = true;
                                 }
                             }
@@ -4853,7 +5119,7 @@ impl Clone for Document {
             viewport_w:      self.viewport_w,
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
-            caret_blink_epoch: std::time::Instant::now(), open_select: 0, dropdown_hover_idx: -1,
+            caret_blink_epoch: std::time::Instant::now(), open_select: 0, open_picker: 0, dropdown_hover_idx: -1,
             active_animations:     self.active_animations.clone(),
             transition_states:     self.transition_states.clone(),
             prev_styles:           self.prev_styles.clone(),

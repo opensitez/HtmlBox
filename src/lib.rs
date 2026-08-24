@@ -226,7 +226,7 @@ fn collect_remote_images(
     path: &mut Vec<usize>,
     pending: &mut Vec<(Vec<usize>, String)>,
 ) {
-    if node.tag == "img" && node.image_data.is_none() {
+    if node.is_image_element() && node.image_data.is_none() {
         if let Some(url) = node.attributes.get("_resolved_src") {
             if url.starts_with("http://") || url.starts_with("https://") {
                 pending.push((path.clone(), url.clone()));

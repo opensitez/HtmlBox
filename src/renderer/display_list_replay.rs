@@ -482,6 +482,117 @@ fn replay_inner(
                         rb.size = sz;
                         rb.paint(target, bx, by, scale);
                     }
+                    // **A LIST BOX, not a dropdown** — HTML §4.10.7: a
+                    // `<select>` with `size` above one, or `multiple`, shows
+                    // its options as ROWS instead of one closed value. Both
+                    // spellings mean the same control; `size` alone was not
+                    // enough, since `<select multiple>` defaults to a list.
+                    //
+                    // This was painted as a closed combobox whatever the
+                    // markup said: a four-row list drew one row and a dropdown
+                    // arrow, showing only the first option. The options and the
+                    // selected index reach here on the display item precisely
+                    // so the rows can be drawn.
+                    // `<progress>` and `<meter>` — HTML §4.10.13/§4.10.14.
+                    //
+                    // Neither is expressible in CSS: the fill is a FRACTION of
+                    // two attributes. With no arm here they fell to the generic
+                    // text branch below and drew their value as a STRING, which
+                    // is why the widget gallery showed `0.6` where a bar goes.
+                    ("progress", _) | ("meter", _) => {
+                        let attr = |name: &str| {
+                            attributes
+                                .iter()
+                                .find(|(k, _)| k == name)
+                                .and_then(|(_, v)| v.trim().parse::<f32>().ok())
+                        };
+                        // The defaults are the spec's: `max` is 1 for a
+                        // progress bar and for a meter, `min` is 0.
+                        let min = attr("min").unwrap_or(0.0);
+                        let max = attr("max").unwrap_or(1.0).max(min);
+                        let has_value = attributes.iter().any(|(k, _)| k == "value");
+                        let value = attr("value").unwrap_or(min).clamp(min, max);
+                        let span = max - min;
+
+                        let mut gauge = crate::widgets::Gauge::new(if span > 0.0 {
+                            (value - min) / span
+                        } else {
+                            0.0
+                        });
+                        gauge.width = rect.w;
+                        gauge.height = rect.h;
+                        // **A `<progress>` with no `value` is indeterminate**,
+                        // which HTML distinguishes from `value="0"`. A meter
+                        // has no such state — `value` is required.
+                        gauge.indeterminate = tag == "progress" && !has_value;
+                        if tag == "meter" {
+                            gauge.band = crate::widgets::meter_band(
+                                value,
+                                min,
+                                max,
+                                attr("low").unwrap_or(min),
+                                attr("high").unwrap_or(max),
+                                attr("optimum").unwrap_or((min + max) / 2.0),
+                            );
+                        }
+                        gauge.paint(target, rect.x, rect.y, scale);
+                    }
+                    ("select", _)
+                        if attributes.iter().any(|(k, v)| {
+                            k == "multiple"
+                                || (k == "size"
+                                    && v.trim().parse::<u32>().map(|n| n > 1).unwrap_or(false))
+                        }) =>
+                    {
+                        // The box itself: the UA sheet gives a `<select>` a
+                        // white field and a grey border, and a list box is the
+                        // same field with rows in it.
+                        let ts = Transform::from_scale(scale, scale);
+                        let mut fill = Paint::default();
+                        fill.anti_alias = true;
+                        fill.set_color_rgba8(255, 255, 255, 255);
+                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
+                            target.fill_rect(r, &fill, ts, None);
+                        }
+
+                        let line_h = *font_size * 1.2;
+                        let pad = 2.0;
+                        for (i, label) in options.iter().enumerate() {
+                            let row_y = rect.y + pad + i as f32 * line_h;
+                            // Clip to the box: a list shows the rows that FIT
+                            // and scrolls the rest, and drawing past the border
+                            // would paint over whatever is beside it.
+                            if row_y + line_h > rect.y + rect.h - pad {
+                                break;
+                            }
+                            let mut text_color = apply_opacity(color, a2);
+                            if i as i32 == *selected {
+                                // The selected row is a filled bar with
+                                // reversed text, which is what every browser
+                                // and every toolkit draws.
+                                let mut bar = Paint::default();
+                                bar.set_color_rgba8(0, 120, 215, 255);
+                                if let Some(r) = SkRect::from_xywh(
+                                    rect.x + 1.0,
+                                    row_y,
+                                    (rect.w - 2.0).max(0.0),
+                                    line_h,
+                                ) {
+                                    target.fill_rect(r, &bar, ts, None);
+                                }
+                                text_color = crate::types::Color::rgba(255, 255, 255, 255);
+                            }
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    rect.x + 4.0, row_y, label, font_family,
+                                    *font_size, *font_weight, 0, rect.w - 8.0, line_h,
+                                    &text_color, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
+                    }
                     ("select", _) => {
                         // Use Select widget for the arrow
                         let mut sel = crate::widgets::Select::new(vec![]);
@@ -504,6 +615,133 @@ fn replay_inner(
                                 );
                             }
                         }
+                    }
+                    // **`<input type=image>` is an image AND a submit button**
+                    // (HTML §4.10.5.1.19). The image itself is painted by the
+                    // `<img>` path — `is_image_element` is what lets it in —
+                    // so all that is left here is the spec's fallback: "if the
+                    // image is unavailable, the alt text is used". Without an
+                    // arm it fell to the generic text branch and drew its
+                    // VALUE, which for a submit button is the submission name,
+                    // not anything a person should see.
+                    ("input", "image") => {
+                        let has_image = attributes.iter().any(|(k, _)| k == "_resolved_src")
+                            || attributes.iter().any(|(k, _)| k == "src");
+                        let alt = attributes
+                            .iter()
+                            .find(|(k, _)| k == "alt")
+                            .map(|(_, v)| v.as_str())
+                            .unwrap_or("");
+                        // The alt is drawn only when there is no image to show
+                        // — an image that HAS loaded is painted by the image
+                        // command and must not have text over it.
+                        if !alt.is_empty() && !has_image {
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                let c = apply_opacity(color, a2);
+                                let line_h = *font_size * 1.2;
+                                let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    rect.x + 2.0, text_y, alt, font_family,
+                                    *font_size, *font_weight, 0, rect.w, line_h,
+                                    &c, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
+                    }
+                    // `<input type=file>` is a BUTTON plus the chosen file's
+                    // name (HTML §4.10.5.1.18) — it fell to the generic arm and
+                    // drew the value as bare text, which for an empty control
+                    // is nothing at all.
+                    ("input", "file") => {
+                        let line_h = *font_size * 1.2;
+                        let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
+                        // Measured from the label so the chrome cannot clip its
+                        // own word in a large font.
+                        let label_w =
+                            crate::widgets::CHOOSE.chars().count() as f32 * *font_size * 0.55;
+                        let button_w =
+                            crate::widgets::FileButton::width_for(label_w).min(rect.w);
+                        let mut button =
+                            crate::widgets::FileButton::new(button_w, rect.h);
+                        button.disabled = attributes.iter().any(|(k, _)| k == "disabled");
+                        button.paint(target, rect.x, rect.y, scale);
+                        if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                            let c = apply_opacity(color, a2);
+                            draw_text_cmd(
+                                target, *fs, *sc, scale,
+                                rect.x + 8.0, text_y, crate::widgets::CHOOSE, font_family,
+                                *font_size, *font_weight, 0, button_w, line_h,
+                                &c, &super::display_list::TextDecoration::default(),
+                                0.0, false,
+                            );
+                            // ⛔ The empty case is a LABEL, not the value: a
+                            // file control with nothing chosen has `value ==
+                            // ""`, and drawing this string from the value would
+                            // be a control that submits "No file chosen".
+                            let name = if value.is_empty() {
+                                crate::widgets::NOTHING_CHOSEN
+                            } else {
+                                value
+                            };
+                            draw_text_cmd(
+                                target, *fs, *sc, scale,
+                                rect.x + button_w + 8.0, text_y, name, font_family,
+                                *font_size, *font_weight, 0,
+                                (rect.w - button_w - 8.0).max(0.0), line_h,
+                                &c, &super::display_list::TextDecoration::default(),
+                                0.0, false,
+                            );
+                        }
+                    }
+                    // The date and time family — a formatted field with a
+                    // picker affordance. Five input types, one control.
+                    ("input", _)
+                        if crate::widgets::DateKind::for_input(input_type.as_str()).is_some() =>
+                    {
+                        let (kind, pattern) =
+                            crate::widgets::DateKind::for_input(input_type.as_str())
+                                .expect("guarded above");
+                        let mut field = crate::widgets::DateField::new(kind, rect.w, rect.h);
+                        field.disabled = attributes.iter().any(|(k, _)| k == "disabled");
+                        field.paint(target, rect.x, rect.y, scale);
+                        if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                            // An empty field shows the PATTERN, dimmed — the
+                            // same treatment a placeholder gets, and what makes
+                            // an empty date input tell you what it wants.
+                            let mut c = apply_opacity(color, a2);
+                            let shown = if value.is_empty() {
+                                c.a = (c.a as f32 * 0.5) as u8;
+                                pattern
+                            } else {
+                                value
+                            };
+                            let line_h = *font_size * 1.2;
+                            let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
+                            let room = (rect.w
+                                - crate::widgets::DateField::glyph_width(rect.h)
+                                - 4.0)
+                                .max(0.0);
+                            draw_text_cmd(
+                                target, *fs, *sc, scale,
+                                rect.x + 4.0, text_y, shown, font_family,
+                                *font_size, *font_weight, 0, room, line_h,
+                                &c, &super::display_list::TextDecoration::default(),
+                                0.0, false,
+                            );
+                        }
+                    }
+                    // `<input type=color>` is a SWATCH, not a text field. It
+                    // fell to the generic arm and rendered `#3366cc` as a
+                    // string — the one thing this control never shows.
+                    ("input", "color") => {
+                        let mut swatch = crate::widgets::ColorSwatch::new(
+                            crate::widgets::ColorSwatch::parse(value),
+                        );
+                        swatch.width = rect.w;
+                        swatch.height = rect.h;
+                        swatch.paint(target, rect.x, rect.y, scale);
                     }
                     ("input", "text") | ("input", "tel") | ("input", "email") |
                     ("input", "password") | ("input", "search") | ("input", "url") |
@@ -551,6 +789,18 @@ fn replay_inner(
                                 );
                             }
                         }
+                        // **The spinner, drawn after the field's own text.**
+                        // `<input type=number>` IS a text field with a stepper
+                        // on it: the field is a CSS box with a text run, which
+                        // the engine already draws, and the two arrows are the
+                        // part no declaration expresses. Last, so the well
+                        // covers a value long enough to reach it — which is
+                        // what a browser does as well.
+                        if input_type == "number" {
+                            let mut stepper = crate::widgets::Stepper::new(rect.w, rect.h);
+                            stepper.disabled = attributes.iter().any(|(k, _)| k == "disabled");
+                            stepper.paint(target, rect.x, rect.y, scale);
+                        }
                     }
                     ("input", "range") => {
                         // Use Slider widget
@@ -562,8 +812,45 @@ fn replay_inner(
                         slider.height = rect.h;
                         slider.paint(target, rect.x, rect.y, scale);
                     }
-                    ("input", "submit") | ("input", "button") | ("input", "reset") | ("button", _) => {
-                        // Button text is rendered by the inline text pipeline — nothing to do here
+                    // `<button>` takes its label from its CHILDREN, which the
+                    // inline text pipeline lays out and draws. Nothing to do.
+                    ("button", _) => {}
+                    // ⛔ An `<input>` button is a VOID element — it has no
+                    // children for that pipeline to find, and its label is the
+                    // `value` ATTRIBUTE (HTML §4.10.5.1.19). Sharing the arm
+                    // with `<button>` meant `<input type=submit value="Send">`
+                    // drew an empty pill: correct chrome, no word on it.
+                    //
+                    // With no `value` the UA supplies the label, which is why a
+                    // bare `<input type=submit>` reads "Submit" in every
+                    // browser rather than being blank.
+                    ("input", "submit") | ("input", "button") | ("input", "reset") => {
+                        let label: &str = if !value.is_empty() {
+                            value
+                        } else {
+                            match input_type.as_str() {
+                                "submit" => "Submit",
+                                "reset" => "Reset",
+                                _ => "",
+                            }
+                        };
+                        if !label.is_empty() {
+                            if let Some((ref mut fs, ref mut sc)) = text_ctx {
+                                let c = apply_opacity(color, a2);
+                                let line_h = *font_size * 1.2;
+                                // Centred both ways, as button chrome is.
+                                let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
+                                let text_w = label.chars().count() as f32 * *font_size * 0.5;
+                                let text_x = rect.x + (rect.w - text_w).max(0.0) / 2.0;
+                                draw_text_cmd(
+                                    target, *fs, *sc, scale,
+                                    text_x, text_y, label, font_family,
+                                    *font_size, *font_weight, 0, rect.w, line_h,
+                                    &c, &super::display_list::TextDecoration::default(),
+                                    0.0, false,
+                                );
+                            }
+                        }
                     }
                     _ => {
                         // Other form elements: draw value text if present

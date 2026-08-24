@@ -2,6 +2,14 @@
 //!
 //! This module ports the C++ `wxHtmlEditWidget` DOM/events/editing API to Rust.
 
+
+/// The HTML namespace — DOM §1.5. An element created without a namespace in an
+/// HTML document is in it, which is why `namespace: None` counts as HTML.
+///
+/// Named here because two rules turn on it: `nodeName` uppercases only for HTML
+/// elements, and `createElementNS` with this URI is an ordinary HTML element.
+pub const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
+
 pub mod arena;
 pub mod api;
 pub mod events;

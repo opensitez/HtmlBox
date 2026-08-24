@@ -694,7 +694,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // replay reads. Everything the 2D context drew is already in those bytes,
     // so painting a canvas is painting its bitmap and nothing else — which is
     // also what the spec says a canvas is.
-    if node.tag == "img" || node.tag == "svg" || node.tag == "canvas" {
+    if node.is_image_element() || node.tag == "svg" || node.tag == "canvas" {
         if let Some(ref data) = node.image_data {
             if node.image_width > 0 && node.image_height > 0 {
                 let cr = node.layout.content_rect;
@@ -703,7 +703,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
                     data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
                 });
             }
-        } else if node.tag == "svg" || (node.tag == "img" && node.svg_markup.is_some()) {
+        } else if node.tag == "svg" || (node.is_image_element() && node.svg_markup.is_some()) {
             // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
             if let Some(ref markup) = node.svg_markup {
                 let cr = node.layout.content_rect;

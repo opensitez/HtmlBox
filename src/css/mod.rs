@@ -400,7 +400,26 @@ fn matches_part_with_context(
             .map(|s| s.split_whitespace().any(|c| c == cls))
             .unwrap_or(false),
         SelectorPart::Attribute { name, op, value } => {
-            match attrs.get(name) {
+            // **An attribute NAME in a selector is ASCII case-insensitive for
+            // an HTML document.** HTML folds attribute names on the way in, so
+            // `[DATA-Foo]` and `[data-foo]` name the same attribute — and a
+            // page that writes `setAttribute("DATA-Foo", …)` and then styles
+            // `[DATA-Foo]` is one a browser handles without comment.
+            //
+            // Exact FIRST, fold only on a miss — the same shape the namespace
+            // tree settled on, and it leaves an XML document (whose attribute
+            // names keep their case) matching exactly as it must.
+            //
+            // The tag name already worked this way (`eq_ignore_ascii_case`);
+            // the attribute name was the half nobody folded, so `[DATA-foo]`
+            // silently matched nothing.
+            let found = attrs.get(name).or_else(|| {
+                attrs
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            });
+            match found {
                 None     => false,
                 Some(av) => match op {
                     AttrOp::Exists     => true,
@@ -5374,18 +5393,59 @@ fn apply_cascade_inner(
                 _ => {}
             },
             "valign"  => apply_property(&mut style, "vertical-align", val),
+            // `<select multiple>` with no `size` shows FOUR rows, which is the
+            // long-standing UA default every browser uses. With a `size` the
+            // arm below wins, because it is applied from that attribute.
+            "multiple" if root.tag == "select" && !root.attributes.contains_key("size") => {
+                apply_property(&mut style, "height", &format!("{}em", 4.0 * 1.2 + 0.5));
+            }
             "bgcolor" => apply_property(&mut style, "background-color", val),
             "color" | "text" => apply_property(&mut style, "color", val),
             "face"  => apply_property(&mut style, "font-family", val),
-            "size"  => {
-                // HTML <font size="1..7"> maps to absolute px sizes
-                let px: f32 = match val.trim() {
-                    "1" => 10.0, "2" => 13.0, "3" => 16.0,
-                    "4" => 18.0, "5" => 24.0, "6" => 32.0, "7" => 48.0,
-                    v   => v.parse::<f32>().unwrap_or(16.0),
-                };
-                apply_property(&mut style, "font-size", &format!("{}px", px));
-            }
+            // ⛔ `size` means THREE different things depending on the element,
+            // and this arm applied the `<font>` one to all of them: a
+            // `<select size="4">` — four visible ROWS — was being given
+            // `font-size: 18px`, because `"4"` is also a legal `<font size>`.
+            "size"  => match root.tag.as_str() {
+                // HTML <font size="1..7"> maps to absolute px sizes.
+                "font" => {
+                    let px: f32 = match val.trim() {
+                        "1" => 10.0, "2" => 13.0, "3" => 16.0,
+                        "4" => 18.0, "5" => 24.0, "6" => 32.0, "7" => 48.0,
+                        v   => v.parse::<f32>().unwrap_or(16.0),
+                    };
+                    apply_property(&mut style, "font-size", &format!("{}px", px));
+                }
+                // **`<select size=N>` with N > 1 is a LIST BOX** (HTML
+                // §4.10.7): it shows N options at once instead of one closed
+                // row. The UA sheet's `height: 2.2em` is the closed height, so
+                // the list needs its own — one line box per row plus the
+                // border-box padding, which is what a browser computes.
+                //
+                // Presentational, so an author's own `height` still wins: this
+                // is the UA's default for the attribute, not an override.
+                "select" => {
+                    // Every `<select size=N>` takes its height from here, N=1
+                    // included: the UA rule deliberately does not match an
+                    // element that HAS the attribute, so if this arm skipped
+                    // `size="1"` that select would be left with no height at
+                    // all. One row is the closed height.
+                    let rows = val.trim().parse::<f32>().unwrap_or(1.0).max(1.0);
+                    let height = if rows > 1.0 { rows * 1.2 + 0.5 } else { 2.2 };
+                    apply_property(&mut style, "height", &format!("{height}em"));
+                }
+                // `<input size=N>` is a width in CHARACTERS — `ch` is exactly
+                // that unit, and the UA sheet's fixed `width: 200px` is what it
+                // replaces.
+                "input" => {
+                    if let Ok(chars) = val.trim().parse::<f32>() {
+                        if chars > 0.0 {
+                            apply_property(&mut style, "width", &format!("{}ch", chars));
+                        }
+                    }
+                }
+                _ => {}
+            },
             "width" => {
                 if val.ends_with('%') {
                     apply_property(&mut style, "width", val);
@@ -7034,6 +7094,13 @@ figure { display: block; margin-top: 1em; margin-bottom: 1em; margin-left: 40px;
 figcaption { display: block; }
 details { display: block; }
 summary { display: list-item; list-style-type: disclosure-closed; }
+/* A closed `<details>` shows only its summary (HTML §4.11.1). Said in CSS so
+   it holds after ANY cascade — `apply_details_summary_post_cascade` runs at
+   parse time only, so toggling `open` at runtime was undone by the next
+   restyle. Phrased as "hide when closed" rather than "show when open" on
+   purpose: a revealed child keeps its own `display`, and a rule that forced
+   `block` would turn a revealed `<span>` into one. */
+details:not([open]) > *:not(summary) { display: none; }
 pre, listing, plaintext, xmp { display: block; font-family: monospace; white-space: pre; margin-top: 1em; margin-bottom: 1em; }
 hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; height: 0; border-top-width: 1px; border-top-style: solid; border-top-color: silver; overflow: hidden; }
 dl, ol, ul, menu, dir { display: block; margin-top: 1em; margin-bottom: 1em; }
@@ -7098,11 +7165,27 @@ input:disabled, select:disabled, textarea:disabled, button:disabled {
   opacity: 0.6; cursor: default;
 }
 input[type=hidden] { display: none; }
+/* An image button IS an image (HTML §4.10.5.1.19), so it takes the box an
+   `<img>` takes — not the 200px text-field default the bare `input` rule
+   gives it, which squashed every image into a field-shaped strip. `width`
+   and `height` on the element still win, as they do on an `<img>`. */
+input[type=image] { display: inline-block; width: auto; height: auto; border: none; padding: 0; background-color: transparent; }
 input[type=radio], input[type=checkbox] { display: inline-block; width: 16px; height: 16px; vertical-align: middle; margin: 0 6px 0 2px; border: none; padding: 0; background: transparent; flex-shrink: 0; }
 label { display: inline-block; }
 input { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
-input[type=submit], input[type=button], input[type=reset] { width: auto; height: auto; border: 1px solid #767676; padding: 3px 8px; background-color: #e8e8e8; }
-select { display: inline-block; width: 200px; height: 2.2em; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
+/* A button input's height is its LABEL's line box plus the padding and border
+   — it has no children to give it one, so `height: auto` collapsed it to a
+   sliver with the word sitting outside. `calc` rather than a fixed px so it
+   still tracks the font, and `width: auto` keeps the intrinsic width the
+   label measures. */
+input[type=submit], input[type=button], input[type=reset] { width: auto; height: calc(1.2em + 8px); border: 1px solid #767676; padding: 3px 8px; background-color: #e8e8e8; }
+select { display: inline-block; width: 200px; padding: 0 6px; border: 1px solid #ababab; border-radius: 3px; box-sizing: border-box; vertical-align: middle; background-color: #ffffff; color: #000000; }
+/* A CLOSED select is one row tall. A list box — `size` above one, or
+   `multiple` — is as tall as its rows, and that height depends on a NUMBER,
+   which CSS cannot express: it arrives as a presentational hint from the
+   `size` attribute. The hint has to be the only thing setting the height, so
+   this rule must not match a list box. */
+select:not([size]):not([multiple]) { height: 2.2em; }
 option, optgroup { display: none; }
 textarea { display: inline-block; white-space: pre-wrap; width: 200px; height: 3em; padding: 2px; border: 1px solid #767676; box-sizing: border-box; }
 input[type=range] { width: 160px; height: 1.2em; border: none; padding: 0; }

@@ -1363,3 +1363,31 @@ fn body_margin_overridden_by_author_css() {
     };
     assert_eq!(m, 0.0, "body margin-top should be overridden to 0 by author CSS, got {:?}", body.style.margin_top);
 }
+
+#[test]
+fn clicking_a_summary_toggles_its_details() {
+    // HTML §4.11.1: activating the summary toggles the details' `open`
+    // attribute. The summary already drew a pointer cursor and a disclosure
+    // marker, so it LOOKED interactive — the click was simply never wired.
+    let mut doc = crate::load_html(
+        r#"<details id="d"><summary id="s">Title</summary><p id="body">Body</p></details>"#,
+        400.0,
+    );
+    crate::layout::LayoutEngine::new().layout(&mut doc, 400.0);
+    let d = doc.get_element_by_id("d").unwrap();
+    let s = doc.get_element_by_id("s").unwrap();
+    assert!(!doc.has_attribute(d, "open"), "starts closed");
+
+    let br = find_box(&doc.root, &|b: &HtmlBox| b.node_id == s)
+        .expect("the summary has a box")
+        .layout
+        .border_rect;
+    let point = (br.x + br.w / 2.0, br.y + br.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, point, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, point, 0);
+    assert!(doc.has_attribute(d, "open"), "the click opened it");
+
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, point, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, point, 0);
+    assert!(!doc.has_attribute(d, "open"), "and the next click closed it again");
+}

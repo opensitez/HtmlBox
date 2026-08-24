@@ -20,6 +20,11 @@ pub mod textfield;
 pub mod select;
 pub mod button;
 pub mod slider;
+pub mod progress;
+pub mod stepper;
+pub mod color_swatch;
+pub mod file_button;
+pub mod date_field;
 
 pub use checkbox::Checkbox;
 pub use radio::Radio;
@@ -27,6 +32,16 @@ pub use textfield::TextInput;
 pub use select::Select;
 pub use button::Button;
 pub use slider::Slider;
+pub use progress::{Band, Gauge, meter_band};
+pub use stepper::Stepper;
+pub use color_swatch::{
+    ColorSwatch, PALETTE, PALETTE_CELL, PALETTE_COLUMNS, to_simple_colour,
+};
+pub use file_button::{CHOOSE, FileButton, NOTHING_CHOSEN};
+pub use date_field::{
+    Calendar, DateField, Kind as DateKind, days_in_month, first_weekday, parse_date,
+    to_date_value,
+};
 
 use tiny_skia::PathBuilder;
 
