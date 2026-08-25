@@ -1396,6 +1396,7 @@ fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) 
         value,
         placeholder,
         input_cursor: node.input_cursor,
+        vertical: !matches!(node.style.writing_mode, crate::types::WritingMode::HorizontalTB),
         options,
         selected,
     });

@@ -454,7 +454,7 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, options, selected } => {
+            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, vertical, options, selected } => {
                 // CSS background/border/padding are drawn by the normal pipeline.
                 // FormElement only draws the CONTENT: value text, check marks, radio dots, etc.
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
@@ -810,6 +810,7 @@ fn replay_inner(
                         let mut slider = crate::widgets::Slider::new(min, max, val);
                         slider.width = rect.w;
                         slider.height = rect.h;
+                        slider.vertical = *vertical;
                         slider.paint(target, rect.x, rect.y, scale);
                     }
                     // `<button>` takes its label from its CHILDREN, which the

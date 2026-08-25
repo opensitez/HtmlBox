@@ -153,6 +153,15 @@ pub enum PaintCmd {
         value: String,
         placeholder: String,
         input_cursor: usize,
+        /// The control's writing mode is VERTICAL (`vertical-rl`/`vertical-lr`).
+        ///
+        /// A form control is laid out along its INLINE axis, and a vertical
+        /// writing mode turns that axis on its side — which is how CSS says
+        /// "this slider runs up and down" without a second element or a
+        /// non-standard `orient` attribute. Resolved here, where the computed
+        /// style is, rather than sniffed out of the `style` attribute in the
+        /// painter: a stylesheet rule sets it just as well as an inline one.
+        vertical: bool,
         /// A `<select>`'s option LABELS, in tree order. Empty for every other
         /// control.
         ///

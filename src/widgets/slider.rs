@@ -15,6 +15,17 @@ pub struct Slider {
     pub height: f32,
     pub track_height: f32,
     pub thumb_radius: f32,
+    /// Runs top-to-bottom instead of left-to-right — a VERTICAL writing mode.
+    ///
+    /// **This is the whole of what makes a range input vertical**, and it is
+    /// CSS that says so (`writing-mode: vertical-rl`/`vertical-lr`), not a
+    /// second element and not the non-standard `orient` attribute. A control is
+    /// laid out along its inline axis; a vertical writing mode turns that axis.
+    ///
+    /// The value increases DOWNWARD, following that inline axis — the same
+    /// direction the text would run — so the minimum is at the top. `direction`
+    /// would flip it, which is not modelled here.
+    pub vertical: bool,
 }
 
 impl Slider {
@@ -32,6 +43,7 @@ impl Slider {
             height: 20.0,
             track_height: 4.0,
             thumb_radius: 8.0,
+            vertical: false,
         }
     }
 
@@ -45,22 +57,50 @@ impl Slider {
         let mut paint = Paint::default();
         paint.anti_alias = true;
 
-        let track_y = y + (self.height - self.track_height) / 2.0;
-        let thumb_x = x + self.thumb_radius + self.value * (self.width - self.thumb_radius * 2.0);
-        let thumb_y = y + self.height / 2.0;
+        // The track runs along the INLINE axis and is centred on the other one;
+        // the thumb travels the track's length, inset by its own radius at each
+        // end so it stops flush rather than half off the control. Both axes are
+        // the same geometry with the roles of width and height exchanged.
+        let (track_x, track_y, track_w, track_h) = if self.vertical {
+            (
+                x + (self.width - self.track_height) / 2.0,
+                y,
+                self.track_height,
+                self.height,
+            )
+        } else {
+            (
+                x,
+                y + (self.height - self.track_height) / 2.0,
+                self.width,
+                self.track_height,
+            )
+        };
+        let travel = if self.vertical { self.height } else { self.width } - self.thumb_radius * 2.0;
+        let along = self.thumb_radius + self.value * travel.max(0.0);
+        let (thumb_x, thumb_y) = if self.vertical {
+            (x + self.width / 2.0, y + along)
+        } else {
+            (x + along, y + self.height / 2.0)
+        };
 
         // Track background
         paint.set_color_rgba8(200, 200, 200, 255);
-        if let Some(path) = rounded_rect_path(x, track_y, self.width, self.track_height, 2.0) {
+        if let Some(path) = rounded_rect_path(track_x, track_y, track_w, track_h, 2.0) {
             pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
         }
 
-        // Filled portion
+        // Filled portion — from the track's start up to the thumb.
         let (r, g, b, a) = self.colors.accent;
         paint.set_color_rgba8(r, g, b, a);
-        let fill_w = thumb_x - x;
-        if fill_w > 0.0 {
-            if let Some(path) = rounded_rect_path(x, track_y, fill_w, self.track_height, 2.0) {
+        let filled = if self.vertical { thumb_y - y } else { thumb_x - x };
+        if filled > 0.0 {
+            let (fw, fh) = if self.vertical {
+                (track_w, filled)
+            } else {
+                (filled, track_h)
+            };
+            if let Some(path) = rounded_rect_path(track_x, track_y, fw, fh, 2.0) {
                 pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
@@ -85,17 +125,17 @@ impl Slider {
     }
 
     /// Handle mouse down — start dragging if on thumb.
-    pub fn mouse_down(&mut self, x: f32, _y: f32) -> bool {
+    pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         if self.disabled { return false; }
         self.dragging = true;
-        self.set_from_x(x);
+        self.set_from_pointer(x, y);
         true
     }
 
     /// Handle mouse move during drag.
-    pub fn mouse_move(&mut self, x: f32) {
+    pub fn mouse_move(&mut self, x: f32, y: f32) {
         if self.dragging {
-            self.set_from_x(x);
+            self.set_from_pointer(x, y);
         }
     }
 
@@ -104,9 +144,19 @@ impl Slider {
         self.dragging = false;
     }
 
-    fn set_from_x(&mut self, x: f32) {
-        let usable = self.width - self.thumb_radius * 2.0;
-        let pct = (x - self.thumb_radius) / usable;
-        self.value = pct.clamp(0.0, 1.0);
+    /// Where along the track the pointer landed. Reads the axis the control
+    /// actually runs on — a vertical slider that measured `x` would answer with
+    /// whatever the pointer's horizontal position happened to be.
+    fn set_from_pointer(&mut self, x: f32, y: f32) {
+        let (along, extent) = if self.vertical {
+            (y, self.height)
+        } else {
+            (x, self.width)
+        };
+        let usable = extent - self.thumb_radius * 2.0;
+        if usable <= 0.0 {
+            return;
+        }
+        self.value = ((along - self.thumb_radius) / usable).clamp(0.0, 1.0);
     }
 }

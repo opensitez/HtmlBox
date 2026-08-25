@@ -1828,6 +1828,35 @@ impl Document {
         if self.pending_nodes.contains_key(&id) {
             return self.pending_nodes.get(&id);
         }
+        // **A DETACHED SUBTREE IS STILL A TREE.**
+        //
+        // `pending_nodes` holds detached ROOTS. The moment a node is appended
+        // into one it stops being a root and lives in that box's `children`,
+        // so a map lookup no longer finds it — and neither does a walk from
+        // `root`, because none of it is in the document yet.
+        //
+        // That is the ordinary idiom one level deeper, and it is what
+        // `innerHTML` on a detached element does for every tag after the
+        // first: build the subtree, then insert it. Without this the parser
+        // could attach a control's direct children and nothing below them —
+        // a `<table>` kept its `<thead>` nowhere, and a `<button>`'s own TEXT
+        // was dropped, so composed chrome came out as empty boxes.
+        fn find_pending<'a>(nodes: &'a [HtmlBox], id: u32) -> Option<&'a HtmlBox> {
+            for node in nodes {
+                if node.node_id == id {
+                    return Some(node);
+                }
+                if let Some(found) = find_pending(&node.children, id) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        for pending in self.pending_nodes.values() {
+            if let Some(found) = find_pending(std::slice::from_ref(pending), id) {
+                return Some(found);
+            }
+        }
         fn walk(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
             if node.node_id == id { return Some(node); }
             for child in &node.children {
@@ -1853,6 +1882,27 @@ impl Document {
                 if let Some(found) = walk(child, id) { return Some(found); }
             }
             None
+        }
+        // The same detached-subtree search `find_htmlbox` explains, and the
+        // half that actually loses nodes: `append_child` takes the child OUT of
+        // `pending_nodes` before asking for its parent, so a parent this cannot
+        // find means the child is already gone and is dropped in silence.
+        //
+        // Found in two passes because the owning root has to be identified
+        // before the map can be borrowed mutably to walk into it.
+        fn contains(node: &HtmlBox, id: u32) -> bool {
+            node.node_id == id || node.children.iter().any(|child| contains(child, id))
+        }
+        let owner = self
+            .pending_nodes
+            .iter()
+            .find(|(_, pending)| contains(pending, id))
+            .map(|(key, _)| *key);
+        if let Some(owner) = owner {
+            return self
+                .pending_nodes
+                .get_mut(&owner)
+                .and_then(|pending| walk(pending, id));
         }
         walk(&mut self.root, id)
     }
