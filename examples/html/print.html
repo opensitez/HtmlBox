@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>wxHtmlEdit – Print Demo</title>
+  <title>Print Demo</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -189,17 +189,17 @@
   <div id="page">
 
     <!-- Optional page header -->
-    <div id="page-header">wxHtmlEdit Print Demo</div>
+    <div id="page-header">Print Demo</div>
 
     <!-- Document content — verbatim from DEMO_HTML string in print_demo.cpp -->
     <div id="doc-content">
 
       <h1 style="color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 8px;">
-        wxHtmlEdit Print Demo
+        Print Demo
       </h1>
 
       <p>This document demonstrates the <b>printing</b> and
-      <b>print preview</b> capabilities of wxHtmlEditWidget.
+      <b>print preview</b> capabilities.
       Click the buttons above to try them out.</p>
 
       <h2 style="color: #8e44ad;">Feature List</h2>
@@ -282,21 +282,6 @@
           </tr>
         </tbody>
       </table>
-
-      <h2 style="color: #27ae60;">Code Example</h2>
-      <pre>// Quick print with defaults
-widget-&gt;Print();
-
-// Print preview with settings dialog
-widget-&gt;PrintPreviewWithDialog();
-
-// Manual settings
-wxHtmlEditWidget::PrintSettings ps;
-ps.paperSize = wxHtmlEditWidget::PaperSize::Letter;
-ps.orientation = wxHtmlEditWidget::Orientation::Landscape;
-ps.scale = 0.75;
-ps.printBackgrounds = false;
-widget-&gt;PrintPreview(ps);</pre>
 
       <h2 style="color: #2980b9;">Filler Text</h2>
       <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
