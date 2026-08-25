@@ -1278,7 +1278,7 @@ impl Stylesheet {
                 if let Some(pos) = last_comb {
                     // Check if :hover appears in the ancestor part (before the combinator)
                     for part in &sel.parts[..pos] {
-                        if matches!(part, SelectorPart::PseudoClass(ref pc) if pc == "hover") {
+                        if matches!(part, SelectorPart::PseudoClass(pc) if pc == "hover") {
                             self.has_hover_descendant_rules = true;
                             break 'rules;
                         }
@@ -5286,7 +5286,7 @@ fn apply_pseudo_child(
         let mut pseudo_box = crate::types::HtmlBox::new(tag);
         pseudo_box.text = content.clone();
         pseudo_box.tag = tag.to_string();
-        if let Some(ref ps) = pseudo_style {
+        if let Some(ps) = pseudo_style {
             pseudo_box.style = *ps.clone();
         }
         // Blockify inline pseudo-elements in grid/flex containers (not positioned ones)
@@ -5653,7 +5653,7 @@ fn apply_cascade_inner(
                 if matches!(val, crate::types::CssValue::Inherit) {
                     let name = property_defs::get(id).name;
                     inherit_props.insert(name.to_string());
-                } else if let crate::types::CssValue::Raw(ref s) = val {
+                } else if let crate::types::CssValue::Raw(s) = val {
                     // Raw values may contain var() even when has_vars is false
                     // (the rule has var refs but no variables are defined in scope).
                     // Resolve var() with empty vars — triggers fallback values.

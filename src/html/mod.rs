@@ -421,12 +421,12 @@ pub fn decode_image_bytes_ex(bytes: &[u8]) -> Option<DecodedImage> {
 fn svg_intrinsic_size(svg: &str) -> (f32, f32) {
     use resvg::usvg;
     let opt = usvg::Options::default();
-    if let Ok(tree) = usvg::Tree::from_str(svg, &opt) {
+    match usvg::Tree::from_str(svg, &opt) { Ok(tree) => {
         let size = tree.size();
         (size.width(), size.height())
-    } else {
+    } _ => {
         (0.0, 0.0)
-    }
+    }}
 }
 
 pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {

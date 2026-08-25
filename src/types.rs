@@ -3558,7 +3558,7 @@ impl Document {
 
         let mut redraw = false;
         macro_rules! ev {
-            ($t:expr, $tgt:expr, $rel:expr, $bubble:expr) => {{
+            ($t:expr_2021, $tgt:expr_2021, $rel:expr_2021, $bubble:expr_2021) => {{
                 let mut e = HtmlEvent::new($t);
                 e.target = $tgt; e.related_target = $rel;
                 e.doc_pos = doc_pt; e.client_pos = client_pos;

@@ -461,7 +461,7 @@ fn update_drop_highlights(doc: &mut Document, new_target: &Option<String>) {
             dom::remove_class(col, "column-drop-active");
         }
     }
-    if let Some(ref body_id) = new_target {
+    if let Some(body_id) = new_target {
         // Derive col id from body id: "body-backlog" → "col-backlog"
         let col_id = format!("col-{}", &body_id["body-".len()..]);
         if let Some(col) = dom::query_selector_mut(root, &format!("#{}", col_id)) {
