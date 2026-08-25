@@ -1,20 +1,20 @@
 [package]
-name = "htmlbox"
+name = "webcore"
 version = "0.2.0"
 edition = "2021"
 description = "HTML/CSS editor and renderer in Rust using tiny-skia"
 license = "GPL-3.0-or-later OR LicenseRef-Commercial"
-repository = "https://github.com/opensitez/htmlbox" 
+repository = "https://github.com/opensitez/webcore" 
 readme = "README.md" 
 keywords = ["html", "css", "rendering"]
 categories = ["gui", "rendering", "web-programming"]
 
 [lib]
-name = "htmlbox"
+name = "webcore"
 path = "src/lib.rs"
 
 [[bin]]
-name = "htmlbox"
+name = "webcore"
 path = "src/main.rs"
 
 [[example]]
