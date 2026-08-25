@@ -39,12 +39,20 @@ The repository includes several examples demonstrating the capabilities of `html
 cargo run --example contenteditable_demo
 ```
 
+## Copyright
+
+Copyright (c) 2026 OpenSitez.com and Youness El Andaloussi. All rights reserved.
+
 ## License
 
 This project is dual-licensed to offer both open-source and commercial use:
 
 **1. Open Source (GPLv3)**
-If you are building an open-source application under a compatible license, you may use `htmlbox` under the terms of the [GNU General Public License v3.0](LICENSE-GPL) (or later).x
+If you are building an open-source application under a compatible license, you may use `htmlbox` under the terms of the [GNU General Public License v3.0](LICENSE-GPL) (or later).
 
 **2. Commercial License**
 If you want to use `htmlbox` in a proprietary, closed-source commercial product without the requirements of the GPLv3, you must purchase a Commercial License. Please contact us for pricing and details.
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dedicated to the public domain (or equivalent, such as the CC0 1.0 Universal public domain dedication). This ensures that all contributions can be freely incorporated into both the open-source (GPLv3) and commercial releases of the project without additional licensing restrictions.
