@@ -1,9 +1,9 @@
 // Grid tests – ported from cpptests/test_grid.cpp
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::css::apply_property;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -579,7 +579,7 @@ fn grid_template_rows_layout() {
            <div>A</div><div>B</div>\
          </div>", 400.0);
     let grid = find_box(&doc.root, &|b| b.style.display == Display::Grid).unwrap();
-    let elems: Vec<&HtmlBox> = grid.children.iter().filter(|c| c.tag != "#text").collect();
+    let elems: Vec<&WebCore> = grid.children.iter().filter(|c| c.tag != "#text").collect();
     let a = elems[0];
     let b = elems[1];
     // First row ~50px
@@ -1109,10 +1109,10 @@ fn grid_auto_flow_column_dense_layout() {
 fn grid_cell_stretch_border_box() {
     // Regression: with box-sizing: border-box, align-self: stretch was
     // double-subtracting padding/border from the cell height, making content_h = 0.
-    use htmlbox::{load_html};
-    use htmlbox::types::{HtmlBox, Display};
+    use webcore::{load_html};
+    use webcore::types::{WebCore, Display};
 
-    fn find_grid<'a>(root: &'a HtmlBox) -> Option<&'a HtmlBox> {
+    fn find_grid<'a>(root: &'a WebCore) -> Option<&'a WebCore> {
         if root.style.display == Display::Grid { return Some(root); }
         for c in &root.children { if let Some(g) = find_grid(c) { return Some(g); } }
         None

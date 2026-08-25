@@ -2,8 +2,8 @@
 // Coverage gap tests for table cell block layout, BR line breaks, rect consistency.
 // Widget-specific tests (InsertHR, Backspace, etc.) are omitted.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     load_html(html, viewport_width)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -19,14 +19,14 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn find_all_boxes<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Vec<&'a HtmlBox> {
+fn find_all_boxes<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     collect_matching(root, pred, &mut result);
     result
 }
 
-fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
-    node: &'a HtmlBox, pred: &F, out: &mut Vec<&'a HtmlBox>
+fn collect_matching<'a, F: Fn(&WebCore) -> bool>(
+    node: &'a WebCore, pred: &F, out: &mut Vec<&'a WebCore>
 ) {
     if pred(node) { out.push(node); }
     for child in &node.children {
@@ -46,11 +46,11 @@ fn cell_blocks_multiple_block_children_stack() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some(), "td not found");
     let td = td.unwrap();
 
-    let blocks: Vec<&HtmlBox> = td.children.iter()
+    let blocks: Vec<&WebCore> = td.children.iter()
         .filter(|ch| ch.style.display != Display::None)
         .collect();
     assert!(blocks.len() >= 3, "expected at least 3 block children in td");
@@ -85,11 +85,11 @@ fn cell_blocks_block_child_with_margin_padding() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let div = find_box(td, &|b: &HtmlBox| b.tag == "div");
+    let div = find_box(td, &|b: &WebCore| b.tag == "div");
     assert!(div.is_some());
     let div = div.unwrap();
 
@@ -114,12 +114,12 @@ fn cell_blocks_block_child_with_border_no_overlap() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let div = find_box(td, &|b: &HtmlBox| b.tag == "div");
-    let hr = find_box(td, &|b: &HtmlBox| b.tag == "hr");
+    let div = find_box(td, &|b: &WebCore| b.tag == "div");
+    let hr = find_box(td, &|b: &WebCore| b.tag == "hr");
     assert!(div.is_some());
     assert!(hr.is_some());
     let div = div.unwrap();
@@ -141,15 +141,15 @@ fn cell_blocks_nested_blocks_in_cell() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let div = find_box(td, &|b: &HtmlBox| b.tag == "div");
+    let div = find_box(td, &|b: &WebCore| b.tag == "div");
     assert!(div.is_some());
     let div = div.unwrap();
 
-    let p = find_box(div, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(div, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert!(p.unwrap().layout.content_rect.h > 0.0);
 }
@@ -167,18 +167,18 @@ fn cell_blocks_nested_table_with_hr_in_outer_cell() {
          </td></tr></table>",
         800.0,
     );
-    let tds = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let tds = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(tds.len() >= 2);
 
     // Find the outer td (the one with an HR child)
     let outer_td = tds.iter().find(|td| {
-        find_box(td, &|b: &HtmlBox| b.tag == "hr").is_some()
+        find_box(td, &|b: &WebCore| b.tag == "hr").is_some()
     });
     assert!(outer_td.is_some());
     let outer_td = outer_td.unwrap();
 
-    let hr = find_box(outer_td, &|b: &HtmlBox| b.tag == "hr").unwrap();
-    let inner_table = find_box(outer_td, &|b: &HtmlBox| b.tag == "table").unwrap();
+    let hr = find_box(outer_td, &|b: &WebCore| b.tag == "hr").unwrap();
+    let inner_table = find_box(outer_td, &|b: &WebCore| b.tag == "table").unwrap();
     assert!(hr.layout.content_rect.y >= inner_table.layout.content_rect.y + inner_table.layout.content_rect.h);
 }
 
@@ -195,11 +195,11 @@ fn cell_blocks_rect_consistency_after_offset() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let divs = find_all_boxes(td, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(td, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
 
     for d in &divs {
@@ -222,7 +222,7 @@ fn cell_blocks_rect_consistency_after_offset() {
 #[test]
 fn br_line_break_br_at_start() {
     let doc = parse_and_layout("<p><br>Text</p>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert!(p.unwrap().layout.line_cache.len() >= 2, "BR at start should produce at least 2 lines");
 }
@@ -234,7 +234,7 @@ fn br_line_break_br_at_start() {
 #[test]
 fn br_line_break_br_at_end() {
     let doc = parse_and_layout("<p>Text<br></p>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert!(p.unwrap().layout.line_cache.len() >= 2, "BR at end should produce at least 2 lines");
 }
@@ -246,7 +246,7 @@ fn br_line_break_br_at_end() {
 #[test]
 fn br_line_break_multiple_brs() {
     let doc = parse_and_layout("<p>A<br><br><br>B</p>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert!(p.unwrap().layout.line_cache.len() >= 4, "A<br><br><br>B should produce 4 lines");
 }
@@ -262,7 +262,7 @@ fn br_line_break_br_breaks_before_width_fill() {
         800.0,
     );
     // Text is in #text child nodes, not in div.text — find the div by line_cache
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.layout.line_cache.len() >= 2
     });
     assert!(div.is_some(), "expected div with >= 2 lines");
@@ -281,10 +281,10 @@ fn cell_blocks_display_none_child_skipped() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
 
-    let hr = find_box(td.unwrap(), &|b: &HtmlBox| b.tag == "hr");
+    let hr = find_box(td.unwrap(), &|b: &WebCore| b.tag == "hr");
     assert!(hr.is_some());
     assert!(hr.unwrap().layout.content_rect.y < 30.0);
 }
@@ -301,12 +301,12 @@ fn cell_padding_with_block_children() {
          </tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let div = find_box(td, &|b: &HtmlBox| b.tag == "div");
-    let hr = find_box(td, &|b: &HtmlBox| b.tag == "hr");
+    let div = find_box(td, &|b: &WebCore| b.tag == "div");
+    let hr = find_box(td, &|b: &WebCore| b.tag == "hr");
     assert!(div.is_some());
     assert!(hr.is_some());
     let div = div.unwrap();
@@ -330,12 +330,12 @@ fn cell_blocks_border_collapse_with_hr() {
          </td></tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let hr = find_box(td, &|b: &HtmlBox| b.tag == "hr").unwrap();
-    let p = find_box(td, &|b: &HtmlBox| b.tag == "p").unwrap();
+    let hr = find_box(td, &|b: &WebCore| b.tag == "hr").unwrap();
+    let p = find_box(td, &|b: &WebCore| b.tag == "p").unwrap();
     assert!(hr.layout.content_rect.y >= p.layout.content_rect.y + p.layout.content_rect.h);
 }
 
@@ -352,14 +352,14 @@ fn cell_blocks_colspan_cell_with_block_children() {
          </table>",
         800.0,
     );
-    let wide_cell = find_box(&doc.root, &|b: &HtmlBox| {
+    let wide_cell = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("colspan").map(|v| v == "2").unwrap_or(false)
     });
     assert!(wide_cell.is_some(), "colspan=2 cell not found");
     let wide_cell = wide_cell.unwrap();
 
-    let hr = find_box(wide_cell, &|b: &HtmlBox| b.tag == "hr");
-    let p = find_box(wide_cell, &|b: &HtmlBox| b.tag == "p");
+    let hr = find_box(wide_cell, &|b: &WebCore| b.tag == "hr");
+    let p = find_box(wide_cell, &|b: &WebCore| b.tag == "p");
     assert!(hr.is_some());
     assert!(p.is_some());
 
@@ -384,14 +384,14 @@ fn cell_blocks_rowspan_cell_with_block_children() {
          </table>",
         800.0,
     );
-    let tall_cell = find_box(&doc.root, &|b: &HtmlBox| {
+    let tall_cell = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("rowspan").map(|v| v == "2").unwrap_or(false)
     });
     assert!(tall_cell.is_some(), "rowspan=2 cell not found");
     let tall_cell = tall_cell.unwrap();
 
-    let hr = find_box(tall_cell, &|b: &HtmlBox| b.tag == "hr");
-    let div = find_box(tall_cell, &|b: &HtmlBox| b.tag == "div");
+    let hr = find_box(tall_cell, &|b: &WebCore| b.tag == "hr");
+    let div = find_box(tall_cell, &|b: &WebCore| b.tag == "div");
     assert!(hr.is_some());
     assert!(div.is_some());
     let hr = hr.unwrap();
@@ -412,7 +412,7 @@ fn br_line_break_br_followed_by_wrapping_text() {
         800.0,
     );
     // Find the div that has >= 3 lines (short + BR + wrapped lines)
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.layout.line_cache.len() >= 3
     });
     assert!(div.is_some(), "expected div with >= 3 lines from BR + wrapping");
@@ -430,7 +430,7 @@ fn br_line_break_br_zero_width_doesnt_affect_wrap() {
     );
     // Should produce exactly 2 lines: "AAAA+BR" and "BB"
     // BR shouldn't cause AAAA to wrap when it fits on one line
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.layout.line_cache.len() >= 2
     });
     assert!(div.is_some(), "expected div with at least 2 lines from BR");
@@ -443,7 +443,7 @@ fn br_line_break_br_zero_width_doesnt_affect_wrap() {
 #[test]
 fn br_line_break_br_inside_styled_span() {
     let doc = parse_and_layout("<p><b>Bold<br>Text</b></p>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some(), "p element must exist");
     // Must not panic; line_cache should be >= 1 (at least one line)
     assert!(p.unwrap().layout.line_cache.len() >= 1,
@@ -466,7 +466,7 @@ fn cell_valign_middle_with_block_children() {
          </tr></table>",
         800.0,
     );
-    let cell = find_box(&doc.root, &|b: &HtmlBox| {
+    let cell = find_box(&doc.root, &|b: &WebCore| {
         b.style.vertical_align == VerticalAlign::Middle
     });
     assert!(cell.is_some(), "cell with vertical-align:middle not found");
@@ -493,7 +493,7 @@ fn cell_valign_bottom_with_block_children() {
          </tr></table>",
         800.0,
     );
-    let cell = find_box(&doc.root, &|b: &HtmlBox| {
+    let cell = find_box(&doc.root, &|b: &WebCore| {
         b.style.vertical_align == VerticalAlign::Bottom
     });
     assert!(cell.is_some(), "cell with vertical-align:bottom not found");
@@ -523,7 +523,7 @@ fn cell_valign_top_with_block_children() {
          </tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| {
+    let td = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "td" && b.children.len() >= 2
     });
     assert!(td.is_some(), "td with multiple children not found");
@@ -550,12 +550,12 @@ fn cell_padding_with_block_children_layout() {
          </tr></table>",
         800.0,
     );
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td.is_some());
     let td = td.unwrap();
 
-    let div = find_box(td, &|b: &HtmlBox| b.tag == "div");
-    let hr = find_box(td, &|b: &HtmlBox| b.tag == "hr");
+    let div = find_box(td, &|b: &WebCore| b.tag == "div");
+    let hr = find_box(td, &|b: &WebCore| b.tag == "hr");
     assert!(div.is_some());
     assert!(hr.is_some());
     let div = div.unwrap();

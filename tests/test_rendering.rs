@@ -9,13 +9,13 @@
 //   - "Smoke" tests: parse + layout, assert no panic, check key invariants.
 //   - Hit-test tests: use the hit_test API from layout::hit_test.
 //   - Overflow tests: verify box dimensions after layout.
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html, Renderer};
+use webcore::types::*;
+use webcore::{load_html, parse_html, Renderer};
 use tiny_skia::Pixmap;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -323,7 +323,7 @@ fn scrolled_viewport_smoke() {
         800.0,
     );
     let mut ps = Vec::new();
-    fn collect<'a>(root: &'a HtmlBox, out: &mut Vec<&'a HtmlBox>) {
+    fn collect<'a>(root: &'a WebCore, out: &mut Vec<&'a WebCore>) {
         if root.tag == "p" { out.push(root); }
         for c in &root.children { collect(c, out); }
     }

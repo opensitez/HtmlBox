@@ -6,14 +6,14 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::keyboard::{PhysicalKey, KeyCode};
 
-use htmlbox::{load_html, Document, Renderer, LayoutEngine};
-use htmlbox::platform::Platform;
-use htmlbox::dom::{self, HtmlEventType};
-use htmlbox::HtmlBox;
+use webcore::{load_html, Document, Renderer, LayoutEngine};
+use webcore::platform::Platform;
+use webcore::dom::{self, HtmlEventType};
+use webcore::WebCore;
 
 const HTML: &str = include_str!("html/event_playground.html");
 
-fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
     if node.node_id == id { return Some(node); }
     for child in &node.children { if let Some(found) = find_node(child, id) { return Some(found); } }
     None
@@ -126,7 +126,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes()
-                .with_title("Event Playground — htmlbox")
+                .with_title("Event Playground — webcore")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 800u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());

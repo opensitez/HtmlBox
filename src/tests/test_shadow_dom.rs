@@ -12,7 +12,7 @@ fn layout_html(html: &str, width: f32) -> Document {
     doc
 }
 
-fn find_by_tag<'a>(node: &'a HtmlBox, tag: &str) -> Option<&'a HtmlBox> {
+fn find_by_tag<'a>(node: &'a WebCore, tag: &str) -> Option<&'a WebCore> {
     if node.tag == tag { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_tag(child, tag) { return Some(n); } }
     // Also search shadow tree
@@ -22,7 +22,7 @@ fn find_by_tag<'a>(node: &'a HtmlBox, tag: &str) -> Option<&'a HtmlBox> {
     None
 }
 
-fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if node.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_id(child, id) { return Some(n); } }
     if let Some(ref sr) = node.shadow_root {
@@ -232,7 +232,7 @@ fn attach_shadow_programmatic() {
     let host = find_by_id(&doc.root, "host").unwrap();
     assert!(host.shadow_root.is_none(), "no shadow root initially");
     // Now attach one
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None

@@ -6,14 +6,14 @@ use crate::layout::block::apply_relative_offset;
 use crate::css::parse_single_track;
 
 /// Resolve a child by path through `display: contents` wrappers.
-pub fn grid_child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
+pub fn grid_child_ref<'a>(node: &'a WebCore, path: &[usize]) -> &'a WebCore {
     let mut n = node;
     for (depth, &i) in path.iter().enumerate() {
         n = if depth == 0 { &n.effective_children()[i] } else { &n.children[i] };
     }
     n
 }
-pub fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
+pub fn grid_child_mut<'a>(node: &'a mut WebCore, path: &[usize]) -> &'a mut WebCore {
     let mut n = node;
     for (depth, &i) in path.iter().enumerate() {
         n = if depth == 0 { &mut n.effective_children_mut()[i] } else { &mut n.children[i] };
@@ -23,13 +23,13 @@ pub fn grid_child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut Html
 
 /// Collect effective children, flattening `display: contents`.
 /// Used by grid, and also by block/flex layout for display:contents support.
-pub fn collect_grid_children(node: &HtmlBox) -> Vec<Vec<usize>> {
+pub fn collect_grid_children(node: &WebCore) -> Vec<Vec<usize>> {
     let mut result = Vec::new();
     let mut path = Vec::new();
     collect_grid_inner(node, &mut path, &mut result);
     result
 }
-fn collect_grid_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+fn collect_grid_inner(node: &WebCore, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
     for (idx, child) in node.effective_children().iter().enumerate() {
         path.push(idx);
         if matches!(child.style.display, Display::Contents) {
@@ -93,7 +93,7 @@ impl SubgridContext {
 /// `grid-template-rows: subgrid`. Inherits track sizes from the parent.
 pub fn layout_grid_subgrid(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     ctx:          &SubgridContext,
     x:            f32,
@@ -355,7 +355,7 @@ pub fn layout_grid_subgrid(
 /// Mirrors C++ LayoutGrid.
 pub fn layout_grid(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     c:            &Constraints,
 ) -> f32 {
@@ -1127,7 +1127,7 @@ fn resolve_line_end_named(raw: i32, name: &str, start: usize, n_explicit: usize,
     resolve_line_end(raw, start, n_explicit)
 }
 
-fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<String, (usize,usize,usize,usize)>,
+fn is_explicitly_placed(child: &WebCore, area_map: &std::collections::HashMap<String, (usize,usize,usize,usize)>,
     col_line_names: &std::collections::HashMap<String, Vec<usize>>,
     row_line_names: &std::collections::HashMap<String, Vec<usize>>,
 ) -> bool {
@@ -1148,7 +1148,7 @@ fn is_explicitly_placed(child: &HtmlBox, area_map: &std::collections::HashMap<St
 
 /// Resolve placement to (col_start, col_end, row_start, row_end), all 0-based.
 fn resolve_placement(
-    child: &HtmlBox,
+    child: &WebCore,
     area_map: &std::collections::HashMap<String,(usize,usize,usize,usize)>,
     n_cols: usize,
     n_rows: usize,
@@ -1177,7 +1177,7 @@ fn resolve_placement(
 /// Maximum grid span/row/col to prevent pathological allocation.
 const MAX_GRID_SPAN: usize = 200;
 
-fn get_span_col(child: &HtmlBox) -> usize {
+fn get_span_col(child: &WebCore) -> usize {
     let (end_is_span, end_val) = decode_grid_line(child.style.grid_column_end);
     if end_is_span { return end_val as usize; }
     let (start_is_span, start_val) = decode_grid_line(child.style.grid_column_start);
@@ -1187,7 +1187,7 @@ fn get_span_col(child: &HtmlBox) -> usize {
     } else { 1 }
 }
 
-fn get_span_row(child: &HtmlBox) -> usize {
+fn get_span_row(child: &WebCore) -> usize {
     let (end_is_span, end_val) = decode_grid_line(child.style.grid_row_end);
     if end_is_span { return end_val as usize; }
     let (start_is_span, start_val) = decode_grid_line(child.style.grid_row_start);
@@ -1515,7 +1515,7 @@ fn span_width(col_px: &[f32], _col_x: &[f32], cs: usize, ce: usize, col_gap: f32
 
 // ─── Alignment helpers ────────────────────────────────────────────────────────
 
-fn effective_justify_self(child: &HtmlBox, parent: AlignItems) -> AlignItems {
+fn effective_justify_self(child: &WebCore, parent: AlignItems) -> AlignItems {
     match child.style.justify_self {
         AlignSelf::Auto      => parent,
         AlignSelf::Stretch   => AlignItems::Stretch,
@@ -1526,7 +1526,7 @@ fn effective_justify_self(child: &HtmlBox, parent: AlignItems) -> AlignItems {
     }
 }
 
-fn effective_align_self_grid(child: &HtmlBox, parent: AlignItems) -> AlignItems {
+fn effective_align_self_grid(child: &WebCore, parent: AlignItems) -> AlignItems {
     match child.style.align_self {
         AlignSelf::Auto      => parent,
         AlignSelf::Stretch   => AlignItems::Stretch,
@@ -1540,7 +1540,7 @@ fn effective_align_self_grid(child: &HtmlBox, parent: AlignItems) -> AlignItems 
 // ─── finish & abs children ───────────────────────────────────────────────────
 
 fn finish_grid(
-    node: &mut HtmlBox,
+    node: &mut WebCore,
     rbox: &ResolvedBox,
     content_x: f32, content_y: f32,
     content_w: f32, content_h: f32,
@@ -1583,7 +1583,7 @@ fn finish_grid(
     node.layout.margin_rect.h
 }
 
-fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, root_font_px: f32) {
+fn layout_abs_children(engine: &LayoutEngine, node: &mut WebCore, font_px: f32, root_font_px: f32) {
     let containing_rect = if !matches!(node.style.position, Position::Static) {
         node.layout.padding_rect
     } else {

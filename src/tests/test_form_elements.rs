@@ -12,24 +12,24 @@ fn layout_html(html: &str, width: f32) -> Document {
     doc
 }
 
-fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if node.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_id(child, id) { return Some(n); } }
     None
 }
 
-fn find_by_tag<'a>(node: &'a HtmlBox, tag: &str) -> Option<&'a HtmlBox> {
+fn find_by_tag<'a>(node: &'a WebCore, tag: &str) -> Option<&'a WebCore> {
     if node.tag == tag { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_tag(child, tag) { return Some(n); } }
     None
 }
 
-fn find_all_by_tag<'a>(node: &'a HtmlBox, tag: &str, out: &mut Vec<&'a HtmlBox>) {
+fn find_all_by_tag<'a>(node: &'a WebCore, tag: &str, out: &mut Vec<&'a WebCore>) {
     if node.tag == tag { out.push(node); }
     for child in &node.children { find_all_by_tag(child, tag, out); }
 }
 
-fn find_by_node_id<'a>(node: &'a HtmlBox, nid: u32) -> Option<&'a HtmlBox> {
+fn find_by_node_id<'a>(node: &'a WebCore, nid: u32) -> Option<&'a WebCore> {
     if node.node_id == nid { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_node_id(child, nid) { return Some(n); } }
     None
@@ -132,7 +132,7 @@ fn text_input_cursor_starts_at_zero() {
 fn process_form_input_key_inserts_char() {
     let doc = layout_html(r#"<input type="text" id="t" value="ab">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -150,7 +150,7 @@ fn process_form_input_key_inserts_char() {
 fn process_form_input_key_backspace() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -168,7 +168,7 @@ fn process_form_input_key_backspace() {
 fn process_form_input_key_arrow_left() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -184,7 +184,7 @@ fn process_form_input_key_arrow_left() {
 fn process_form_input_key_arrow_right() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -200,7 +200,7 @@ fn process_form_input_key_arrow_right() {
 fn process_form_input_key_enter_not_in_input() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -217,7 +217,7 @@ fn process_form_input_key_enter_not_in_input() {
 fn process_form_input_key_space() {
     let doc = layout_html(r#"<input type="text" id="t" value="ab">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -728,7 +728,7 @@ fn radio_in_label_spacing() {
 fn form_input_insert_at_middle() {
     let doc = layout_html(r#"<input type="text" id="t" value="ac">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -745,7 +745,7 @@ fn form_input_insert_at_middle() {
 fn form_input_delete_key() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -762,7 +762,7 @@ fn form_input_delete_key() {
 fn form_input_home_end() {
     let doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -780,7 +780,7 @@ fn form_input_home_end() {
 fn textarea_enter_inserts_newline() {
     let doc = layout_html(r#"<textarea id="t">ab</textarea>"#, 400.0);
     let mut root = doc.root;
-    fn find_mut<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
         None
@@ -825,7 +825,7 @@ fn disabled_button_matches_pseudo_class() {
 fn readonly_input_blocks_editing() {
     let doc = layout_html(r#"<input type="text" id="t" value="fixed" readonly>"#, 400.0);
     let mut root = doc.root;
-    fn fm<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
         None
@@ -844,7 +844,7 @@ fn readonly_input_blocks_editing() {
 fn maxlength_prevents_input() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc" maxlength="5">"#, 400.0);
     let mut root = doc.root;
-    fn fm<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
         None
@@ -898,7 +898,7 @@ fn input_size_affects_width() {
 fn disabled_input_blocks_typing() {
     let doc = layout_html(r#"<input type="text" id="t" value="hi" disabled>"#, 400.0);
     let mut root = doc.root;
-    fn fm<'a>(n: &'a mut HtmlBox, id: &str) -> Option<&'a mut HtmlBox> {
+    fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
         if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
         for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
         None

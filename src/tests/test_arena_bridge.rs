@@ -1,14 +1,14 @@
 //! Tests for the arena-based DOM bridge integration.
 //!
 //! Verifies that:
-//! - Every HtmlBox gets a unique non-zero node_id during parsing
-//! - The arena mirrors the HtmlBox tree structure
+//! - Every WebCore gets a unique non-zero node_id during parsing
+//! - The arena mirrors the WebCore tree structure
 //! - The node_map bridge lookup works correctly
-//! - Arena node attributes/text match HtmlBox data
+//! - Arena node attributes/text match WebCore data
 
 use crate::html::parse_html;
 use crate::dom::arena::NodeId;
-use crate::types::{Document, HtmlBox};
+use crate::types::{Document, WebCore};
 
 /// The `<body>` box, found by TAG.
 ///
@@ -16,7 +16,7 @@ use crate::types::{Document, HtmlBox};
 /// body` skeleton (HTML §13.2.6), so body is the *second* child — and any
 /// fixed index goes wrong again the moment the tree gains anything else.
 /// A test that means "the body" should say so.
-fn body_of(doc: &Document) -> &HtmlBox {
+fn body_of(doc: &Document) -> &WebCore {
     doc.root
         .children
         .iter()
@@ -24,8 +24,8 @@ fn body_of(doc: &Document) -> &HtmlBox {
         .expect("every parsed document has a body")
 }
 
-/// Helper: collect all node_ids from an HtmlBox tree into a Vec.
-fn collect_node_ids(node: &crate::types::HtmlBox) -> Vec<u32> {
+/// Helper: collect all node_ids from an WebCore tree into a Vec.
+fn collect_node_ids(node: &crate::types::WebCore) -> Vec<u32> {
     let mut ids = vec![node.node_id];
     for child in &node.children {
         ids.extend(collect_node_ids(child));
@@ -33,8 +33,8 @@ fn collect_node_ids(node: &crate::types::HtmlBox) -> Vec<u32> {
     ids
 }
 
-/// Helper: count total nodes in HtmlBox tree.
-fn count_nodes(node: &crate::types::HtmlBox) -> usize {
+/// Helper: count total nodes in WebCore tree.
+fn count_nodes(node: &crate::types::WebCore) -> usize {
     1 + node.children.iter().map(|c| count_nodes(c)).sum::<usize>()
 }
 
@@ -86,7 +86,7 @@ fn arena_mirrors_tree_structure() {
     for (i, &li_arena_id) in arena_children.iter().enumerate() {
         assert_eq!(arena.get(li_arena_id).tag, "li");
         assert_eq!(arena.get(li_arena_id).parent, ul_id);
-        // Each li should match the HtmlBox li's node_id
+        // Each li should match the WebCore li's node_id
         assert_eq!(li_arena_id.0, ul.children[i].node_id);
     }
 }
@@ -154,7 +154,7 @@ fn node_map_finds_deep_nodes() {
     doc.rebuild_node_map();
 
     // Find all <a> tags by walking the tree
-    fn find_tags<'a>(node: &'a crate::types::HtmlBox, tag: &str) -> Vec<&'a crate::types::HtmlBox> {
+    fn find_tags<'a>(node: &'a crate::types::WebCore, tag: &str) -> Vec<&'a crate::types::WebCore> {
         let mut result = Vec::new();
         if node.tag == tag { result.push(node); }
         for child in &node.children {
@@ -174,7 +174,7 @@ fn node_map_finds_deep_nodes() {
 }
 
 #[test]
-fn arena_and_htmlbox_node_counts_match() {
+fn arena_and_webcore_node_counts_match() {
     let doc = parse_html(r#"
         <html>
         <body>
@@ -189,15 +189,15 @@ fn arena_and_htmlbox_node_counts_match() {
         </html>
     "#);
 
-    let htmlbox_count = count_nodes(&doc.root);
+    let webcore_count = count_nodes(&doc.root);
     // Arena has slot 0 (sentinel) + real nodes. Count alive nodes.
     let arena_alive = (1..doc.arena.len())
         .filter(|&i| doc.arena.is_alive(NodeId(i as u32)))
         .count();
 
-    assert_eq!(htmlbox_count, arena_alive,
-        "HtmlBox tree has {} nodes but arena has {} alive nodes",
-        htmlbox_count, arena_alive);
+    assert_eq!(webcore_count, arena_alive,
+        "WebCore tree has {} nodes but arena has {} alive nodes",
+        webcore_count, arena_alive);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn arena_parent_child_links_consistent() {
     let arena = &doc.arena;
 
     // Walk entire tree and verify every child's parent link is correct
-    fn verify_links(arena: &crate::dom::arena::DomArena, node: &crate::types::HtmlBox) {
+    fn verify_links(arena: &crate::dom::arena::DomArena, node: &crate::types::WebCore) {
         let node_id = NodeId(node.node_id);
         for child in &node.children {
             let child_id = NodeId(child.node_id);
@@ -269,7 +269,7 @@ fn arena_get_element_by_id_works() {
     assert_eq!(arena.get(inner_id).tag, "span");
     assert_eq!(arena.get(inner_id).attributes.get("id").map(|s| s.as_str()), Some("inner"));
 
-    // Verify it matches the HtmlBox
+    // Verify it matches the WebCore
     let span = &body_of(&doc).children[0].children[0]; // body > div > span
     assert_eq!(span.node_id, inner_id.0);
 }
@@ -293,7 +293,7 @@ fn rebuild_arena_from_tree_works() {
     assert_eq!(doc.arena.get(body_id).parent, html_id);
 
     // Verify all parent-child links
-    fn verify(arena: &crate::dom::arena::DomArena, node: &crate::types::HtmlBox) {
+    fn verify(arena: &crate::dom::arena::DomArena, node: &crate::types::WebCore) {
         let nid = NodeId(node.node_id);
         for child in &node.children {
             let cid = NodeId(child.node_id);

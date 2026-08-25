@@ -7,10 +7,10 @@
 // the test is written as a comment block marked `// TODO: API not available`.
 // Tests that exercise APIs that *do* exist in Rust are fully ported.
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::layout::LayoutEngine;
-use htmlbox::dom::{
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::layout::LayoutEngine;
+use webcore::dom::{
     Editor, TextRange,
     query_selector, query_selector_mut, query_selector_all,
     get_text_content,
@@ -26,7 +26,7 @@ fn parse_and_layout(html: &str) -> Document {
     load_html(html, 800.0)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -34,7 +34,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -42,7 +42,7 @@ fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
     n
 }
 
-fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
+fn set_caret(editor: &mut Editor, element: &WebCore, offset: usize) {
     editor.caret_box  = Some(element.node_id);
     editor.collapse_to(offset);
 }
@@ -84,7 +84,7 @@ fn heading_parsed_h4_to_h6() {
         let html = format!("<h{}>Deep</h{}>", level, level);
         let doc = parse(&html);
         let tag = format!("h{}", level);
-        let h = find_box(&doc.root, &|b: &HtmlBox| b.tag == tag);
+        let h = find_box(&doc.root, &|b: &WebCore| b.tag == tag);
         assert!(h.is_some(), "expected <h{}> to be parsed", level);
     }
 }
@@ -601,7 +601,7 @@ fn nested_list_outdent_to_block_removes_list() {
 // We use set_style_property to toggle on/off.
 #[test]
 fn supersub_toggle_superscript_off_via_style() {
-    use htmlbox::dom::set_style_property;
+    use webcore::dom::set_style_property;
 
     let mut doc = parse("<p><span id=\"t\">2</span></p>");
     let span = query_selector_mut(&mut doc.root, "span").unwrap();
@@ -623,7 +623,7 @@ fn supersub_toggle_superscript_off_via_style() {
 // with no text runs does not panic.
 #[test]
 fn supersub_no_selection_no_crash() {
-    use htmlbox::dom::set_style_property;
+    use webcore::dom::set_style_property;
 
     // An empty paragraph — no inline_runs
     let mut doc = parse("<p></p>");
@@ -656,7 +656,7 @@ fn code_block_has_mono_font() {
 // We test this by applying an inline background-color to a <pre> and checking it.
 #[test]
 fn code_block_has_background_via_style() {
-    use htmlbox::dom::apply_inline_style_str;
+    use webcore::dom::apply_inline_style_str;
 
     let mut doc = parse("<pre>code here</pre>");
     let pre = query_selector_mut(&mut doc.root, "pre").unwrap();

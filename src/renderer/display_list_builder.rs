@@ -9,11 +9,11 @@ use crate::types::{
     MixBlendMode, Overflow, Position, TextDecorationStyle,
     TextTransform,
 };
-use crate::types::{HtmlBox, Rect};
+use crate::types::{WebCore, Rect};
 use super::display_list::{DisplayList, ImageRef, PaintCmd, TextDecoration};
 
 /// Build a display list from a laid-out box tree.
-pub fn build_display_list(root: &HtmlBox, viewport_w: f32, viewport_h: f32) -> DisplayList {
+pub fn build_display_list(root: &WebCore, viewport_w: f32, viewport_h: f32) -> DisplayList {
     let visited = std::collections::HashSet::new();
     // Use full document extent as clip — viewport culling is done at replay time.
     // Building with viewport clip causes scrolled-to content to be missing.
@@ -33,7 +33,7 @@ pub fn build_display_list(root: &HtmlBox, viewport_w: f32, viewport_h: f32) -> D
 
 /// Build with full context (scroll, hover, etc.).
 pub fn build_display_list_full(
-    root: &HtmlBox,
+    root: &WebCore,
     viewport_w: f32,
     viewport_h: f32,
     scroll_x: f32,
@@ -63,7 +63,7 @@ pub fn build_display_list_full(
     let mut fixed_ids = Vec::new();
     collect_fixed_elements(root, &mut fixed_ids);
     for fid in fixed_ids {
-        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+        fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &node.children {
                 if let Some(found) = find_node(child, id) { return Some(found); }
@@ -91,7 +91,7 @@ struct BuildContext<'a> {
 // Main entry: build_for_box — mirrors render_box in mod.rs exactly
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
+fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     // ── Early exits (same as render_box) ─────────────────────────────────────
     if matches!(node.style.display, Display::None) {
         return;
@@ -741,7 +741,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
     // Skip position:fixed (rendered in separate overlay pass).
     {
         let eff_children = node.effective_children();
-        let is_renderable = |c: &HtmlBox| -> bool {
+        let is_renderable = |c: &WebCore| -> bool {
             !matches!(c.style.display, Display::None)
                 && c.tag != "::before"
                 && c.tag != "::after"
@@ -767,7 +767,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
             }
 
             // Positioned elements with z-index >= 0 (in front), sorted by z-index
-            let mut positioned: Vec<&HtmlBox> = eff_children
+            let mut positioned: Vec<&WebCore> = eff_children
                 .iter()
                 .filter(|c| is_renderable(c) && c.style.is_positioned() && c.style.z_index >= 0)
                 .collect();
@@ -807,7 +807,7 @@ fn build_for_box(node: &HtmlBox, list: &mut DisplayList, ctx: &BuildContext) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn build_inline_text(
-    node: &HtmlBox,
+    node: &WebCore,
     eff_style: &ComputedStyle,
     list: &mut DisplayList,
     sx: f32,
@@ -1136,7 +1136,7 @@ fn build_inline_text(
 // List marker
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn build_list_marker(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) {
+fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
     // Skip marker entirely when list-style-type is None
     if matches!(node.style.list_style_type, ListStyleType::None) {
         return;
@@ -1305,7 +1305,7 @@ fn build_list_marker(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) {
 // Form element
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn build_form_element(node: &HtmlBox, list: &mut DisplayList, sx: f32, sy: f32) {
+fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
     let tag = node.tag.as_str();
     let input_type = node
         .attributes
@@ -1465,7 +1465,7 @@ fn emit_text(
 /// framework that nests a text widget produces — rendered as an empty entry.
 /// The wrapper is invalid markup on the author's side and a browser still shows
 /// the word, because the label is defined over descendants.
-pub(crate) fn option_label(opt: &HtmlBox) -> String {
+pub(crate) fn option_label(opt: &WebCore) -> String {
     if let Some(label) = opt.attributes.get("label") {
         return label.split_whitespace().collect::<Vec<_>>().join(" ");
     }
@@ -1477,7 +1477,7 @@ pub(crate) fn option_label(opt: &HtmlBox) -> String {
 /// Every text node under `node`, in tree order — DOM's "descendant text
 /// content". Unlike `collect_flat_text` this does NOT filter by `display`: the
 /// label of an option is defined over the tree, not over what is rendered.
-fn descendant_text(node: &HtmlBox, out: &mut String) {
+fn descendant_text(node: &WebCore, out: &mut String) {
     if node.tag == "#text" {
         out.push_str(&node.text);
     }
@@ -1486,7 +1486,7 @@ fn descendant_text(node: &HtmlBox, out: &mut String) {
     }
 }
 
-fn collect_flat_text(node: &HtmlBox, out: &mut String) {
+fn collect_flat_text(node: &WebCore, out: &mut String) {
     if node.tag == "#text" {
         out.push_str(&node.text);
         return;
@@ -1504,7 +1504,7 @@ fn collect_flat_text(node: &HtmlBox, out: &mut String) {
     }
 }
 
-fn subtree_has(node: &HtmlBox, id: u32) -> bool {
+fn subtree_has(node: &WebCore, id: u32) -> bool {
     if node.node_id == id {
         return true;
     }
@@ -1716,7 +1716,7 @@ fn to_roman_upper(mut n: i32) -> String {
     out
 }
 
-fn collect_fixed_elements(node: &HtmlBox, out: &mut Vec<u32>) {
+fn collect_fixed_elements(node: &WebCore, out: &mut Vec<u32>) {
     if node.style.position == Position::Fixed && node.node_id != 0 {
         out.push(node.node_id);
     }

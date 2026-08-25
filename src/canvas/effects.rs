@@ -9,7 +9,7 @@
 //!
 //! ## Why the blur lives here
 //!
-//! htmlbox had no blur at all. `display_list_replay.rs` says
+//! webcore had no blur at all. `display_list_replay.rs` says
 //! `0 => {} // blur — needs convolution, skipped`, and `PaintCmd::BoxShadow`
 //! and `PaintCmd::TextShadow` both destructure `blur: _`. So `shadowBlur`,
 //! `filter: blur()`, CSS `box-shadow` and CSS `text-shadow` were four features

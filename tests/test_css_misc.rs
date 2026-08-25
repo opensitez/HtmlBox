@@ -2,15 +2,15 @@
 // margin collapsing, box-sizing, viewport units, calc(), overflow,
 // pseudo-elements, shorthands, visibility, opacity, and text properties.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for child in &root.children { if let Some(f) = by_id(child, id) { return Some(f); } }
     None
 }
-fn find<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children { if let Some(f) = find(child, pred) { return Some(f); } }
     None
@@ -333,7 +333,7 @@ fn bootstrap_navbar_flex_with_pseudo() {
     assert!(matches!(nav.style.display, Display::Flex),
         "navbar-nav should be flex, got {:?}", nav.style.display);
     // nav items should be laid out horizontally (second item x > first item x)
-    let items: Vec<&HtmlBox> = nav.children.iter()
+    let items: Vec<&WebCore> = nav.children.iter()
         .filter(|c| c.tag == "li")
         .collect();
     assert!(items.len() >= 2, "need at least 2 nav items");

@@ -1,17 +1,17 @@
 // Comprehensive CSS positioning tests — static, relative, absolute, fixed,
 // sticky, z-index, containing blocks, and real-world layout patterns.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for child in &root.children {
         if let Some(found) = by_id(child, id) { return Some(found); }
     }
     None
 }
-fn find<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children { if let Some(f) = find(child, pred) { return Some(f); } }
     None

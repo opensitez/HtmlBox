@@ -105,7 +105,7 @@ fn test_text_shadow_not_inherited_across_block_boundary() {
 
     let paras: Vec<_> = {
         let mut v = Vec::new();
-        let mut collect = |b: &HtmlBox| {
+        let mut collect = |b: &WebCore| {
             if b.tag == "p" { v.push(b.style.text_shadow.is_some()); }
         };
         walk_boxes(&doc.root, &mut collect);

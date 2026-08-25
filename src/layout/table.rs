@@ -47,13 +47,13 @@ struct TableCellSlot {
 
 // ─── Helper: read colspan/rowspan from HTML attributes ────────────────────────
 
-fn get_colspan(cell: &HtmlBox) -> usize {
+fn get_colspan(cell: &WebCore) -> usize {
     cell.attributes.get("colspan")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1).max(1)
 }
 
-fn get_rowspan(cell: &HtmlBox) -> usize {
+fn get_rowspan(cell: &WebCore) -> usize {
     cell.attributes.get("rowspan")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1).max(1)
@@ -68,7 +68,7 @@ struct RowRef {
     grandchild_idx: Option<usize>, // None = direct row, Some(j) = row inside row group
 }
 
-fn collect_rows(table: &HtmlBox,
+fn collect_rows(table: &WebCore,
     abs_children: &mut Vec<usize>,
     caption_idx: &mut Option<usize>,
     col_indices: &mut Vec<usize>,
@@ -151,13 +151,13 @@ fn collect_rows(table: &HtmlBox,
 }
 
 /// Get a reference to a row box given a RowRef.
-fn row_ref<'a>(table: &'a HtmlBox, rr: &RowRef) -> &'a HtmlBox {
+fn row_ref<'a>(table: &'a WebCore, rr: &RowRef) -> &'a WebCore {
     match rr.grandchild_idx {
         None    => &table.children[rr.child_idx],
         Some(j) => &table.children[rr.child_idx].children[j],
     }
 }
-fn row_ref_mut<'a>(table: &'a mut HtmlBox, rr: &RowRef) -> &'a mut HtmlBox {
+fn row_ref_mut<'a>(table: &'a mut WebCore, rr: &RowRef) -> &'a mut WebCore {
     match rr.grandchild_idx {
         None    => &mut table.children[rr.child_idx],
         Some(j) => &mut table.children[rr.child_idx].children[j],
@@ -170,7 +170,7 @@ fn row_ref_mut<'a>(table: &'a mut HtmlBox, rr: &RowRef) -> &'a mut HtmlBox {
 /// Mirrors C++ LayoutTable.
 pub fn layout_table(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     c:            &Constraints,
 ) -> f32 {
@@ -743,7 +743,7 @@ pub fn layout_table(
 // ─── Border-collapse conflict resolution ─────────────────────────────────────
 
 fn resolve_collapsed_borders(
-    node:     &mut HtmlBox,
+    node:     &mut WebCore,
     row_refs: &[RowRef],
     grid:     &[Vec<TableCellSlot>],
     num_rows: usize,
@@ -904,13 +904,13 @@ fn resolve_collapsed_borders(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn shift_children_y(children: &mut Vec<HtmlBox>, dy: f32) {
+fn shift_children_y(children: &mut Vec<WebCore>, dy: f32) {
     for child in children.iter_mut() {
         shift_rects(child, 0.0, dy);
     }
 }
 
-fn clear_dirty(node: &mut HtmlBox) {
+fn clear_dirty(node: &mut WebCore) {
     node.layout.layout_dirty = false;
     for child in &mut node.children {
         clear_dirty(child);
@@ -918,7 +918,7 @@ fn clear_dirty(node: &mut HtmlBox) {
 }
 
 fn finish_table(
-    node: &mut HtmlBox,
+    node: &mut WebCore,
     rbox: &ResolvedBox,
     content_x: f32, content_y: f32,
     content_w: f32, content_h: f32,

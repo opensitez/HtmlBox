@@ -3,7 +3,7 @@
 //! A browser does not hand out `Document` values; it hands out handles and
 //! keeps the trees itself, because a document outlives any one call into it and
 //! several windows may name the same one. `vybe_widgets::dom` has exactly this,
-//! and htmlbox needs it for the same reason — without it, `window.open()` has
+//! and webcore needs it for the same reason — without it, `window.open()` has
 //! nowhere to put the document it creates, and `document.defaultView` has
 //! nothing to point back at.
 //!

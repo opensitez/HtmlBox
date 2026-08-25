@@ -4,10 +4,10 @@ use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use htmlbox::{load_html_with_registry, Document, Renderer, LayoutEngine};
-use htmlbox::platform::Platform;
-use htmlbox::types::ComponentRegistry;
-use htmlbox::dom::{self, HtmlEventType};
+use webcore::{load_html_with_registry, Document, Renderer, LayoutEngine};
+use webcore::platform::Platform;
+use webcore::types::ComponentRegistry;
+use webcore::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/calculator.html");
 
@@ -103,7 +103,7 @@ struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("calculator — htmlbox").with_inner_size(winit::dpi::LogicalSize::new(360u32, 420u32))).unwrap());
+        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("calculator — webcore").with_inner_size(winit::dpi::LogicalSize::new(360u32, 420u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
         let doc = load_html_with_registry(HTML, "", self.width, 420.0, self.registry.clone());

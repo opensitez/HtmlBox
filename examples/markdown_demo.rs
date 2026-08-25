@@ -11,8 +11,8 @@ use winit::window::Window;
 use winit::application::ApplicationHandler;
 use tiny_skia::Pixmap;
 
-use htmlbox::{parse_markdown, load_html, Document, Renderer, HtmlEventType};
-use htmlbox::platform::Platform;
+use webcore::{parse_markdown, load_html, Document, Renderer, HtmlEventType};
+use webcore::platform::Platform;
 
 // ── Sample markdown ──────────────────────────────────────────────────────────
 
@@ -199,7 +199,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Markdown Editor — htmlbox")
+                    .with_title("Markdown Editor — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(1100u32, 750u32))
             ).unwrap()
         );

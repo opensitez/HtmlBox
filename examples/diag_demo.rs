@@ -1,10 +1,10 @@
 /// Port of wxhtmledit/examples/diag.cpp
 /// Diagnostic: dump box tree to see layout results.
 
-use htmlbox::{load_html, LayoutEngine};
-use htmlbox::types::{HtmlBox, Display};
+use webcore::{load_html, LayoutEngine};
+use webcore::types::{WebCore, Display};
 
-fn dump_box_tree(node: &HtmlBox, depth: usize) {
+fn dump_box_tree(node: &WebCore, depth: usize) {
     if matches!(node.style.display, Display::None) {
         return;
     }

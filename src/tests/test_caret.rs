@@ -17,7 +17,7 @@ fn load_with_fonts(html: &str) -> Document {
     renderer.load_html(html, 900.0)
 }
 
-fn find_editable_box(root: &HtmlBox) -> Option<&HtmlBox> {
+fn find_editable_box(root: &WebCore) -> Option<&WebCore> {
     if root.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false) {
         return Some(root);
     }
@@ -28,7 +28,7 @@ fn find_editable_box(root: &HtmlBox) -> Option<&HtmlBox> {
 }
 
 /// Find any box that has a populated line_cache (inline content).
-fn find_box_with_lines(root: &HtmlBox) -> Option<&HtmlBox> {
+fn find_box_with_lines(root: &WebCore) -> Option<&WebCore> {
     if !root.layout.line_cache.is_empty() { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box_with_lines(child) { return Some(b); }
@@ -275,10 +275,10 @@ fn caret_click_roundtrip_flex_item() {
           <div id="a">Left</div>
           <div id="b">Right side</div>
         </div>"#);
-    let find_by_id = |root: &HtmlBox, id: &str| -> Option<*const HtmlBox> {
-        fn search(node: &HtmlBox, id: &str) -> Option<*const HtmlBox> {
+    let find_by_id = |root: &WebCore, id: &str| -> Option<*const WebCore> {
+        fn search(node: &WebCore, id: &str) -> Option<*const WebCore> {
             if node.attributes.get("id").map(|v| v == id).unwrap_or(false) {
-                return Some(node as *const HtmlBox);
+                return Some(node as *const WebCore);
             }
             for child in &node.children {
                 if let Some(r) = search(child, id) { return Some(r); }
@@ -342,7 +342,7 @@ fn hr_unaffected_by_empty_block_fix() {
     // <hr> is a void element — the empty-block placeholder must NOT be added.
     let doc = load_with_fonts(r#"<div><hr/><p>text</p></div>"#);
     // Find the <hr> box — it must have an empty line_cache (no text placeholder).
-    fn find_hr(node: &HtmlBox) -> Option<&HtmlBox> {
+    fn find_hr(node: &WebCore) -> Option<&WebCore> {
         if node.tag == "hr" { return Some(node); }
         for child in &node.children { if let Some(r) = find_hr(child) { return Some(r); } }
         None
@@ -363,7 +363,7 @@ fn hr_unaffected_by_empty_block_fix() {
 /// Returns `(original_line_y, inserted_line_y)` (absolute document coords).
 fn enter_creates_new_line_scenario(
     html: &str,
-    find_edit_box: fn(&HtmlBox) -> Option<*const HtmlBox>,
+    find_edit_box: fn(&WebCore) -> Option<*const WebCore>,
 ) -> (f32, f32) {
     let mut renderer = Renderer::new();
     let mut doc = renderer.load_html(html, 900.0);
@@ -423,7 +423,7 @@ fn enter_at_midtext_moves_caret_to_new_line_in_root() {
     // <p> directly inside root → Enter splits into two <p> blocks.
     let html = r#"<p contenteditable="true">Hello world</p>"#;
     let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
-        find_editable_box(root).map(|b| b as *const HtmlBox)
+        find_editable_box(root).map(|b| b as *const WebCore)
     });
     assert!(new_y > orig_y,
         "after Enter in root <p>: inserted text line y ({}) must be below original line y ({})",
@@ -435,7 +435,7 @@ fn enter_at_midtext_moves_caret_to_new_line_inside_div() {
     // <p> inside a <div> → same splitting behaviour.
     let html = r#"<div><p contenteditable="true">Hello world</p></div>"#;
     let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
-        find_editable_box(root).map(|b| b as *const HtmlBox)
+        find_editable_box(root).map(|b| b as *const WebCore)
     });
     assert!(new_y > orig_y,
         "after Enter in <div><p>: inserted text line y ({}) must be below original line y ({})",
@@ -448,8 +448,8 @@ fn enter_at_midtext_moves_caret_to_new_line_in_table_cell() {
     // line within the same cell.
     let html = r#"<table><tr><td contenteditable="true">Hello world</td></tr></table>"#;
     let (orig_y, new_y) = enter_creates_new_line_scenario(html, |root| {
-        fn find_td(node: &HtmlBox) -> Option<*const HtmlBox> {
-            if node.tag == "td" { return Some(node as *const HtmlBox); }
+        fn find_td(node: &WebCore) -> Option<*const WebCore> {
+            if node.tag == "td" { return Some(node as *const WebCore); }
             for c in &node.children { if let Some(r) = find_td(c) { return Some(r); } }
             None
         }
@@ -533,8 +533,8 @@ fn enter_in_cell_caret_renders_on_new_line() {
     );
 
     // Find the <td> and click in the middle.
-    fn find_td(node: &HtmlBox) -> Option<*const HtmlBox> {
-        if node.tag == "td" { return Some(node as *const HtmlBox); }
+    fn find_td(node: &WebCore) -> Option<*const WebCore> {
+        if node.tag == "td" { return Some(node as *const WebCore); }
         for c in &node.children { if let Some(r) = find_td(c) { return Some(r); } }
         None
     }
@@ -552,7 +552,7 @@ fn enter_in_cell_caret_renders_on_new_line() {
 
     // After relayout the <td> must have two lines.
     // Re-find the td by walking the tree (old pointer may be invalidated).
-    fn find_td2(node: &HtmlBox) -> Option<&HtmlBox> {
+    fn find_td2(node: &WebCore) -> Option<&WebCore> {
         if node.tag == "td" { return Some(node); }
         for c in &node.children { if let Some(r) = find_td2(c) { return Some(r); } }
         None

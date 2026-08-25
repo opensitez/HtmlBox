@@ -7,14 +7,14 @@ use crate::types::*;
 
 #[test]
 fn selectors_tag_match() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     assert!(parse_selector("p").matches_box(&b));
     assert!(!parse_selector("div").matches_box(&b));
 }
 
 #[test]
 fn selectors_class_match() {
-    let mut b = HtmlBox::new("div");
+    let mut b = WebCore::new("div");
     b.attributes.insert("class".into(), "foo bar".into());
     assert!(parse_selector(".foo").matches_box(&b));
     assert!(parse_selector(".bar").matches_box(&b));
@@ -23,7 +23,7 @@ fn selectors_class_match() {
 
 #[test]
 fn selectors_id_match() {
-    let mut b = HtmlBox::new("div");
+    let mut b = WebCore::new("div");
     b.attributes.insert("id".into(), "main".into());
     assert!(parse_selector("#main").matches_box(&b));
     assert!(!parse_selector("#other").matches_box(&b));
@@ -31,7 +31,7 @@ fn selectors_id_match() {
 
 #[test]
 fn selectors_tag_and_class_combined() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.attributes.insert("class".into(), "intro".into());
     assert!(parse_selector("p.intro").matches_box(&b));
     assert!(!parse_selector("div.intro").matches_box(&b));
@@ -39,7 +39,7 @@ fn selectors_tag_and_class_combined() {
 
 #[test]
 fn selectors_tag_and_id_combined() {
-    let mut b = HtmlBox::new("div");
+    let mut b = WebCore::new("div");
     b.attributes.insert("id".into(), "header".into());
     assert!(parse_selector("div#header").matches_box(&b));
     assert!(!parse_selector("p#header").matches_box(&b));
@@ -47,13 +47,13 @@ fn selectors_tag_and_id_combined() {
 
 #[test]
 fn selectors_universal_selector() {
-    let b = HtmlBox::new("span");
+    let b = WebCore::new("span");
     assert!(parse_selector("*").matches_box(&b));
 }
 
 #[test]
 fn selectors_multiple_class_selector() {
-    let mut b = HtmlBox::new("div");
+    let mut b = WebCore::new("div");
     b.attributes.insert("class".into(), "foo bar baz".into());
     assert!(parse_selector(".foo.bar").matches_box(&b));
     assert!(parse_selector(".foo.baz").matches_box(&b));
@@ -190,7 +190,7 @@ fn selectors_child_universal_matches_direct_child() {
     // ".grid-3 > *" must match a direct child of .grid-3, not a grandchild.
     use crate::css::AncestorInfo;
     let sel = parse_selector(".grid-3 > *");
-    let child = HtmlBox::new("div");
+    let child = WebCore::new("div");
 
     // Direct child: parent is .grid-3
     let direct_ancestors = vec![AncestorInfo {
@@ -231,7 +231,7 @@ fn selectors_nth_child_odd() {
     // :nth-child(odd) == 2n+1
     let sel = parse_selector("li:nth-child(odd)");
     // Parsed: child_index 0 (pos=1, odd) should match; child_index 1 (pos=2, even) should not
-    let mut b_first = HtmlBox::new("li");
+    let mut b_first = WebCore::new("li");
     let ancestors = vec![AncestorInfo {
         tag: "ul".into(),
         attributes: Default::default(),
@@ -254,7 +254,7 @@ fn selectors_nth_child_even() {
         sibling_count: 4,
         ..Default::default()
     }];
-    let b = HtmlBox::new("li");
+    let b = WebCore::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 4, &ancestors)); // pos=1, odd
     assert!(sel.matches_with_ancestors(&b, 1, 4, &ancestors));  // pos=2, even
 }
@@ -270,7 +270,7 @@ fn selectors_nth_child_simple_number() {
         sibling_count: 4,
         ..Default::default()
     }];
-    let b = HtmlBox::new("li");
+    let b = WebCore::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 4, &ancestors));
     assert!(!sel.matches_with_ancestors(&b, 1, 4, &ancestors));
     assert!(sel.matches_with_ancestors(&b, 2, 4, &ancestors));  // pos=3
@@ -288,7 +288,7 @@ fn selectors_first_child_match() {
         sibling_count: 2,
         ..Default::default()
     }];
-    let b = HtmlBox::new("li");
+    let b = WebCore::new("li");
     assert!(sel.matches_with_ancestors(&b, 0, 2, &ancestors));  // first child
     assert!(!sel.matches_with_ancestors(&b, 1, 2, &ancestors)); // second child
 }
@@ -304,7 +304,7 @@ fn selectors_last_child_match() {
         sibling_count: 2,
         ..Default::default()
     }];
-    let b = HtmlBox::new("li");
+    let b = WebCore::new("li");
     assert!(!sel.matches_with_ancestors(&b, 0, 2, &ancestors)); // first child
     assert!(sel.matches_with_ancestors(&b, 1, 2, &ancestors));  // last child
 }
@@ -327,7 +327,7 @@ fn selectors_only_child_match() {
         sibling_count: 2,
         ..Default::default()
     }];
-    let b = HtmlBox::new("p");
+    let b = WebCore::new("p");
     assert!(sel.matches_with_ancestors(&b, 0, 1, &ancestors_single));  // only child
     assert!(!sel.matches_with_ancestors(&b, 0, 2, &ancestors_two));    // has sibling
 }
@@ -336,7 +336,7 @@ fn selectors_only_child_match() {
 fn selectors_descendant_match() {
     // "div p" should match a p whose ancestor is a div
     let sel = parse_selector("div p");
-    let b = HtmlBox::new("p");
+    let b = WebCore::new("p");
     let ancestors = vec![AncestorInfo {
         tag: "div".into(),
         attributes: Default::default(),
@@ -356,7 +356,7 @@ fn selectors_child_match() {
     // Note: the parser inserts an extra Descendant combinator for whitespace
     // around ">", so we use the no-space form to get a clean Child selector.
     let sel = parse_selector("div>p");
-    let b = HtmlBox::new("p");
+    let b = WebCore::new("p");
     let ancestors = vec![AncestorInfo {
         tag: "div".into(),
         attributes: Default::default(),
@@ -375,7 +375,7 @@ fn selectors_deep_descendant_match() {
     let sel_desc      = parse_selector("div p");
     let sel_child     = parse_selector("div>p");
     let sel_sec_child = parse_selector("section>p");
-    let b = HtmlBox::new("p");
+    let b = WebCore::new("p");
     // ancestors listed outermost-first: div → section → p
     let ancestors = vec![
         AncestorInfo { tag: "div".into(),     attributes: Default::default(), child_index: 0, sibling_count: 1, ..Default::default() },

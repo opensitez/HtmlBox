@@ -1,12 +1,12 @@
 // Ported from cpptests/test_css.cpp
 // CSS declaration parsing, stylesheet parsing, selector parsing, property application.
 
-use htmlbox::types::*;
-use htmlbox::css::{
+use webcore::types::*;
+use webcore::css::{
     apply_property, parse_declarations, parse_selector, parse_stylesheet,
     SelectorPart, Combinator, PseudoElement,
 };
-use htmlbox::parse_html;
+use webcore::parse_html;
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -365,7 +365,7 @@ fn css_important_color_applied() {
     let doc = parse_html(
         "<html><head><style>.red { color: #ff0000 !important; }</style></head>\
          <body><p class=\"red\">Text</p></body></html>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some(), "p element should be found");
     let p = p.unwrap();
     assert_eq!(p.style.color, Color::rgb(255, 0, 0),
@@ -377,7 +377,7 @@ fn css_important_background_applied() {
     let doc = parse_html(
         "<html><head><style>.bg { background-color: #334155 !important; }</style></head>\
          <body><div class=\"bg\">Box</div></body></html>");
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.attributes.get("class").map(|v| v == "bg").unwrap_or(false)
     });
     assert!(div.is_some(), "div.bg should be found");
@@ -398,7 +398,7 @@ fn css_important_beats_higher_specificity() {
            body p.special { color: blue; }\
          </style></head>\
          <body><p class=\"special\">Text</p></body></html>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p"
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p"
         && b.attributes.get("class").map_or(false, |v| v == "special"));
     assert!(p.is_some());
     // !important (specificity 1) should beat normal (specificity 12)
@@ -414,7 +414,7 @@ fn css_important_beats_inline_style() {
            p { color: green !important; }\
          </style></head>\
          <body><p style=\"color: blue;\">Text</p></body></html>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(0, 128, 0),
         "!important in stylesheet should override inline style");
@@ -428,7 +428,7 @@ fn css_inline_important_beats_stylesheet_important() {
            p { color: green !important; }\
          </style></head>\
          <body><p style=\"color: blue !important;\">Text</p></body></html>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 255),
         "inline !important should beat stylesheet !important");
@@ -443,7 +443,7 @@ fn css_important_does_not_affect_other_properties() {
            p.x { color: blue; background-color: green; }\
          </style></head>\
          <body><p class=\"x\">Text</p></body></html>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p"
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p"
         && b.attributes.get("class").map_or(false, |v| v == "x"));
     assert!(p.is_some());
     let p = p.unwrap();
@@ -454,7 +454,7 @@ fn css_important_does_not_affect_other_properties() {
 }
 
 // ── find_box helper ───────────────────────────────────────────────────────────
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }

@@ -1,9 +1,9 @@
 // List tests – ported from cpptests/test_lists.cpp
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::css::apply_property;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -11,7 +11,7 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     None
 }
 
-fn count_boxes(root: &HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> usize {
+fn count_boxes(root: &WebCore, pred: &dyn Fn(&WebCore) -> bool) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -19,7 +19,7 @@ fn count_boxes(root: &HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> usize {
     n
 }
 
-fn walk_boxes<'a>(root: &'a HtmlBox, out: &mut Vec<&'a HtmlBox>, pred: &dyn Fn(&HtmlBox) -> bool) {
+fn walk_boxes<'a>(root: &'a WebCore, out: &mut Vec<&'a WebCore>, pred: &dyn Fn(&WebCore) -> bool) {
     if pred(root) { out.push(root); }
     for child in &root.children {
         walk_boxes(child, out, pred);

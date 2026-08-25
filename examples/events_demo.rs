@@ -5,9 +5,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::keyboard::{PhysicalKey, KeyCode};
 
-use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
-use htmlbox::platform::Platform;
-use htmlbox::dom::{self, HtmlEventType};
+use webcore::{load_html, Document, Renderer, LayoutEngine, WebCore};
+use webcore::platform::Platform;
+use webcore::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/events.html");
 
@@ -54,7 +54,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes()
-                .with_title("events_demo — htmlbox")
+                .with_title("events_demo — webcore")
                 .with_inner_size(winit::dpi::LogicalSize::new(1000u32, 800u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());
@@ -341,10 +341,10 @@ impl ApplicationHandler for App {
 // ── Drag helpers ──────────────────────────────────────────────────────────────
 
 /// Find the id of the top-most card under `doc_pt`, if any.
-fn hit_card_id(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
-    use htmlbox::layout::hit_test::point_to_hit;
+fn hit_card_id(root: &WebCore, doc_pt: (f32, f32)) -> Option<String> {
+    use webcore::layout::hit_test::point_to_hit;
     let hit = point_to_hit(root, doc_pt, 0)?;
-    fn find_node<'a>(node: &'a HtmlBox, id: u32) -> Option<&'a HtmlBox> {
+    fn find_node<'a>(node: &'a WebCore, id: u32) -> Option<&'a WebCore> {
         if node.node_id == id { return Some(node); }
         for c in &node.children { if let Some(f) = find_node(c, id) { return Some(f); } }
         None
@@ -364,11 +364,11 @@ fn hit_card_id(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
 /// Recursively search for the node matching `target_id` and return its nearest
 /// card ancestor's id. Walks the tree depth-first; when the target is found,
 /// propagates a sentinel upward so ancestor nodes can check if they are a card.
-fn find_card_ancestor(root: &HtmlBox, target_id: u32) -> Option<String> {
+fn find_card_ancestor(root: &WebCore, target_id: u32) -> Option<String> {
     /// Returns `Some(card_id)` if target_id is found in this subtree and an
     /// ancestor with class "card" exists. Returns `Some("")` as a sentinel
     /// meaning "found the target but no card ancestor yet".
-    fn walk(node: &HtmlBox, target_id: u32) -> Option<String> {
+    fn walk(node: &WebCore, target_id: u32) -> Option<String> {
         if node.node_id == target_id {
             // Found the target — check if this node itself is a card
             if dom::has_class(node, "card") {
@@ -397,7 +397,7 @@ fn find_card_ancestor(root: &HtmlBox, target_id: u32) -> Option<String> {
 }
 
 /// Find which column body id contains the point `(mx, doc_y)`.
-fn find_target_body(root: &HtmlBox, mx: f32, doc_y: f32) -> Option<String> {
+fn find_target_body(root: &WebCore, mx: f32, doc_y: f32) -> Option<String> {
     for &(_, body_id) in COLS {
         if let Some(body) = dom::query_selector(root, &format!("#{}", body_id)) {
             let r = body.layout.border_rect;
@@ -572,8 +572,8 @@ fn drag_end(doc: &mut Document, card_id: &str, _dropped: bool) {
 }
 
 /// Deselect all cards.
-fn deselect_all(root: &mut HtmlBox) {
-    fn walk(node: &mut HtmlBox) {
+fn deselect_all(root: &mut WebCore) {
+    fn walk(node: &mut WebCore) {
         if dom::has_class(node, "card") { dom::remove_class(node, "card-selected"); }
         for child in node.children.iter_mut() { walk(child); }
     }
@@ -581,8 +581,8 @@ fn deselect_all(root: &mut HtmlBox) {
 }
 
 /// Get the text content of the first descendant with `class_name`.
-fn get_text_of_class<'a>(node: &'a HtmlBox, class_name: &str) -> String {
-    fn walk<'a>(node: &'a HtmlBox, class_name: &str) -> Option<&'a HtmlBox> {
+fn get_text_of_class<'a>(node: &'a WebCore, class_name: &str) -> String {
+    fn walk<'a>(node: &'a WebCore, class_name: &str) -> Option<&'a WebCore> {
         if dom::has_class(node, class_name) { return Some(node); }
         for child in &node.children { if let Some(b) = walk(child, class_name) { return Some(b); } }
         None

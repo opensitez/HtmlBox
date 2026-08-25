@@ -23,7 +23,7 @@ fn display_contents_child_has_zero_box() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let wrapper = find_box(&doc.root, &|b: &HtmlBox| {
+    let wrapper = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "wrapper").unwrap_or(false)
     }).expect("wrapper element");
     assert_eq!(wrapper.layout.content_rect.w, 0.0, "display:contents element should have 0 width");
@@ -42,7 +42,7 @@ fn display_contents_children_visible_in_block() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let inner = find_box(&doc.root, &|b: &HtmlBox| {
+    let inner = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "inner").unwrap_or(false)
     }).expect("inner <p>");
     assert!(inner.layout.content_rect.w > 0.0,
@@ -67,7 +67,7 @@ fn display_contents_nested_chain() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let deep = find_box(&doc.root, &|b: &HtmlBox| {
+    let deep = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "deep").unwrap_or(false)
     }).expect("deep <p>");
     assert!(deep.layout.content_rect.h > 0.0,
@@ -87,7 +87,7 @@ fn display_contents_block_height_includes_promoted_children() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let parent = find_box(&doc.root, &|b: &HtmlBox| {
+    let parent = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "parent").unwrap_or(false)
     }).expect("parent div");
     assert!(parent.layout.content_rect.h > 0.0,
@@ -108,13 +108,13 @@ fn display_contents_mixed_with_normal_children() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let first = find_box(&doc.root, &|b: &HtmlBox| {
+    let first = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "first").unwrap_or(false)
     }).expect("first");
-    let promoted = find_box(&doc.root, &|b: &HtmlBox| {
+    let promoted = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "promoted").unwrap_or(false)
     }).expect("promoted");
-    let last = find_box(&doc.root, &|b: &HtmlBox| {
+    let last = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "last").unwrap_or(false)
     }).expect("last");
 
@@ -142,7 +142,7 @@ fn display_contents_in_flex_children_promoted() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    let item = find_box(&doc.root, &|b: &HtmlBox| {
+    let item = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "item").unwrap_or(false)
     }).expect("flex item");
     assert!(item.layout.content_rect.h > 0.0,
@@ -175,7 +175,7 @@ fn aol_header_pattern_contents_chain_in_block() {
         </div>
     "#;
     let doc = parse_and_layout(html, 1200.0);
-    let header_inner = find_box(&doc.root, &|b: &HtmlBox| {
+    let header_inner = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "header-inner").unwrap_or(false)
     }).expect("header-inner");
     assert!(header_inner.layout.content_rect.h > 0.0,
@@ -185,7 +185,7 @@ fn aol_header_pattern_contents_chain_in_block() {
         "header content must have reasonable width, got {}", header_inner.layout.content_rect.w);
 
     // Content below the header must be pushed down.
-    let content = find_box(&doc.root, &|b: &HtmlBox| {
+    let content = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "content").unwrap_or(false)
     }).expect("content div");
     assert!(content.layout.margin_rect.y >= header_inner.layout.margin_rect.y + header_inner.layout.margin_rect.h,

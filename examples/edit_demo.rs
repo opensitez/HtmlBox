@@ -8,8 +8,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use htmlbox::{Document, Renderer, HtmlEventType};
-use htmlbox::platform::Platform;
+use webcore::{Document, Renderer, HtmlEventType};
+use webcore::platform::Platform;
 
 const HTML: &str = include_str!("html/edit_demo.html");
 
@@ -30,7 +30,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("edit_demo — htmlbox")
+                    .with_title("edit_demo — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(1000u32, 780u32))
             ).unwrap()
         );

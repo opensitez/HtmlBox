@@ -1,5 +1,5 @@
 //! Tests for the DOM/Layout split — verifying LayoutBox and LayoutStore work
-//! correctly alongside the existing HtmlBox tree.
+//! correctly alongside the existing WebCore tree.
 
 use crate::html::parse_html;
 use crate::layout::layout_box::{LayoutBox, LayoutStore};

@@ -2,7 +2,7 @@ pub mod serializer;
 pub mod streaming;
 
 use std::collections::HashMap;
-use crate::types::{HtmlBox, Document, Display, ListStyleType};
+use crate::types::{WebCore, Document, Display, ListStyleType};
 use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
 // ─── SVG extraction ────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ fn parse_viewbox_value(val: Option<&str>) -> Option<(u32, u32)> {
 /// rasterize the SVG to RGBA pixel data, and store it on the box.
 /// Post-cascade pass: load background images for elements whose
 /// background-image URL was set by CSS rules (not just inline styles).
-pub fn load_background_images(node: &mut HtmlBox, base_url: &str) {
+pub fn load_background_images(node: &mut WebCore, base_url: &str) {
     if node.bg_image_data.is_none() && !node.style.background_image_url.is_empty() {
         let url = node.style.background_image_url.clone();
         if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
@@ -258,7 +258,7 @@ pub fn resolve_url(src: &str, base_url: &str) -> String {
 /// Set decoded image data on a node.
 /// Dimensions are NOT baked into the style here — the layout engine handles
 /// aspect-ratio sizing after the CSS cascade has set any explicit width/height.
-pub fn set_image_on_node(node: &mut HtmlBox, data: Vec<u8>, w: u32, h: u32) {
+pub fn set_image_on_node(node: &mut WebCore, data: Vec<u8>, w: u32, h: u32) {
     node.image_data   = Some(data);
     node.image_width  = w;
     node.image_height = h;
@@ -266,7 +266,7 @@ pub fn set_image_on_node(node: &mut HtmlBox, data: Vec<u8>, w: u32, h: u32) {
 
 /// Set decoded image (raster or SVG) on an img node.
 /// SVGs are stored as markup for deferred rasterization at the correct display size.
-pub fn set_decoded_image_on_node(node: &mut HtmlBox, decoded: DecodedImage) {
+pub fn set_decoded_image_on_node(node: &mut WebCore, decoded: DecodedImage) {
     match decoded {
         DecodedImage::Raster(data, w, h) => {
             node.image_data   = Some(data);
@@ -777,7 +777,7 @@ pub fn default_display(tag: &str) -> &'static str {
 
 // ─── Apply presentational attributes ───────────────────────────────────────
 
-fn apply_presentational_attrs(node: &mut HtmlBox) {
+fn apply_presentational_attrs(node: &mut WebCore) {
     let attrs = node.attributes.clone();
     let tag = node.tag.clone();
 
@@ -906,7 +906,7 @@ fn apply_presentational_attrs(node: &mut HtmlBox) {
     }
 }
 
-fn apply_inline_style(node: &mut HtmlBox, css: &str) {
+fn apply_inline_style(node: &mut WebCore, css: &str) {
     for decl in css.split(';') {
         let decl = decl.trim();
         if decl.is_empty() { continue; }
@@ -980,7 +980,7 @@ struct HtmlParser {
     linked_stylesheets: Vec<(String, String)>,  // (href, media)
     /// Monotonically increasing counter for assigning stable node_ids.
     next_node_id:       u32,
-    /// Arena-based DOM being built in parallel with the HtmlBox tree.
+    /// Arena-based DOM being built in parallel with the WebCore tree.
     arena:              crate::dom::arena::DomArena,
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
@@ -1018,11 +1018,11 @@ impl HtmlParser {
         }
     }
 
-    /// Create an HtmlBox with a fresh sequential node_id.
+    /// Create an WebCore with a fresh sequential node_id.
     /// Also creates the corresponding node in the arena.
     #[inline]
-    fn new_box(&mut self, tag: &str) -> HtmlBox {
-        let mut b = HtmlBox::new(tag);
+    fn new_box(&mut self, tag: &str) -> WebCore {
+        let mut b = WebCore::new(tag);
         let arena_id = if tag == "#text" {
             self.arena.create_text("")
         } else {
@@ -1052,13 +1052,13 @@ impl HtmlParser {
     fn parse_children_into(
         &mut self,
         parent_tag: &str,
-        children: &mut Vec<HtmlBox>,
+        children: &mut Vec<WebCore>,
         ol_counter: &mut i32,
     ) {
         // Each frame represents one nesting level.
         struct Frame {
             parent_tag: String,
-            node:       HtmlBox,   // the element whose children we're collecting
+            node:       WebCore,   // the element whose children we're collecting
             ol_counter: i32,
         }
 
@@ -1066,7 +1066,7 @@ impl HtmlParser {
         let mut stack: Vec<Frame> = Vec::new();
         stack.push(Frame {
             parent_tag: parent_tag.to_string(),
-            node:       HtmlBox::new("__root__"),  // temporary container, no arena node needed
+            node:       WebCore::new("__root__"),  // temporary container, no arena node needed
             ol_counter: *ol_counter,
         });
 
@@ -1341,7 +1341,7 @@ impl HtmlParser {
     }
 
     /// Post-processing applied to a node after its children have been parsed.
-    fn post_process_node(node: &mut HtmlBox, base_url: &str) {
+    fn post_process_node(node: &mut WebCore, base_url: &str) {
         // Declarative Shadow DOM: <template shadowrootmode="open|closed">
         // Convert the template's children into a shadow root on the parent.
         let has_shadow_template = node.children.iter().any(|c|
@@ -1460,7 +1460,7 @@ impl HtmlParser {
                 }
             }
             // Add a display text node for the currently selected option
-            let mut display_node = HtmlBox::new("#text");
+            let mut display_node = WebCore::new("#text");
             display_node.text = selected_text.trim().to_string();
             node.children.push(display_node);
             // Set overflow hidden so options don't leak
@@ -1492,7 +1492,7 @@ impl HtmlParser {
                         });
                     if !label.is_empty() {
                         node.children.clear();
-                        let mut text_node = HtmlBox::new("#text");
+                        let mut text_node = WebCore::new("#text");
                         text_node.text = label;
                         node.children.push(text_node);
                     }
@@ -1527,7 +1527,7 @@ impl HtmlParser {
         tag: String,
         attrs: HashMap<String, String>,
         self_closing: bool,
-        children: &mut Vec<HtmlBox>,
+        children: &mut Vec<WebCore>,
         ol_counter: &mut i32,
     ) {
         // Reaching here at all means the token was not `<html>`, `<head>` or
@@ -1790,7 +1790,7 @@ fn parse_srcset_url(srcset: &str) -> Option<String> {
 }
 
 /// Resolve the best `<source>` for a `<picture>` element and set it on the child `<img>`.
-fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f32) {
+fn resolve_picture_source(picture: &mut WebCore, base_url: &str, vw: f32, vh: f32) {
     // Find the best matching <source>
     let mut best_url: Option<String> = None;
     let mut best_width: Option<String> = None;
@@ -1849,7 +1849,7 @@ fn resolve_picture_source(picture: &mut HtmlBox, base_url: &str, vw: f32, vh: f3
 }
 
 /// Post-pass: re-resolve `<picture>` elements with real viewport dimensions.
-pub fn resolve_picture_elements(node: &mut HtmlBox, base_url: &str, vw: f32, vh: f32) {
+pub fn resolve_picture_elements(node: &mut WebCore, base_url: &str, vw: f32, vh: f32) {
     if node.tag == "picture" {
         resolve_picture_source(node, base_url, vw, vh);
     }
@@ -1858,7 +1858,7 @@ pub fn resolve_picture_elements(node: &mut HtmlBox, base_url: &str, vw: f32, vh:
     }
 }
 
-fn number_lists(node: &mut HtmlBox) {
+fn number_lists(node: &mut WebCore) {
     if node.tag == "ol" {
         let mut idx = 1i32;
         for child in &mut node.children {
@@ -1935,9 +1935,9 @@ fn parse_head_content(parser: &mut HtmlParser) {
 
 fn parse_html_children(
     parser: &mut HtmlParser,
-    html_box: &mut HtmlBox,
-    body_box: &mut HtmlBox,
-    body_children: &mut Vec<HtmlBox>,
+    html_box: &mut WebCore,
+    body_box: &mut WebCore,
+    body_children: &mut Vec<WebCore>,
     ol_counter: &mut i32,
 ) {
     loop {
@@ -2001,7 +2001,7 @@ fn parse_html_children(
 /// After the CSS cascade runs, fix up `<summary>` display and `<details>` open/closed hiding.
 /// The UA stylesheet sets `details, summary { display: block }` which overwrites our
 /// parse-time settings, so we re-apply them here.
-fn apply_details_summary_post_cascade(node: &mut HtmlBox) {
+fn apply_details_summary_post_cascade(node: &mut WebCore) {
     if node.tag == "details" {
         let is_open = node.attributes.contains_key("open");
         for child in &mut node.children {
@@ -2102,7 +2102,7 @@ fn parse_html_full(
     let mut body_box = parser.new_box("body");
     apply_property(&mut body_box.style, "display", "block");
 
-    let mut body_children: Vec<HtmlBox> = Vec::new();
+    let mut body_children: Vec<WebCore> = Vec::new();
     let mut ol_counter = 0i32;
 
     while parser.pos < parser.tokens.len() {
@@ -2195,7 +2195,7 @@ fn parse_html_full(
 
     html_box.children = vec![head_box, body_box];
 
-    // Wire arena parent-child relationships to mirror the HtmlBox tree.
+    // Wire arena parent-child relationships to mirror the WebCore tree.
     wire_arena_children(&mut parser.arena, &html_box);
 
     // Build combined stylesheet (UA + author)
@@ -2309,9 +2309,9 @@ fn parse_html_full(
 
 // ─── Arena wiring ────────────────────────────────────────────────────────────
 
-/// Walk the HtmlBox tree and wire arena parent-child links to mirror it.
-/// Called once after parsing is complete and the full HtmlBox tree is built.
-fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &HtmlBox) {
+/// Walk the WebCore tree and wire arena parent-child links to mirror it.
+/// Called once after parsing is complete and the full WebCore tree is built.
+fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &WebCore) {
     use crate::dom::arena::NodeId;
     let root_id = NodeId(root.node_id);
     if root_id.is_none() || !arena.is_alive(root_id) { return; }
@@ -2331,14 +2331,14 @@ fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &HtmlBox) 
     }
 }
 
-/// Rebuild arena from an existing HtmlBox tree (e.g. after clone or DOM mutation).
-/// Creates fresh arena nodes for every HtmlBox and wires parent-child links.
-pub fn rebuild_arena_from_tree(arena: &mut crate::dom::arena::DomArena, root: &mut HtmlBox) {
+/// Rebuild arena from an existing WebCore tree (e.g. after clone or DOM mutation).
+/// Creates fresh arena nodes for every WebCore and wires parent-child links.
+pub fn rebuild_arena_from_tree(arena: &mut crate::dom::arena::DomArena, root: &mut WebCore) {
     *arena = crate::dom::arena::DomArena::new();
     rebuild_arena_recursive(arena, root);
 }
 
-fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut HtmlBox) {
+fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut WebCore) {
     use crate::dom::arena::NodeId;
     // Create arena node
     let arena_id = if node.tag == "#text" {
@@ -2358,13 +2358,13 @@ fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut H
         let child_id = NodeId(child.node_id);
         arena.append_child(arena_id, child_id);
     }
-    // Populate linked-list pointers on HtmlBox (second pass — all node_ids assigned)
+    // Populate linked-list pointers on WebCore (second pass — all node_ids assigned)
     populate_sibling_links(node);
 }
 
 /// Populate parent/first_child/last_child/next_sibling/prev_sibling on a node
 /// and all its Vec children. Called after node_ids are assigned.
-pub fn populate_sibling_links(node: &mut HtmlBox) {
+pub fn populate_sibling_links(node: &mut WebCore) {
     let parent_id = node.node_id;
     let n = node.children.len();
     if n == 0 {
@@ -2389,7 +2389,7 @@ pub fn populate_sibling_links(node: &mut HtmlBox) {
 /// Used by `dom_set_inner_html` to wire new children into the existing arena.
 pub fn rebuild_arena_recursive_pub(
     arena: &mut crate::dom::arena::DomArena,
-    node: &mut HtmlBox,
+    node: &mut WebCore,
     parent_arena_id: crate::dom::arena::NodeId,
 ) {
     rebuild_arena_recursive(arena, node);

@@ -16,7 +16,7 @@ fn layout(html: &str) -> Document {
     doc
 }
 
-fn query<'a>(doc: &'a Document, sel: &str) -> Option<&'a crate::types::HtmlBox> {
+fn query<'a>(doc: &'a Document, sel: &str) -> Option<&'a crate::types::WebCore> {
     crate::dom::query_selector(&doc.root, sel)
 }
 

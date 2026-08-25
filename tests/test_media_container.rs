@@ -1,11 +1,11 @@
 // Comprehensive @media and @container query tests — covers all media features,
 // complex conditions, nesting, container queries, and responsive patterns.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
-use htmlbox::load_html_vp;
+use webcore::types::*;
+use webcore::load_html;
+use webcore::load_html_vp;
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for child in &root.children { if let Some(f) = by_id(child, id) { return Some(f); } }
     None

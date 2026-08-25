@@ -1,10 +1,10 @@
 // Ported from cpptests/test_cascade.cpp
 // CSS Cascade Priority Tests: UA stylesheet < author <style> < inline style=""
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::layout::LayoutEngine;
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::layout::LayoutEngine;
+use webcore::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     load_html(html, viewport_width)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -24,14 +24,14 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn find_all_boxes<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Vec<&'a HtmlBox> {
+fn find_all_boxes<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     collect_matching(root, pred, &mut result);
     result
 }
 
-fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
-    node: &'a HtmlBox, pred: &F, out: &mut Vec<&'a HtmlBox>
+fn collect_matching<'a, F: Fn(&WebCore) -> bool>(
+    node: &'a WebCore, pred: &F, out: &mut Vec<&'a WebCore>
 ) {
     if pred(node) { out.push(node); }
     for child in &node.children {
@@ -39,14 +39,14 @@ fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
     }
 }
 
-fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
+fn walk_boxes<F: FnMut(&WebCore)>(root: &WebCore, visitor: &mut F) {
     visitor(root);
     for child in &root.children {
         walk_boxes(child, visitor);
     }
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -65,7 +65,7 @@ fn doc_text(doc: &Document) -> String {
 #[test]
 fn cascade_heading_is_bold() {
     let doc = parse_and_layout("<h1>Title</h1>", 800.0);
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some(), "h1 box not found");
     assert!(h1.unwrap().style.font_weight.is_bold());
 }
@@ -73,7 +73,7 @@ fn cascade_heading_is_bold() {
 #[test]
 fn cascade_paragraph_has_margin() {
     let doc = parse_and_layout("<p>text</p>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some(), "p box not found");
     let s = &p.unwrap().style;
     assert!(!s.margin_top.is_none(), "p should have top margin");
@@ -89,7 +89,7 @@ fn cascade_author_style_overrides_ua_heading() {
     let doc = parse(
         "<style>h1 { font-weight: normal; }</style><h1>Title</h1>",
     );
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some());
     assert!(!h1.unwrap().style.font_weight.is_bold());
 }
@@ -100,7 +100,7 @@ fn cascade_author_class_overrides_ua() {
         "<style>.compact { margin-top: 0px; margin-bottom: 0px; }</style>\
          <p class=\"compact\">text</p>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| {
+    let p = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "p"
             && b.attributes.get("class").map(|v| v == "compact").unwrap_or(false)
     });
@@ -120,7 +120,7 @@ fn cascade_inline_style_overrides_author() {
         "<style>div { color: red; }</style>\
          <div style=\"color: green;\">text</div>",
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let div = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(div.is_some());
     assert_eq!(div.unwrap().style.color, Color::rgb(0, 128, 0));
 }
@@ -128,7 +128,7 @@ fn cascade_inline_style_overrides_author() {
 #[test]
 fn cascade_inline_style_overrides_ua() {
     let doc = parse("<h1 style=\"font-weight: normal;\">Title</h1>");
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some());
     assert!(!h1.unwrap().style.font_weight.is_bold());
 }
@@ -139,7 +139,7 @@ fn cascade_inline_style_overrides_author_and_ua() {
         "<style>p { margin-top: 50px; }</style>\
          <p style=\"margin-top: 5px;\">text</p>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.margin_top, CssLength::Px(5.0));
 }
@@ -153,7 +153,7 @@ fn cascade_color_inherited_from_parent() {
     let doc = parse(
         "<div style=\"color: purple;\"><p>text</p></div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(128, 0, 128));
 }
@@ -163,7 +163,7 @@ fn cascade_inline_style_beats_inheritance() {
     let doc = parse(
         "<div style=\"color: red;\"><p style=\"color: blue;\">text</p></div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 255));
 }
@@ -178,7 +178,7 @@ fn cascade_class_beats_tag() {
         "<style>p { color: blue; } .red { color: red; }</style>\
          <p class=\"red\">text</p>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| {
+    let p = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "p"
             && b.attributes.get("class").map(|v| v == "red").unwrap_or(false)
     });
@@ -192,7 +192,7 @@ fn cascade_id_beats_class() {
         "<style>.red { color: red; } #special { color: green; }</style>\
          <p class=\"red\" id=\"special\">text</p>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| {
+    let p = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "special").unwrap_or(false)
     });
     assert!(p.is_some());
@@ -208,7 +208,7 @@ fn cascade_font_inherited_from_parent() {
     let doc = parse(
         "<div style=\"font-size: 20px;\"><p>text</p></div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.font_size, CssLength::Px(20.0));
 }
@@ -218,7 +218,7 @@ fn cascade_inline_style_font_overrides_inheritance() {
     let doc = parse(
         "<div style=\"font-size: 20px;\"><p style=\"font-size: 10px;\">text</p></div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.font_size, CssLength::Px(10.0));
 }
@@ -234,7 +234,7 @@ fn cascade_deep_inheritance() {
            <div><div><p>deep</p></div></div>\
          </div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(255, 0, 0));
 }
@@ -246,7 +246,7 @@ fn cascade_deep_override() {
            <div style=\"color: blue;\"><p>text</p></div>\
          </div>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 255));
 }
@@ -258,7 +258,7 @@ fn cascade_deep_override() {
 #[test]
 fn cascade_named_color_red() {
     let doc = parse("<div style=\"color: red;\">r</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.color, Color::rgb(255, 0, 0));
 }
@@ -266,7 +266,7 @@ fn cascade_named_color_red() {
 #[test]
 fn cascade_named_color_navy() {
     let doc = parse("<div style=\"color: navy;\">n</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.color, Color::rgb(0, 0, 128));
 }
@@ -274,7 +274,7 @@ fn cascade_named_color_navy() {
 #[test]
 fn cascade_named_color_darkred() {
     let doc = parse("<div style=\"color: darkred;\">t</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.color, Color::rgb(139, 0, 0));
 }
@@ -282,7 +282,7 @@ fn cascade_named_color_darkred() {
 #[test]
 fn cascade_named_color_green() {
     let doc = parse("<div style=\"color: green;\">g</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.color, Color::rgb(0, 128, 0));
 }
@@ -290,7 +290,7 @@ fn cascade_named_color_green() {
 #[test]
 fn cascade_named_color_white() {
     let doc = parse("<div style=\"color: white;\">w</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.color, Color::rgb(255, 255, 255));
 }
@@ -298,7 +298,7 @@ fn cascade_named_color_white() {
 #[test]
 fn cascade_named_color_in_border() {
     let doc = parse("<p style=\"border: 2px solid blue;\">b</p>");
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     let s = &p.unwrap().style;
     assert_eq!(s.border_top_color, Color::rgb(0, 0, 255));
@@ -312,7 +312,7 @@ fn cascade_named_color_in_border() {
 #[test]
 fn cascade_th_is_bold_and_center() {
     let doc = parse("<table><tr><th>H</th></tr></table>");
-    let th = find_box(&doc.root, &|b: &HtmlBox| b.tag == "th");
+    let th = find_box(&doc.root, &|b: &WebCore| b.tag == "th");
     assert!(th.is_some());
     let s = &th.unwrap().style;
     assert!(s.font_weight.is_bold());
@@ -322,7 +322,7 @@ fn cascade_th_is_bold_and_center() {
 #[test]
 fn cascade_pre_has_white_space_pre() {
     let doc = parse("<pre>  spaces  </pre>");
-    let pre = find_box(&doc.root, &|b: &HtmlBox| b.tag == "pre");
+    let pre = find_box(&doc.root, &|b: &WebCore| b.tag == "pre");
     assert!(pre.is_some());
     assert_eq!(pre.unwrap().style.white_space, WhiteSpace::Pre);
 }
@@ -330,7 +330,7 @@ fn cascade_pre_has_white_space_pre() {
 #[test]
 fn cascade_center_has_text_align_center() {
     let doc = parse("<center>text</center>");
-    let c = find_box(&doc.root, &|b: &HtmlBox| b.tag == "center");
+    let c = find_box(&doc.root, &|b: &WebCore| b.tag == "center");
     assert!(c.is_some());
     assert_eq!(c.unwrap().style.text_align, TextAlign::Center);
 }
@@ -344,7 +344,7 @@ fn cascade_clip_path_polygon_no_duplication() {
     let doc = parse(
         "<div style='clip-path: polygon(50% 0%, 100% 100%, 0% 100%);'>T</div>",
     );
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.clip_path.points.len(), 3);
 }
@@ -360,7 +360,7 @@ fn cascade_sibling_margins_collapse() {
          <div style='margin-top: 30px;'>B</div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
@@ -377,7 +377,7 @@ fn cascade_sibling_negative_margins_collapse() {
          <div style='margin-top: -20px;'>B</div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
@@ -393,7 +393,7 @@ fn cascade_sibling_mixed_margins_collapse() {
          <div style='margin-top: -10px;'>B</div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
@@ -412,7 +412,7 @@ fn cascade_parent_first_child_top_collapse() {
         "<div style='margin-top: 10px;'><div style='margin-top: 40px;'>child</div></div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
@@ -433,7 +433,7 @@ fn cascade_parent_first_child_blocked_by_padding() {
          <div style='margin-top: 40px;'>child</div></div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
@@ -448,7 +448,7 @@ fn cascade_parent_first_child_blocked_by_border() {
          <div style='margin-top: 40px;'>child</div></div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let child = divs[1];
     assert!(child.layout.content_rect.y >= 35.0);
@@ -466,7 +466,7 @@ fn cascade_parent_last_child_bottom_collapse() {
          <div>after</div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(!divs.is_empty());
     let parent = divs[0];
     assert!(parent.layout.collapsed_margin_bottom >= 35.0);
@@ -483,7 +483,7 @@ fn cascade_overflow_hidden_blocks_collapsing() {
          <div style='margin-top: 40px;'>child</div></div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(divs.len() >= 2);
     let parent = divs[0];
     let child = divs[1];
@@ -502,7 +502,7 @@ fn cascade_empty_block_margins_collapse() {
          <div>after</div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(!divs.is_empty());
     let empty = divs[0];
     assert!(empty.layout.collapsed_margin_top >= 25.0);
@@ -516,7 +516,7 @@ fn cascade_empty_block_with_border_not_empty() {
          border: 1px solid black;'></div>",
         800.0,
     );
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     let d = d.unwrap();
     assert!(d.layout.collapsed_margin_top >= 15.0 && d.layout.collapsed_margin_top <= 25.0);
@@ -530,7 +530,7 @@ fn cascade_empty_block_with_border_not_empty() {
 #[test]
 fn cascade_heading_has_margins() {
     let doc = parse_and_layout("<h1>Title</h1>", 800.0);
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some());
     let s = &h1.unwrap().style;
     assert!(!s.margin_top.is_none());
@@ -551,7 +551,7 @@ fn cascade_grandchild_margin_pass_through() {
          </div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(!divs.is_empty());
     let outer = divs[0];
     assert!(outer.layout.collapsed_margin_top >= 45.0);
@@ -566,7 +566,7 @@ fn cascade_page_break_before_parsed() {
     let doc = parse(
         "<style>h2 { page-break-before: always; }</style><h2>Heading</h2>",
     );
-    let h2 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h2");
+    let h2 = find_box(&doc.root, &|b: &WebCore| b.tag == "h2");
     assert!(h2.is_some());
     assert_eq!(h2.unwrap().style.break_before, BreakValue::Always);
 }
@@ -576,7 +576,7 @@ fn cascade_page_break_after_avoid() {
     let doc = parse(
         "<style>h3 { page-break-after: avoid; }</style><h3>Heading</h3>",
     );
-    let h3 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h3");
+    let h3 = find_box(&doc.root, &|b: &WebCore| b.tag == "h3");
     assert!(h3.is_some());
     assert_eq!(h3.unwrap().style.break_after, BreakValue::Avoid);
 }
@@ -587,7 +587,7 @@ fn cascade_break_inside_avoid() {
         "<style>.card { break-inside: avoid; }</style>\
          <div class=\"card\">content</div>",
     );
-    let card = find_box(&doc.root, &|b: &HtmlBox| {
+    let card = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div"
             && b.attributes.get("class").map(|v| v == "card").unwrap_or(false)
     });
@@ -600,7 +600,7 @@ fn cascade_orphans_widows_parsed() {
     let doc = parse(
         "<style>p { orphans: 4; widows: 3; }</style><p>text</p>",
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     let s = &p.unwrap().style;
     assert_eq!(s.orphans, 4);
@@ -612,7 +612,7 @@ fn cascade_inline_page_break_before() {
     let doc = parse(
         "<div style=\"page-break-before: always;\">content</div>",
     );
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.break_before, BreakValue::Always);
 }
@@ -622,7 +622,7 @@ fn cascade_break_before_page_value() {
     let doc = parse(
         "<style>div { break-before: page; }</style><div>content</div>",
     );
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.break_before, BreakValue::Always);
 }
@@ -634,7 +634,7 @@ fn cascade_break_before_page_value() {
 #[test]
 fn cascade_reapply_preserves_dir_attribute() {
     let doc = parse("<div dir=\"rtl\">text</div>");
-    let d = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let d = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(d.is_some());
     assert_eq!(d.unwrap().style.direction, Direction::RTL);
 }
@@ -648,7 +648,7 @@ fn cascade_link_gets_ua_blue() {
     // Links should get blue color from UA stylesheet
     let doc = parse_and_layout("<a href=\"http://example.com\">link</a>", 800.0);
     let mut found_blue = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(0, 0, 238) {
                 found_blue = true;
@@ -666,7 +666,7 @@ fn cascade_author_style_overrides_ua() {
         800.0,
     );
     let mut found_red = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(255, 0, 0) {
                 found_red = true;
@@ -685,7 +685,7 @@ fn cascade_link_color_beats_body_color() {
     );
     let mut found_link_run = false;
     let mut not_body_color = true;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() {
                 found_link_run = true;
@@ -708,7 +708,7 @@ fn cascade_inline_style_on_link_beats_ua() {
         800.0,
     );
     let mut found = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.color == Color::rgb(255, 255, 255) {
                 found = true;
@@ -731,7 +731,7 @@ fn cascade_span_class_styled() {
         800.0,
     );
     let mut found_green = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(0, 128, 0) {
                 found_green = true;
@@ -746,7 +746,7 @@ fn cascade_em_gets_css_italic() {
     // UA stylesheet sets em { font-style: italic }
     let doc = parse_and_layout("<p>normal <em>italic</em> normal</p>", 800.0);
     let mut found_italic = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic {
                 found_italic = true;
@@ -761,7 +761,7 @@ fn cascade_strong_gets_css_bold() {
     // UA stylesheet sets strong { font-weight: bold }
     let doc = parse_and_layout("<p>normal <strong>bold</strong> normal</p>", 800.0);
     let mut found_bold = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 found_bold = true;
@@ -780,7 +780,7 @@ fn cascade_inline_class_specificity() {
         800.0,
     );
     let mut found_blue = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(0, 0, 255) {
                 found_blue = true;
@@ -795,7 +795,7 @@ fn cascade_nested_inline_elements() {
     // <a><em>text</em></a> — em should be italic AND have link href
     let doc = parse_and_layout("<p><a href=\"http://test.com\"><em>linked italic</em></a></p>", 800.0);
     let mut found_linked_italic = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() && run.style.font_style == FontStyle::Italic {
                 found_linked_italic = true;
@@ -813,7 +813,7 @@ fn cascade_nested_inline_elements() {
 fn cascade_h1_run_gets_bold_font() {
     // After cascade, the h1's inline runs must have bold + large font
     let doc = parse_and_layout("<h1>Heading</h1>", 800.0);
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some(), "h1 not found");
     let h1 = h1.unwrap();
     assert!(!h1.layout.inline_runs.is_empty(), "h1 should have inline runs");
@@ -829,7 +829,7 @@ fn cascade_h1_run_gets_bold_font() {
 #[test]
 fn cascade_h2_run_gets_bold_font() {
     let doc = parse_and_layout("<h2>Sub</h2>", 800.0);
-    let h2 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h2");
+    let h2 = find_box(&doc.root, &|b: &WebCore| b.tag == "h2");
     assert!(h2.is_some(), "h2 not found");
     let h2 = h2.unwrap();
     assert!(!h2.layout.inline_runs.is_empty(), "h2 should have inline runs");
@@ -844,7 +844,7 @@ fn cascade_h2_run_gets_bold_font() {
 #[test]
 fn cascade_pre_run_gets_monospace() {
     let doc = parse_and_layout("<pre>code</pre>", 800.0);
-    let pre = find_box(&doc.root, &|b: &HtmlBox| b.tag == "pre");
+    let pre = find_box(&doc.root, &|b: &WebCore| b.tag == "pre");
     assert!(pre.is_some(), "pre not found");
     let pre = pre.unwrap();
     assert!(!pre.layout.inline_runs.is_empty(), "pre should have inline runs");
@@ -855,7 +855,7 @@ fn cascade_pre_run_gets_monospace() {
 fn cascade_block_run_inherits_color() {
     // p inside colored div: p's runs must have the inherited color
     let doc = parse_and_layout("<div style=\"color: red;\"><p>text</p></div>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some(), "p not found");
     let p = p.unwrap();
     assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
@@ -866,7 +866,7 @@ fn cascade_block_run_inherits_color() {
 fn cascade_body_text_color_inherits_to_runs() {
     // body text="" attribute color should reach runs
     let doc = parse_and_layout("<body text=\"#2c3e50\"><p>text</p></body>", 800.0);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some(), "p not found");
     let p = p.unwrap();
     assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
@@ -881,7 +881,7 @@ fn cascade_body_text_color_inherits_to_runs() {
 fn cascade_inline_span_color_in_flattened_run() {
     let doc = parse_and_layout("<p>a <span style=\"color: red;\">b</span> c</p>", 800.0);
     let mut found_red = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.color == Color::rgb(255, 0, 0) {
                 found_red = true;
@@ -895,7 +895,7 @@ fn cascade_inline_span_color_in_flattened_run() {
 fn cascade_bold_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <b>bold</b> c</p>", 800.0);
     let mut found_bold = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 found_bold = true;
@@ -909,7 +909,7 @@ fn cascade_bold_tag_run_in_flattened_run() {
 fn cascade_italic_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <i>ital</i> c</p>", 800.0);
     let mut found_italic = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic {
                 found_italic = true;
@@ -923,7 +923,7 @@ fn cascade_italic_tag_run_in_flattened_run() {
 fn cascade_underline_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <u>under</u> c</p>", 800.0);
     let mut found_underline = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.text_decoration.underline {
                 found_underline = true;
@@ -937,7 +937,7 @@ fn cascade_underline_tag_run_in_flattened_run() {
 fn cascade_strike_tag_run_in_flattened_run() {
     let doc = parse_and_layout("<p>a <s>strike</s> c</p>", 800.0);
     let mut found_strike = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.text_decoration.strikethrough {
                 found_strike = true;
@@ -951,7 +951,7 @@ fn cascade_strike_tag_run_in_flattened_run() {
 fn cascade_code_tag_run_gets_monospace() {
     let doc = parse_and_layout("<p>a <code>mono</code> c</p>", 800.0);
     let mut found_mono = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_family == "monospace" {
                 found_mono = true;
@@ -966,7 +966,7 @@ fn cascade_mark_tag_run_gets_yellow_bg() {
     // UA stylesheet sets mark { background-color: yellow }
     // Check on the mark element's own style (background-color is not inherited by #text children)
     let doc = parse_and_layout("<p>a <mark>hi</mark> c</p>", 800.0);
-    let mark = find_box(&doc.root, &|b: &HtmlBox| b.tag == "mark");
+    let mark = find_box(&doc.root, &|b: &WebCore| b.tag == "mark");
     assert!(mark.is_some(), "mark element not found");
     assert_eq!(mark.unwrap().style.background_color, Color::rgb(255, 255, 0),
         "mark should have yellow background from UA");
@@ -976,7 +976,7 @@ fn cascade_mark_tag_run_gets_yellow_bg() {
 fn cascade_named_color_yellow() {
     // UA mark rule sets background-color: yellow — check on the mark element directly
     let doc = parse_and_layout("<mark>text</mark>", 800.0);
-    let mark = find_box(&doc.root, &|b: &HtmlBox| b.tag == "mark");
+    let mark = find_box(&doc.root, &|b: &WebCore| b.tag == "mark");
     assert!(mark.is_some(), "mark element not found");
     assert_eq!(mark.unwrap().style.background_color, Color::rgb(255, 255, 0),
         "mark element should have yellow background from UA");
@@ -986,7 +986,7 @@ fn cascade_named_color_yellow() {
 fn cascade_link_run_gets_url_and_blue() {
     let doc = parse_and_layout("<p><a href=\"http://x\">link</a></p>", 800.0);
     let mut found = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if !run.style.href.is_empty() {
                 assert_eq!(run.style.color, Color::rgb(0, 0, 238), "link should be UA blue");
@@ -1007,7 +1007,7 @@ fn cascade_bold_does_not_prevent_font_size_inheritance() {
     // b { font-weight: bold } should NOT prevent font-size inheritance
     let doc = parse_and_layout("<div style=\"font-size: 20px;\"><p><b>big bold</b></p></div>", 800.0);
     let mut found = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() {
                 let px = match run.style.font_size { CssLength::Px(px) => px, _ => 0.0 };
@@ -1023,7 +1023,7 @@ fn cascade_italic_does_not_prevent_font_family_inheritance() {
     // <pre><i>mono italic</i></pre> — should be both italic and monospace
     let doc = parse_and_layout("<pre><i>mono italic</i></pre>", 800.0);
     let mut found = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_style == FontStyle::Italic && run.style.font_family == "monospace" {
                 found = true;
@@ -1038,7 +1038,7 @@ fn cascade_monospace_does_not_prevent_bold_inheritance() {
     // <b><code>x</code></b> — code gets monospace from UA, bold from parent
     let doc = parse_and_layout("<p><b><code>x</code></b></p>", 800.0);
     let mut found = false;
-    walk_boxes(&doc.root, &mut |b: &HtmlBox| {
+    walk_boxes(&doc.root, &mut |b: &WebCore| {
         for run in &b.layout.inline_runs {
             if run.style.font_weight.is_bold() && run.style.font_family == "monospace" {
                 found = true;
@@ -1055,7 +1055,7 @@ fn cascade_monospace_does_not_prevent_bold_inheritance() {
 #[test]
 fn cascade_hr_has_border() {
     let doc = parse_and_layout("<hr>", 800.0);
-    let hr = find_box(&doc.root, &|b: &HtmlBox| b.tag == "hr");
+    let hr = find_box(&doc.root, &|b: &WebCore| b.tag == "hr");
     assert!(hr.is_some(), "hr not found");
     let s = &hr.unwrap().style;
     // UA now uses border-top: 1px solid silver (not inset)
@@ -1067,7 +1067,7 @@ fn cascade_hr_has_border() {
 #[test]
 fn cascade_blockquote_has_margins() {
     let doc = parse_and_layout("<blockquote>q</blockquote>", 800.0);
-    let bq = find_box(&doc.root, &|b: &HtmlBox| b.tag == "blockquote");
+    let bq = find_box(&doc.root, &|b: &WebCore| b.tag == "blockquote");
     assert!(bq.is_some(), "blockquote not found");
     let s = &bq.unwrap().style;
     assert!(!s.margin_left.is_none(), "blockquote should have left margin");
@@ -1080,7 +1080,7 @@ fn cascade_blockquote_has_margins() {
 #[test]
 fn cascade_th_run_is_bold() {
     let doc = parse_and_layout("<table><tr><th>H</th></tr></table>", 800.0);
-    let th = find_box(&doc.root, &|b: &HtmlBox| b.tag == "th");
+    let th = find_box(&doc.root, &|b: &WebCore| b.tag == "th");
     assert!(th.is_some(), "th not found");
     let th = th.unwrap();
     assert!(!th.layout.inline_runs.is_empty(), "th should have inline runs");
@@ -1092,7 +1092,7 @@ fn cascade_sub_has_vertical_align_sub() {
     // UA stylesheet: sub { vertical-align: sub }
     // Check on the sub element's own style (vertical-align is not inherited by #text children)
     let doc = parse_and_layout("<p>x<sub>2</sub></p>", 800.0);
-    let sub = find_box(&doc.root, &|b: &HtmlBox| b.tag == "sub");
+    let sub = find_box(&doc.root, &|b: &WebCore| b.tag == "sub");
     assert!(sub.is_some(), "sub element not found");
     assert_eq!(sub.unwrap().style.vertical_align, VerticalAlign::Sub,
         "sub should have vertical-align: sub from UA");
@@ -1103,7 +1103,7 @@ fn cascade_sup_has_vertical_align_super() {
     // UA stylesheet: sup { vertical-align: super }
     // Check on the sup element's own style (vertical-align is not inherited by #text children)
     let doc = parse_and_layout("<p>x<sup>2</sup></p>", 800.0);
-    let sup = find_box(&doc.root, &|b: &HtmlBox| b.tag == "sup");
+    let sup = find_box(&doc.root, &|b: &WebCore| b.tag == "sup");
     assert!(sup.is_some(), "sup element not found");
     assert_eq!(sup.unwrap().style.vertical_align, VerticalAlign::Super,
         "sup should have vertical-align: super from UA");
@@ -1113,12 +1113,12 @@ fn cascade_sup_has_vertical_align_super() {
 fn cascade_ua_stylesheet_headings_break_avoid() {
     // UA stylesheet adds break-after: avoid; break-inside: avoid to headings
     let doc = parse_and_layout("<h1>Title</h1><h2>Sub</h2>", 800.0);
-    let h1 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h1");
+    let h1 = find_box(&doc.root, &|b: &WebCore| b.tag == "h1");
     assert!(h1.is_some(), "h1 not found");
     assert_eq!(h1.unwrap().style.break_after, BreakValue::Avoid);
     assert_eq!(h1.unwrap().style.break_inside, BreakInside::Avoid);
 
-    let h2 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h2");
+    let h2 = find_box(&doc.root, &|b: &WebCore| b.tag == "h2");
     assert!(h2.is_some(), "h2 not found");
     assert_eq!(h2.unwrap().style.break_after, BreakValue::Avoid);
     assert_eq!(h2.unwrap().style.break_inside, BreakInside::Avoid);
@@ -1136,7 +1136,7 @@ fn cascade_inline_block_blocks_collapsing() {
          <div style='margin-top: 40px;'>child</div></div>",
         800.0,
     );
-    let divs = find_all_boxes(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let divs = find_all_boxes(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(!divs.is_empty(), "should find divs");
     let parent = divs[0];
     assert!(parent.layout.collapsed_margin_top <= 15.0, "inline-block should not collapse margin through BFC");
@@ -1153,7 +1153,7 @@ fn cascade_float_before_first_child_blocks_collapse() {
         800.0,
     );
     // Find the outer non-floated div
-    let parent = find_box(&doc.root, &|b: &HtmlBox| {
+    let parent = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && matches!(b.style.float, Float::None)
     });
     assert!(parent.is_some(), "outer non-float div not found");
@@ -1166,8 +1166,8 @@ fn cascade_float_before_first_child_blocks_collapse() {
 fn cascade_heading_margins_collapse_with_siblings() {
     // Adjacent heading margins collapse (not stack)
     let doc = parse_and_layout("<h3>Three</h3><h4>Four</h4>", 800.0);
-    let h3 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h3");
-    let h4 = find_box(&doc.root, &|b: &HtmlBox| b.tag == "h4");
+    let h3 = find_box(&doc.root, &|b: &WebCore| b.tag == "h3");
+    let h4 = find_box(&doc.root, &|b: &WebCore| b.tag == "h4");
     assert!(h3.is_some(), "h3 not found");
     assert!(h4.is_some(), "h4 not found");
     let h3 = h3.unwrap();
@@ -1203,7 +1203,7 @@ fn pseudo_element_webkit_scrollbar_not_applied_to_elements() {
     assert!(doc.root.layout.content_rect.w > 100.0,
         "root unexpectedly narrow ({}) — ::-webkit-scrollbar leaked to real elements",
         doc.root.layout.content_rect.w);
-    let body = find_box(&doc.root, &|b: &HtmlBox| b.tag == "body");
+    let body = find_box(&doc.root, &|b: &WebCore| b.tag == "body");
     assert!(body.is_some(), "body not found");
     assert!(body.unwrap().layout.content_rect.w > 100.0,
         "body width {} — ::-webkit-scrollbar leaked to body",
@@ -1222,7 +1222,7 @@ fn pseudo_element_selector_does_not_match_real_elements() {
         </style><div><p id="p1">Text</p></div>"#,
         800.0,
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "p1").unwrap_or(false));
+    let p = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "p1").unwrap_or(false));
     assert!(p.is_some(), "p#p1 not found");
     // p should have black color (from `p { color: black }`), not red from ::placeholder
     assert_eq!(p.unwrap().style.color, Color::rgb(0, 0, 0),
@@ -1236,11 +1236,11 @@ fn pseudo_element_selector_does_not_match_real_elements() {
 #[test]
 fn vh_resolves_to_viewport_height() {
     // height: 100vh on a block should equal the viewport height passed to the engine
-    let doc = htmlbox::load_html_vp(
+    let doc = webcore::load_html_vp(
         r#"<div id="box" style="height:100vh; background:red;"></div>"#,
         900.0, 600.0,
     );
-    let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
+    let b = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
     assert!(b.is_some(), "box not found");
     let h = b.unwrap().layout.border_rect.h;
     assert!((h - 600.0).abs() < 2.0,
@@ -1249,11 +1249,11 @@ fn vh_resolves_to_viewport_height() {
 
 #[test]
 fn vw_resolves_to_viewport_width() {
-    let doc = htmlbox::load_html_vp(
+    let doc = webcore::load_html_vp(
         r#"<div id="box" style="width:50vw; height:10px;"></div>"#,
         800.0, 600.0,
     );
-    let b = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
+    let b = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "box").unwrap_or(false));
     assert!(b.is_some(), "box not found");
     let w = b.unwrap().layout.border_rect.w;
     assert!((w - 400.0).abs() < 2.0,
@@ -1263,14 +1263,14 @@ fn vw_resolves_to_viewport_width() {
 #[test]
 fn vh_on_flex_item_resolves_correctly() {
     // A flex item with height:100vh in a column flex container should get full viewport height
-    let doc = htmlbox::load_html_vp(
+    let doc = webcore::load_html_vp(
         r#"<style>
             body { display:flex; flex-direction:column; height:100vh; margin:0; }
             #app  { flex:1; }
         </style><div id="app"></div>"#,
         900.0, 800.0,
     );
-    let app = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "app").unwrap_or(false));
+    let app = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "app").unwrap_or(false));
     assert!(app.is_some(), "app not found");
     let h = app.unwrap().layout.border_rect.h;
     assert!(h > 700.0,
@@ -1280,7 +1280,7 @@ fn vh_on_flex_item_resolves_correctly() {
 #[test]
 fn three_column_flex_layout_with_vh() {
     // Regression: email-style three-column layout should lay out all three columns
-    let doc = htmlbox::load_html_vp(
+    let doc = webcore::load_html_vp(
         r#"<style>
             body { display:flex; flex-direction:column; height:100vh; margin:0; }
             .app  { display:flex; flex-direction:row; flex:1; }
@@ -1293,8 +1293,8 @@ fn three_column_flex_layout_with_vh() {
         </div>"#,
         900.0, 800.0,
     );
-    let sidebar = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "sidebar").unwrap_or(false));
-    let main    = find_box(&doc.root, &|b: &HtmlBox| b.attributes.get("id").map(|s| s == "main").unwrap_or(false));
+    let sidebar = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "sidebar").unwrap_or(false));
+    let main    = find_box(&doc.root, &|b: &WebCore| b.attributes.get("id").map(|s| s == "main").unwrap_or(false));
     assert!(sidebar.is_some(), "sidebar not found");
     assert!(main.is_some(), "main not found");
     let sw = sidebar.unwrap().layout.border_rect.w;

@@ -1,8 +1,8 @@
 // Tests for the event system in src/dom/mod.rs.
 
-use htmlbox::dom::*;
-use htmlbox::types::*;
-use htmlbox::parse_html;
+use webcore::dom::*;
+use webcore::types::*;
+use webcore::parse_html;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -114,7 +114,7 @@ fn event_selector_matching() {
 
 #[test]
 fn click_fires_on_mouseup_same_target() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="btn" style="width:100px;height:40px">Click</div>"#, 400.0,
     );
     let click_count = Arc::new(AtomicUsize::new(0));
@@ -129,7 +129,7 @@ fn click_fires_on_mouseup_same_target() {
 
 #[test]
 fn click_does_not_fire_on_different_target() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:40px">A</div>
            <div id="b" style="width:100px;height:40px">B</div>"#, 400.0,
     );
@@ -149,7 +149,7 @@ fn click_does_not_fire_on_different_target() {
 
 #[test]
 fn client_pos_set_on_events() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="box" style="width:200px;height:100px">Box</div>"#, 400.0,
     );
     let got_pos = Arc::new(std::sync::Mutex::new((0.0f32, 0.0f32)));
@@ -167,7 +167,7 @@ fn client_pos_set_on_events() {
 
 #[test]
 fn dblclick_fires_within_400ms() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="btn" style="width:100px;height:40px">Dbl</div>"#, 400.0,
     );
     let dbl_count   = Arc::new(AtomicUsize::new(0));
@@ -192,7 +192,7 @@ fn dblclick_fires_within_400ms() {
 
 #[test]
 fn dblclick_does_not_fire_on_different_targets() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:40px">A</div>
            <div id="b" style="width:100px;height:40px">B</div>"#, 400.0,
     );
@@ -212,7 +212,7 @@ fn dblclick_does_not_fire_on_different_targets() {
 
 #[test]
 fn drag_fires_after_threshold() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="card" style="width:200px;height:100px">Drag me</div>"#, 400.0,
     );
     let start_count = Arc::new(AtomicUsize::new(0));
@@ -249,7 +249,7 @@ fn drag_fires_after_threshold() {
 
 #[test]
 fn click_suppressed_when_drag_occurred() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="card" style="width:200px;height:100px">Drag me</div>"#, 400.0,
     );
     let click_count = Arc::new(AtomicUsize::new(0));
@@ -267,7 +267,7 @@ fn click_suppressed_when_drag_occurred() {
 
 #[test]
 fn mouseenter_does_not_bubble() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:50px">A</div>
            <div id="b" style="width:100px;height:50px">
              <div id="child" style="width:80px;height:40px">child</div>
@@ -293,7 +293,7 @@ fn mouseenter_does_not_bubble() {
 
 #[test]
 fn mouseleave_does_not_bubble() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:50px">A</div>
            <div id="b" style="width:100px;height:50px">B</div>"#, 400.0,
     );
@@ -319,7 +319,7 @@ fn mouseleave_does_not_bubble() {
 #[test]
 fn mouseover_mouseout_dispatch_over_out() {
     // Two stacked divs: A occupies y 0-50, B occupies y 50-100.
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
         400.0,
     );
@@ -349,7 +349,7 @@ fn mouseover_mouseout_dispatch_over_out() {
 
 #[test]
 fn pointerover_pointerout_dispatch_over_out() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" style="width:100px;height:50px">A</div><div id="b" style="width:100px;height:50px">B</div>"#,
         400.0,
     );
@@ -378,7 +378,7 @@ fn pointerover_pointerout_dispatch_over_out() {
 
 #[test]
 fn focusin_focusout_on_mouse_down_focus_change() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="a" tabindex="0" style="width:100px;height:50px">A</div><div id="b" tabindex="0" style="width:100px;height:50px">B</div>"#,
         400.0,
     );
@@ -416,7 +416,7 @@ fn focusin_focusout_on_mouse_down_focus_change() {
 
 #[test]
 fn pointer_down_up_move_events() {
-    let mut doc = htmlbox::load_html(
+    let mut doc = webcore::load_html(
         r#"<div id="box" style="width:200px;height:100px">Box</div>"#,
         400.0,
     );

@@ -125,7 +125,7 @@ fn parser_adoption_agency_pops_intermediates() {
     assert!(text.contains("after"));
 }
 
-fn tree_depth(node: &HtmlBox) -> usize {
+fn tree_depth(node: &WebCore) -> usize {
     let mut max_child = 0;
     for c in &node.children {
         max_child = max_child.max(tree_depth(c));
@@ -187,7 +187,7 @@ fn insert_br_in_td_preserves_table_structure() {
     );
 
     // Find the <td> and click in the middle.
-    let td = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td")
+    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td")
         .expect("<td> must exist before Enter");
     let (cx, cy) = {
         let line = &td.layout.line_cache[0];
@@ -199,7 +199,7 @@ fn insert_br_in_td_preserves_table_structure() {
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     // The <td> must still exist after the split.
-    let td_after = find_box(&doc.root, &|b: &HtmlBox| b.tag == "td");
+    let td_after = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
     assert!(td_after.is_some(), "<td> must still exist after Enter (not destroyed by split_node_with_br)");
 
     // The <td> must contain a <br>.
@@ -220,7 +220,7 @@ fn insert_br_in_div_preserves_div() {
         900.0,
     );
 
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false)
     }).expect("editable div");
     let (cx, cy) = {
@@ -232,7 +232,7 @@ fn insert_br_in_div_preserves_div() {
     doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
     renderer.layout_engine().layout(&mut doc, 900.0);
 
-    let div_after = find_box(&doc.root, &|b: &HtmlBox| {
+    let div_after = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false)
     });
     assert!(div_after.is_some(), "editable <div> must still exist after Enter");
@@ -253,7 +253,7 @@ fn insert_char_marks_layout_dirty() {
         900.0,
     );
 
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p")
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p")
         .expect("p element");
     let (cx, cy) = {
         let line = &p.layout.line_cache[0];
@@ -265,12 +265,12 @@ fn insert_char_marks_layout_dirty() {
     // Insert a character — must mark node dirty so layout re-runs.
     doc.editor.insert_char(&mut doc.root, 'X');
 
-    let p_after_insert = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p").unwrap();
+    let p_after_insert = find_box(&doc.root, &|b: &WebCore| b.tag == "p").unwrap();
     assert!(p_after_insert.layout.layout_dirty, "node must be layout_dirty after insert_char");
 
     // After re-layout, the inserted character should appear in the text.
     renderer.layout_engine().layout(&mut doc, 900.0);
-    let p_relaid = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p").unwrap();
+    let p_relaid = find_box(&doc.root, &|b: &WebCore| b.tag == "p").unwrap();
     let text = p_relaid.text_content();
     assert!(text.contains('X'), "inserted character must appear after relayout, got: {}", text);
 }
@@ -283,7 +283,7 @@ fn tailwind_class_with_ampersand_parsed_correctly() {
     // the `&` corrupting the class attribute.
     let html = r#"<div class="[&_.foo]:contents">text</div>"#;
     let doc = parse_html(&html);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("class").map(|c| c.contains("[&_.foo]:contents")).unwrap_or(false)
     });
     assert!(div.is_some(),

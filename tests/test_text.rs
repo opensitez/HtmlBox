@@ -1,11 +1,11 @@
 // Text tests – ported from cpptests/test_text.cpp
 // Font-specific tests (wxFont Get/SetPointSize etc.) and dir="auto" detection
 // tests that use engine.ApplyStylesheet are skipped.
-use htmlbox::types::*;
-use htmlbox::parse_html;
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::parse_html;
+use webcore::css::apply_property;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -495,7 +495,7 @@ fn bdo_element_unicode_bidi_override() {
         b.style.unicode_bidi == UnicodeBidi::Override
     });
     // Also check inline runs of any box for the override
-    fn walk_runs(root: &HtmlBox) -> bool {
+    fn walk_runs(root: &WebCore) -> bool {
         if root.layout.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Override) {
             return true;
         }
@@ -513,7 +513,7 @@ fn bdi_element_unicode_bidi_isolate() {
     let found_box = find_box(&doc.root, &|b| {
         b.style.unicode_bidi == UnicodeBidi::Isolate
     });
-    fn walk_runs(root: &HtmlBox) -> bool {
+    fn walk_runs(root: &WebCore) -> bool {
         if root.layout.inline_runs.iter().any(|r| r.style.unicode_bidi == UnicodeBidi::Isolate) {
             return true;
         }

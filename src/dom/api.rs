@@ -11,9 +11,9 @@
 //! narrowing happens at the boundary, so the arena is untouched.
 //!
 //! Every mutation goes through these methods, which update both the arena and the
-//! HtmlBox tree (bridge period), and set dirty flags for incremental re-style/layout.
+//! WebCore tree (bridge period), and set dirty flags for incremental re-style/layout.
 
-use crate::types::{Document, HtmlBox, Rect};
+use crate::types::{Document, WebCore, Rect};
 use crate::dom::arena::NodeId;
 use crate::css::apply_property;
 
@@ -22,7 +22,7 @@ use crate::css::apply_property;
 impl Document {
     /// Find element by its HTML `id` attribute. Returns stable node_id.
     pub fn get_element_by_id(&self, id: &str) -> Option<u32> {
-        fn walk(node: &HtmlBox, id: &str) -> Option<u32> {
+        fn walk(node: &WebCore, id: &str) -> Option<u32> {
             if node.attributes.get("id").map(|s| s.as_str()) == Some(id) {
                 return Some(node.node_id);
             }
@@ -59,7 +59,7 @@ fn parse_comma_selectors(selector: &str) -> Vec<crate::css::CssSelector> {
 }
 
 /// Build ancestor info for the current node's children.
-fn build_ancestor_entry(node: &HtmlBox, child_index: usize, sibling_count: usize) -> crate::css::AncestorInfo {
+fn build_ancestor_entry(node: &WebCore, child_index: usize, sibling_count: usize) -> crate::css::AncestorInfo {
     crate::css::AncestorInfo {
         tag: node.tag.clone(),
         attributes: node.attributes.clone(),
@@ -72,7 +72,7 @@ fn build_ancestor_entry(node: &HtmlBox, child_index: usize, sibling_count: usize
 }
 
 fn query_walk_first(
-    node: &HtmlBox,
+    node: &WebCore,
     parent_ancestors: &[crate::css::AncestorInfo],
     selectors: &[crate::css::CssSelector],
     hover_chain: &std::collections::HashSet<u32>,
@@ -114,7 +114,7 @@ fn query_walk_first(
 }
 
 fn query_walk_all(
-    node: &HtmlBox,
+    node: &WebCore,
     parent_ancestors: &[crate::css::AncestorInfo],
     selectors: &[crate::css::CssSelector],
     hover_chain: &std::collections::HashSet<u32>,
@@ -239,9 +239,9 @@ impl Document {
     ///
     /// WHY THIS EXISTS
     ///
-    /// Everything in this file dual-writes: the arena first, then the HtmlBox
+    /// Everything in this file dual-writes: the arena first, then the WebCore
     /// tree. Interaction cannot follow that rule. `handle_form_click` and
-    /// `process_form_input_key` are free functions over `&mut HtmlBox` — they
+    /// `process_form_input_key` are free functions over `&mut WebCore` — they
     /// have no `Document`, so they have no arena to write to, and they set
     /// `checked` / `value` on the render tree alone.
     ///
@@ -262,7 +262,7 @@ impl Document {
     /// arena are separate things.
     pub(crate) fn sync_form_state_to_arena(&mut self) {
         type Snapshot = (u32, Option<String>, Option<String>, Option<String>);
-        fn walk(node: &HtmlBox, out: &mut Vec<Snapshot>) {
+        fn walk(node: &WebCore, out: &mut Vec<Snapshot>) {
             if node.node_id != 0
                 && matches!(node.tag.as_str(), "input" | "textarea" | "select" | "option")
             {
@@ -316,7 +316,7 @@ impl Document {
     /// subtree; the only thing missing was the DOM spelling in front of it.
     pub fn inner_html(&self, id: u32) -> String {
         if id == 0 { return String::new(); }
-        let node = match self.find_htmlbox(id) {
+        let node = match self.find_webcore(id) {
             Some(n) => n,
             // A node created but never inserted still has an `innerHTML`.
             None => match self.pending_nodes.get(&id) {
@@ -339,7 +339,7 @@ impl Document {
         // Cloned out of the tree FIRST so the recursion below owns its source.
         // `clone_subtree` needs `&mut self` for the arena, which it could not
         // have while still borrowing a box out of `self.root`.
-        let src = match self.find_htmlbox(id).cloned() {
+        let src = match self.find_webcore(id).cloned() {
             Some(b) => b,
             None => match self.pending_nodes.get(&id).cloned() {
                 Some(b) => b,
@@ -356,7 +356,7 @@ impl Document {
     ///
     /// `src` must be owned by the caller, not borrowed out of `self` — the
     /// arena writes here need `&mut self`.
-    fn clone_subtree(&mut self, src: &HtmlBox, deep: bool) -> HtmlBox {
+    fn clone_subtree(&mut self, src: &WebCore, deep: bool) -> WebCore {
         let new_id = match src.tag.as_str() {
             "#text" => self.arena.create_text(&src.text),
             "#comment" => self.arena.create_comment(&src.text),
@@ -453,7 +453,7 @@ impl Document {
             return;
         }
         self.arena.get_mut(NodeId(id)).text = data.to_string();
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        if let Some(node) = self.find_webcore_mut(id) {
             node.text = data.to_string();
             node.layout.layout_dirty = true;
             node.layout.intrinsic_dirty = true;
@@ -482,7 +482,7 @@ impl Document {
     /// form reset restores to. They start equal and part company the moment
     /// anything ticks the box.
     pub fn checked(&self, id: u32) -> bool {
-        self.find_htmlbox(id).map(|n| n.checkedness).unwrap_or(false)
+        self.find_webcore(id).map(|n| n.checkedness).unwrap_or(false)
     }
 
     /// `input.checked = b` — the IDL setter.
@@ -496,7 +496,7 @@ impl Document {
     /// markup and the state one store — so `getAttribute("checked")` reported
     /// clicks, and the reset algorithm had nothing left to restore to.
     pub fn set_checked(&mut self, id: u32, checked: bool) {
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        if let Some(node) = self.find_webcore_mut(id) {
             node.checkedness = checked;
             node.dirty_checked = true;
             // **Invalidate what this changed.** The old body wrote the
@@ -531,7 +531,7 @@ impl Document {
     /// answer identically — the same split a browser draws between its internal
     /// style struct and the `CSSStyleDeclaration` it hands to script.
     pub fn get_computed_style(&self, id: u32) -> Option<&crate::types::ComputedStyle> {
-        self.find_htmlbox(id).map(|node| &node.style)
+        self.find_webcore(id).map(|node| &node.style)
     }
 
     /// `font-size` on the root element — what `rem` resolves against.
@@ -717,7 +717,7 @@ impl Document {
 
     /// `element.matches(selectors)`.
     pub fn matches(&self, id: u32, selectors: &str) -> bool {
-        match self.find_htmlbox(id) {
+        match self.find_webcore(id) {
             Some(node) => selectors
                 .split(',')
                 .any(|s| crate::dom::matches_simple_selector(node, s.trim())),
@@ -862,7 +862,7 @@ impl Document {
 
 // ─── XML: namespaces, CDATA, processing instructions ────────────────────────
 //
-// htmlbox parses HTML, where every element is in the HTML namespace and
+// webcore parses HTML, where every element is in the HTML namespace and
 // `prefix` is always null — so none of this was reachable. It becomes
 // reachable through `createElementNS` and friends, which is the only way an
 // XML tree is built here.
@@ -875,7 +875,7 @@ impl Document {
     /// `document.createElementNS(namespace, qualifiedName)`.
     pub fn create_element_ns(&mut self, namespace: &str, qualified_name: &str) -> u32 {
         let arena_id = self.arena.create_element_ns(namespace, qualified_name);
-        let mut b = HtmlBox::new(qualified_name);
+        let mut b = WebCore::new(qualified_name);
         b.node_id = arena_id.0;
         apply_property(&mut b.style, "display", crate::html::default_display(qualified_name));
         self.pending_nodes.insert(arena_id.0, b);
@@ -890,7 +890,7 @@ impl Document {
     /// it were an element's own text.
     pub fn create_cdata_section(&mut self, data: &str) -> u32 {
         let arena_id = self.arena.create_cdata(data);
-        let mut b = HtmlBox::new("#cdata-section");
+        let mut b = WebCore::new("#cdata-section");
         b.node_id = arena_id.0;
         b.text = data.to_string();
         apply_property(&mut b.style, "display", "none");
@@ -902,7 +902,7 @@ impl Document {
     /// `document.createProcessingInstruction(target, data)`.
     pub fn create_processing_instruction(&mut self, target: &str, data: &str) -> u32 {
         let arena_id = self.arena.create_processing_instruction(target, data);
-        let mut b = HtmlBox::new(target);
+        let mut b = WebCore::new(target);
         b.node_id = arena_id.0;
         b.text = data.to_string();
         apply_property(&mut b.style, "display", "none");
@@ -998,12 +998,12 @@ impl Document {
 // ─── HTMLSelectElement / HTMLOptionElement ──────────────────────────────────
 //
 // The items of a `<select>` are its `<option>` CHILDREN — HTML has no separate
-// item list, and htmlbox's own renderer already reads them that way (it walks
+// item list, and webcore's own renderer already reads them that way (it walks
 // `sel.children` collecting `option` and flattening `optgroup`). So these are
 // ordinary tree operations, and an item added here is one the renderer draws
 // and the serializer round-trips, with nothing to keep in sync.
 //
-// Selection is the exception: htmlbox keeps it in `node.data["_selected_idx"]`,
+// Selection is the exception: webcore keeps it in `node.data["_selected_idx"]`,
 // which is where its mouse and keyboard paths already write. Reading and
 // writing THAT is what makes a programmatic selection and a user's click mean
 // the same thing.
@@ -1012,7 +1012,7 @@ impl Document {
     /// Option node_ids in tree order, flattening `<optgroup>` — HTML counts
     /// options through a group, not around it, so `selectedIndex` does too.
     fn option_ids(&self, select: u32) -> Vec<u32> {
-        fn walk(node: &HtmlBox, out: &mut Vec<u32>) {
+        fn walk(node: &WebCore, out: &mut Vec<u32>) {
             for child in &node.children {
                 match child.tag.as_str() {
                     "option" => out.push(child.node_id),
@@ -1022,7 +1022,7 @@ impl Document {
             }
         }
         let mut out = Vec::new();
-        if let Some(sel) = self.find_htmlbox(select) {
+        if let Some(sel) = self.find_webcore(select) {
             walk(sel, &mut out);
         }
         out
@@ -1079,7 +1079,7 @@ impl Document {
             return -1;
         }
         let idx = self
-            .find_htmlbox(select)
+            .find_webcore(select)
             .and_then(|n| n.data.get("_selected_idx"))
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
@@ -1088,7 +1088,7 @@ impl Document {
 
     /// `select.selectedIndex = i`.
     ///
-    /// Writes htmlbox's own `_selected_idx` — the same slot its click and
+    /// Writes webcore's own `_selected_idx` — the same slot its click and
     /// arrow-key handling use, so a programmatic selection and a user's are
     /// indistinguishable afterwards — AND reflects `selected` onto the options
     /// so the DOM tells the same story as the widget.
@@ -1109,7 +1109,7 @@ impl Document {
         }
         // Nested rather than a let-chain: this crate is not on edition 2024.
         if let Some(i) = chosen {
-            if let Some(sel) = self.find_htmlbox_mut(select) {
+            if let Some(sel) = self.find_webcore_mut(select) {
                 sel.data.insert("_selected_idx".into(), i.to_string());
             }
         }
@@ -1120,12 +1120,12 @@ impl Document {
     ///
     /// A `<textarea>`'s value is its text content; a `<select>`'s is the VALUE
     /// OF ITS SELECTED OPTION (falling back to that option's label, per
-    /// `option.value`); everything else reads the `value` attribute. htmlbox's
+    /// `option.value`); everything else reads the `value` attribute. webcore's
     /// `input_value` covers the first and last but answers a `<select>` from a
     /// `value` attribute a select does not have.
     pub fn value(&self, id: u32) -> String {
         if id == 0 { return String::new(); }
-        let tag = self.find_htmlbox(id).map(|n| n.tag.clone()).unwrap_or_default();
+        let tag = self.find_webcore(id).map(|n| n.tag.clone()).unwrap_or_default();
         match tag.as_str() {
             "textarea" => self.text_content(id),
             "select" => {
@@ -1160,7 +1160,7 @@ impl Document {
     /// `element.value = v`, the setter half of the above.
     pub fn set_value(&mut self, id: u32, value: &str) {
         if id == 0 { return; }
-        let tag = self.find_htmlbox(id).map(|n| n.tag.clone()).unwrap_or_default();
+        let tag = self.find_webcore(id).map(|n| n.tag.clone()).unwrap_or_default();
         match tag.as_str() {
             "textarea" => self.set_text_content(id, value),
             // Assigning to `select.value` selects the option WITH that value —
@@ -1188,7 +1188,7 @@ impl Document {
 // anyone calling `show()`.
 //
 // The user-agent stylesheet rules this file has to stand in for, since
-// htmlbox's UA sheet has no `dialog` entry at all:
+// webcore's UA sheet has no `dialog` entry at all:
 //
 //     dialog:not([open]) { display: none }
 //     dialog             { position: absolute }
@@ -1347,7 +1347,7 @@ impl Document {
         let want = self.fold_name(tag);
         let all = want == "*";
         let mut out = Vec::new();
-        fn walk(doc: &Document, node: &HtmlBox, want: &str, all: bool, out: &mut Vec<u32>) {
+        fn walk(doc: &Document, node: &WebCore, want: &str, all: bool, out: &mut Vec<u32>) {
             if all || doc.fold_name(&node.tag) == want {
                 // Text and comment boxes carry `#text` / `#comment` as their
                 // tag and are not elements, so `*` must not collect them.
@@ -1397,7 +1397,7 @@ impl Document {
         // `createElementNS` deliberately does NOT fold; see it below.
         let tag = &self.fold_name(tag);
         let arena_id = self.arena.create_element(tag);
-        let mut b = HtmlBox::new(tag);
+        let mut b = WebCore::new(tag);
         b.node_id = arena_id.0;
         apply_property(&mut b.style, "display", crate::html::default_display(tag));
         self.pending_nodes.insert(arena_id.0, b);
@@ -1408,7 +1408,7 @@ impl Document {
     /// `document.createTextNode(data)`.
     pub fn create_text_node(&mut self, text: &str) -> u32 {
         let arena_id = self.arena.create_text(text);
-        let mut b = HtmlBox::new("#text");
+        let mut b = WebCore::new("#text");
         b.node_id = arena_id.0;
         b.text = text.to_string();
         self.pending_nodes.insert(arena_id.0, b);
@@ -1424,7 +1424,7 @@ impl Document {
     /// default display for an unknown tag and paint its own text onto the page.
     pub fn create_comment(&mut self, text: &str) -> u32 {
         let arena_id = self.arena.create_comment(text);
-        let mut b = HtmlBox::new("#comment");
+        let mut b = WebCore::new("#comment");
         b.node_id = arena_id.0;
         b.text = text.to_string();
         apply_property(&mut b.style, "display", "none");
@@ -1457,14 +1457,14 @@ impl Document {
         }
         self.arena.append_child(NodeId(parent_id), NodeId(child_id));
 
-        // Update HtmlBox tree
+        // Update WebCore tree
         let child_box = if let Some(b) = self.pending_nodes.remove(&child_id) {
             b
         } else {
-            self.detach_htmlbox(child_id).unwrap_or_else(|| HtmlBox::new("#error"))
+            self.detach_webcore(child_id).unwrap_or_else(|| WebCore::new("#error"))
         };
 
-        if let Some(parent) = self.find_htmlbox_mut(parent_id) {
+        if let Some(parent) = self.find_webcore_mut(parent_id) {
             parent.children.push(child_box);
             parent.layout.layout_dirty = true;
             parent.layout.intrinsic_dirty = true;
@@ -1492,14 +1492,14 @@ impl Document {
         }
         self.arena.insert_before(NodeId(parent_id), NodeId(child_id), NodeId(reference_id));
 
-        // Update HtmlBox tree
+        // Update WebCore tree
         let child_box = if let Some(b) = self.pending_nodes.remove(&child_id) {
             b
         } else {
-            self.detach_htmlbox(child_id).unwrap_or_else(|| HtmlBox::new("#error"))
+            self.detach_webcore(child_id).unwrap_or_else(|| WebCore::new("#error"))
         };
 
-        if let Some(parent) = self.find_htmlbox_mut(parent_id) {
+        if let Some(parent) = self.find_webcore_mut(parent_id) {
             let idx = parent.children.iter()
                 .position(|c| c.node_id == reference_id)
                 .unwrap_or(parent.children.len());
@@ -1510,7 +1510,7 @@ impl Document {
         }
     }
 
-    /// Remove a child from its parent. The node is dropped from the HtmlBox tree
+    /// Remove a child from its parent. The node is dropped from the WebCore tree
     /// and freed in the arena.
     pub fn remove_child(&mut self, child_id: u32) {
         if child_id == 0 { return; }
@@ -1527,12 +1527,12 @@ impl Document {
         // It goes where a freshly CREATED node goes, because it is now in the
         // same state: detached, with an id, waiting to be attached. That is
         // the map `append_child` and `insert_before` already look in.
-        if let Some(detached) = self.detach_htmlbox(child_id) {
+        if let Some(detached) = self.detach_webcore(child_id) {
             self.pending_nodes.insert(child_id, detached);
         }
         // Mark parent dirty for layout
         if parent_id != 0 {
-            if let Some(parent) = self.find_htmlbox_mut(parent_id) {
+            if let Some(parent) = self.find_webcore_mut(parent_id) {
                 parent.layout.layout_dirty = true;
                 parent.layout.intrinsic_dirty = true;
                 parent.has_dirty_layout_descendant = true;
@@ -1546,7 +1546,7 @@ impl Document {
         let key = &self.fold_name(key);
         self.arena.set_attribute(NodeId(id), key, value);
         let mut canvas_resized = None;
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        if let Some(node) = self.find_webcore_mut(id) {
             node.attributes.insert(key.to_string(), value.to_string());
             node.layout.layout_dirty = true;
             node.layout.intrinsic_dirty = true;
@@ -1584,7 +1584,7 @@ impl Document {
         if id == 0 { return; }
         let key = &self.fold_name(key);
         self.arena.remove_attribute(NodeId(id), key);
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        if let Some(node) = self.find_webcore_mut(id) {
             node.attributes.remove(key);
             // The other half of the same sentence: "when the `checked` content
             // attribute is removed, if the control does not have dirty
@@ -1609,8 +1609,8 @@ impl Document {
             self.arena.free(child);
             child = next;
         }
-        // Update HtmlBox tree
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        // Update WebCore tree
+        if let Some(node) = self.find_webcore_mut(id) {
             node.children.clear();
             node.text.clear();
         }
@@ -1654,7 +1654,7 @@ impl Document {
         // `innerHTML` means the CONTENT. Take the body's children by finding
         // body, not by indexing: this used to check `children[0]`, which the
         // synthesised `<head>` displaced.
-        let new_children: Vec<HtmlBox> = match fragment
+        let new_children: Vec<WebCore> = match fragment
             .root
             .children
             .iter()
@@ -1677,8 +1677,8 @@ impl Document {
             child = next;
         }
 
-        // Set new children on HtmlBox
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        // Set new children on WebCore
+        if let Some(node) = self.find_webcore_mut(id) {
             node.children = new_children;
             node.text.clear();
         }
@@ -1808,15 +1808,15 @@ impl Document {
 
     // ── Internal helpers ──
 
-    /// Find a shared reference to an HtmlBox by node_id.
+    /// Find a shared reference to an WebCore by node_id.
     ///
     /// A tree walk on purpose. `get_box_by_id` has an O(1) fast path through
-    /// `node_index`, which is a `HashMap<u32, *const HtmlBox>` rebuilt only by
+    /// `node_index`, which is a `HashMap<u32, *const WebCore>` rebuilt only by
     /// `rebuild_node_index()` — that is, only at layout. Any DOM mutation in
-    /// between moves boxes inside their parent's `Vec<HtmlBox>` and leaves
+    /// between moves boxes inside their parent's `Vec<WebCore>` and leaves
     /// those pointers dangling, and the fast path would hand one back. The DOM
     /// API mutates without laying out, so it must not use that index.
-    pub(crate) fn find_htmlbox(&self, id: u32) -> Option<&HtmlBox> {
+    pub(crate) fn find_webcore(&self, id: u32) -> Option<&WebCore> {
         // `pending_nodes` FIRST. A node created but not yet inserted is not in
         // the tree, and the ordinary DOM idiom writes to it before it ever is:
         //
@@ -1841,7 +1841,7 @@ impl Document {
         // could attach a control's direct children and nothing below them —
         // a `<table>` kept its `<thead>` nowhere, and a `<button>`'s own TEXT
         // was dropped, so composed chrome came out as empty boxes.
-        fn find_pending<'a>(nodes: &'a [HtmlBox], id: u32) -> Option<&'a HtmlBox> {
+        fn find_pending<'a>(nodes: &'a [WebCore], id: u32) -> Option<&'a WebCore> {
             for node in nodes {
                 if node.node_id == id {
                     return Some(node);
@@ -1857,7 +1857,7 @@ impl Document {
                 return Some(found);
             }
         }
-        fn walk(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+        fn walk(node: &WebCore, id: u32) -> Option<&WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &node.children {
                 if let Some(found) = walk(child, id) { return Some(found); }
@@ -1867,30 +1867,30 @@ impl Document {
         walk(&self.root, id)
     }
 
-    /// Find a mutable reference to an HtmlBox by node_id.
+    /// Find a mutable reference to an WebCore by node_id.
     ///
     /// Checks `pending_nodes` first, for the reason spelled out on
-    /// `find_htmlbox` — a detached node is still a legal target for
+    /// `find_webcore` — a detached node is still a legal target for
     /// `setAttribute`, `setTextContent` and a style write.
-    fn find_htmlbox_mut(&mut self, id: u32) -> Option<&mut HtmlBox> {
+    fn find_webcore_mut(&mut self, id: u32) -> Option<&mut WebCore> {
         if self.pending_nodes.contains_key(&id) {
             return self.pending_nodes.get_mut(&id);
         }
-        fn walk(node: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
+        fn walk(node: &mut WebCore, id: u32) -> Option<&mut WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &mut node.children {
                 if let Some(found) = walk(child, id) { return Some(found); }
             }
             None
         }
-        // The same detached-subtree search `find_htmlbox` explains, and the
+        // The same detached-subtree search `find_webcore` explains, and the
         // half that actually loses nodes: `append_child` takes the child OUT of
         // `pending_nodes` before asking for its parent, so a parent this cannot
         // find means the child is already gone and is dropped in silence.
         //
         // Found in two passes because the owning root has to be identified
         // before the map can be borrowed mutably to walk into it.
-        fn contains(node: &HtmlBox, id: u32) -> bool {
+        fn contains(node: &WebCore, id: u32) -> bool {
             node.node_id == id || node.children.iter().any(|child| contains(child, id))
         }
         let owner = self
@@ -1907,9 +1907,9 @@ impl Document {
         walk(&mut self.root, id)
     }
 
-    /// Detach an HtmlBox from its parent in the tree, returning the detached box.
-    fn detach_htmlbox(&mut self, id: u32) -> Option<HtmlBox> {
-        fn walk(node: &mut HtmlBox, id: u32) -> Option<HtmlBox> {
+    /// Detach an WebCore from its parent in the tree, returning the detached box.
+    fn detach_webcore(&mut self, id: u32) -> Option<WebCore> {
+        fn walk(node: &mut WebCore, id: u32) -> Option<WebCore> {
             if let Some(idx) = node.children.iter().position(|c| c.node_id == id) {
                 return Some(node.children.remove(idx));
             }
@@ -1981,7 +1981,7 @@ fn dataset_key(attribute: &str) -> Option<String> {
 }
 
 /// Walk a rendered subtree, gathering what a reader would actually see.
-fn inner_text_into(node: &HtmlBox, out: &mut String) {
+fn inner_text_into(node: &WebCore, out: &mut String) {
     use crate::types::Display;
     if node.tag == "#text" {
         out.push_str(&node.text);
@@ -2016,7 +2016,7 @@ impl Document {
     /// the ordinary `append_child` attaches what goes into it.
     pub fn create_document_fragment(&mut self) -> u32 {
         let arena_id = self.arena.create_document_fragment();
-        let mut b = HtmlBox::new("#document-fragment");
+        let mut b = WebCore::new("#document-fragment");
         b.node_id = arena_id.0;
         // It never renders: it exists to be emptied into something that does,
         // and if one is ever left in a tree it must not draw.
@@ -2250,7 +2250,7 @@ impl Document {
             return String::new();
         }
         let node = match self
-            .find_htmlbox(id)
+            .find_webcore(id)
             .or_else(|| self.pending_nodes.get(&id))
         {
             Some(n) => n,
@@ -2350,7 +2350,7 @@ impl Document {
     pub fn inner_text(&self, id: u32) -> String {
         let mut out = String::new();
         if let Some(node) = self
-            .find_htmlbox(id)
+            .find_webcore(id)
             .or_else(|| self.pending_nodes.get(&id))
         {
             inner_text_into(node, &mut out);
@@ -2550,7 +2550,7 @@ impl Document {
     /// parsed `<canvas>`; an element from `createElement("canvas")` has never
     /// been through it, and gets its bitmap here.
     fn ensure_canvas_bitmap(&mut self, id: u32) -> bool {
-        let Some(node) = self.find_htmlbox_mut(id) else { return false };
+        let Some(node) = self.find_webcore_mut(id) else { return false };
         if node.tag != "canvas" {
             return false;
         }
@@ -2588,7 +2588,7 @@ impl Document {
         // the surface store are never borrowed at the same time — and a canvas
         // is never copied to be drawn on.
         let (mut pixels, w, h) = {
-            let node = self.find_htmlbox_mut(id)?;
+            let node = self.find_webcore_mut(id)?;
             (
                 node.image_data.take()?,
                 node.image_width,
@@ -2596,7 +2596,7 @@ impl Document {
             )
         };
         let out = self.canvas_surfaces.with_context(id, &mut pixels, w, h, f);
-        if let Some(node) = self.find_htmlbox_mut(id) {
+        if let Some(node) = self.find_webcore_mut(id) {
             node.image_data = Some(pixels);
         }
         out
@@ -2611,7 +2611,7 @@ impl Document {
     /// is the documented way a page clears a canvas, and an implementation
     /// that kept the pixels would break it silently.
     pub fn set_canvas_size(&mut self, id: u32, width: u32, height: u32) {
-        let Some(node) = self.find_htmlbox_mut(id) else { return };
+        let Some(node) = self.find_webcore_mut(id) else { return };
         if node.tag != "canvas" {
             return;
         }

@@ -168,12 +168,12 @@ impl EventTargetMap {
         self.dispatch_with_path(event, &path_root_to_target)
     }
 
-    /// Dispatch an event through the HtmlBox tree with capture → target → bubble.
-    /// Uses the HtmlBox tree for the ancestor path (no DomArena needed).
-    pub fn dispatch_on_tree(&self, root: &crate::types::HtmlBox, event: &mut DomEvent) -> bool {
+    /// Dispatch an event through the WebCore tree with capture → target → bubble.
+    /// Uses the WebCore tree for the ancestor path (no DomArena needed).
+    pub fn dispatch_on_tree(&self, root: &crate::types::WebCore, event: &mut DomEvent) -> bool {
         if event.target == 0 { return false; }
         let mut path: Vec<u32> = Vec::new();
-        fn collect_path(node: &crate::types::HtmlBox, target: u32, path: &mut Vec<u32>) -> bool {
+        fn collect_path(node: &crate::types::WebCore, target: u32, path: &mut Vec<u32>) -> bool {
             path.push(node.node_id);
             if node.node_id == target { return true; }
             for child in &node.children {

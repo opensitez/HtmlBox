@@ -1,9 +1,9 @@
 #[test]
 fn badge_align_center_no_stretch() {
-    use htmlbox::load_html;
-    use htmlbox::types::{HtmlBox, AlignItems};
+    use webcore::load_html;
+    use webcore::types::{WebCore, AlignItems};
 
-    fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+    fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
         if pred(root) { return Some(root); }
         for child in &root.children { if let Some(b) = find_box(child, pred) { return Some(b); } }
         None
@@ -17,7 +17,7 @@ fn badge_align_center_no_stretch() {
         300.0);
     
     // Check parent's align-items
-    let parent = find_box(&doc.root, &|b| b.style.display == htmlbox::types::Display::Flex).unwrap();
+    let parent = find_box(&doc.root, &|b| b.style.display == webcore::types::Display::Flex).unwrap();
     println!("parent align_items: {:?}", parent.style.align_items);
     assert_eq!(parent.style.align_items, AlignItems::Center, "align-items should be Center");
     

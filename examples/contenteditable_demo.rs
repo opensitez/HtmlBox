@@ -10,8 +10,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use htmlbox::{Document, Renderer, HtmlEventType};
-use htmlbox::platform::Platform;
+use webcore::{Document, Renderer, HtmlEventType};
+use webcore::platform::Platform;
 
 const HTML: &str = include_str!("html/contenteditable.html");
 
@@ -32,7 +32,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Contenteditable Demo — htmlbox")
+                    .with_title("Contenteditable Demo — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(800u32, 700u32))
             ).unwrap()
         );

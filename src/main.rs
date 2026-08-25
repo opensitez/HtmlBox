@@ -7,7 +7,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window;
 
-use htmlbox::{load_html_with_base, Document, Renderer, HtmlEventType};
+use webcore::{load_html_with_base, Document, Renderer, HtmlEventType};
 use platform::Platform;
 
 const DEMO_HTML: &str = r##"<!DOCTYPE html>
@@ -43,7 +43,7 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>htmlbox — Rust HTML/CSS Renderer</h1>
+  <h1>webcore — Rust HTML/CSS Renderer</h1>
   <p contenteditable="true">A port of <strong>wxhtmledit</strong> to Rust, using <em>tiny-skia</em> for rendering
      and <em>winit</em> for windowing. Click here to edit.</p>
 
@@ -79,7 +79,7 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
 
   <h2>Table</h2>
   <table>
-    <tr><th>Property</th><th>C++ (wxhtmledit)</th><th>Rust (htmlbox)</th></tr>
+    <tr><th>Property</th><th>C++ (wxhtmledit)</th><th>Rust (webcore)</th></tr>
     <tr><td>Language</td><td>C++17</td><td>Rust 2021</td></tr>
     <tr><td>Rendering</td><td>wxWidgets DC</td><td>tiny-skia</td></tr>
     <tr><td>Windowing</td><td>wxWidgets</td><td>winit</td></tr>
@@ -87,7 +87,7 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
     <tr><td>Layout</td><td>Custom engine</td><td>Ported engine</td></tr>
   </table>
 
-  <p style="color:#888; font-size:0.85em;">htmlbox v0.1.0 — built with tiny-skia + winit + cosmic-text</p>
+  <p style="color:#888; font-size:0.85em;">webcore v0.1.0 — built with tiny-skia + winit + cosmic-text</p>
 </body>
 </html>
 "##;
@@ -117,7 +117,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("htmlbox")
+                    .with_title("webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(900u32, 700u32))
             ).expect("Failed to create window")
         );
@@ -335,7 +335,7 @@ fn main() {
     let (initial_html, base_url) = if let Some(ref path) = arg {
         if path.starts_with("http://") || path.starts_with("https://") {
             // URL — fetch content, use URL as base
-            let html = htmlbox::http_client()
+            let html = webcore::http_client()
                 .get(path).send().ok()
                 .and_then(|r| r.bytes().ok())
                 .and_then(|bytes| {

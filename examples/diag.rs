@@ -1,7 +1,7 @@
-use htmlbox::{load_html};
-use htmlbox::types::*;
+use webcore::{load_html};
+use webcore::types::*;
 
-fn find_all<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool, out: &mut Vec<&'a HtmlBox>) {
+fn find_all<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool, out: &mut Vec<&'a WebCore>) {
     if pred(root) { out.push(root); }
     for child in &root.children {
         find_all(child, pred, out);

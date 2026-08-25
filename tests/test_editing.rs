@@ -1,9 +1,9 @@
 // Tests for editing API (toggling styles, contenteditable logic, etc.)
 
-use htmlbox::dom::*;
-use htmlbox::types::*;
-use htmlbox::layout::LayoutEngine;
-use htmlbox::parse_html;
+use webcore::dom::*;
+use webcore::types::*;
+use webcore::layout::LayoutEngine;
+use webcore::parse_html;
 
 #[test]
 fn editing_toggle_bold() {

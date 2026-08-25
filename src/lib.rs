@@ -61,7 +61,7 @@ pub mod accessibility;
 #[cfg(test)]
 pub mod tests;
 
-pub use types::{Document, HtmlBox, ComputedStyle, Rect, Color, CSSCursor, ShadowRoot, ShadowMode, LivePoliteness, Announcement,
+pub use types::{Document, WebCore, ComputedStyle, Rect, Color, CSSCursor, ShadowRoot, ShadowMode, LivePoliteness, Announcement,
                 KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
                 AnimState, TransitionState, MatchedRule,
                 FormEvent, FormEventKind, FormEventCallback, CanvasContext,
@@ -222,7 +222,7 @@ fn start_async_image_fetches(doc: &mut types::Document) {
 }
 
 fn collect_remote_images(
-    node: &types::HtmlBox,
+    node: &types::WebCore,
     path: &mut Vec<usize>,
     pending: &mut Vec<(Vec<usize>, String)>,
 ) {

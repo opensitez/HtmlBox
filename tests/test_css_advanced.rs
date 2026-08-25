@@ -1,8 +1,8 @@
 // Ported from cpptests/test_css_advanced.cpp
 // Advanced CSS property parsing tests
 
-use htmlbox::types::*;
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::css::apply_property;
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -555,11 +555,11 @@ fn css_adv_inset_block_end() {
 fn css_adv_hover_background_color() {
     // hover-background-color was removed; hover styles are now stored as a
     // full ComputedStyle clone in hover_style. Test via cascade instead.
-    use htmlbox::parse_html;
+    use webcore::parse_html;
     let doc = parse_html(
         "<html><head><style>div:hover { background-color: yellow; }</style></head>\
          <body><div>x</div></body></html>");
-    fn find<'a>(b: &'a htmlbox::types::HtmlBox, tag: &str) -> Option<&'a htmlbox::types::HtmlBox> {
+    fn find<'a>(b: &'a webcore::types::WebCore, tag: &str) -> Option<&'a webcore::types::WebCore> {
         if b.tag == tag { return Some(b); }
         for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
         None
@@ -571,11 +571,11 @@ fn css_adv_hover_background_color() {
 
 #[test]
 fn css_adv_hover_color() {
-    use htmlbox::parse_html;
+    use webcore::parse_html;
     let doc = parse_html(
         "<html><head><style>div:hover { color: green; }</style></head>\
          <body><div>x</div></body></html>");
-    fn find<'a>(b: &'a htmlbox::types::HtmlBox, tag: &str) -> Option<&'a htmlbox::types::HtmlBox> {
+    fn find<'a>(b: &'a webcore::types::WebCore, tag: &str) -> Option<&'a webcore::types::WebCore> {
         if b.tag == tag { return Some(b); }
         for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
         None
@@ -630,7 +630,7 @@ fn css_adv_border_bottom_right_radius() {
 // Media Queries — @media rule parsing
 // ============================================================
 
-use htmlbox::css::parse_stylesheet;
+use webcore::css::parse_stylesheet;
 
 #[test]
 fn css_adv_media_query_parsed() {
@@ -754,12 +754,12 @@ fn css_adv_cell_spacing_parsed() {
 
 // ============================================================
 // Colspan / Rowspan (C++ CSSAdv tests)
-// In Rust, colspan/rowspan are HTML element attributes on HtmlBox,
+// In Rust, colspan/rowspan are HTML element attributes on WebCore,
 // not ComputedStyle CSS properties.
 // ============================================================
 
 // TODO: API not available — colspan/rowspan are not ComputedStyle fields; they are
-// parsed from HTML attributes and stored on HtmlBox, not accessible via apply_property.
+// parsed from HTML attributes and stored on WebCore, not accessible via apply_property.
 // (C++ tests: CSSAdv/ColspanParsed, CSSAdv/RowspanParsed)
 
 // ============================================================

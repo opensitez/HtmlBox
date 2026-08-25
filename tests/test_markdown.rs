@@ -2,12 +2,12 @@
 // Tests for Markdown parsing, serialization, and round-trip.
 // Widget API tests (MdWidget) are skipped — require wxHtmlEditWidget.
 
-use htmlbox::types::*;
-use htmlbox::{parse_markdown, serialize_markdown, parse_html, load_html, LayoutEngine};
+use webcore::types::*;
+use webcore::{parse_markdown, serialize_markdown, parse_html, load_html, LayoutEngine};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) {
         return Some(root);
     }
@@ -19,7 +19,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -27,12 +27,12 @@ fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
     n
 }
 
-fn find_tag<'a>(doc: &'a Document, tag: &str) -> Option<&'a HtmlBox> {
+fn find_tag<'a>(doc: &'a Document, tag: &str) -> Option<&'a WebCore> {
     let t = tag.to_string();
     find_box(&doc.root, &|b| b.tag == t)
 }
 
-fn get_text(b: &HtmlBox) -> String {
+fn get_text(b: &WebCore) -> String {
     let mut result = String::new();
     for run in &b.layout.inline_runs {
         let end = run.text_offset + run.length;
@@ -862,7 +862,7 @@ fn md_nested_ordered_in_unordered() {
 // <pre> must not be collapsed to spaces.
 // ============================================================
 
-fn find_pre(doc: &Document) -> Option<&HtmlBox> {
+fn find_pre(doc: &Document) -> Option<&WebCore> {
     find_box(&doc.root, &|b| b.tag == "pre")
 }
 
@@ -1120,7 +1120,7 @@ fn md_layout_heading_font_px_larger_than_body() {
 fn md_layout_list_items_stacked() {
     let doc = parse_and_layout("- Alpha\n- Beta\n- Gamma");
     let ul = find_tag(&doc, "ul").expect("ul not found");
-    let items: Vec<&HtmlBox> = ul.children.iter().filter(|c| c.tag == "li").collect();
+    let items: Vec<&WebCore> = ul.children.iter().filter(|c| c.tag == "li").collect();
     assert_eq!(items.len(), 3, "should have 3 li items");
     for i in 1..items.len() {
         let prev_bottom = items[i-1].layout.margin_rect.y + items[i-1].layout.margin_rect.h;
@@ -1278,7 +1278,7 @@ fn md_layout_demo_sample() {
 // dropping bold, italic, link color, strikethrough, code font.
 // ============================================================
 
-fn parse_layout_find<'a>(doc: &'a Document, tag: &str) -> &'a HtmlBox {
+fn parse_layout_find<'a>(doc: &'a Document, tag: &str) -> &'a WebCore {
     find_tag(doc, tag).unwrap_or_else(|| panic!("{} not found", tag))
 }
 

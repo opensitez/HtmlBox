@@ -299,7 +299,7 @@ impl FloatContext {
 }
 
 /// Collect node_ids of elements that have hover-dependent styles.
-fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u32>) {
+fn collect_hover_sensitive(node: &WebCore, out: &mut std::collections::HashSet<u32>) {
     if node.style.hover_style.is_some() {
         out.insert(node.node_id);
     }
@@ -310,7 +310,7 @@ fn collect_hover_sensitive(node: &HtmlBox, out: &mut std::collections::HashSet<u
 
 /// Walk the tree bottom-up: if any child is `layout_dirty`, mark the parent
 /// dirty too.  Returns `true` if the node (or any descendant) is dirty.
-fn propagate_dirty(node: &mut HtmlBox) -> bool {
+fn propagate_dirty(node: &mut WebCore) -> bool {
     // Fast path: if neither this node nor any descendant is dirty, skip entirely.
     // Check both cascade-dirty descendants (hover → style → layout) and
     // layout-dirty descendants (DOM mutation → layout_dirty set directly).
@@ -595,7 +595,7 @@ impl LayoutEngine {
     ///
     /// Returns `IntrinsicSizes { min_content, max_content }`.
     /// Results are cached via `cached_intrinsic_w` (max) on the node's LayoutBox.
-    pub fn intrinsic_sizes(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> IntrinsicSizes {
+    pub fn intrinsic_sizes(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> IntrinsicSizes {
         IntrinsicSizes {
             min_content: self.min_content_width(node, parent_font_px, root_font_px),
             max_content: self.max_content_width(node, parent_font_px, root_font_px),
@@ -604,7 +604,7 @@ impl LayoutEngine {
 
     /// Compute the min-content width of a node (the smallest width it can take
     /// without overflowing).  For text, this is the width of the longest word.
-    pub fn min_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
+    pub fn min_content_width(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
@@ -673,7 +673,7 @@ impl LayoutEngine {
         max_w + pad_border
     }
 
-    pub fn max_content_width(&self, node: &HtmlBox, parent_font_px: f32, root_font_px: f32) -> f32 {
+    pub fn max_content_width(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
         // Explicit width → use that directly (but skip percentages — they can't
@@ -1141,7 +1141,7 @@ impl LayoutEngine {
         if (self.viewport_h - self.last_geometry_viewport_h).abs() > 0.5
             && !self.last_geometry_viewport_h.is_nan()
         {
-            fn mark_all_dirty(n: &mut crate::types::HtmlBox) {
+            fn mark_all_dirty(n: &mut crate::types::WebCore) {
                 n.layout.layout_dirty = true;
                 n.layout.intrinsic_dirty = true;
                 n.has_dirty_layout_descendant = true;
@@ -1198,7 +1198,7 @@ impl LayoutEngine {
 
     pub fn layout_box(
         &self,
-        node:       &mut HtmlBox,
+        node:       &mut WebCore,
         c: &Constraints,
     ) -> f32 {
         self.layout_box_with_fc(node, c, None)
@@ -1206,7 +1206,7 @@ impl LayoutEngine {
 
     pub fn layout_box_with_fc(
         &self,
-        node:       &mut HtmlBox,
+        node:       &mut WebCore,
         c: &Constraints,
         fc:  Option<&mut FloatContext>,
     ) -> f32 {
@@ -1585,7 +1585,7 @@ impl LayoutEngine {
     /// Layout a box in inline context — returns (width, height, baseline).
     pub fn layout_inline(
         &self,
-        node: &mut HtmlBox,
+        node: &mut WebCore,
         max_w: f32,
         x: f32, y: f32,
         parent_font_px: f32,
@@ -1604,13 +1604,13 @@ impl LayoutEngine {
 // ─── Helper: does a box have any block-level children? ────────────────────────
 
 /// Quick check if any node in the tree has a shadow root.
-fn has_shadow_roots(node: &HtmlBox) -> bool {
+fn has_shadow_roots(node: &WebCore) -> bool {
     if node.shadow_root.is_some() { return true; }
     node.children.iter().any(|c| has_shadow_roots(c))
 }
 
 /// Walk the tree and resolve `<slot>` elements in all shadow roots.
-fn resolve_all_slots(node: &mut HtmlBox) {
+fn resolve_all_slots(node: &mut WebCore) {
     node.resolve_slots();
     for child in &mut node.children {
         resolve_all_slots(child);
@@ -1622,11 +1622,11 @@ fn resolve_all_slots(node: &mut HtmlBox) {
     }
 }
 
-fn count_nodes(node: &HtmlBox) -> usize {
+fn count_nodes(node: &WebCore) -> usize {
     1 + node.children.iter().map(|c| count_nodes(c)).sum::<usize>()
 }
 
-pub fn has_block_children(node: &HtmlBox) -> bool {
+pub fn has_block_children(node: &WebCore) -> bool {
     node.effective_children().iter().any(|c| {
         if matches!(c.style.display, Display::None) { return false; }
         if matches!(c.style.display, Display::Contents) {
@@ -1640,7 +1640,7 @@ pub fn has_block_children(node: &HtmlBox) -> bool {
 
 // ─── Absolute / fixed positioning pass ───────────────────────────────────────
 
-pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
+pub fn layout_positioned(engine: &LayoutEngine, node: &mut WebCore,
                          containing_rect: Rect, parent_font_px: f32, root_font_px: f32) {
     layout_positioned_static(engine, node, containing_rect, parent_font_px, root_font_px, None);
 }
@@ -1648,7 +1648,7 @@ pub fn layout_positioned(engine: &LayoutEngine, node: &mut HtmlBox,
 /// Layout an absolutely/fixed positioned element, with optional static position.
 /// `static_y` is the y offset (relative to containing block) where the element would
 /// appear in normal flow — used when `top` and `bottom` are both `auto`.
-pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
+pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
                          containing_rect: Rect, parent_font_px: f32, root_font_px: f32,
                          static_y: Option<f32>) {
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
@@ -1804,7 +1804,7 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut HtmlBox,
     }
 }
 
-pub fn shift_rects(node: &mut HtmlBox, dx: f32, dy: f32) {
+pub fn shift_rects(node: &mut WebCore, dx: f32, dy: f32) {
     node.layout.content_rect.x += dx; node.layout.content_rect.y += dy;
     node.layout.padding_rect.x += dx; node.layout.padding_rect.y += dy;
     node.layout.border_rect.x  += dx; node.layout.border_rect.y  += dy;

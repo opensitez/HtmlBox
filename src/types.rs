@@ -23,8 +23,8 @@ impl Rect {
 
 // ─── Custom Components ───────────────────────────────────────────────────────
 
-pub type ComponentMeasureFn = Arc<dyn Fn(&HtmlBox, f32) -> (f32, f32) + Send + Sync>;
-pub type ComponentPaintFn   = Arc<dyn Fn(&HtmlBox, &mut tiny_skia::Pixmap, f32, f32, f32, f32, f32) + Send + Sync>;
+pub type ComponentMeasureFn = Arc<dyn Fn(&WebCore, f32) -> (f32, f32) + Send + Sync>;
+pub type ComponentPaintFn   = Arc<dyn Fn(&WebCore, &mut tiny_skia::Pixmap, f32, f32, f32, f32, f32) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ComponentCallbacks {
@@ -44,32 +44,32 @@ pub struct ComponentCallbacks {
 /// ```ignore
 /// struct ProgressBar;
 /// impl Component for ProgressBar {
-///     fn measure(&self, node: &HtmlBox, available_width: f32) -> (f32, f32) {
+///     fn measure(&self, node: &WebCore, available_width: f32) -> (f32, f32) {
 ///         let pct = node.attributes.get("value")
 ///             .and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
 ///         (available_width, 24.0) // full width, 24px tall
 ///     }
-///     fn paint(&self, node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap,
+///     fn paint(&self, node: &WebCore, pixmap: &mut tiny_skia::Pixmap,
 ///              x: f32, y: f32, w: f32, h: f32, scale: f32) {
 ///         // draw track + filled portion
 ///     }
-///     fn intrinsic_width(&self, _node: &HtmlBox) -> (f32, f32) {
+///     fn intrinsic_width(&self, _node: &WebCore) -> (f32, f32) {
 ///         (100.0, 300.0) // min 100px, preferred 300px
 ///     }
 /// }
 /// ```
 pub trait Component: Send + Sync {
     /// Measure: given available width, return (content_width, content_height).
-    fn measure(&self, node: &HtmlBox, available_width: f32) -> (f32, f32);
+    fn measure(&self, node: &WebCore, available_width: f32) -> (f32, f32);
 
     /// Paint: draw the component into the pixmap at the given position.
-    fn paint(&self, node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap,
+    fn paint(&self, node: &WebCore, pixmap: &mut tiny_skia::Pixmap,
              x: f32, y: f32, w: f32, h: f32, scale: f32);
 
     /// Intrinsic sizes for parent flex/grid/table sizing.
     /// Returns (min_content_width, max_content_width).
     /// Default: uses measure() with width=0 for min, width=infinity for max.
-    fn intrinsic_width(&self, node: &HtmlBox) -> (f32, f32) {
+    fn intrinsic_width(&self, node: &WebCore) -> (f32, f32) {
         let (min_w, _) = self.measure(node, 0.0);
         let (max_w, _) = self.measure(node, f32::MAX);
         (min_w, max_w)
@@ -77,16 +77,16 @@ pub trait Component: Send + Sync {
 
     /// Hit test: is the given point (relative to the component's content rect) inside?
     /// Default: rectangular hit test (always true if within bounds).
-    fn hit_test(&self, _node: &HtmlBox, _x: f32, _y: f32) -> bool { true }
+    fn hit_test(&self, _node: &WebCore, _x: f32, _y: f32) -> bool { true }
 
     /// Handle an input event. Return true if the event was consumed.
-    fn handle_event(&self, _node: &mut HtmlBox, _event: &ComponentEvent) -> bool { false }
+    fn handle_event(&self, _node: &mut WebCore, _event: &ComponentEvent) -> bool { false }
 
     /// Accessibility role for this component.
     fn accessibility_role(&self) -> &str { "generic" }
 
     /// Accessibility label (human-readable name).
-    fn accessibility_label(&self, _node: &HtmlBox) -> Option<String> { None }
+    fn accessibility_label(&self, _node: &WebCore) -> Option<String> { None }
 }
 
 /// Input events delivered to components.
@@ -1731,7 +1731,7 @@ impl Default for LayoutBox {
 
 /// A box/node in the box tree.  Mirrors the C++ `Box` struct.
 #[derive(Clone, Debug)]
-pub struct HtmlBox {
+pub struct WebCore {
     pub tag:        String,
     pub node_id:    u32,                // Stable identity — index into Document.nodes
     pub style:      ComputedStyle,
@@ -1746,7 +1746,7 @@ pub struct HtmlBox {
     pub prev_sibling: u32,              // 0 = first child
 
     // DEPRECATED: Vec storage kept during migration. Will be removed.
-    pub children:   Vec<HtmlBox>,
+    pub children:   Vec<WebCore>,
 
     /// Layout geometry — all layout-computed fields live here.
     pub layout: LayoutBox,
@@ -1833,7 +1833,7 @@ pub struct HtmlBox {
 #[derive(Clone, Debug)]
 pub struct ShadowRoot {
     /// The shadow tree nodes (laid out/painted instead of light DOM children).
-    pub children: Vec<HtmlBox>,
+    pub children: Vec<WebCore>,
     /// Scoped stylesheet — only applies inside this shadow tree.
     pub stylesheet: crate::css::Stylesheet,
     /// Open (inspectable) or closed (opaque).
@@ -2010,8 +2010,8 @@ impl CanvasContext {
         }
     }
 
-    /// Copy pixel buffer to an HtmlBox's image_data for rendering.
-    pub fn apply_to_node(&self, node: &mut HtmlBox) {
+    /// Copy pixel buffer to an WebCore's image_data for rendering.
+    pub fn apply_to_node(&self, node: &mut WebCore) {
         node.image_data = Some(self.pixels.clone());
         node.image_width = self.width;
         node.image_height = self.height;
@@ -2069,7 +2069,7 @@ pub struct MatchedRule {
     pub source: String,
 }
 
-impl HtmlBox {
+impl WebCore {
     /// Does this element DISPLAY an image — `<img>`, or `<input type=image>`?
     ///
     /// HTML §4.10.5.1.19: the Image Button state "represents an image and a
@@ -2203,7 +2203,7 @@ impl HtmlBox {
 
     /// Returns the effective children for layout/render: shadow children if a
     /// shadow root is present, otherwise the normal children.
-    pub fn effective_children(&self) -> &[HtmlBox] {
+    pub fn effective_children(&self) -> &[WebCore] {
         if let Some(ref sr) = self.shadow_root {
             &sr.children
         } else {
@@ -2212,7 +2212,7 @@ impl HtmlBox {
     }
 
     /// Mutable version of `effective_children`.
-    pub fn effective_children_mut(&mut self) -> &mut Vec<HtmlBox> {
+    pub fn effective_children_mut(&mut self) -> &mut Vec<WebCore> {
         if let Some(ref mut sr) = self.shadow_root {
             &mut sr.children
         } else {
@@ -2242,13 +2242,13 @@ impl HtmlBox {
     }
 
     /// Find boxes matching a simple CSS selector (tag, .class, #id).
-    pub fn query_selector_all<'a>(&'a self, selector: &str) -> Vec<&'a HtmlBox> {
+    pub fn query_selector_all<'a>(&'a self, selector: &str) -> Vec<&'a WebCore> {
         let mut results = Vec::new();
         self.collect_matching(selector, &mut results);
         results
     }
 
-    fn collect_matching<'a>(&'a self, selector: &str, out: &mut Vec<&'a HtmlBox>) {
+    fn collect_matching<'a>(&'a self, selector: &str, out: &mut Vec<&'a WebCore>) {
         if self.matches_simple_selector(selector) {
             out.push(self);
         }
@@ -2359,7 +2359,7 @@ pub struct ParsedTransition {
 /// Runtime state for one active CSS animation on one element.
 #[derive(Clone, Debug)]
 pub struct AnimState {
-    /// The HtmlBox raw pointer, stored as `usize` for Hash/Eq.
+    /// The WebCore raw pointer, stored as `usize` for Hash/Eq.
     pub element_id: u32,
     pub animation:  ParsedAnimation,
     pub start_time: std::time::Instant,
@@ -2402,14 +2402,14 @@ pub struct Announcement {
     pub atomic:      bool,
 }
 
-// ─── Node Arena (flat storage for all HtmlBox nodes) ─────────────────────────
+// ─── Node Arena (flat storage for all WebCore nodes) ─────────────────────────
 
-/// Flat storage for all HtmlBox nodes, indexed by node_id.
+/// Flat storage for all WebCore nodes, indexed by node_id.
 /// This is the source of truth for the DOM tree. Tree structure is encoded
 /// via linked-list pointers (parent/first_child/last_child/next_sibling/prev_sibling)
-/// on each HtmlBox.
+/// on each WebCore.
 pub struct NodeArena {
-    nodes: HashMap<u32, HtmlBox>,
+    nodes: HashMap<u32, WebCore>,
     pub root_id: u32,
 }
 
@@ -2419,24 +2419,24 @@ impl NodeArena {
     }
 
     /// Insert a node. If a node with this ID already exists, it's replaced.
-    pub fn insert(&mut self, node: HtmlBox) {
+    pub fn insert(&mut self, node: WebCore) {
         self.nodes.insert(node.node_id, node);
     }
 
     /// Get an immutable reference to a node.
     #[inline]
-    pub fn get(&self, id: u32) -> Option<&HtmlBox> {
+    pub fn get(&self, id: u32) -> Option<&WebCore> {
         self.nodes.get(&id)
     }
 
     /// Get a mutable reference to a node.
     #[inline]
-    pub fn get_mut(&mut self, id: u32) -> Option<&mut HtmlBox> {
+    pub fn get_mut(&mut self, id: u32) -> Option<&mut WebCore> {
         self.nodes.get_mut(&id)
     }
 
     /// Remove a node from the arena. Returns it if it existed.
-    pub fn remove(&mut self, id: u32) -> Option<HtmlBox> {
+    pub fn remove(&mut self, id: u32) -> Option<WebCore> {
         self.nodes.remove(&id)
     }
 
@@ -2475,12 +2475,12 @@ impl NodeArena {
     }
 
     /// Get the root node.
-    pub fn root(&self) -> Option<&HtmlBox> {
+    pub fn root(&self) -> Option<&WebCore> {
         self.nodes.get(&self.root_id)
     }
 
     /// Get the root node mutably.
-    pub fn root_mut(&mut self) -> Option<&mut HtmlBox> {
+    pub fn root_mut(&mut self) -> Option<&mut WebCore> {
         self.nodes.get_mut(&self.root_id)
     }
 
@@ -2536,9 +2536,9 @@ impl NodeArena {
         }
     }
 
-    /// Build the arena from an existing HtmlBox tree (migration helper).
+    /// Build the arena from an existing WebCore tree (migration helper).
     /// Clones all nodes into the flat HashMap. Original tree unchanged.
-    pub fn from_tree(root: &HtmlBox) -> Self {
+    pub fn from_tree(root: &WebCore) -> Self {
         let mut arena = Self::new();
         arena.root_id = root.node_id;
         flatten_into_arena(root, &mut arena);
@@ -2546,10 +2546,10 @@ impl NodeArena {
     }
 }
 
-/// Recursively flatten a Vec<HtmlBox> tree into the arena.
+/// Recursively flatten a Vec<WebCore> tree into the arena.
 /// Clones each node (with empty children Vec) into the flat store.
 /// The original tree is NOT modified.
-fn flatten_into_arena(node: &HtmlBox, arena: &mut NodeArena) {
+fn flatten_into_arena(node: &WebCore, arena: &mut NodeArena) {
     // Clone the node with an empty children Vec (arena uses linked-list, not Vec)
     let mut flat_node = node.clone();
     flat_node.children.clear(); // arena nodes don't need Vec children
@@ -2594,8 +2594,8 @@ pub enum PickerKind {
 }
 
 pub struct Document {
-    pub root:            HtmlBox,
-    /// Flat node storage — all HtmlBox nodes indexed by node_id.
+    pub root:            WebCore,
+    /// Flat node storage — all WebCore nodes indexed by node_id.
     /// Rebuilt lazily on first `get_node()` after layout marks it stale.
     pub nodes:           NodeArena,
     /// True when the tree has changed since last arena rebuild.
@@ -2604,17 +2604,17 @@ pub struct Document {
     pub title:           String,
     pub base_url:        String,
 
-    // ── Arena-based DOM (bridge period: mirrors HtmlBox tree) ────────────────
+    // ── Arena-based DOM (bridge period: mirrors WebCore tree) ────────────────
     /// Arena-based DOM tree with stable NodeId identity.
-    /// During the bridge period, this mirrors the HtmlBox tree structure.
+    /// During the bridge period, this mirrors the WebCore tree structure.
     pub arena:           DomArena,
     /// Next node_id to assign (monotonically increasing counter).
     pub next_node_id:    u32,
     /// Bridge lookup: set of known node_ids in the tree.
-    /// O(1) node lookup index: node_id → raw pointer into the HtmlBox tree.
+    /// O(1) node lookup index: node_id → raw pointer into the WebCore tree.
     /// Rebuilt by `rebuild_node_index()` after layout. Pointers are valid only
     /// until the next tree mutation (layout, DOM change).
-    pub node_index: HashMap<u32, *const HtmlBox>,
+    pub node_index: HashMap<u32, *const WebCore>,
     /// Which grammar this document was built from — HTML or XML.
     ///
     /// The difference the DOM actually draws is CASE. An HTML document
@@ -2622,14 +2622,14 @@ pub struct Document {
     /// makes a `div` and `getAttribute("HREF")` finds `href`; an XML document
     /// is case-sensitive, where `<Rect>` and `<rect>` are two elements.
     ///
-    /// Everything htmlbox parses is HTML, so this only becomes anything other
+    /// Everything webcore parses is HTML, so this only becomes anything other
     /// than `Html` when a caller asks for an XML document explicitly.
     pub kind: DocumentKind,
-    /// Separated layout data indexed by node_id (bridge: duplicates HtmlBox geometry).
+    /// Separated layout data indexed by node_id (bridge: duplicates WebCore geometry).
     pub layout_store:    crate::layout::layout_box::LayoutStore,
     /// Nodes created by dom_create_element/dom_create_text that haven't been
-    /// inserted into the HtmlBox tree yet. Consumed by dom_append_child/dom_insert_before.
-    pub pending_nodes:   HashMap<u32, HtmlBox>,
+    /// inserted into the WebCore tree yet. Consumed by dom_append_child/dom_insert_before.
+    pub pending_nodes:   HashMap<u32, WebCore>,
     /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
     /// Populated by the parser so the host can fetch and merge external CSS.
     /// External stylesheets from `<link rel="stylesheet">` tags: (href, media).
@@ -2639,7 +2639,7 @@ pub struct Document {
     pub linked_stylesheets: Vec<(String, String)>,
     pub editor:          Editor,
     /// Drawing state for the document's `<canvas>` elements, keyed by node id.
-    /// The pixels stay on the element in `HtmlBox::image_data`; this is what
+    /// The pixels stay on the element in `WebCore::image_data`; this is what
     /// persists between two calls from a page. See `canvas::CanvasSurfaces`.
     pub canvas_surfaces: crate::canvas::CanvasSurfaces,
     pub events:          EventListeners,
@@ -2709,7 +2709,7 @@ pub struct Document {
     // ── CSS animation / transition runtime ────────────────────────────────────
     /// All currently running CSS animations (one entry per animation per element).
     pub active_animations: Vec<AnimState>,
-    /// Per-element active transitions, keyed by HtmlBox pointer (as usize).
+    /// Per-element active transitions, keyed by WebCore pointer (as usize).
     pub(crate) transition_states: HashMap<u32, Vec<TransitionState>>,
     /// Previous transitionable style values per element, for change detection.
     pub(crate) prev_styles: HashMap<u32, HashMap<String, String>>,
@@ -2735,7 +2735,7 @@ pub struct Document {
     // ── aria-live region machinery ─────────────────────────────────────────────
     /// Announcements queued since the last call to `take_announcements()`.
     pub pending_announcements: Vec<Announcement>,
-    /// Text-content snapshots for each aria-live region, keyed by HtmlBox pointer.
+    /// Text-content snapshots for each aria-live region, keyed by WebCore pointer.
     /// Updated every layout pass to detect content changes.
     pub(crate) live_region_snapshots: HashMap<u32, String>,
     /// `false` until the first `check_live_regions()` call.
@@ -2758,7 +2758,7 @@ pub struct Document {
 impl Document {
     pub fn new() -> Self {
         Self {
-            root:            HtmlBox::new("html"),
+            root:            WebCore::new("html"),
             nodes:           NodeArena::new(),
             nodes_stale:     true,
             stylesheet:      Stylesheet::default(),
@@ -2839,9 +2839,9 @@ impl Document {
     /// Called after layout (tree structure is stable until next mutation).
     pub fn rebuild_node_index(&mut self) {
         self.node_index.clear();
-        fn collect(node: &HtmlBox, map: &mut HashMap<u32, *const HtmlBox>) {
+        fn collect(node: &WebCore, map: &mut HashMap<u32, *const WebCore>) {
             if node.node_id != 0 {
-                map.insert(node.node_id, node as *const HtmlBox);
+                map.insert(node.node_id, node as *const WebCore);
             }
             for child in &node.children { collect(child, map); }
         }
@@ -2854,7 +2854,7 @@ impl Document {
     /// O(1) node lookup by node_id. Uses the cached pointer index.
     /// Falls back to tree walk if index is empty (not yet built).
     #[inline]
-    pub fn get_box_by_id(&self, node_id: u32) -> Option<&HtmlBox> {
+    pub fn get_box_by_id(&self, node_id: u32) -> Option<&WebCore> {
         if node_id == 0 { return None; }
         // Fast path: O(1) index lookup
         if let Some(&ptr) = self.node_index.get(&node_id) {
@@ -2863,7 +2863,7 @@ impl Document {
             return Some(unsafe { &*ptr });
         }
         // Fallback: tree walk (index not built yet)
-        fn walk(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+        fn walk(node: &WebCore, id: u32) -> Option<&WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &node.children { if let Some(f) = walk(child, id) { return Some(f); } }
             None
@@ -2873,7 +2873,7 @@ impl Document {
 
     /// Same as get_box_by_id — O(1) when index is built.
     #[inline]
-    pub fn get_node(&self, node_id: u32) -> Option<&HtmlBox> {
+    pub fn get_node(&self, node_id: u32) -> Option<&WebCore> {
         self.get_box_by_id(node_id)
     }
 
@@ -2885,9 +2885,9 @@ impl Document {
 
     /// O(1) mutable node lookup via tree walk (arena stores clones, not references).
     /// For mutable access, we must use the tree since the arena is a snapshot.
-    pub fn get_box_by_id_mut(&mut self, node_id: u32) -> Option<&mut HtmlBox> {
+    pub fn get_box_by_id_mut(&mut self, node_id: u32) -> Option<&mut WebCore> {
         if node_id == 0 { return None; }
-        fn walk(node: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
+        fn walk(node: &mut WebCore, id: u32) -> Option<&mut WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &mut node.children { if let Some(f) = walk(child, id) { return Some(f); } }
             None
@@ -2908,7 +2908,7 @@ impl Document {
     /// Resets hover/active pointers since box addresses may change after re-layout.
     pub fn recascade(&mut self) {
         // Invalidate hover/active pointers — raw pointers may alias differently
-        // after HtmlBox trees are rebuilt or re-allocated during parsing.
+        // after WebCore trees are rebuilt or re-allocated during parsing.
         self.hovered_box = 0;
         self.active_box  = 0;
         self.stylesheet.rebuild_index();
@@ -2948,7 +2948,7 @@ impl Document {
         // whole process down on the first click of a submit button. Every
         // other click-path walk here (`find_form_parent_id`) goes over boxes
         // for the same reason.
-        fn walk<'a>(node: &'a HtmlBox, hit: u32, chain: &mut Vec<&'a HtmlBox>) -> bool {
+        fn walk<'a>(node: &'a WebCore, hit: u32, chain: &mut Vec<&'a WebCore>) -> bool {
             chain.push(node);
             if node.node_id == hit {
                 return true;
@@ -2979,7 +2979,7 @@ impl Document {
     }
 
     pub(crate) fn picker_rect(&self, id: u32) -> Option<(f32, f32, f32, f32)> {
-        let node = self.find_htmlbox(id)?;
+        let node = self.find_webcore(id)?;
         let br = node.layout.border_rect;
         // Below the control, as the dropdown opens below its select.
         let (w, h) = match self.picker_kind(id) {
@@ -2999,7 +2999,7 @@ impl Document {
     /// Which picker an element opens, if any — the one place that decides, so
     /// the geometry, the paint and the hit test cannot disagree.
     pub(crate) fn picker_kind(&self, id: u32) -> Option<PickerKind> {
-        let node = self.find_htmlbox(id)?;
+        let node = self.find_webcore(id)?;
         if node.tag != "input" {
             return None;
         }
@@ -3018,7 +3018,7 @@ impl Document {
     /// current month when it has none — which is what a browser opens on.
     pub(crate) fn picker_month(&self, id: u32) -> (i32, u32, Option<u32>) {
         let value = self
-            .find_htmlbox(id)
+            .find_webcore(id)
             .and_then(|n| n.attributes.get("value"))
             .map(String::as_str)
             .unwrap_or("");
@@ -3263,7 +3263,7 @@ impl Document {
                         if let Some(value) = picked {
                             self.set_value(picker_id, &value);
                             let (id, name) = self
-                                .find_htmlbox(picker_id)
+                                .find_webcore(picker_id)
                                 .map(|n| {
                                     (
                                         n.attributes.get("id").cloned().unwrap_or_default(),
@@ -3317,7 +3317,7 @@ impl Document {
                                 .flatten()
                             {
                                 if form_redraw { redraw = true; }
-                                // `handle_form_click` takes `&mut HtmlBox`, so it
+                                // `handle_form_click` takes `&mut WebCore`, so it
                                 // wrote `checked` to the render tree only. Push it
                                 // into the arena before anything reads the DOM
                                 // through the WHATWG accessors — see
@@ -3341,7 +3341,7 @@ impl Document {
                         if hit_node_id != 0 && button == 0 {
                             if let Some(details_id) = self.summary_details(hit_node_id) {
                                 let open = self
-                                    .find_htmlbox(details_id)
+                                    .find_webcore(details_id)
                                     .map(|n| n.attributes.contains_key("open"))
                                     .unwrap_or(false);
                                 if open {
@@ -3429,7 +3429,7 @@ impl Document {
 
                                     if let Some(opt_idx) = clicked_opt {
                                         let sel_id = self.open_select;
-                                        fn find_m<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                                        fn find_m<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
                                             if n.node_id == t { return Some(n); }
                                             for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
                                             None
@@ -3644,7 +3644,7 @@ impl Document {
                 // Select: arrow up/down changes selected option
                 if focused.tag == "select" && (key_code == 38 || key_code == 40) {
                     let fid = self.focused_box;
-                    fn find_m<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                    fn find_m<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
                         if n.node_id == t { return Some(n); }
                         for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
                         None
@@ -3697,7 +3697,7 @@ impl Document {
                     && (key_code == 38 || key_code == 40)
                 {
                     let fid = self.focused_box;
-                    fn find_n<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                    fn find_n<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
                         if n.node_id == t { return Some(n); }
                         for c in &mut n.children { if let Some(r) = find_n(c, t) { return Some(r); } }
                         None
@@ -3725,7 +3725,7 @@ impl Document {
                 else if is_text_input(focused) {
                     // Find the focused node mutably and process the key
                     let fid = self.focused_box;
-                    fn find_input<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+                    fn find_input<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
                         if n.node_id == t { return Some(n); }
                         for c in &mut n.children {
                             if let Some(r) = find_input(c, t) { return Some(r); }
@@ -3756,7 +3756,7 @@ impl Document {
             if form_handled {
                 redraw = true;
                 // Typing went through `process_form_input_key`, which takes
-                // `&mut HtmlBox` and so updated `value` on the render tree
+                // `&mut WebCore` and so updated `value` on the render tree
                 // only. Reconcile before the DOM is read. Deferred to here
                 // rather than done at the call site because `input` borrows
                 // `self.root` for the whole block above.
@@ -3773,14 +3773,14 @@ impl Document {
     }
 
     /// Walk all boxes in depth-first order.
-    pub fn walk_all<F: FnMut(&HtmlBox)>(root: &HtmlBox, f: &mut F) {
+    pub fn walk_all<F: FnMut(&WebCore)>(root: &WebCore, f: &mut F) {
         f(root);
         for child in &root.children {
             Self::walk_all(child, f);
         }
     }
 
-    pub fn walk_all_mut<F: FnMut(&mut HtmlBox)>(root: &mut HtmlBox, f: &mut F) {
+    pub fn walk_all_mut<F: FnMut(&mut WebCore)>(root: &mut WebCore, f: &mut F) {
         f(root);
         for child in &mut root.children {
             Self::walk_all_mut(child, f);
@@ -3790,8 +3790,8 @@ impl Document {
     /// Compute the full scrollable extent of the document.
     /// Walks all elements and returns the maximum bottom/right edge,
     /// ignoring containers with `height: 100vh` or similar constraints.
-    pub fn scroll_height(root: &HtmlBox) -> f32 {
-        fn walk_scroll(node: &HtmlBox, max_bottom: &mut f32) {
+    pub fn scroll_height(root: &WebCore) -> f32 {
+        fn walk_scroll(node: &WebCore, max_bottom: &mut f32) {
             if matches!(node.style.display, Display::None) { return; }
             // Fixed elements don't contribute to scroll height
             if matches!(node.style.position, Position::Fixed) { return; }
@@ -3851,7 +3851,7 @@ impl Document {
         let mut new_ann: Vec<Announcement> = Vec::new();
 
         fn walk(
-            node:         &HtmlBox,
+            node:         &WebCore,
             snapshots:    &mut HashMap<u32, String>,
             out:          &mut Vec<Announcement>,
             initialized:  bool,
@@ -3918,7 +3918,7 @@ impl Document {
     /// currently has an `animation` property.  Call this after each cascade pass.
     pub fn sync_animations(&mut self, now: std::time::Instant) {
         let mut current: Vec<(u32, ParsedAnimation)> = Vec::new();
-        fn collect(node: &HtmlBox, out: &mut Vec<(u32, ParsedAnimation)>) {
+        fn collect(node: &WebCore, out: &mut Vec<(u32, ParsedAnimation)>) {
             let id = node.node_id;
             for a in &node.style.animations {
                 out.push((id, a.clone()));
@@ -3954,7 +3954,7 @@ impl Document {
         let hovered = self.hovered_box;
         let mut current: Vec<(u32, Vec<ParsedTransition>, HashMap<String, String>)> = Vec::new();
         fn collect(
-            node: &HtmlBox,
+            node: &WebCore,
             hovered: u32,
             cascade_ran: bool,
             cascade_styles: &HashMap<u32, HashMap<String, String>>,
@@ -3989,7 +3989,7 @@ impl Document {
 
         // When cascade ran, save the clean base styles for hover-only frames.
         if cascade_ran {
-            fn snapshot(node: &HtmlBox, out: &mut HashMap<u32, HashMap<String, String>>) {
+            fn snapshot(node: &WebCore, out: &mut HashMap<u32, HashMap<String, String>>) {
                 if !node.style.transitions.is_empty() {
                     out.insert(node.node_id, extract_transitionable(node));
                 }
@@ -4163,7 +4163,7 @@ impl Document {
         // Mark all elements with active overrides as layout_dirty so the
         // layout cache doesn't return stale geometry for animated elements.
         if !self.animation_overrides.is_empty() {
-            fn mark_dirty(node: &mut HtmlBox, ids: &HashMap<u32, Vec<(String, String)>>) {
+            fn mark_dirty(node: &mut WebCore, ids: &HashMap<u32, Vec<(String, String)>>) {
                 if ids.contains_key(&node.node_id) {
                     node.layout.layout_dirty = true;
                 }
@@ -4368,9 +4368,9 @@ impl Document {
 /// the *tab* order by `collect_focusable_ordered`.
 /// Handle a click on a form element: toggle checkbox, select radio, fire form events.
 /// Returns Some(true) if a redraw is needed, Some(false) if handled but no redraw, None if not a form element.
-pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<FormEventCallback>) -> Option<bool> {
+pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<FormEventCallback>) -> Option<bool> {
     // Find a node by node_id in the tree (immutable)
-    fn find_ref<'a>(node: &'a HtmlBox, t: u32) -> Option<&'a HtmlBox> {
+    fn find_ref<'a>(node: &'a WebCore, t: u32) -> Option<&'a WebCore> {
         if node.node_id == t { return Some(node); }
         for child in &node.children {
             if let Some(found) = find_ref(child, t) { return Some(found); }
@@ -4378,7 +4378,7 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
         None
     }
     // Find a node by node_id in the tree (mutable)
-    fn find_mut<'a>(node: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+    fn find_mut<'a>(node: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
         if node.node_id == t { return Some(node); }
         for child in &mut node.children {
             if let Some(found) = find_mut(child, t) { return Some(found); }
@@ -4392,7 +4392,7 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
         let node = find_ref(root, target)?;
         if node.tag == "#text" {
             // Walk the tree to find the parent of this text node
-            fn find_parent_id(node: &HtmlBox, child_id: u32) -> Option<u32> {
+            fn find_parent_id(node: &WebCore, child_id: u32) -> Option<u32> {
                 for c in &node.children {
                     if c.node_id == child_id {
                         return Some(node.node_id);
@@ -4450,7 +4450,7 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
                 "radio" => {
                     // Uncheck other radios with the same name, check this one
                     if !name.is_empty() {
-                        fn uncheck_radios(node: &mut HtmlBox, name: &str, except_id: u32) {
+                        fn uncheck_radios(node: &mut WebCore, name: &str, except_id: u32) {
                             if node.tag == "input"
                                 && node.attributes.get("type").map(|s| s.as_str()) == Some("radio")
                                 && node.attributes.get("name").map(|s| s.as_str()) == Some(name)
@@ -4482,9 +4482,9 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
                     if input_type == "reset" {
                         let _form_action = find_parent_form_action(root, target);
                         // Find and reset the parent form
-                        fn find_form_for_reset(node: &HtmlBox, target_id: u32) -> Option<u32> {
+                        fn find_form_for_reset(node: &WebCore, target_id: u32) -> Option<u32> {
                             if node.tag == "form" {
-                                fn contains(n: &HtmlBox, t: u32) -> bool {
+                                fn contains(n: &WebCore, t: u32) -> bool {
                                     if n.node_id == t { return true; }
                                     n.children.iter().any(|c| contains(c, t))
                                 }
@@ -4542,9 +4542,9 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
             }
             // Reset buttons reset the form
             if btn_type == "reset" {
-                fn find_form_id(node: &HtmlBox, target_id: u32) -> Option<u32> {
+                fn find_form_id(node: &WebCore, target_id: u32) -> Option<u32> {
                     if node.tag == "form" {
-                        fn has(n: &HtmlBox, t: u32) -> bool {
+                        fn has(n: &WebCore, t: u32) -> bool {
                             if n.node_id == t { return true; }
                             n.children.iter().any(|c| has(c, t))
                         }
@@ -4568,8 +4568,8 @@ pub fn handle_form_click(root: &mut HtmlBox, target: u32, callback: &mut Option<
 }
 
 /// Find the form element parent of a target (walks up from #text to select/input/button).
-fn find_form_parent_id(root: &HtmlBox, target_id: u32) -> u32 {
-    fn find_ref<'a>(node: &'a HtmlBox, t: u32) -> Option<&'a HtmlBox> {
+fn find_form_parent_id(root: &WebCore, target_id: u32) -> u32 {
+    fn find_ref<'a>(node: &'a WebCore, t: u32) -> Option<&'a WebCore> {
         if node.node_id == t { return Some(node); }
         for child in &node.children { if let Some(f) = find_ref(child, t) { return Some(f); } }
         None
@@ -4580,7 +4580,7 @@ fn find_form_parent_id(root: &HtmlBox, target_id: u32) -> u32 {
         }
     }
     // Walk tree to find parent
-    fn walk(node: &HtmlBox, target_id: u32) -> Option<u32> {
+    fn walk(node: &WebCore, target_id: u32) -> Option<u32> {
         for child in &node.children {
             if child.node_id == target_id {
                 if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button" | "label") {
@@ -4595,8 +4595,8 @@ fn find_form_parent_id(root: &HtmlBox, target_id: u32) -> u32 {
 }
 
 /// Find the action URL of the nearest ancestor <form> element.
-pub fn find_parent_form_action(root: &HtmlBox, target_id: u32) -> String {
-    fn walk(node: &HtmlBox, target_id: u32) -> Option<String> {
+pub fn find_parent_form_action(root: &WebCore, target_id: u32) -> String {
+    fn walk(node: &WebCore, target_id: u32) -> Option<String> {
         for child in &node.children {
             if child.node_id == target_id {
                 if node.tag == "form" {
@@ -4609,7 +4609,7 @@ pub fn find_parent_form_action(root: &HtmlBox, target_id: u32) -> String {
             }
             // Check if child contains target and this node is a form
             if node.tag == "form" {
-                fn contains(node: &HtmlBox, target_id: u32) -> bool {
+                fn contains(node: &WebCore, target_id: u32) -> bool {
                     if node.node_id == target_id { return true; }
                     node.children.iter().any(|c| contains(c, target_id))
                 }
@@ -4632,13 +4632,13 @@ pub fn find_parent_form_action(root: &HtmlBox, target_id: u32) -> String {
 /// - Textarea: text content
 /// - Disabled elements are excluded
 /// - Elements without a name are excluded
-pub fn collect_form_data(form: &HtmlBox) -> std::collections::HashMap<String, String> {
+pub fn collect_form_data(form: &WebCore) -> std::collections::HashMap<String, String> {
     let mut data = std::collections::HashMap::new();
     collect_form_data_inner(form, &mut data);
     data
 }
 
-fn collect_form_data_inner(node: &HtmlBox, data: &mut std::collections::HashMap<String, String>) {
+fn collect_form_data_inner(node: &WebCore, data: &mut std::collections::HashMap<String, String>) {
     if node.attributes.contains_key("disabled") { return; }
     let name = match node.attributes.get("name") {
         Some(n) if !n.is_empty() => n.clone(),
@@ -4725,8 +4725,8 @@ fn collect_form_data_inner(node: &HtmlBox, data: &mut std::collections::HashMap<
 /// Text inputs reset to their original value attribute (from defaultValue).
 /// Checkboxes/radios reset to their initial checked state.
 /// Selects reset to the initially selected option.
-pub fn reset_form(root: &mut HtmlBox, form_id: u32) {
-    fn find_mut<'a>(n: &'a mut HtmlBox, t: u32) -> Option<&'a mut HtmlBox> {
+pub fn reset_form(root: &mut WebCore, form_id: u32) {
+    fn find_mut<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
         if n.node_id == t { return Some(n); }
         for c in &mut n.children { if let Some(r) = find_mut(c, t) { return Some(r); } }
         None
@@ -4736,7 +4736,7 @@ pub fn reset_form(root: &mut HtmlBox, form_id: u32) {
     }
 }
 
-fn reset_form_inner(node: &mut HtmlBox) {
+fn reset_form_inner(node: &mut WebCore) {
     match node.tag.as_str() {
         "input" => {
             let input_type = node.attributes.get("type").cloned().unwrap_or_else(|| "text".to_string());
@@ -4828,7 +4828,7 @@ pub fn build_form_submit_url(action: &str, method: &str, data: &std::collections
 
 /// Apply autofocus: find the first element with the `autofocus` attribute and focus it.
 pub fn apply_autofocus(doc: &mut Document) {
-    fn find_autofocus(node: &HtmlBox) -> Option<u32> {
+    fn find_autofocus(node: &WebCore) -> Option<u32> {
         if node.attributes.contains_key("autofocus") && is_focusable_node(node) {
             return Some(node.node_id);
         }
@@ -4843,11 +4843,11 @@ pub fn apply_autofocus(doc: &mut Document) {
 }
 
 /// Resolve `<slot>` elements in a shadow tree by projecting light DOM children into them.
-fn resolve_slots_inner(shadow_children: &mut Vec<HtmlBox>, light_children: &[HtmlBox]) {
+fn resolve_slots_inner(shadow_children: &mut Vec<WebCore>, light_children: &[WebCore]) {
     for child in shadow_children.iter_mut() {
         if child.tag == "slot" {
             let slot_name = child.attributes.get("name").cloned().unwrap_or_default();
-            let projected: Vec<HtmlBox> = if slot_name.is_empty() {
+            let projected: Vec<WebCore> = if slot_name.is_empty() {
                 // Default slot: all light children without a `slot` attribute
                 light_children.iter()
                     .filter(|lc| !lc.attributes.contains_key("slot") && lc.tag != "#text"
@@ -4877,7 +4877,7 @@ fn resolve_slots_inner(shadow_children: &mut Vec<HtmlBox>, light_children: &[Htm
 }
 
 /// Returns true if this element is a text-editable form input.
-pub fn is_text_input(node: &HtmlBox) -> bool {
+pub fn is_text_input(node: &WebCore) -> bool {
     match node.tag.as_str() {
         "textarea" => true,
         "input" => {
@@ -4889,7 +4889,7 @@ pub fn is_text_input(node: &HtmlBox) -> bool {
 }
 
 /// Get the current value of a form input.
-pub fn input_value(node: &HtmlBox) -> String {
+pub fn input_value(node: &WebCore) -> String {
     if node.tag == "textarea" {
         // Textarea value is in child text nodes
         node.children.iter()
@@ -4902,7 +4902,7 @@ pub fn input_value(node: &HtmlBox) -> String {
 }
 
 /// Process a key event on a focused form input. Returns true if the value changed.
-pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char>, ctrl: bool, _shift: bool) -> bool {
+pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char>, ctrl: bool, _shift: bool) -> bool {
     if !is_text_input(node) { return false; }
     // Disabled elements don't accept any input
     if node.attributes.contains_key("disabled") { return false; }
@@ -5024,7 +5024,7 @@ pub fn process_form_input_key(node: &mut HtmlBox, key_code: u32, ch: Option<char
     changed || key_code == 37 || key_code == 39 || key_code == 36 || key_code == 35
 }
 
-pub fn is_focusable_node(node: &HtmlBox) -> bool {
+pub fn is_focusable_node(node: &WebCore) -> bool {
     if matches!(node.style.display, Display::None) { return false; }
     if !node.style.visibility { return false; }
     let tag = node.tag.as_str();
@@ -5044,7 +5044,7 @@ pub fn is_focusable_node(node: &HtmlBox) -> bool {
 ///
 /// Elements with `tabindex=-1` are excluded (programmatically focusable only).
 fn collect_focusable_ordered(
-    node: &HtmlBox,
+    node: &WebCore,
     positive: &mut Vec<(u32, i32)>,
     normal:   &mut Vec<u32>,
 ) {
@@ -5161,7 +5161,7 @@ impl Default for Document {
 // re-established on the owning thread.
 unsafe impl Send for Document {}
 
-fn find_node_by_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut HtmlBox> {
+fn find_node_by_path_mut<'a>(root: &'a mut WebCore, path: &[usize]) -> Option<&'a mut WebCore> {
     let mut node = root;
     for &idx in path {
         if idx >= node.children.len() { return None; }
@@ -5174,7 +5174,7 @@ fn find_node_by_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'
 
 /// Collect the visible text content of a live region by walking its subtree.
 /// Used by `Document::check_live_regions` to compare snapshots.
-fn collect_live_text(node: &HtmlBox) -> String {
+fn collect_live_text(node: &WebCore) -> String {
     let mut buf = String::new();
     collect_live_text_inner(node, &mut buf);
     // Collapse runs of whitespace for stable comparison across minor reflows.
@@ -5191,7 +5191,7 @@ fn collect_live_text(node: &HtmlBox) -> String {
     out.trim().to_string()
 }
 
-fn collect_live_text_inner(node: &HtmlBox, buf: &mut String) {
+fn collect_live_text_inner(node: &WebCore, buf: &mut String) {
     if !node.text.trim().is_empty() {
         if !buf.is_empty() { buf.push(' '); }
         buf.push_str(node.text.trim());
@@ -5208,7 +5208,7 @@ fn collect_live_text_inner(node: &HtmlBox, buf: &mut String) {
 /// Search a subtree for absolute/fixed descendants that contain `pt` and can
 /// be scrolled. Used when an in-flow ancestor fails the hit test but its
 /// absolute children may still be under the cursor.
-fn scroll_abs_in(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
+fn scroll_abs_in(node: &mut WebCore, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
     for child in &mut node.children {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) {
@@ -5229,7 +5229,7 @@ fn scroll_abs_in(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
 ///
 /// `pt` on entry is already adjusted for all ancestor scroll offsets so that it
 /// can be compared directly against children's `margin_rect` (layout-space) positions.
-fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
+fn scroll_box_at(node: &mut WebCore, pt: (f32, f32), delta_x: f32, delta_y: f32) -> bool {
     if matches!(node.style.display, Display::None) { return false; }
 
     // Adjust pt for this node's own scroll so we can test its children,
@@ -5310,7 +5310,7 @@ fn scroll_box_at(node: &mut HtmlBox, pt: (f32, f32), delta_x: f32, delta_y: f32)
 
 /// Snap the vertical scroll position of `node` to the nearest child snap point,
 /// if the element has `scroll-snap-type` with a Y/Both axis.
-fn apply_scroll_snap_y(node: &mut HtmlBox) {
+fn apply_scroll_snap_y(node: &mut WebCore) {
     if !node.style.scroll_snap_type.snaps_y() { return; }
     let content_y = node.layout.content_rect.y;
     let content_h = node.layout.content_rect.h;
@@ -5323,7 +5323,7 @@ fn apply_scroll_snap_y(node: &mut HtmlBox) {
 }
 
 /// Snap the horizontal scroll position of `node`.
-fn apply_scroll_snap_x(node: &mut HtmlBox) {
+fn apply_scroll_snap_x(node: &mut WebCore) {
     if !node.style.scroll_snap_type.snaps_x() { return; }
     let content_x = node.layout.content_rect.x;
     let content_w = node.layout.content_rect.w;
@@ -5335,7 +5335,7 @@ fn apply_scroll_snap_x(node: &mut HtmlBox) {
     node.layout.scroll_left = target.clamp(0.0, max_scroll);
 }
 
-fn collect_snap_points_y(node: &HtmlBox, content_y: f32, content_h: f32) -> Vec<f32> {
+fn collect_snap_points_y(node: &WebCore, content_y: f32, content_h: f32) -> Vec<f32> {
     let mut pts = Vec::new();
     for child in &node.children {
         if matches!(child.style.display, Display::None) { continue; }
@@ -5351,7 +5351,7 @@ fn collect_snap_points_y(node: &HtmlBox, content_y: f32, content_h: f32) -> Vec<
     pts
 }
 
-fn collect_snap_points_x(node: &HtmlBox, content_x: f32, content_w: f32) -> Vec<f32> {
+fn collect_snap_points_x(node: &WebCore, content_x: f32, content_w: f32) -> Vec<f32> {
     let mut pts = Vec::new();
     for child in &node.children {
         if matches!(child.style.display, Display::None) { continue; }
@@ -5395,7 +5395,7 @@ fn nearest_snap(current: f32, pts: &[f32], viewport_size: f32, mandatory: bool) 
 /// On hit: optionally jump-scrolls to the click position, then writes a
 /// `ScrollbarDrag` with `kind = Element(raw ptr)` into `drag_out`.
 fn scrollbar_hit_test(
-    node:      &mut HtmlBox,
+    node:      &mut WebCore,
     screen_x:  f32,
     screen_y:  f32,
     sx:        f32,
@@ -5461,8 +5461,8 @@ fn scrollbar_hit_test(
 /// Values are serialised to `rgba(…)` or `Npx` strings for comparison/interpolation.
 /// Find the node_id of the nearest ancestor of `target_id` that has a valid node_id.
 /// Used when hit-test returns a node with node_id=0 (e.g. pseudo-elements, post-process nodes).
-pub fn find_parent_node_id_by_id(root: &HtmlBox, target_id: u32) -> u32 {
-    fn walk(node: &HtmlBox, target_id: u32) -> Option<u32> {
+pub fn find_parent_node_id_by_id(root: &WebCore, target_id: u32) -> u32 {
+    fn walk(node: &WebCore, target_id: u32) -> Option<u32> {
         for child in &node.children {
             if child.node_id == target_id {
                 return if node.node_id != 0 { Some(node.node_id) } else { None };
@@ -5475,7 +5475,7 @@ pub fn find_parent_node_id_by_id(root: &HtmlBox, target_id: u32) -> u32 {
 }
 
 /// Find the node_id of an <a> element with the given href.
-pub fn find_link_node_id(root: &HtmlBox, href: &str) -> Option<u32> {
+pub fn find_link_node_id(root: &WebCore, href: &str) -> Option<u32> {
     if root.tag == "a" && root.node_id != 0 && root.style.href == href {
         return Some(root.node_id);
     }
@@ -5487,7 +5487,7 @@ pub fn find_link_node_id(root: &HtmlBox, href: &str) -> Option<u32> {
     None
 }
 
-pub(crate) fn subtree_contains_id(node: &HtmlBox, target_id: u32) -> bool {
+pub(crate) fn subtree_contains_id(node: &WebCore, target_id: u32) -> bool {
     if node.node_id == target_id { return true; }
     for child in &node.children {
         if subtree_contains_id(child, target_id) { return true; }
@@ -5495,7 +5495,7 @@ pub(crate) fn subtree_contains_id(node: &HtmlBox, target_id: u32) -> bool {
     false
 }
 
-pub(crate) fn extract_transitionable(node: &HtmlBox) -> HashMap<String, String> {
+pub(crate) fn extract_transitionable(node: &WebCore) -> HashMap<String, String> {
     extract_transitionable_style(&node.style)
 }
 

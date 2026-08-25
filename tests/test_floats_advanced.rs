@@ -2,15 +2,15 @@
 // text wrapping, float + positioning interactions, shrink-wrap, BFC,
 // and real-world patterns.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for child in &root.children { if let Some(f) = by_id(child, id) { return Some(f); } }
     None
 }
-fn find_all<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Vec<&'a HtmlBox> {
+fn find_all<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Vec<&'a WebCore> {
     let mut r = Vec::new();
     if pred(root) { r.push(root); }
     for c in &root.children { r.extend(find_all(c, pred)); }

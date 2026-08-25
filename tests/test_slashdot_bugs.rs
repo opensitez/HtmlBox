@@ -15,10 +15,10 @@
 //   .rail-right { float:left; width:320px; margin-left:-320px; } produced
 //   margin_rect.w = 0 instead of 320.
 
-use htmlbox::load_html;
-use htmlbox::types::*;
+use webcore::load_html;
+use webcore::types::*;
 
-fn find<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for c in &root.children {
         if let Some(b) = find(c, pred) { return Some(b); }
@@ -26,12 +26,12 @@ fn find<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a Ht
     None
 }
 
-fn find_attr<'a>(root: &'a HtmlBox, attr: &str, val: &str) -> Option<&'a HtmlBox> {
+fn find_attr<'a>(root: &'a WebCore, attr: &str, val: &str) -> Option<&'a WebCore> {
     find(root, &|b| b.get_attr(attr) == Some(val))
 }
 
 #[allow(dead_code)]
-fn dump(root: &HtmlBox, depth: usize) {
+fn dump(root: &WebCore, depth: usize) {
     let indent = "  ".repeat(depth);
     eprintln!("{}{} pos={:?} c=({:.0},{:.0} {:.0}x{:.0}) m=({:.0},{:.0} {:.0}x{:.0})",
         indent, root.tag, root.style.position,

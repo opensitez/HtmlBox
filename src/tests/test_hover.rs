@@ -10,7 +10,7 @@ fn layout_html(html: &str, width: f32) -> Document {
     doc
 }
 
-fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if node.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_id(child, id) { return Some(n); } }
     None

@@ -1,11 +1,11 @@
 // Image tests – ported from cpptests/test_images.cpp
 // Only object-fit parsing + img tag parsing are portable.
 // Image layout (bitmap, intrinsic dimensions, IsReplaced) skipped.
-use htmlbox::types::*;
-use htmlbox::parse_html;
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::parse_html;
+use webcore::css::apply_property;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -94,8 +94,8 @@ fn object_fit_fill() {
 fn img_with_inline_style() {
     let doc = parse_html("<img src=\"test.png\" style=\"width: 300px; height: 150px;\">");
     let b = find_box(&doc.root, &|b| b.tag == "img").unwrap();
-    assert_eq!(b.style.width, htmlbox::types::CssLength::Px(300.0));
-    assert_eq!(b.style.height, htmlbox::types::CssLength::Px(150.0));
+    assert_eq!(b.style.width, webcore::types::CssLength::Px(300.0));
+    assert_eq!(b.style.height, webcore::types::CssLength::Px(150.0));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn img_id_and_class() {
 
 #[test]
 fn img_serialization_preserves_src() {
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><img src=\"photo.jpg\"></p>");
     let html = serialize_html(&doc);
     assert!(html.contains("photo.jpg"));
@@ -126,15 +126,15 @@ fn img_serialization_preserves_src() {
 fn img_explicit_layout_dimensions() {
     // After load_html (layout pass), an img with explicit CSS size should
     // have its content_rect dimensions reflect the specified size.
-    use htmlbox::load_html;
+    use webcore::load_html;
     let doc = load_html(
         "<img src=\"test.png\" style=\"width: 200px; height: 100px;\">",
         800.0,
     );
     let b = find_box(&doc.root, &|b| b.tag == "img").unwrap();
     // Style must retain the specified values
-    assert_eq!(b.style.width,  htmlbox::types::CssLength::Px(200.0));
-    assert_eq!(b.style.height, htmlbox::types::CssLength::Px(100.0));
+    assert_eq!(b.style.width,  webcore::types::CssLength::Px(200.0));
+    assert_eq!(b.style.height, webcore::types::CssLength::Px(100.0));
 }
 
 #[test]

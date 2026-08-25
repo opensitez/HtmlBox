@@ -1,14 +1,14 @@
-//! Accessibility tree builder for htmlbox.
+//! Accessibility tree builder for webcore.
 //!
 //! Converts the live `Document` box tree into an `accesskit::TreeUpdate` that can
-//! be pushed to an `accesskit_winit::Adapter`.  Every visible `HtmlBox` becomes
+//! be pushed to an `accesskit_winit::Adapter`.  Every visible `WebCore` becomes
 //! one `accesskit::Node`; the node's `NodeId` is the box's raw pointer cast to
 //! `u64 | 1` (guaranteeing non-zero).
 //!
 //! # Usage
 //! ```ignore
 //! // After every layout rebuild:
-//! let update = htmlbox::accessibility::build_tree(&doc, platform.scale_factor());
+//! let update = webcore::accessibility::build_tree(&doc, platform.scale_factor());
 //! adapter.update_if_active(|| update);
 //! ```
 //!
@@ -20,7 +20,7 @@
 //! let event_loop = EventLoop::<ActionRequestEvent>::with_user_event().build().unwrap();
 //! let proxy = event_loop.create_proxy();
 //! let adapter = accesskit_winit::Adapter::new(&window,
-//!     || htmlbox::accessibility::build_tree(&doc, scale),
+//!     || webcore::accessibility::build_tree(&doc, scale),
 //!     proxy);
 //!
 //! // In your event handler — call for every WindowEvent:
@@ -29,7 +29,7 @@
 //! // Handle action requests (focus requests from screen readers, etc.):
 //! Event::UserEvent(ActionRequestEvent { request, .. }) => {
 //!     if request.action == accesskit::Action::Focus {
-//!         // The NodeId encodes the HtmlBox pointer: id.0 & !1 gives the address.
+//!         // The NodeId encodes the WebCore pointer: id.0 & !1 gives the address.
 //!         // Find the box, set doc.focused_box, fire Focus events, request redraw.
 //!     }
 //! }
@@ -43,7 +43,7 @@ use accesskit::{
     SortDirection, Toggled, Tree, TreeUpdate, Rect as AkRect,
 };
 #[cfg(feature = "accessibility")]
-use crate::types::{HtmlBox, Document, Display};
+use crate::types::{WebCore, Document, Display};
 
 /// Synthetic document-root NodeId (wraps the real root element).
 #[cfg(feature = "accessibility")]
@@ -110,7 +110,7 @@ pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
 /// Pre-pass: collect every element with an `id` attribute into two lookup maps.
 #[cfg(feature = "accessibility")]
 fn collect_id_maps<'a>(
-    node: &'a HtmlBox,
+    node: &'a WebCore,
     id_to_nid: &mut HashMap<&'a str, NodeId>,
     id_to_text: &mut HashMap<&'a str, String>,
 ) {
@@ -132,7 +132,7 @@ fn collect_id_maps<'a>(
 /// - `<label>` wrapping a control → stores `control_ptr → label_text` in `wrapped_label_map`
 #[cfg(feature = "accessibility")]
 fn collect_label_maps<'a>(
-    node: &'a HtmlBox,
+    node: &'a WebCore,
     for_label_map:     &mut HashMap<&'a str, String>,
     wrapped_label_map: &mut HashMap<u32, String>,
 ) {
@@ -158,7 +158,7 @@ fn collect_label_maps<'a>(
 /// Collect text from a `<label>`, skipping embedded labelable controls so they
 /// don't contribute their own placeholder/value to the computed name.
 #[cfg(feature = "accessibility")]
-fn collect_label_text(node: &HtmlBox) -> String {
+fn collect_label_text(node: &WebCore) -> String {
     let mut s = node.text.trim().to_string();
     for child in &node.children {
         if matches!(child.tag.as_str(), "input" | "textarea" | "select" | "button") {
@@ -178,7 +178,7 @@ fn collect_label_text(node: &HtmlBox) -> String {
 /// Find the first labelable descendant (for implicit `<label>` wrapping).
 /// Returns the raw pointer to the control so it can be used as a map key.
 #[cfg(feature = "accessibility")]
-fn find_labelable_descendant(node: &HtmlBox) -> Option<u32> {
+fn find_labelable_descendant(node: &WebCore) -> Option<u32> {
     for child in &node.children {
         let tag = child.tag.as_str();
         let labelable = matches!(tag, "button" | "input" | "meter" | "output" | "progress" | "select" | "textarea")
@@ -215,7 +215,7 @@ fn text_from_idrefs(refs: &str, id_to_text: &HashMap<&str, String>) -> String {
 /// Returns the `NodeId` assigned to `node`.
 #[cfg(feature = "accessibility")]
 fn walk(
-    node: &HtmlBox,
+    node: &WebCore,
     scale: f32,
     nodes: &mut Vec<(NodeId, Node)>,
     focused_id: u32,
@@ -540,7 +540,7 @@ fn walk(
 
 /// Resolve the ARIA role: explicit `role` attribute → HTML element semantics.
 #[cfg(feature = "accessibility")]
-fn resolve_role(node: &HtmlBox) -> Role {
+fn resolve_role(node: &WebCore) -> Role {
     if let Some(role_attr) = node.attributes.get("role") {
         match role_attr.as_str() {
             "button"          => return Role::Button,
@@ -720,7 +720,7 @@ fn resolve_role(node: &HtmlBox) -> Role {
 /// 7. `title` as last resort
 #[cfg(feature = "accessibility")]
 fn compute_name(
-    node: &HtmlBox,
+    node: &WebCore,
     id_to_text: &HashMap<&str, String>,
     for_label_map: &HashMap<&str, String>,
     wrapped_label_map: &HashMap<u32, String>,
@@ -804,7 +804,7 @@ fn compute_name(
 
 /// Recursively collect visible text content of a subtree.
 #[cfg(feature = "accessibility")]
-fn collect_text(node: &HtmlBox) -> String {
+fn collect_text(node: &WebCore) -> String {
     let mut s = node.text.trim().to_string();
     for child in &node.children {
         if !matches!(child.style.display, Display::None) && child.style.visibility {
@@ -820,7 +820,7 @@ fn collect_text(node: &HtmlBox) -> String {
 
 /// Returns true if this element participates in the keyboard tab order.
 #[cfg(feature = "accessibility")]
-fn is_focusable(node: &HtmlBox) -> bool {
+fn is_focusable(node: &WebCore) -> bool {
     let tag = node.tag.as_str();
     matches!(tag, "button" | "input" | "textarea" | "select")
         || (tag == "a" && node.attributes.contains_key("href"))

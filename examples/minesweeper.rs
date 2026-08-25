@@ -8,9 +8,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use rand::Rng;
-use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
-use htmlbox::platform::Platform;
-use htmlbox::dom::{self, HtmlEventType};
+use webcore::{load_html, Document, Renderer, LayoutEngine, WebCore};
+use webcore::platform::Platform;
+use webcore::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/minesweeper.html");
 
@@ -48,7 +48,7 @@ fn parse_id_to_idx(id: &str) -> Option<usize> {
     Some(rc_to_idx(r,c))
 }
 
-fn new_game(state: &mut AppState, root: &mut HtmlBox) {
+fn new_game(state: &mut AppState, root: &mut WebCore) {
     // reset
     state.mine_grid = [false; 81];
     state.revealed = [false; 81];
@@ -101,7 +101,7 @@ fn new_game(state: &mut AppState, root: &mut HtmlBox) {
     if let Some(st) = dom::query_selector_mut(root, "#status") { dom::set_text_content(st, "Click to start"); }
 }
 
-fn reveal_recursive(state: &mut AppState, root: &mut HtmlBox, idx: usize) {
+fn reveal_recursive(state: &mut AppState, root: &mut WebCore, idx: usize) {
     if state.revealed[idx] || state.flagged[idx] { return; }
     state.revealed[idx] = true;
     if let Some(cell) = dom::query_selector_mut(root, &format!("#r{}c{}", idx/9, idx%9)) {
@@ -126,7 +126,7 @@ fn reveal_recursive(state: &mut AppState, root: &mut HtmlBox, idx: usize) {
     }
 }
 
-fn reveal_all_mines(state: &AppState, root: &mut HtmlBox) {
+fn reveal_all_mines(state: &AppState, root: &mut WebCore) {
     for i in 0..(state.rows*state.cols) {
         if state.mine_grid[i] {
             if let Some(c) = dom::query_selector_mut(root, &format!("#r{}c{}", i/9, i%9)) {
@@ -141,7 +141,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("minesweeper — htmlbox")
+                    .with_title("minesweeper — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(500u32, 700u32))
             ).unwrap()
         );

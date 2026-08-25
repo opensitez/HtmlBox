@@ -8,7 +8,7 @@
 //! element, keyed by node id.
 //!
 //! **The pixels are not here.** They live on the element, in
-//! `HtmlBox::image_data`, which the parser already allocates for a `<canvas>`
+//! `WebCore::image_data`, which the parser already allocates for a `<canvas>`
 //! and the display-list builder already knows how to paint. Keeping one
 //! bitmap rather than two is what makes `getImageData` and a rendered frame
 //! agree by construction, and the alternative — recording the calls and

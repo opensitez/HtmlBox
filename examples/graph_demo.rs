@@ -4,15 +4,15 @@ use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use htmlbox::{Document, Renderer, HtmlBox};
-use htmlbox::types::Component;
-use htmlbox::platform::Platform;
-use htmlbox::dom::{self, HtmlEventType};
+use webcore::{Document, Renderer, WebCore};
+use webcore::types::Component;
+use webcore::platform::Platform;
+use webcore::dom::{self, HtmlEventType};
 use std::sync::Mutex;
 
 const HTML: &str = include_str!("html/graph.html");
 
-fn get_attr(node: &HtmlBox, key: &str, def: &str) -> String {
+fn get_attr(node: &WebCore, key: &str, def: &str) -> String {
     node.attributes.get(key).cloned().unwrap_or_else(|| def.to_string())
 }
 
@@ -24,18 +24,18 @@ fn parse_csv(s: &str) -> Vec<f32> {
 struct GraphComponent;
 
 impl Component for GraphComponent {
-    fn measure(&self, node: &HtmlBox, _available_w: f32) -> (f32, f32) {
+    fn measure(&self, node: &WebCore, _available_w: f32) -> (f32, f32) {
         let w = get_attr(node, "data-width", "340").parse::<f32>().unwrap_or(340.0);
         let h = get_attr(node, "data-height", "190").parse::<f32>().unwrap_or(190.0);
         (w, h)
     }
 
-    fn intrinsic_width(&self, node: &HtmlBox) -> (f32, f32) {
+    fn intrinsic_width(&self, node: &WebCore) -> (f32, f32) {
         let w = get_attr(node, "data-width", "340").parse::<f32>().unwrap_or(340.0);
         (w, w) // fixed size: min == max
     }
 
-    fn paint(&self, node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap, x: f32, y: f32, w: f32, h: f32, scale: f32) {
+    fn paint(&self, node: &WebCore, pixmap: &mut tiny_skia::Pixmap, x: f32, y: f32, w: f32, h: f32, scale: f32) {
         use tiny_skia::*;
         let mut paint = Paint::default();
         paint.set_color_rgba8(22, 27, 34, 255);
@@ -222,7 +222,7 @@ impl Component for GraphComponent {
 
     fn accessibility_role(&self) -> &str { "img" }
 
-    fn accessibility_label(&self, node: &HtmlBox) -> Option<String> {
+    fn accessibility_label(&self, node: &WebCore) -> Option<String> {
         let chart_type = get_attr(node, "data-type", "chart");
         Some(format!("{} chart", chart_type))
     }
@@ -235,7 +235,7 @@ struct AppState {
     log_counter: i32,
 }
 
-fn bump_interaction(root: &mut HtmlBox, state: &mut AppState) {
+fn bump_interaction(root: &mut WebCore, state: &mut AppState) {
     state.interaction_count += 1;
     if let Some(c) = dom::query_selector_mut(root, "#click-count") {
         dom::set_text_content(c, &state.interaction_count.to_string());
@@ -248,13 +248,13 @@ fn bump_interaction(root: &mut HtmlBox, state: &mut AppState) {
     }
 }
 
-fn update_status(root: &mut HtmlBox, detail: &str) {
+fn update_status(root: &mut WebCore, detail: &str) {
     if let Some(st) = dom::query_selector_mut(root, "#status-text") {
         dom::set_text_content(st, detail);
     }
 }
 
-fn log_event(root: &mut HtmlBox, state: &mut AppState, etype: &str, detail: &str) {
+fn log_event(root: &mut WebCore, state: &mut AppState, etype: &str, detail: &str) {
     state.log_counter += 1;
     // Shift log lines
     for i in (2..=5).rev() {
@@ -271,7 +271,7 @@ fn log_event(root: &mut HtmlBox, state: &mut AppState, etype: &str, detail: &str
     }
 }
 
-fn scale_all_charts(root: &mut HtmlBox, mult: f32) {
+fn scale_all_charts(root: &mut WebCore, mult: f32) {
     let graph_ids = dom::query_selector_all_ids(root, "graph");
     for gid in graph_ids { let g = dom::find_box_mut(root, gid).unwrap();
         let vals_str = dom::get_attribute(g, "data-values").unwrap_or("").to_string();
@@ -284,7 +284,7 @@ fn scale_all_charts(root: &mut HtmlBox, mult: f32) {
     }
 }
 
-fn randomize_all_charts(root: &mut HtmlBox) {
+fn randomize_all_charts(root: &mut WebCore) {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let graph_ids = dom::query_selector_all_ids(root, "graph");
@@ -314,7 +314,7 @@ struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("graph_demo — htmlbox").with_inner_size(winit::dpi::LogicalSize::new(1100u32, 860u32))).unwrap());
+        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("graph_demo — webcore").with_inner_size(winit::dpi::LogicalSize::new(1100u32, 860u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
 

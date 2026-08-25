@@ -3,9 +3,9 @@
 // Note: display:contents, flow-root, inline-table, ruby-base are omitted
 // (not yet in Rust Display enum).
 
-use htmlbox::types::*;
-use htmlbox::css::apply_property;
-use htmlbox::{load_html, parse_html};
+use webcore::types::*;
+use webcore::css::apply_property;
+use webcore::{load_html, parse_html};
 
 fn parse(html: &str) -> Document {
     parse_html(html)
@@ -15,7 +15,7 @@ fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     load_html(html, viewport_width)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -23,7 +23,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -56,7 +56,7 @@ fn display_ruby_text_parsed() {
 #[test]
 fn display_ruby_html_tag() {
     let doc = parse("<div><ruby>base<rt>text</rt></ruby></div>");
-    let ruby = find_box(&doc.root, &|b: &HtmlBox| b.tag == "ruby");
+    let ruby = find_box(&doc.root, &|b: &WebCore| b.tag == "ruby");
     assert!(ruby.is_some());
     assert_eq!(ruby.unwrap().style.display, Display::Ruby);
 }
@@ -64,7 +64,7 @@ fn display_ruby_html_tag() {
 #[test]
 fn display_rt_html_tag() {
     let doc = parse("<div><ruby>base<rt>annotation</rt></ruby></div>");
-    let rt = find_box(&doc.root, &|b: &HtmlBox| b.tag == "rt");
+    let rt = find_box(&doc.root, &|b: &WebCore| b.tag == "rt");
     assert!(rt.is_some());
     assert_eq!(rt.unwrap().style.display, Display::RubyText);
 }
@@ -87,7 +87,7 @@ fn display_inline_block_layout_dimensions() {
          </div>",
         400.0,
     );
-    let ib = find_box(&doc.root, &|b: &HtmlBox| {
+    let ib = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
     });
     assert!(ib.is_some());
@@ -104,7 +104,7 @@ fn display_inline_block_with_margin() {
          </div>",
         400.0,
     );
-    let ib = find_box(&doc.root, &|b: &HtmlBox| {
+    let ib = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
     });
     assert!(ib.is_some());
@@ -123,7 +123,7 @@ fn display_inline_block_with_padding() {
          </div>",
         400.0,
     );
-    let ib = find_box(&doc.root, &|b: &HtmlBox| {
+    let ib = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
     });
     assert!(ib.is_some());
@@ -141,10 +141,10 @@ fn display_inline_block_multiple_same_line() {
          </div>",
         400.0,
     );
-    let a = find_box(&doc.root, &|b: &HtmlBox| {
+    let a = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "a").unwrap_or(false)
     });
-    let bx = find_box(&doc.root, &|b: &HtmlBox| {
+    let bx = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "b").unwrap_or(false)
     });
     assert!(a.is_some());
@@ -194,7 +194,7 @@ fn display_flow_root_block_level() {
     let doc = parse(
         "<div><div id='fr' style='display:flow-root'>content</div></div>",
     );
-    let fr = find_box(&doc.root, &|b: &HtmlBox| {
+    let fr = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "fr").unwrap_or(false)
     });
     assert!(fr.is_some(), "flow-root div not found");
@@ -212,7 +212,7 @@ fn display_flow_root_establishes_bfc() {
          </div>",
         400.0,
     );
-    let fr = find_box(&doc.root, &|b: &HtmlBox| {
+    let fr = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "fr").unwrap_or(false)
     });
     assert!(fr.is_some(), "flow-root div not found");
@@ -232,10 +232,10 @@ fn display_flow_root_no_margin_collapse() {
          </div>",
         400.0,
     );
-    let fr = find_box(&doc.root, &|b: &HtmlBox| {
+    let fr = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "fr").unwrap_or(false)
     });
-    let inner = find_box(&doc.root, &|b: &HtmlBox| {
+    let inner = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "inner").unwrap_or(false)
     });
     assert!(fr.is_some(), "flow-root not found");
@@ -256,7 +256,7 @@ fn display_ruby_is_inline_level() {
         "<div><div id='r' style='display:ruby'>\
          <div style='display:ruby-text'>x</div></div></div>",
     );
-    let r = find_box(&doc.root, &|b: &HtmlBox| {
+    let r = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "r").unwrap_or(false)
     });
     assert!(r.is_some(), "ruby div not found");
@@ -276,10 +276,10 @@ fn display_ruby_layout() {
         400.0,
     );
     // Just verify both boxes are laid out (positioned somewhere)
-    let base = find_box(&doc.root, &|b: &HtmlBox| {
+    let base = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "base").unwrap_or(false)
     });
-    let anno = find_box(&doc.root, &|b: &HtmlBox| {
+    let anno = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "anno").unwrap_or(false)
     });
     assert!(base.is_some(), "ruby base not found");
@@ -298,10 +298,10 @@ fn display_ruby_multiple_pairs() {
          </div>",
         400.0,
     );
-    let b1 = find_box(&doc.root, &|b: &HtmlBox| {
+    let b1 = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "b1").unwrap_or(false)
     });
-    let b2 = find_box(&doc.root, &|b: &HtmlBox| {
+    let b2 = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "b2").unwrap_or(false)
     });
     assert!(b1.is_some(), "b1 not found");
@@ -323,7 +323,7 @@ fn display_inline_block_same_line_as_text() {
          </div>",
         400.0,
     );
-    let ib = find_box(&doc.root, &|b: &HtmlBox| {
+    let ib = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
     });
     assert!(ib.is_some(), "inline-block span not found");
@@ -335,8 +335,8 @@ fn display_inline_block_same_line_as_text() {
 #[test]
 fn display_inline_block_layout_stable_on_relayout() {
     // Re-layout should produce stable positions and heights
-    use htmlbox::LayoutEngine;
-    let mut doc = htmlbox::parse_html(
+    use webcore::LayoutEngine;
+    let mut doc = webcore::parse_html(
         "<div style='width:400px'>\
            <span style='display:inline-block; width:80px; height:40px;' id='ib'>IB</span>\
          </div>",
@@ -344,7 +344,7 @@ fn display_inline_block_layout_stable_on_relayout() {
     let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 400.0);
     let (y1, h1) = {
-        let ib = find_box(&doc.root, &|b: &HtmlBox| {
+        let ib = find_box(&doc.root, &|b: &WebCore| {
             b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
         });
         assert!(ib.is_some(), "ib not found after first layout");
@@ -353,7 +353,7 @@ fn display_inline_block_layout_stable_on_relayout() {
     // Re-layout
     engine.layout(&mut doc, 400.0);
     let (y2, h2) = {
-        let ib = find_box(&doc.root, &|b: &HtmlBox| {
+        let ib = find_box(&doc.root, &|b: &WebCore| {
             b.attributes.get("id").map(|v| v == "ib").unwrap_or(false)
         });
         assert!(ib.is_some(), "ib not found after second layout");

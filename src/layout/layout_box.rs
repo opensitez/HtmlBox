@@ -2,7 +2,7 @@
 //!
 //! This module re-exports `types::LayoutBox` as the core geometry struct
 //! and provides `StandaloneLayoutBox` (with node_id + style) for the
-//! parallel LayoutStore. Eventually HtmlBox's embedded LayoutBox will go
+//! parallel LayoutStore. Eventually WebCore's embedded LayoutBox will go
 //! away and everything goes through LayoutStore.
 //!
 //! LayoutBox is indexed by node_id (same as DomArena) for O(1) lookup.
@@ -12,10 +12,10 @@ use crate::types::{ComputedStyle, LayoutBox as CoreLayoutBox};
 /// Standalone layout data for a single node — wraps core geometry + node identity + style.
 #[derive(Clone, Debug)]
 pub struct LayoutBox {
-    /// Stable node identity — same as HtmlBox.node_id and DomArena NodeId.
+    /// Stable node identity — same as WebCore.node_id and DomArena NodeId.
     pub node_id: u32,
 
-    /// Layout geometry data (same struct embedded in HtmlBox.layout).
+    /// Layout geometry data (same struct embedded in WebCore.layout).
     pub layout: CoreLayoutBox,
 
     /// Computed style snapshot at layout time.

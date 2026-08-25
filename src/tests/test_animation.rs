@@ -599,7 +599,7 @@ fn layout_applies_animation_override_to_style() {
     engine.layout(&mut doc, 800.0);
 
     // Animation just started, so at t~=0 opacity should be ~0 (from keyframe).
-    let b = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div");
+    let b = find_box(&doc.root, &|b: &WebCore| b.tag == "div");
     assert!(b.is_some(), "div should exist");
     // The opacity should be close to 0 (start of fade-in) rather than 1 (stylesheet).
     let opacity = b.unwrap().style.opacity;
@@ -626,7 +626,7 @@ fn transition_state_starts_on_style_change() {
 
     // Simulate a style change: manually inject a new opacity into the stylesheet
     // and force a re-cascade by changing the inline style.
-    let b_nid = find_box(&doc.root, &|b: &HtmlBox| b.tag == "div")
+    let b_nid = find_box(&doc.root, &|b: &WebCore| b.tag == "div")
         .map(|b| b.node_id);
 
     // Directly write a prev_style snapshot for the element with opacity=1,

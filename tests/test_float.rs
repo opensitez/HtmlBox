@@ -2,9 +2,9 @@
 // Float property parsing and float layout tests.
 // NOTE: Smoke tests that require Render(dc, …) are omitted.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::load_html;
+use webcore::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,7 +12,7 @@ fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     load_html(html, viewport_width)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -20,14 +20,14 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
+fn walk_boxes<F: FnMut(&WebCore)>(root: &WebCore, visitor: &mut F) {
     visitor(root);
     for child in &root.children {
         walk_boxes(child, visitor);
     }
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -35,14 +35,14 @@ fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
     n
 }
 
-fn find_all_boxes<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Vec<&'a HtmlBox> {
+fn find_all_boxes<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     collect_matching(root, pred, &mut result);
     result
 }
 
-fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
-    node: &'a HtmlBox, pred: &F, out: &mut Vec<&'a HtmlBox>
+fn collect_matching<'a, F: Fn(&WebCore) -> bool>(
+    node: &'a WebCore, pred: &F, out: &mut Vec<&'a WebCore>
 ) {
     if pred(node) { out.push(node); }
     for child in &node.children {

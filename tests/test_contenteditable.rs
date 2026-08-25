@@ -1,18 +1,18 @@
 // Ported from cpptests/test_contenteditable.cpp
 //
 // Tests that can be expressed without widget infrastructure:
-//   - BoxDefaultFalse: HtmlBox has no contentEditable flag → parse works fine
+//   - BoxDefaultFalse: WebCore has no contentEditable flag → parse works fine
 //   - DOM manipulation: toggle_bold, toggle_italic, toggle_underline,
 //     set_font_size, set_text_color using the dom module APIs
 
-use htmlbox::types::*;
-use htmlbox::parse_html;
-use htmlbox::dom::{
+use webcore::types::*;
+use webcore::parse_html;
+use webcore::dom::{
     toggle_bold, toggle_italic, toggle_underline, set_font_size, set_text_color,
     TextRange,
 };
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -22,7 +22,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
 
 // ============================================================
 // contentEditable attribute on Box
-// HtmlBox does not expose a content_editable field in Rust;
+// WebCore does not expose a content_editable field in Rust;
 // these tests verify that parsing/layout work correctly and that
 // the box tree is accessible (structural equivalents of BoxDefaultFalse).
 // ============================================================
@@ -34,7 +34,7 @@ fn ce_box_parse_produces_tree() {
     let doc = parse_html("<p>Text</p>");
     let p = find_box(&doc.root, &|b| b.tag == "p");
     assert!(p.is_some(), "parsed document should have a <p> box");
-    // HtmlBox doesn't have a content_editable field; confirm that
+    // WebCore doesn't have a content_editable field; confirm that
     // tag and text are as expected.
     let p = p.unwrap();
     assert_eq!(p.tag, "p");
@@ -59,7 +59,7 @@ fn ce_sibling_boxes_are_independent() {
     let doc = parse_html(r#"<div><p id="a">A</p><p id="b">B</p></div>"#);
     let paras: Vec<_> = {
         let mut v = vec![];
-        fn collect<'a>(b: &'a HtmlBox, v: &mut Vec<&'a HtmlBox>) {
+        fn collect<'a>(b: &'a WebCore, v: &mut Vec<&'a WebCore>) {
             if b.tag == "p" { v.push(b); }
             for c in &b.children { collect(c, v); }
         }
@@ -80,7 +80,7 @@ fn ce_sibling_boxes_are_independent() {
 
 #[test]
 fn ce_toggle_bold_turns_on() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello World".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 11, style: ComputedStyle::default() },
@@ -92,7 +92,7 @@ fn ce_toggle_bold_turns_on() {
 
 #[test]
 fn ce_toggle_bold_turns_off_when_all_bold() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello".to_string();
     let mut style = ComputedStyle::default();
     style.font_weight = FontWeight::Bold;
@@ -107,7 +107,7 @@ fn ce_toggle_bold_turns_off_when_all_bold() {
 #[test]
 fn ce_toggle_bold_partial_range() {
     // Only the overlapping run should be affected
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello World".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() }, // "Hello"
@@ -126,7 +126,7 @@ fn ce_toggle_bold_partial_range() {
 
 #[test]
 fn ce_toggle_italic_turns_on() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Test".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style: ComputedStyle::default() },
@@ -138,7 +138,7 @@ fn ce_toggle_italic_turns_on() {
 
 #[test]
 fn ce_toggle_italic_turns_off() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Test".to_string();
     let mut style = ComputedStyle::default();
     style.font_style = FontStyle::Italic;
@@ -156,7 +156,7 @@ fn ce_toggle_italic_turns_off() {
 
 #[test]
 fn ce_toggle_underline_turns_on() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Test".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 4, style: ComputedStyle::default() },
@@ -168,7 +168,7 @@ fn ce_toggle_underline_turns_on() {
 
 #[test]
 fn ce_toggle_underline_turns_off() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Test".to_string();
     let mut style = ComputedStyle::default();
     style.text_decoration.underline = true;
@@ -186,7 +186,7 @@ fn ce_toggle_underline_turns_off() {
 
 #[test]
 fn ce_set_font_size() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5, style: ComputedStyle::default() },
@@ -198,7 +198,7 @@ fn ce_set_font_size() {
 
 #[test]
 fn ce_set_font_size_partial() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello World".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() },
@@ -219,7 +219,7 @@ fn ce_set_font_size_partial() {
 
 #[test]
 fn ce_set_text_color() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5, style: ComputedStyle::default() },
@@ -231,7 +231,7 @@ fn ce_set_text_color() {
 
 #[test]
 fn ce_set_text_color_partial() {
-    let mut b = HtmlBox::new("p");
+    let mut b = WebCore::new("p");
     b.text = "Hello World".to_string();
     b.layout.inline_runs = vec![
         InlineRun { text_offset: 0, length: 5,  style: ComputedStyle::default() },
@@ -251,7 +251,7 @@ fn ce_set_text_color_partial() {
 
 #[test]
 fn ce_clone_element_preserves_tag_and_text() {
-    use htmlbox::dom::clone_element;
+    use webcore::dom::clone_element;
     let doc = parse_html("<p>Cloneable</p>");
     let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
     let cloned = clone_element(p);
@@ -262,12 +262,12 @@ fn ce_clone_element_preserves_tag_and_text() {
 
 #[test]
 fn ce_clone_element_is_independent() {
-    use htmlbox::dom::clone_element;
+    use webcore::dom::clone_element;
     let doc = parse_html("<div><p>Original</p></div>");
     let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
     let cloned = clone_element(p);
     // Cloned is a separate object (different address)
-    assert!(!std::ptr::eq(p as *const HtmlBox, &cloned as *const HtmlBox));
+    assert!(!std::ptr::eq(p as *const WebCore, &cloned as *const WebCore));
 }
 
 // ============================================================
@@ -276,17 +276,17 @@ fn ce_clone_element_is_independent() {
 // DecreaseIndentSurvives
 // ============================================================
 
-use htmlbox::dom::{query_selector_mut, query_selector};
-use htmlbox::layout::LayoutEngine;
-use htmlbox::dom::Editor;
+use webcore::dom::{query_selector_mut, query_selector};
+use webcore::layout::LayoutEngine;
+use webcore::dom::Editor;
 
-fn parse_and_layout(html: &str) -> htmlbox::types::Document {
+fn parse_and_layout(html: &str) -> webcore::types::Document {
     let mut doc = parse_html(html);
     LayoutEngine::new().layout(&mut doc, 800.0);
     doc
 }
 
-fn set_caret(editor: &mut Editor, element: &HtmlBox, offset: usize) {
+fn set_caret(editor: &mut Editor, element: &WebCore, offset: usize) {
     editor.caret_box   = Some(element.node_id);
     editor.collapse_to(offset);
 }
@@ -302,7 +302,7 @@ fn ce_indent_survives_recascade() {
     doc.editor.increase_indent(&mut doc.root, 40.0);
 
     let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        htmlbox::types::CssLength::Px(v) => v,
+        webcore::types::CssLength::Px(v) => v,
         _ => panic!("expected Px margin after indent"),
     };
     assert!(margin_before > 0.0, "margin-left should be positive after increase_indent");
@@ -310,7 +310,7 @@ fn ce_indent_survives_recascade() {
     doc.recascade();
 
     match &query_selector(&doc.root, "p").unwrap().style.margin_left {
-        htmlbox::types::CssLength::Px(v) =>
+        webcore::types::CssLength::Px(v) =>
             assert!((*v - margin_before).abs() < 0.01,
                 "margin-left must survive recascade; before={} after={}", margin_before, v),
         other => panic!("indent must survive recascade; got {:?}", other),
@@ -330,16 +330,16 @@ fn ce_decrease_indent_survives_recascade() {
     doc.editor.decrease_indent(&mut doc.root, 40.0);
 
     let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        htmlbox::types::CssLength::Px(v) => v,
-        htmlbox::types::CssLength::Zero  => 0.0,
+        webcore::types::CssLength::Px(v) => v,
+        webcore::types::CssLength::Zero  => 0.0,
         _ => panic!("expected Px or Zero margin"),
     };
 
     doc.recascade();
 
     let margin_after = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        htmlbox::types::CssLength::Px(v) => v,
-        htmlbox::types::CssLength::Zero  => 0.0,
+        webcore::types::CssLength::Px(v) => v,
+        webcore::types::CssLength::Zero  => 0.0,
         _ => panic!("expected Px or Zero margin after recascade"),
     };
     assert!((margin_after - margin_before).abs() < 0.01,
@@ -356,7 +356,7 @@ fn ce_decrease_indent_survives_recascade() {
 #[test]
 fn ce_bullet_list_survives_recascade() {
     // ParserStyleSync, BulletListSurvivesReCascade
-    use htmlbox::dom::query_selector_all;
+    use webcore::dom::query_selector_all;
     let mut doc = parse_and_layout("<div><p>List item</p></div>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();

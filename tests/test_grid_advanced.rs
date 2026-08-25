@@ -1,10 +1,10 @@
 // Comprehensive grid layout tests — covers advanced features, edge cases,
 // and real-world patterns from BBC, AP News, Wikipedia, Al Jazeera.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -12,14 +12,14 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     None
 }
 
-fn find_all<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Vec<&'a HtmlBox> {
+fn find_all<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     if pred(root) { result.push(root); }
     for child in &root.children { result.extend(find_all(child, pred)); }
     result
 }
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     find_box(root, &|b| b.attributes.get("id").map(|v| v == id).unwrap_or(false))
 }
 

@@ -1,11 +1,11 @@
 // Tests for Agent C layout features:
 // position:sticky, aspect-ratio, multi-column, @font-face, will-change, contain, scroll-padding
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::css::{apply_property, Stylesheet};
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::css::{apply_property, Stylesheet};
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -13,7 +13,7 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     None
 }
 
-fn count_boxes(root: &HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> usize {
+fn count_boxes(root: &WebCore, pred: &dyn Fn(&WebCore) -> bool) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children { n += count_boxes(child, pred); }
     n
@@ -157,7 +157,7 @@ fn multi_column_children_spread_horizontally() {
     let container = container.unwrap();
 
     // Collect p children (not the container itself)
-    let mut ps: Vec<&HtmlBox> = Vec::new();
+    let mut ps: Vec<&WebCore> = Vec::new();
     for c in &container.children {
         if c.tag == "p" { ps.push(c); }
     }
@@ -185,7 +185,7 @@ fn multi_column_two_cols_stack_vertically() {
     let container = find_box(&doc.root, &|b| b.style.column_count == Some(2));
     assert!(container.is_some());
     let container = container.unwrap();
-    let ps: Vec<&HtmlBox> = container.children.iter().filter(|c| c.tag == "p").collect();
+    let ps: Vec<&WebCore> = container.children.iter().filter(|c| c.tag == "p").collect();
     assert_eq!(ps.len(), 4);
     // A and B are both in column 0 (same x)
     assert!((ps[0].layout.content_rect.x - ps[1].layout.content_rect.x).abs() < 2.0,
@@ -350,7 +350,7 @@ fn scroll_padding_individual_sides() {
 
 // ── <br> in block context produces vertical space ────────────────────────────
 
-fn walk_boxes_t<F: FnMut(&HtmlBox)>(root: &HtmlBox, f: &mut F) {
+fn walk_boxes_t<F: FnMut(&WebCore)>(root: &WebCore, f: &mut F) {
     f(root);
     for child in &root.children { walk_boxes_t(child, f); }
 }

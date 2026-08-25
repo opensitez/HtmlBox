@@ -230,7 +230,7 @@ fn layout_flex_nav_li_items_no_overlap() {
 
     // Collect li border_rect x positions
     let mut li_boxes: Vec<f32> = Vec::new();
-    fn collect_li(node: &crate::types::HtmlBox, out: &mut Vec<f32>) {
+    fn collect_li(node: &crate::types::WebCore, out: &mut Vec<f32>) {
         if node.tag == "li" { out.push(node.layout.border_rect.x); }
         for ch in &node.children { collect_li(ch, out); }
     }

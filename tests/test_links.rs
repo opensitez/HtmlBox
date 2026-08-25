@@ -1,9 +1,9 @@
 // Tests for link parsing and hit-testing.
 
-use htmlbox::types::*;
-use htmlbox::parse_html;
-use htmlbox::layout::hit_test::*;
-use htmlbox::layout::LayoutEngine;
+use webcore::types::*;
+use webcore::parse_html;
+use webcore::layout::hit_test::*;
+use webcore::layout::LayoutEngine;
 
 fn layout(html: &str, width: f32) -> Document {
     let mut doc = parse_html(html);
@@ -15,7 +15,7 @@ fn layout(html: &str, width: f32) -> Document {
 #[test]
 fn link_parsing_href() {
     let doc = parse_html(r#"<a href="http://example.com">Click</a>"#);
-    let a = htmlbox::dom::query_selector(&doc.root, "a").expect("a tag not found");
+    let a = webcore::dom::query_selector(&doc.root, "a").expect("a tag not found");
     assert_eq!(a.tag, "a");
     assert_eq!(a.attributes.get("href").unwrap(), "http://example.com");
 }
@@ -58,7 +58,7 @@ fn link_anchor_text_preserved() {
 #[test]
 fn link_anchor_is_inline_in_paragraph() {
     let doc = parse_html(r##"<p><a href="#">Link</a> text</p>"##);
-    use htmlbox::dom::query_selector;
+    use webcore::dom::query_selector;
     let p = query_selector(&doc.root, "p").expect("p not found");
     // The anchor should be a child of the paragraph
     let has_a = p.children.iter().any(|c| c.tag == "a");
@@ -70,7 +70,7 @@ fn link_multiple_links_parsed() {
     let doc = parse_html(
         r#"<p><a href="http://a.com">A</a> and <a href="http://b.com">B</a></p>"#,
     );
-    use htmlbox::dom::query_selector_all;
+    use webcore::dom::query_selector_all;
     let links = query_selector_all(&doc.root, "a");
     assert!(links.len() >= 2, "expected at least 2 anchor elements; got {}", links.len());
     let hrefs: Vec<_> = links.iter()
@@ -83,7 +83,7 @@ fn link_multiple_links_parsed() {
 #[test]
 fn link_nested_link_in_div() {
     let doc = parse_html(r#"<div><a href="http://example.com">Nested</a></div>"#);
-    use htmlbox::dom::query_selector;
+    use webcore::dom::query_selector;
     let a = query_selector(&doc.root, "a").expect("a not found inside div");
     assert_eq!(
         a.attributes.get("href").map(String::as_str),
@@ -98,7 +98,7 @@ fn link_nested_link_in_div() {
 #[test]
 fn link_serialization_preserves_href() {
     let doc = parse_html(r#"<p><a href="http://example.com">Link</a></p>"#);
-    let html = htmlbox::html::serialize_html(&doc);
+    let html = webcore::html::serialize_html(&doc);
     assert!(html.contains("http://example.com"), "serialized HTML must contain the href URL");
     assert!(html.contains("href"), "serialized HTML must contain the 'href' attribute");
 }
@@ -107,10 +107,10 @@ fn link_serialization_preserves_href() {
 fn link_round_trip_preserves_href() {
     let original = r#"<p><a href="http://example.com">Click</a></p>"#;
     let doc = parse_html(original);
-    let serialized = htmlbox::html::serialize_html(&doc);
+    let serialized = webcore::html::serialize_html(&doc);
     // Re-parse the serialized HTML
     let doc2 = parse_html(&serialized);
-    use htmlbox::dom::query_selector;
+    use webcore::dom::query_selector;
     let a = query_selector(&doc2.root, "a").expect("anchor not found after round-trip");
     assert_eq!(
         a.attributes.get("href").map(String::as_str),
@@ -182,7 +182,7 @@ fn link_point_to_offset_out_of_bounds() {
 #[test]
 fn link_offset_to_point_smoke() {
     let doc = layout("<p>Hello</p>", 800.0);
-    use htmlbox::dom::query_selector;
+    use webcore::dom::query_selector;
     let p = query_selector(&doc.root, "p").unwrap();
     let pt = offset_to_point(&doc.root, p.node_id, 0, 0.0, 0.0);
     assert!(pt.is_some(), "offset_to_point must return Some for offset 0");
@@ -194,7 +194,7 @@ fn link_offset_to_point_smoke() {
 #[test]
 fn link_offset_to_point_at_end() {
     let doc = layout("<p>Hello</p>", 800.0);
-    use htmlbox::dom::query_selector;
+    use webcore::dom::query_selector;
     let p = query_selector(&doc.root, "p").unwrap();
     let text_len = p.text_content().len();
     // Must not panic for offset at end of text

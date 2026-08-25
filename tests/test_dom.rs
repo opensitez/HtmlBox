@@ -1,10 +1,10 @@
 // Ported from cpptests/test_dom.cpp
 // DOM query, traversal, text content, and attribute tests.
 
-use htmlbox::types::*;
-use htmlbox::parse_html;
-use htmlbox::dom::*;
-use htmlbox::html::serializer::serialize_box;
+use webcore::types::*;
+use webcore::parse_html;
+use webcore::dom::*;
+use webcore::html::serializer::serialize_box;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,7 +12,7 @@ fn parse(html: &str) -> Document {
     parse_html(html)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -194,7 +194,7 @@ fn dom_get_element_children() {
     let results = doc.root.query_selector_all("#parent");
     assert!(!results.is_empty());
     let parent = results[0];
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     assert_eq!(element_children.len(), 3);
@@ -206,7 +206,7 @@ fn dom_get_first_and_last_child() {
     let results = doc.root.query_selector_all("#parent");
     assert!(!results.is_empty());
     let parent = results[0];
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     assert!(element_children.len() >= 2);
@@ -223,7 +223,7 @@ fn dom_get_child_count() {
     let results = doc.root.query_selector_all("#parent");
     assert!(!results.is_empty());
     let parent = results[0];
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     assert_eq!(element_children.len(), 2);
@@ -234,7 +234,7 @@ fn dom_get_child_count_empty() {
     let doc = parse(r#"<div id="empty"></div>"#);
     let results = doc.root.query_selector_all("#empty");
     assert!(!results.is_empty());
-    let element_children: Vec<&HtmlBox> = results[0].children.iter()
+    let element_children: Vec<&WebCore> = results[0].children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     assert_eq!(element_children.len(), 0);
@@ -299,7 +299,7 @@ fn dom_children_are_ordered() {
     let list_results = doc.root.query_selector_all("#list");
     assert!(!list_results.is_empty());
     let list = list_results[0];
-    let items: Vec<&HtmlBox> = list.children.iter()
+    let items: Vec<&WebCore> = list.children.iter()
         .filter(|c| c.tag == "li")
         .collect();
     assert_eq!(items.len(), 3);
@@ -554,7 +554,7 @@ fn dom_insert_before() {
     set_attribute(&mut new_el, "id", "mid");
     insert_before(parent, b_id, new_el);
 
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     let mid_idx = element_children.iter().position(|c| {
@@ -575,7 +575,7 @@ fn dom_insert_after() {
     set_attribute(&mut new_el, "id", "mid");
     insert_after(parent, a_id, new_el);
 
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     let mid_idx = element_children.iter().position(|c| {
@@ -742,7 +742,7 @@ fn dom_query_selector_by_tag_and_class() {
     let doc = parse(r#"<div><p class="x">P</p><span class="x">S</span></div>"#);
     // query_selector_all only supports simple selectors; "p.x" is compound.
     // Filter manually: all <p> that also have class "x"
-    let results: Vec<&HtmlBox> = doc.root.query_selector_all("p")
+    let results: Vec<&WebCore> = doc.root.query_selector_all("p")
         .into_iter()
         .filter(|b| has_class(b, "x"))
         .collect();
@@ -757,7 +757,7 @@ fn dom_query_selector_by_tag_and_class() {
 #[test]
 fn dom_get_bounding_rect_returns_rect() {
     // After load_html (which runs layout), border_rect is populated.
-    let doc = htmlbox::load_html(r#"<div><p id="t">Box</p></div>"#, 800.0);
+    let doc = webcore::load_html(r#"<div><p id="t">Box</p></div>"#, 800.0);
     let t = query_selector(&doc.root, "#t").unwrap();
     // width and height should be non-negative (may be 0 without font metrics)
     assert!(t.layout.border_rect.w >= 0.0);
@@ -1088,13 +1088,13 @@ fn dom_event_listener_all_new_types_registrable() {
 // FindElementsByText (manual implementation)
 // ============================================================
 
-fn find_elements_by_text<'a>(root: &'a HtmlBox, needle: &str, case_sensitive: bool) -> Vec<&'a HtmlBox> {
+fn find_elements_by_text<'a>(root: &'a WebCore, needle: &str, case_sensitive: bool) -> Vec<&'a WebCore> {
     let mut out = Vec::new();
     collect_by_text(root, needle, case_sensitive, &mut out);
     out
 }
 
-fn collect_by_text<'a>(node: &'a HtmlBox, needle: &str, case_sensitive: bool, out: &mut Vec<&'a HtmlBox>) {
+fn collect_by_text<'a>(node: &'a WebCore, needle: &str, case_sensitive: bool, out: &mut Vec<&'a WebCore>) {
     if needle.is_empty() { return; }
     let text = get_text_content(node);
     let matches = if case_sensitive {
@@ -1189,7 +1189,7 @@ fn dom_get_child_index() {
     let div = doc.root.query_selector_all("div");
     assert!(!div.is_empty());
     let parent = div[0];
-    let element_children: Vec<&HtmlBox> = parent.children.iter()
+    let element_children: Vec<&WebCore> = parent.children.iter()
         .filter(|c| !c.is_text_node())
         .collect();
     let idx_a = element_children.iter().position(|c| get_attribute(c, "id") == Some("a"));
@@ -1312,7 +1312,7 @@ fn dom_data_null_box() {
 
 #[test]
 fn dom_get_bounding_rect_absolute_coords() {
-    let doc = htmlbox::load_html(
+    let doc = webcore::load_html(
         r#"<div style="padding:10px;"><p id="inner">Text</p></div>"#,
         800.0,
     );
@@ -1325,7 +1325,7 @@ fn dom_get_bounding_rect_absolute_coords() {
 
 #[test]
 fn dom_get_bounding_rect_nested_elements() {
-    let doc = htmlbox::load_html(
+    let doc = webcore::load_html(
         r#"<div style="padding:20px;"><div style="padding:15px;"><p id="deep">Deep</p></div></div>"#,
         800.0,
     );

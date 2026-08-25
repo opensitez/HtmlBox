@@ -36,7 +36,7 @@ pub fn establishes_bfc(style: &ComputedStyle) -> bool {
 
 /// Can top margin of this box collapse with its first child's top margin?
 /// Mirrors C++ CanCollapseTopWithFirstChild.
-fn can_collapse_top_with_first_child(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
+fn can_collapse_top_with_first_child(node: &WebCore, rbox: &ResolvedBox) -> bool {
     if establishes_bfc(&node.style) { return false; }
     // The root element (<html>) is the initial containing block / BFC root
     if node.tag == "html" { return false; }
@@ -48,7 +48,7 @@ fn can_collapse_top_with_first_child(node: &HtmlBox, rbox: &ResolvedBox) -> bool
 
 /// Can bottom margin of this box collapse with its last child's bottom margin?
 /// Mirrors C++ CanCollapseBottomWithLastChild.
-fn can_collapse_bottom_with_last_child(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
+fn can_collapse_bottom_with_last_child(node: &WebCore, rbox: &ResolvedBox) -> bool {
     if establishes_bfc(&node.style) { return false; }
     if rbox.border_bottom > 0.0 { return false; }
     if rbox.padding_bottom > 0.0 { return false; }
@@ -60,7 +60,7 @@ fn can_collapse_bottom_with_last_child(node: &HtmlBox, rbox: &ResolvedBox) -> bo
 
 /// Is this an "empty" block (no borders, padding, inline content, explicit height, in-flow children)?
 /// Mirrors C++ IsEmptyBlock.
-fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
+fn is_empty_block(node: &WebCore, rbox: &ResolvedBox) -> bool {
     if rbox.border_top != 0.0 || rbox.border_bottom != 0.0 { return false; }
     if rbox.padding_top != 0.0 || rbox.padding_bottom != 0.0 { return false; }
     if !node.layout.line_cache.is_empty() { return false; }
@@ -80,7 +80,7 @@ fn is_empty_block(node: &HtmlBox, rbox: &ResolvedBox) -> bool {
 
 /// Compute the intrinsic (max-content) width of a box that was laid out at a
 /// larger containing width.  Mirrors C++ ComputeIntrinsicWidth.
-pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
+pub fn compute_intrinsic_width(node: &WebCore) -> f32 {
     let cached = node.layout.cached_intrinsic_w.get();
     if !cached.is_nan() { return cached; }
     let result = compute_intrinsic_width_inner(node);
@@ -88,7 +88,7 @@ pub fn compute_intrinsic_width(node: &HtmlBox) -> f32 {
     result
 }
 
-fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
+fn compute_intrinsic_width_inner(node: &WebCore) -> f32 {
     // If the box has a fixed width, that IS its intrinsic width (min and max).
     // (In a more complete engine we'd distinguish min-content vs max-content,
     // but for now max-content is what matters for 'Auto' tracks).
@@ -229,7 +229,7 @@ fn compute_intrinsic_width_inner(node: &HtmlBox) -> f32 {
 
 /// Apply position:relative offset to a node's rects after layout.
 /// Mirrors C++ ApplyRelativeOffset.
-pub fn apply_relative_offset(node: &mut HtmlBox, font_px: f32, containing_w: f32, root_font_px: f32) {
+pub fn apply_relative_offset(node: &mut WebCore, font_px: f32, containing_w: f32, root_font_px: f32) {
     if !matches!(node.style.position, Position::Relative) { return; }
     let dx = if !node.style.left.is_auto() {
         node.style.left.resolve(font_px, containing_w, root_font_px)
@@ -255,7 +255,7 @@ pub fn apply_relative_offset(node: &mut HtmlBox, font_px: f32, containing_w: f32
 /// Set node rects from rbox and geometry.
 /// Mirrors C++ BuildBoxRects.
 pub fn build_box_rects(
-    node: &mut HtmlBox,
+    node: &mut WebCore,
     rbox: &ResolvedBox,
     content_x: f32, content_y: f32,
     content_w: f32, content_h: f32,
@@ -307,7 +307,7 @@ pub fn build_box_rects(
 /// Mirrors C++ LayoutBlockFlow.
 pub fn layout_block(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     containing_w: f32,
     x:            f32,
@@ -322,7 +322,7 @@ pub fn layout_block(
 /// Non-BFC blocks share parent's float context; BFC blocks get their own.
 pub fn layout_block_with_fc(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     c:            &Constraints,
     parent_fc:    Option<&mut FloatContext>,
@@ -897,7 +897,7 @@ pub fn establishes_column_context(style: &ComputedStyle) -> bool {
 /// Returns the total content height.
 pub fn layout_columns(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     _rbox:        &ResolvedBox,
     content_x:    f32,
     content_y:    f32,

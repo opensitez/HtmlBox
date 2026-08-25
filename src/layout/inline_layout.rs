@@ -11,7 +11,7 @@ use super::Constraints;
 /// `float_ctx` is the float context from the containing block (may be None).
 pub fn layout_inline_block(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     c:            &Constraints,
     parent_float_ctx: Option<&mut FloatContext>,
@@ -206,13 +206,13 @@ pub fn layout_inline_block(
                 let end = (run.text_offset + run.length).min(node.text.len());
                 if run.text_offset >= end { continue; }
                 let run_text = node.text[run.text_offset..end].to_string();
-                let mut tmp = HtmlBox::new("#text");
+                let mut tmp = WebCore::new("#text");
                 tmp.text = run_text;
                 tmp.style = run.style.clone();
                 collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
             }
         } else {
-            let mut tmp_node = HtmlBox::new("#text");
+            let mut tmp_node = WebCore::new("#text");
             tmp_node.text = node.text.clone();
             tmp_node.style = node.style.clone();
             collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
@@ -820,7 +820,7 @@ pub fn layout_inline_block(
 // ─── Path resolution helpers ─────────────────────────────────────────────────
 
 /// Follow a chain of child indices to find the target node (immutable).
-fn resolve_path<'a>(root: &'a HtmlBox, path: &[usize]) -> Option<&'a HtmlBox> {
+fn resolve_path<'a>(root: &'a WebCore, path: &[usize]) -> Option<&'a WebCore> {
     let mut cur = root;
     for &idx in path {
         if idx >= cur.children.len() { return None; }
@@ -830,7 +830,7 @@ fn resolve_path<'a>(root: &'a HtmlBox, path: &[usize]) -> Option<&'a HtmlBox> {
 }
 
 /// Follow a chain of child indices to find the target node (mutable).
-fn resolve_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut HtmlBox> {
+fn resolve_path_mut<'a>(root: &'a mut WebCore, path: &[usize]) -> Option<&'a mut WebCore> {
     let mut cur = root;
     for &idx in path {
         if idx >= cur.children.len() { return None; }
@@ -842,7 +842,7 @@ fn resolve_path_mut<'a>(root: &'a mut HtmlBox, path: &[usize]) -> Option<&'a mut
 // ─── Box rect helper ──────────────────────────────────────────────────────────
 
 fn set_box_rects(
-    node:       &mut HtmlBox,
+    node:       &mut WebCore,
     content_x:  f32, content_y: f32,
     content_w:  f32, content_h: f32,
     rbox:       &ResolvedBox,
@@ -955,7 +955,7 @@ pub struct InlineItem {
 /// that container's `children` vec, so the index is only valid at depth 0.
 pub fn collect_items(
     engine:          &LayoutEngine,
-    node:            &HtmlBox,
+    node:            &WebCore,
     parent_font_px:  f32,
     root_font_px:    f32,
     items:           &mut Vec<InlineItem>,
@@ -973,7 +973,7 @@ pub fn collect_items(
 
 fn collect_items_inner(
     engine:          &LayoutEngine,
-    node:            &HtmlBox,
+    node:            &WebCore,
     parent_font_px:  f32,
     root_font_px:    f32,
     items:           &mut Vec<InlineItem>,
@@ -1722,13 +1722,13 @@ pub fn fill_char_x_for_line(
 
 // ─── Collect flat text (same traversal as collect_items) ─────────────────────
 /// Used by the renderer to map text_start offsets back to characters.
-pub fn collect_flat_text(node: &HtmlBox) -> String {
+pub fn collect_flat_text(node: &WebCore) -> String {
     let mut out = String::new();
     collect_flat_text_inner(node, &mut out, true);
     out
 }
 
-fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
+fn collect_flat_text_inner(node: &WebCore, out: &mut String, is_root: bool) {
     if node.is_text_node() {
         // Normalize newlines/tabs to spaces in normal white-space mode
         // so that flat text matches what tokenize_text rendered.
@@ -1772,7 +1772,7 @@ fn collect_flat_text_inner(node: &HtmlBox, out: &mut String, is_root: bool) {
 /// so the item gets the correct advance width and ascent.
 fn prelayout_nested_inline_blocks(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     content_w:    f32,
     font_px:      f32,
     root_font_px: f32,

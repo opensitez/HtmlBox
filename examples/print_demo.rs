@@ -13,8 +13,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
-use htmlbox::platform::Platform;
+use webcore::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use webcore::platform::Platform;
 
 const HTML: &str = include_str!("html/print.html");
 
@@ -38,7 +38,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Print Demo (preview only) — htmlbox")
+                    .with_title("Print Demo (preview only) — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(900u32, 780u32))
             ).unwrap()
         );

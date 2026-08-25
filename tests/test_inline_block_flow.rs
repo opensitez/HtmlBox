@@ -5,11 +5,11 @@
 // - compute_intrinsic_width for mixed block/inline content
 // - image aspect ratio preservation
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
+use webcore::types::*;
+use webcore::{load_html, parse_html};
 
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -17,14 +17,14 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     None
 }
 
-fn find_all_boxes<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Vec<&'a HtmlBox> {
+fn find_all_boxes<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     collect_matching(root, pred, &mut result);
     result
 }
 
 fn collect_matching<'a>(
-    node: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool, out: &mut Vec<&'a HtmlBox>,
+    node: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool, out: &mut Vec<&'a WebCore>,
 ) {
     if pred(node) { out.push(node); }
     for child in &node.children {
@@ -219,7 +219,7 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
     // when image_width/image_height are known.
     let mut doc = parse_html("<img src='logo.png' height='40'>");
     // Simulate image loading by setting image dimensions on the box
-    fn set_image_dims(node: &mut HtmlBox, w: u32, h: u32) {
+    fn set_image_dims(node: &mut WebCore, w: u32, h: u32) {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
@@ -230,7 +230,7 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
         }
     }
     set_image_dims(&mut doc.root, 1250, 200);
-    let mut engine = htmlbox::layout::LayoutEngine::new();
+    let mut engine = webcore::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");
@@ -247,7 +247,7 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
 fn img_height_auto_width_specified_sets_aspect_ratio() {
     // img with width=200 and no explicit height should get height from aspect ratio
     let mut doc = parse_html("<img src='photo.jpg' width='200'>");
-    fn set_image_dims(node: &mut HtmlBox, w: u32, h: u32) {
+    fn set_image_dims(node: &mut WebCore, w: u32, h: u32) {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
@@ -258,7 +258,7 @@ fn img_height_auto_width_specified_sets_aspect_ratio() {
         }
     }
     set_image_dims(&mut doc.root, 400, 200);
-    let mut engine = htmlbox::layout::LayoutEngine::new();
+    let mut engine = webcore::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");
@@ -275,7 +275,7 @@ fn img_height_auto_width_specified_sets_aspect_ratio() {
 fn img_both_auto_uses_natural_size() {
     // img with no width/height attributes should use natural dimensions
     let mut doc = parse_html("<img src='photo.jpg'>");
-    fn set_image_dims(node: &mut HtmlBox, w: u32, h: u32) {
+    fn set_image_dims(node: &mut WebCore, w: u32, h: u32) {
         if node.tag == "img" {
             node.image_width = w;
             node.image_height = h;
@@ -286,7 +286,7 @@ fn img_both_auto_uses_natural_size() {
         }
     }
     set_image_dims(&mut doc.root, 320, 240);
-    let mut engine = htmlbox::layout::LayoutEngine::new();
+    let mut engine = webcore::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");

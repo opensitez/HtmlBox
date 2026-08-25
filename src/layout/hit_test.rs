@@ -279,7 +279,7 @@ pub struct HitResult {
 // entirely in absolute coordinates and does NOT subtract content_rect offsets
 // when recursing into children.
 
-fn hit_test_impl(node: &HtmlBox, doc_pt: (f32, f32), _button: u8) -> Option<HitResult> {
+fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitResult> {
     if matches!(node.style.display, Display::None) { return None; }
 
     // Adjust for this node's own scroll offset (rare — only scrollable boxes)
@@ -406,7 +406,7 @@ fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
 ///
 /// The point is relative to the document origin (top-left of viewport content),
 /// before any scroll offset is applied — i.e. `(mouse_x + scroll_x, mouse_y + scroll_y)`.
-pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<HitResult> {
+pub fn point_to_hit(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<HitResult> {
     // Coordinates are absolute — pass directly (root.layout.content_rect is always 0,0)
     hit_test_impl(root, doc_pt, button)
 }
@@ -416,7 +416,7 @@ pub fn point_to_hit(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<Hi
 ///
 /// Pass `scroll_x = 0, scroll_y = 0` to get absolute document coordinates.
 pub fn offset_to_point(
-    root:         &HtmlBox,
+    root:         &WebCore,
     target_id:    u32,
     local_offset: usize,
     scroll_x:     f32,
@@ -426,7 +426,7 @@ pub fn offset_to_point(
 }
 
 fn find_and_measure(
-    node:         &HtmlBox,
+    node:         &WebCore,
     target_id:    u32,
     local_offset: usize,
     scroll_x:     f32,
@@ -463,7 +463,7 @@ fn find_and_measure(
 
 /// Like inline_offset_of but matches by node_id instead of pointer.
 fn inline_offset_of_by_id(
-    node:         &HtmlBox,
+    node:         &WebCore,
     target_id:    u32,
     local_offset: usize,
     acc:          &mut usize,
@@ -515,11 +515,11 @@ fn caret_point_in_box(
 }
 
 /// Find the deepest box at a document-space point. Returns node_id.
-pub fn hit_test_box_at(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> u32 {
+pub fn hit_test_box_at(root: &WebCore, doc_pt: (f32, f32), button: u8) -> u32 {
     deepest_box_at(root, doc_pt, button).unwrap_or(root.node_id)
 }
 
-fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<u32> {
+fn deepest_box_at(node: &WebCore, pt: (f32, f32), _button: u8) -> Option<u32> {
     if matches!(node.style.display, Display::None) { return None; }
     let (px, py) = (pt.0 + node.layout.scroll_left, pt.1 + node.layout.scroll_top);
     for child in node.children.iter().rev() {
@@ -533,10 +533,10 @@ fn deepest_box_at(node: &HtmlBox, pt: (f32, f32), _button: u8) -> Option<u32> {
 }
 
 /// Find a link URL at a document-space point, if any.
-pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<String> {
+pub fn hit_test_link(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<String> {
     // 1. Try hitting text content (inline runs)
     if let Some(hit) = hit_test_impl(root, doc_pt, button) {
-        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+        fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &node.children {
                 if let Some(f) = find_node(child, id) { return Some(f); }
@@ -560,8 +560,8 @@ pub fn hit_test_link(root: &HtmlBox, doc_pt: (f32, f32), button: u8) -> Option<S
     find_href_up_by_id(root, target_id)
 }
 
-fn find_href_up_by_id(root: &HtmlBox, target_id: u32) -> Option<String> {
-    fn walk(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool {
+fn find_href_up_by_id(root: &WebCore, target_id: u32) -> Option<String> {
+    fn walk(node: &WebCore, target_id: u32, path: &mut Vec<u32>) -> bool {
         path.push(node.node_id);
         if node.node_id == target_id { return true; }
         for child in &node.children {
@@ -574,7 +574,7 @@ fn find_href_up_by_id(root: &HtmlBox, target_id: u32) -> Option<String> {
     if !walk(root, target_id, &mut path) { return None; }
     // Walk path in reverse (target → root) looking for href
     for &nid in path.iter().rev() {
-        fn find_node(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+        fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
             if node.node_id == id { return Some(node); }
             for child in &node.children {
                 if let Some(f) = find_node(child, id) { return Some(f); }

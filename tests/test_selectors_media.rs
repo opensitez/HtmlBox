@@ -1,16 +1,16 @@
 // CSS selector matching and @media query tests — covers specificity,
 // combinators, pseudo-classes, attribute selectors, and responsive layout.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
-use htmlbox::load_html_vp;
+use webcore::types::*;
+use webcore::load_html;
+use webcore::load_html_vp;
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for child in &root.children { if let Some(f) = by_id(child, id) { return Some(f); } }
     None
 }
-fn by_class<'a>(root: &'a HtmlBox, cls: &str) -> Option<&'a HtmlBox> {
+fn by_class<'a>(root: &'a WebCore, cls: &str) -> Option<&'a WebCore> {
     if root.attributes.get("class").map(|v| v.split_whitespace().any(|c| c == cls)).unwrap_or(false) { return Some(root); }
     for child in &root.children { if let Some(f) = by_class(child, cls) { return Some(f); } }
     None

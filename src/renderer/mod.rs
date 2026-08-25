@@ -253,7 +253,7 @@ impl Renderer {
         if hovered_id == 0 { return CSSCursor::Default; }
         let node = match doc.get_node(hovered_id) { Some(n) => n, None => return CSSCursor::Default };
         if node.style.cursor != CSSCursor::Auto { return node.style.cursor; }
-        fn is_link_or_button(n: &crate::types::HtmlBox) -> bool {
+        fn is_link_or_button(n: &crate::types::WebCore) -> bool {
             match n.tag.as_str() {
                 "a" => n.attributes.contains_key("href"),
                 "button" | "summary" | "label" => true,
@@ -479,7 +479,7 @@ impl Renderer {
 
 
 
-    fn paint_custom_components(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, scale: f32) {
+    fn paint_custom_components(&self, node: &WebCore, pixmap: &mut Pixmap, sx: f32, sy: f32, scale: f32) {
         // Trait-based component — same coordinate contract as legacy: logical coords, scale passed separately
         if let Some(component) = self.component_registry.get_component(&node.tag) {
             let r = &node.layout.content_rect;
@@ -495,11 +495,11 @@ impl Renderer {
         }
     }
 
-    fn draw_caret(&mut self, root: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, caret_node_id: u32, caret_local: usize) {
+    fn draw_caret(&mut self, root: &WebCore, pixmap: &mut Pixmap, sx: f32, sy: f32, caret_node_id: u32, caret_local: usize) {
         self.draw_caret_walk(root, pixmap, sx, sy, caret_node_id, caret_local);
     }
 
-    fn draw_caret_walk(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, caret_node_id: u32, caret_local: usize) -> bool {
+    fn draw_caret_walk(&mut self, node: &WebCore, pixmap: &mut Pixmap, sx: f32, sy: f32, caret_node_id: u32, caret_local: usize) -> bool {
         if node.node_id == caret_node_id {
             let flat = collect_flat_text(node);
             let font_px = node.style.font_size_px(16.0, 16.0);
@@ -651,11 +651,11 @@ impl Renderer {
         }
     }
 
-    fn draw_select_dropdown(&mut self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32) {
+    fn draw_select_dropdown(&mut self, node: &WebCore, pixmap: &mut Pixmap, sx: f32, sy: f32) {
         let br = node.layout.border_rect;
         let popup_x = br.x - sx; let popup_y = br.y + br.h - sy; let popup_w = br.w.max(150.0);
         let selected_idx: usize = node.data.get("_selected_idx").and_then(|s| s.parse().ok()).unwrap_or(0);
-        struct DropdownItem<'a> { node: &'a HtmlBox, is_group: bool, text: String, index: usize }
+        struct DropdownItem<'a> { node: &'a WebCore, is_group: bool, text: String, index: usize }
         let mut items: Vec<DropdownItem> = Vec::new();
         let mut opt_idx = 0usize;
         for child in &node.children {
@@ -746,7 +746,7 @@ fn line_path(x1: f32, y1: f32, x2: f32, y2: f32) -> Option<tiny_skia::Path> {
 
 impl Default for Renderer { fn default() -> Self { Self::new() } }
 
-pub fn draw_inspect_overlay(node: &HtmlBox, pixmap: &mut Pixmap, scroll_x: f32, scroll_y: f32, scale: f32) {
+pub fn draw_inspect_overlay(node: &WebCore, pixmap: &mut Pixmap, scroll_x: f32, scroll_y: f32, scale: f32) {
     let fill_rect = |pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: u8, g: u8, b: u8, a: u8| {
         if w <= 0.0 || h <= 0.0 { return; }
         let mut paint = tiny_skia::Paint::default(); paint.set_color_rgba8(r, g, b, a);

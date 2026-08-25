@@ -127,8 +127,8 @@ pub struct MatchContext<'a> {
     pub type_child_index:   usize,
     /// Count of same-tag siblings (including this element).
     pub type_sibling_count: usize,
-    /// Raw pointer to the HtmlBox being matched (for :has()).
-    pub html_box:           Option<&'a crate::types::HtmlBox>,
+    /// Raw pointer to the WebCore being matched (for :has()).
+    pub html_box:           Option<&'a crate::types::WebCore>,
     /// Set of node IDs on the hover chain (hovered element + all ancestors).
     /// When non-empty, :hover pseudo-class matches elements in this set.
     pub hover_chain:        &'a std::collections::HashSet<u32>,
@@ -205,7 +205,7 @@ impl CssSelector {
     }
 
     /// Match against `b` without ancestor context (for tests / simple selectors).
-    pub fn matches_box(&self, b: &HtmlBox) -> bool {
+    pub fn matches_box(&self, b: &WebCore) -> bool {
         let empty_hover = std::collections::HashSet::new();
         let ctx = MatchContext {
             focused_box: 0,
@@ -223,7 +223,7 @@ impl CssSelector {
     /// Match against `b` with full ancestor chain for combinator resolution.
     pub fn matches_with_ancestors(
         &self,
-        b: &HtmlBox,
+        b: &WebCore,
         child_index: usize,
         sibling_count: usize,
         ancestors: &[AncestorInfo],
@@ -245,7 +245,7 @@ impl CssSelector {
     /// Match against `b` with full ancestor chain and extra context.
     pub fn matches_with_ancestors_ctx(
         &self,
-        b: &HtmlBox,
+        b: &WebCore,
         child_index: usize,
         sibling_count: usize,
         ancestors: &[AncestorInfo],
@@ -254,7 +254,7 @@ impl CssSelector {
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, ctx)
     }
 
-    /// Internal: match using raw tag/attrs (used from :not/:is/:where to avoid re-borrowing HtmlBox).
+    /// Internal: match using raw tag/attrs (used from :not/:is/:where to avoid re-borrowing WebCore).
     fn matches_with_ancestors_ctx_raw(
         &self,
         tag: &str,
@@ -557,7 +557,7 @@ fn matches_part_with_context(
 
 /// Returns true for text-entry controls — these always show :focus-visible even
 /// when focused by mouse, because the cursor position needs to be visible.
-fn is_text_entry(b: &crate::types::HtmlBox) -> bool {
+fn is_text_entry(b: &crate::types::WebCore) -> bool {
     match b.tag.as_str() {
         "textarea" => true,
         "input" => !matches!(
@@ -571,7 +571,7 @@ fn is_text_entry(b: &crate::types::HtmlBox) -> bool {
 }
 
 /// Check if `b` or any of its descendants is the focused element.
-fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: u32) -> bool {
+fn is_or_contains_focused(b: &crate::types::WebCore, focused: u32) -> bool {
     for child in &b.children {
         if child.node_id != 0 && child.node_id == focused {
             return true;
@@ -585,7 +585,7 @@ fn is_or_contains_focused(b: &crate::types::HtmlBox, focused: u32) -> bool {
 
 /// Check if any descendant of `node` matches `sel`.
 fn has_descendant_matching(
-    node: &crate::types::HtmlBox,
+    node: &crate::types::WebCore,
     sel: &CssSelector,
     focused_box: u32,
 ) -> bool {
@@ -1163,7 +1163,7 @@ pub struct Stylesheet {
     idx_by_tag:   HashMap<String, Vec<usize>>,
     idx_universal: Vec<usize>,  // rules with * or no specific key selector
     idx_dirty:    bool,
-    /// When true, the cascade stores matched CSS rules on each HtmlBox
+    /// When true, the cascade stores matched CSS rules on each WebCore
     /// for inspector display. Off by default to avoid memory overhead.
     pub inspect_mode: bool,
     /// True if any rule has :hover on a non-subject selector part (descendant hover rules).
@@ -2411,7 +2411,7 @@ fn strip_quotes(s: &str) -> String {
 /// Walk the box tree and apply `animation_overrides` (from `Document::tick_animations`)
 /// on top of the cascaded computed styles.
 pub fn apply_animation_overrides(
-    node:      &mut HtmlBox,
+    node:      &mut WebCore,
     overrides: &HashMap<u32, Vec<(String, String)>>,
 ) {
     let id = node.node_id;
@@ -2450,7 +2450,7 @@ fn is_inherited_css_prop(prop: &str) -> bool {
 /// also have their text-node leaves updated.  Nodes that have their own entry in
 /// `animation_overrides` will be handled separately; here we only touch text nodes,
 /// which never have transitions of their own.
-fn propagate_to_text_descendants(children: &mut Vec<HtmlBox>, props: &[(&str, &str)]) {
+fn propagate_to_text_descendants(children: &mut Vec<WebCore>, props: &[(&str, &str)]) {
     for child in children {
         if child.is_text_node() {
             for &(prop, val) in props {
@@ -4659,7 +4659,7 @@ pub struct ContainerEntry {
 /// Returns `true` if any styles were changed (used to decide whether a
 /// second layout pass is needed).
 pub fn apply_container_cascade_tree(
-    node: &mut crate::types::HtmlBox,
+    node: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     container_stack: &[ContainerEntry],
     ancestors: &[AncestorInfo],
@@ -4685,7 +4685,7 @@ pub fn apply_container_cascade_tree(
 }
 
 fn apply_container_cascade_inner(
-    node: &mut crate::types::HtmlBox,
+    node: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     container_stack: &mut Vec<ContainerEntry>,
     ancestors: &mut Vec<AncestorInfo>,
@@ -4823,7 +4823,7 @@ fn apply_container_cascade_inner(
 // ─── CSS Cascade ─────────────────────────────────────────────────────────────
 
 /// Apply a stylesheet to all boxes in the tree (cascade + inheritance).
-pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
+pub fn apply_cascade(root: &mut crate::types::WebCore, stylesheet: &Stylesheet,
                      parent_style: Option<&ComputedStyle>, root_font_px: f32) {
     apply_cascade_vp(root, stylesheet, parent_style, root_font_px, 0.0, 0.0, 0, false);
 }
@@ -4835,7 +4835,7 @@ pub fn apply_cascade(root: &mut crate::types::HtmlBox, stylesheet: &Stylesheet,
 ///
 /// **Note**: call `stylesheet.rebuild_index()` before this if rules were added since last cascade.
 pub fn apply_cascade_vp(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -4853,7 +4853,7 @@ pub fn apply_cascade_vp(
 /// When the stylesheet has more than 1000 rules, automatically uses a parallel
 /// selector-matching pass (via Rayon) to speed up large pages.
 pub fn apply_cascade_vp_hover(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -4883,7 +4883,7 @@ pub fn apply_cascade_vp_hover(
 /// Sets `cascade_dirty` on nodes whose hover state toggled (symmetric difference),
 /// and `has_dirty_descendant` on their ancestors (the hover chain path).
 pub fn mark_hover_dirty(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     old_chain: &std::collections::HashSet<u32>,
     new_chain: &std::collections::HashSet<u32>,
     has_hover_descendant_rules: bool,
@@ -4894,7 +4894,7 @@ pub fn mark_hover_dirty(
     // All nodes on the path (for has_dirty_descendant traversal)
     let path: std::collections::HashSet<u32> = old_chain.union(new_chain).copied().collect();
 
-    fn walk(node: &mut crate::types::HtmlBox, toggled: &std::collections::HashSet<u32>,
+    fn walk(node: &mut crate::types::WebCore, toggled: &std::collections::HashSet<u32>,
             path: &std::collections::HashSet<u32>, has_hover_desc: bool,
             sensitive: &std::collections::HashSet<u32>) -> bool {
         let mut any_dirty = false;
@@ -4922,7 +4922,7 @@ pub fn mark_hover_dirty(
     walk(root, &toggled, &path, has_hover_descendant_rules, hover_sensitive);
 }
 
-fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {
+fn mark_children_cascade_dirty(node: &mut crate::types::WebCore) {
     for child in &mut node.children {
         child.cascade_dirty = true;
         mark_children_cascade_dirty(child);
@@ -4932,7 +4932,7 @@ fn mark_children_cascade_dirty(node: &mut crate::types::HtmlBox) {
 /// Clear cascade_dirty and has_dirty_descendant flags after incremental cascade.
 /// Clear cascade_dirty flags after cascade. Preserves has_dirty_descendant
 /// for the layout pass (propagate_dirty uses it to skip clean subtrees).
-pub fn clear_cascade_dirty(node: &mut crate::types::HtmlBox) {
+pub fn clear_cascade_dirty(node: &mut crate::types::WebCore) {
     if !node.cascade_dirty && !node.has_dirty_descendant { return; }
     node.cascade_dirty = false;
     // Note: has_dirty_descendant is intentionally NOT cleared here — layout needs it.
@@ -4943,7 +4943,7 @@ pub fn clear_cascade_dirty(node: &mut crate::types::HtmlBox) {
 }
 
 /// Clear has_dirty_descendant flags after layout completes.
-pub fn clear_descendant_dirty(node: &mut crate::types::HtmlBox) {
+pub fn clear_descendant_dirty(node: &mut crate::types::WebCore) {
     if !node.has_dirty_descendant { return; }
     node.has_dirty_descendant = false;
     for child in &mut node.children {
@@ -4956,7 +4956,7 @@ pub fn clear_descendant_dirty(node: &mut crate::types::HtmlBox) {
 /// `has_dirty_descendant` are traversed but not re-cascaded.
 /// Call `mark_hover_dirty()` before and `clear_cascade_dirty()` after.
 pub fn apply_cascade_incremental(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -4979,7 +4979,7 @@ pub fn apply_cascade_incremental(
 }
 
 fn apply_cascade_incremental_walk(
-    node: &mut crate::types::HtmlBox,
+    node: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -5055,9 +5055,9 @@ fn apply_cascade_incremental_walk(
 
 /// Build the set of element pointers from root to the hovered element (hover chain).
 /// Returns empty set if target is null or not found in the tree.
-pub fn build_hover_chain(root: &crate::types::HtmlBox, target: u32) -> std::collections::HashSet<u32> {
+pub fn build_hover_chain(root: &crate::types::WebCore, target: u32) -> std::collections::HashSet<u32> {
     if target == 0 { return std::collections::HashSet::new(); }
-    fn walk(node: &crate::types::HtmlBox, target: u32, path: &mut Vec<u32>) -> bool {
+    fn walk(node: &crate::types::WebCore, target: u32, path: &mut Vec<u32>) -> bool {
         path.push(node.node_id);
         if node.node_id != 0 && node.node_id == target { return true; }
         for child in &node.children {
@@ -5085,14 +5085,14 @@ pub fn build_hover_chain(root: &crate::types::HtmlBox, target: u32) -> std::coll
 ///
 /// Returns `true` if any style was changed (caller should re-layout).
 pub fn swap_hover_state(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     hover_chain: &std::collections::HashSet<u32>,
 ) -> bool {
     swap_hover_inner(root, hover_chain, false)
 }
 
 fn swap_hover_inner(
-    node: &mut crate::types::HtmlBox,
+    node: &mut crate::types::WebCore,
     hover_chain: &std::collections::HashSet<u32>,
     ancestor_in_chain: bool,
 ) -> bool {
@@ -5150,7 +5150,7 @@ fn swap_hover_inner(
                     ps.is_block_level());
                 if is_grid_or_flex || before_is_positioned || before_is_block {
                     let existing = node.children.iter().position(|c| c.tag == "::before");
-                    let mut pseudo_box = crate::types::HtmlBox::new("::before");
+                    let mut pseudo_box = crate::types::WebCore::new("::before");
                     pseudo_box.text = node.style.before_content.clone();
                     if let Some(ref ps) = node.style.before_style {
                         pseudo_box.style = *ps.clone();
@@ -5176,7 +5176,7 @@ fn swap_hover_inner(
                     ps.is_block_level());
                 if is_grid_or_flex || after_is_positioned || after_is_block {
                     let existing = node.children.iter().position(|c| c.tag == "::after");
-                    let mut pseudo_box = crate::types::HtmlBox::new("::after");
+                    let mut pseudo_box = crate::types::WebCore::new("::after");
                     pseudo_box.text = node.style.after_content.clone();
                     if let Some(ref ps) = node.style.after_style {
                         pseudo_box.style = *ps.clone();
@@ -5260,7 +5260,7 @@ fn build_pseudo_style_shared(
 
 
 fn apply_cascade_inner(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -5314,7 +5314,7 @@ fn apply_cascade_inner(
 
     // ⚠ A style-sharing stub stood here: four bindings feeding an EMPTY `if`,
     // whose own comment said the sharing "actually happens in cascade_children
-    // where we have access to the sibling HtmlBox objects". It computed a class
+    // where we have access to the sibling WebCore objects". It computed a class
     // string and a hover lookup on every element and did nothing with them.
     // Removed rather than annotated — a reader greps `class_attr` and lands on
     // machinery that never ran.
@@ -5912,7 +5912,7 @@ fn apply_cascade_inner(
             || (before_is_block && !root.style.before_content.is_empty())
         {
             let existing = root.children.iter().position(|c| c.tag == "::before");
-            let mut pseudo_box = crate::types::HtmlBox::new("::before");
+            let mut pseudo_box = crate::types::WebCore::new("::before");
             pseudo_box.text = root.style.before_content.clone();
             pseudo_box.tag = "::before".to_string();
             if let Some(ref ps) = root.style.before_style {
@@ -5944,7 +5944,7 @@ fn apply_cascade_inner(
             || (after_is_block && !root.style.after_content.is_empty())
         {
             let existing = root.children.iter().position(|c| c.tag == "::after");
-            let mut pseudo_box = crate::types::HtmlBox::new("::after");
+            let mut pseudo_box = crate::types::WebCore::new("::after");
             pseudo_box.text = root.style.after_content.clone();
             pseudo_box.tag = "::after".to_string();
             if let Some(ref ps) = root.style.after_style {
@@ -5981,7 +5981,7 @@ fn apply_cascade_inner(
 
     // Helper: cascade a list of children with a given stylesheet
     fn cascade_children(
-        children: &mut [crate::types::HtmlBox],
+        children: &mut [crate::types::WebCore],
         stylesheet: &Stylesheet,
         parent_style: &ComputedStyle,
         root_font_px: f32,
@@ -6136,7 +6136,7 @@ struct CascadeMatchResult {
 /// Pass 1: Flatten the DOM tree into a work list.
 /// Each element gets its ancestor chain snapshot (needed for descendant selectors).
 fn flatten_tree_for_cascade(
-    node: &crate::types::HtmlBox,
+    node: &crate::types::WebCore,
     ancestors: &mut Vec<AncestorInfo>,
     path: &mut Vec<usize>,
     child_index: usize,
@@ -6320,7 +6320,7 @@ fn parallel_selector_match(
 /// Pass 3: Walk tree sequentially, apply matched rules to each node's style.
 /// Uses the match results from the parallel pass instead of re-matching selectors.
 fn apply_matched_results(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,
@@ -6763,7 +6763,7 @@ fn apply_matched_results(
             || (before_is_positioned && root.style.before_style.is_some())
         {
             let existing = root.children.iter().position(|c| c.tag == "::before");
-            let mut pseudo_box = crate::types::HtmlBox::new("::before");
+            let mut pseudo_box = crate::types::WebCore::new("::before");
             pseudo_box.text = root.style.before_content.clone();
             pseudo_box.tag = "::before".to_string();
             if let Some(ref ps) = root.style.before_style {
@@ -6790,7 +6790,7 @@ fn apply_matched_results(
             || (after_is_positioned && root.style.after_style.is_some())
         {
             let existing = root.children.iter().position(|c| c.tag == "::after");
-            let mut pseudo_box = crate::types::HtmlBox::new("::after");
+            let mut pseudo_box = crate::types::WebCore::new("::after");
             pseudo_box.text = root.style.after_content.clone();
             pseudo_box.tag = "::after".to_string();
             if let Some(ref ps) = root.style.after_style {
@@ -6865,7 +6865,7 @@ fn apply_matched_results(
 
 /// Helper: cascade children using parallel match results.
 fn cascade_children_parallel(
-    children: &mut [crate::types::HtmlBox],
+    children: &mut [crate::types::WebCore],
     stylesheet: &Stylesheet,
     parent_style: &ComputedStyle,
     root_font_px: f32,
@@ -6913,7 +6913,7 @@ fn cascade_children_parallel(
 
 /// Helper: cascade children sequentially (used for shadow DOM subtrees).
 fn cascade_children_sequential(
-    children: &mut [crate::types::HtmlBox],
+    children: &mut [crate::types::WebCore],
     stylesheet: &Stylesheet,
     parent_style: &ComputedStyle,
     root_font_px: f32,
@@ -6964,7 +6964,7 @@ fn cascade_children_sequential(
 /// 2. Run selector matching in parallel via Rayon (parallel)
 /// 3. Apply matched rules to styles (sequential — inherits from parent, builds state styles)
 pub fn apply_cascade_parallel(
-    root: &mut crate::types::HtmlBox,
+    root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
     parent_style: Option<&ComputedStyle>,
     root_font_px: f32,

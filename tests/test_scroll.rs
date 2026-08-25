@@ -1,14 +1,14 @@
 // Tests for per-element and viewport scroll: overflow, wheel dispatch,
 // scroll clamping, and scrollbar visibility logic.
 
-use htmlbox::{load_html, LayoutEngine};
-use htmlbox::types::*;
+use webcore::{load_html, LayoutEngine};
+use webcore::types::*;
 
 fn parse_and_layout(html: &str, vw: f32) -> Document {
     load_html(html, vw)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }

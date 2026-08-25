@@ -1,9 +1,9 @@
 // Ported from cpptests/test_box_model.cpp
 // Box model: margin, padding, border, box-sizing, width/height, colors.
 
-use htmlbox::types::*;
-use htmlbox::css::apply_property;
-use htmlbox::{load_html, parse_html};
+use webcore::types::*;
+use webcore::css::apply_property;
+use webcore::{load_html, parse_html};
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -15,7 +15,7 @@ fn parse_and_layout(html: &str, vw: f32) -> Document {
     load_html(html, vw)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -74,7 +74,7 @@ fn box_model_margin_auto_center() {
         800.0,
     );
     // Find div with width ≈ 200
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
@@ -90,7 +90,7 @@ fn box_model_margin_auto_left_only() {
         "<div style='width: 200px; margin-left: auto;'>Right</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
@@ -105,7 +105,7 @@ fn box_model_margin_auto_does_not_affect_defaults() {
         "<div style='width: 200px;'>Not centered</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with width 200 not found");
@@ -120,7 +120,7 @@ fn box_model_margin_percent() {
         "<div style='margin-left: 10%;'>Offset</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && matches!(b.style.margin_left, CssLength::Percent(_))
     });
     assert!(div.is_some(), "div with percent margin not found");
@@ -171,7 +171,7 @@ fn box_model_padding_affects_layout() {
         "<div style='width: 200px; padding: 20px;'>Padded</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 200 not found");
@@ -228,7 +228,7 @@ fn box_model_border_affects_layout() {
         "<div style='width: 200px; border: 5px solid black;'>Bordered</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 200 not found");
@@ -248,7 +248,7 @@ fn box_model_content_box_default() {
         "<div style='width: 200px; padding: 20px; border: 5px solid black;'>Content-box</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.box_sizing == BoxSizing::ContentBox
     });
     assert!(div.is_some(), "content-box div not found");
@@ -266,7 +266,7 @@ fn box_model_border_box_sizing() {
         "<div style='box-sizing: border-box; width: 200px; padding: 20px; border: 5px solid black;'>Border-box</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.box_sizing == BoxSizing::BorderBox
     });
     assert!(div.is_some(), "border-box div not found");
@@ -286,7 +286,7 @@ fn box_model_border_box_sizing() {
 #[test]
 fn box_model_explicit_width() {
     let doc = parse_and_layout("<div style='width: 300px;'>Fixed</div>", 800.0);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.w - 300.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with content_rect.w ≈ 300 not found");
@@ -295,7 +295,7 @@ fn box_model_explicit_width() {
 #[test]
 fn box_model_percentage_width() {
     let doc = parse_and_layout("<div style='width: 50%;'>Half</div>", 800.0);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.layout.content_rect.w > 350.0 && b.layout.content_rect.w < 450.0
     });
     assert!(div.is_some(), "div with width ≈ 50% of 800 not found");
@@ -304,7 +304,7 @@ fn box_model_percentage_width() {
 #[test]
 fn box_model_auto_width_fills_container() {
     let doc = parse_and_layout("<div>Full width</div>", 800.0);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.layout.content_rect.w > 700.0
     });
     assert!(div.is_some(), "div should fill container (w > 700)");
@@ -316,7 +316,7 @@ fn box_model_min_width() {
         "<div style='width: 50px; min-width: 200px;'>Min</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.min_width == CssLength::Px(200.0)
     });
     assert!(div.is_some(), "div with min-width: 200px not found");
@@ -330,7 +330,7 @@ fn box_model_max_width() {
         "<div style='max-width: 300px;'>Max</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.max_width != CssLength::None
     });
     assert!(div.is_some(), "div with max-width not found");
@@ -344,7 +344,7 @@ fn box_model_explicit_height() {
         "<div style='height: 100px;'>Tall</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && (b.layout.content_rect.h - 100.0).abs() < 2.0
     });
     assert!(div.is_some(), "div with height ≈ 100px not found");
@@ -404,7 +404,7 @@ fn box_model_background_color() {
 #[test]
 fn box_model_background_color_from_html() {
     let doc = parse_html("<div style='background-color: yellow;'>Yellow</div>");
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.style.background_color == Color::rgb(255, 255, 0)
     });
     assert!(div.is_some(), "div with yellow background not found");
@@ -418,13 +418,13 @@ fn box_model_color_inheritance_via_stylesheet() {
         800.0,
     );
     // Parent div should have red color applied
-    let parent = find_box(&doc.root, &|b: &HtmlBox| {
+    let parent = find_box(&doc.root, &|b: &WebCore| {
         b.style.color == Color::rgb(255, 0, 0)
             && b.attributes.get("class").map(|v| v == "parent").unwrap_or(false)
     });
     assert!(parent.is_some(), "parent div with red color not found");
     // Child p should inherit red from parent
-    let child = find_box(&doc.root, &|b: &HtmlBox| {
+    let child = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "p" && b.style.color == Color::rgb(255, 0, 0)
     });
     assert!(child.is_some(), "child p should inherit red color");
@@ -440,7 +440,7 @@ fn box_model_display_none() {
         "<div style='display: none;'>Hidden</div><div>Visible</div>",
         800.0,
     );
-    let hidden = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::None);
+    let hidden = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::None);
     assert!(hidden.is_some(), "display:none div should be in tree");
     let hidden = hidden.unwrap();
     assert_eq!(hidden.layout.content_rect.w, 0.0, "display:none box should have zero width");

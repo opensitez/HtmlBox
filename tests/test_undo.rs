@@ -3,9 +3,9 @@
 // NOTE: All C++ undo tests use TestWidget (wxHtmlEditWidget) which is not portable.
 // Only the pure undo-stack tests are ported here.
 
-use htmlbox::dom::*;
-use htmlbox::types::*;
-use htmlbox::parse_html;
+use webcore::dom::*;
+use webcore::types::*;
+use webcore::parse_html;
 
 #[test]
 fn undo_push_and_restore() {
@@ -185,7 +185,7 @@ fn undo_new_push_clears_redo_and_sets_can_undo() {
 #[test]
 fn undo_roundtrip_text() {
     // Undo, RoundTripText
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p>Hello <b>bold</b> world</p>");
     let orig_text = doc.root.text_content();
     let html = serialize_html(&doc);
@@ -197,7 +197,7 @@ fn undo_roundtrip_text() {
 #[test]
 fn undo_roundtrip_structure() {
     // Undo, RoundTripStructure
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p>A</p><p>B</p><p>C</p>");
     let orig_text = doc.root.text_content();
     let html = serialize_html(&doc);
@@ -211,7 +211,7 @@ fn undo_roundtrip_structure() {
 #[test]
 fn undo_multiple_roundtrips_stable() {
     // Undo, MultipleRoundTripsStable
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let input = "<p><b>Bold</b> <i>italic</i> <u>underline</u></p>";
     let d1 = parse_html(input);
     let h1 = serialize_html(&d1);
@@ -235,7 +235,7 @@ fn undo_multiple_roundtrips_stable() {
 #[test]
 fn undo_serialize_preserves_bold() {
     // Clipboard, SelectedHTMLBold — pure serialization variant
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><b>Bold</b> text</p>");
     let html = serialize_html(&doc);
     assert!(html.contains("<b>") || html.contains("font-weight"),
@@ -246,7 +246,7 @@ fn undo_serialize_preserves_bold() {
 
 #[test]
 fn undo_serialize_preserves_italic() {
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><i>Italic</i> text</p>");
     let html = serialize_html(&doc);
     assert!(html.contains("<i>") || html.contains("font-style"),
@@ -256,7 +256,7 @@ fn undo_serialize_preserves_italic() {
 
 #[test]
 fn undo_serialize_preserves_underline() {
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><u>Underlined</u></p>");
     let html = serialize_html(&doc);
     assert!(html.contains("Underlined"), "serialised HTML must contain underlined text");
@@ -265,7 +265,7 @@ fn undo_serialize_preserves_underline() {
 #[test]
 fn undo_serialize_table_structure() {
     // Clipboard, TableHTMLPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html(
         "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>",
     );
@@ -277,7 +277,7 @@ fn undo_serialize_table_structure() {
 #[test]
 fn undo_serialize_mixed_inline_formatting() {
     // Clipboard, MixedInlineFormatting
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><b>Bold</b> <i>Italic</i> <u>Under</u> <s>Strike</s></p>");
     let html = serialize_html(&doc);
     assert!(html.contains("Bold"),   "must contain Bold");
@@ -289,7 +289,7 @@ fn undo_serialize_mixed_inline_formatting() {
 #[test]
 fn undo_serialize_nested_formatting() {
     // Clipboard, NestedFormattingPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><b><i>BoldItalic</i></b> plain</p>");
     let html = serialize_html(&doc);
     assert!(html.contains("BoldItalic"),
@@ -299,7 +299,7 @@ fn undo_serialize_nested_formatting() {
 #[test]
 fn undo_serialize_blockquote() {
     // Clipboard, BlockquotePreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<blockquote><p>Quoted text</p></blockquote>");
     let html = serialize_html(&doc);
     assert!(html.contains("Quoted text"),
@@ -309,7 +309,7 @@ fn undo_serialize_blockquote() {
 #[test]
 fn undo_serialize_ordered_list() {
     // Clipboard, OrderedListPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<ol><li>First</li><li>Second</li><li>Third</li></ol>");
     let html = serialize_html(&doc);
     assert!(html.contains("First")  && html.contains("Second") && html.contains("Third"),
@@ -319,7 +319,7 @@ fn undo_serialize_ordered_list() {
 #[test]
 fn undo_serialize_nested_list() {
     // Clipboard, NestedListPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<ul><li>Outer<ul><li>Inner</li></ul></li></ul>");
     let html = serialize_html(&doc);
     assert!(html.contains("Outer") && html.contains("Inner"),
@@ -329,7 +329,7 @@ fn undo_serialize_nested_list() {
 #[test]
 fn undo_serialize_link_preserved() {
     // Clipboard, LinkPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html(r#"<p><a href="https://example.com">Click here</a></p>"#);
     let html = serialize_html(&doc);
     assert!(html.contains("Click here"),
@@ -342,7 +342,7 @@ fn undo_serialize_link_preserved() {
 #[test]
 fn undo_serialize_complex_document() {
     // Clipboard, ComplexDocumentPreserved
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html(
         "<h1>Title</h1>\
          <p>Intro with <b>bold</b> and <i>italic</i></p>\
@@ -362,7 +362,7 @@ fn undo_serialize_complex_document() {
 #[test]
 fn undo_roundtrip_via_serialize_then_parse() {
     // Clipboard, HTMLRoundTripViaGetSelectedHTML (pure-serialize variant)
-    use htmlbox::html::serialize_html;
+    use webcore::html::serialize_html;
     let doc = parse_html("<p><b>Bold</b> normal <i>italic</i></p>");
     let orig_text = doc.root.text_content();
     let html = serialize_html(&doc);

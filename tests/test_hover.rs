@@ -1,9 +1,9 @@
 // Hover tests – ported from cpptests/test_hover.cpp
 // Only CSS property parsing tests are portable; hover state/render tests skipped.
-use htmlbox::types::*;
-use htmlbox::parse_html;
+use webcore::types::*;
+use webcore::parse_html;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }

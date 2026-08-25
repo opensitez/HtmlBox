@@ -2,10 +2,10 @@
 // Covers :root, element-level, inheritance, fallbacks, chaining,
 // var() in different property types, and real-world patterns.
 
-use htmlbox::types::*;
-use htmlbox::load_html;
+use webcore::types::*;
+use webcore::load_html;
 
-fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
+fn find_box<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_box(child, pred) { return Some(found); }
@@ -13,11 +13,11 @@ fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'
     None
 }
 
-fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn by_id<'a>(root: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     find_box(root, &|b| b.attributes.get("id").map(|v| v == id).unwrap_or(false))
 }
 
-fn by_class<'a>(root: &'a HtmlBox, cls: &str) -> Option<&'a HtmlBox> {
+fn by_class<'a>(root: &'a WebCore, cls: &str) -> Option<&'a WebCore> {
     find_box(root, &|b| b.attributes.get("class").map(|v| v.contains(cls)).unwrap_or(false))
 }
 

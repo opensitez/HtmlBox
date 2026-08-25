@@ -1,6 +1,6 @@
 use crate::types::{
     AlignItems, BorderStyle, Color, ComputedStyle, CssLength, Display, Document, Float,
-    FlexDirection, FlexWrap, FontStyle, FontWeight, HtmlBox, JustifyContent, Position,
+    FlexDirection, FlexWrap, FontStyle, FontWeight, WebCore, JustifyContent, Position,
     TextAlign, TextTransform, WhiteSpace,
 };
 use crate::css::{CssRule, CssSelector, SelectorPart, Combinator, ua_stylesheet};
@@ -502,8 +502,8 @@ fn serialize_stylesheet(doc: &Document) -> String {
 
 // ─── Box serialization ────────────────────────────────────────────────────────
 
-/// Serialize a single `HtmlBox` (and all its descendants) into `out`.
-pub fn serialize_box(node: &HtmlBox, out: &mut String) {
+/// Serialize a single `WebCore` (and all its descendants) into `out`.
+pub fn serialize_box(node: &WebCore, out: &mut String) {
     // Text nodes
     if node.tag == "#text" {
         out.push_str(&escape_html(&node.text));

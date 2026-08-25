@@ -1,6 +1,6 @@
 //! Fragment tree — separates layout from DOM.
 //!
-//! The fragment tree is an owned tree (like HtmlBox) with the same field names
+//! The fragment tree is an owned tree (like WebCore) with the same field names
 //! so that layout functions can operate on it with minimal changes.
 //! Generated from the DOM before each layout pass, with structural corrections:
 //! - Anonymous block boxes for mixed block+inline children
@@ -17,12 +17,12 @@ use std::collections::HashMap;
 
 // ─── LayoutNode trait ─────────────────────────────────────────────────────────
 //
-// Both HtmlBox and Fragment implement this trait so layout functions
+// Both WebCore and Fragment implement this trait so layout functions
 // can operate on either type. This enables the migration: layout_geometry
 // generates a Fragment tree and lays it out without touching the DOM.
 
 /// Trait for types that can be laid out by the layout engine.
-/// Both HtmlBox and Fragment implement this.
+/// Both WebCore and Fragment implement this.
 pub trait LayoutNode {
     fn node_id(&self) -> u32;
     fn tag(&self) -> &str;
@@ -77,7 +77,7 @@ impl LayoutNode for Fragment {
     fn has_dirty_layout_descendant(&self) -> bool { self.has_dirty_layout_descendant }
 }
 
-impl LayoutNode for HtmlBox {
+impl LayoutNode for WebCore {
     fn node_id(&self) -> u32 { self.node_id }
     fn tag(&self) -> &str { &self.tag }
     fn text(&self) -> &str { &self.text }
@@ -85,8 +85,8 @@ impl LayoutNode for HtmlBox {
     fn style_mut(&mut self) -> &mut ComputedStyle { &mut self.style }
     fn layout(&self) -> &LayoutBox { &self.layout }
     fn layout_mut(&mut self) -> &mut LayoutBox { &mut self.layout }
-    fn children(&self) -> &[HtmlBox] { &self.children }
-    fn children_mut(&mut self) -> &mut Vec<HtmlBox> { &mut self.children }
+    fn children(&self) -> &[WebCore] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<WebCore> { &mut self.children }
     fn attributes(&self) -> &HashMap<String, String> { &self.attributes }
     fn image_width(&self) -> u32 { self.image_width }
     fn image_height(&self) -> u32 { self.image_height }
@@ -104,7 +104,7 @@ impl LayoutNode for HtmlBox {
     fn has_dirty_layout_descendant(&self) -> bool { self.has_dirty_layout_descendant }
 }
 
-/// A layout fragment — structurally mirrors HtmlBox so layout functions
+/// A layout fragment — structurally mirrors WebCore so layout functions
 /// can operate on it with minimal code changes.
 #[derive(Clone, Debug)]
 pub struct Fragment {
@@ -118,7 +118,7 @@ pub struct Fragment {
     pub style: ComputedStyle,
     /// Layout output geometry.
     pub layout: LayoutBox,
-    /// Children (owned, like HtmlBox).
+    /// Children (owned, like WebCore).
     pub children: Vec<Fragment>,
     /// HTML attributes.
     pub attributes: HashMap<String, String>,
@@ -143,7 +143,7 @@ pub struct Fragment {
 }
 
 impl Fragment {
-    /// Create a minimal fragment (like HtmlBox::new).
+    /// Create a minimal fragment (like WebCore::new).
     pub fn new(tag: &str) -> Self {
         Self {
             node_id: 0,
@@ -188,11 +188,11 @@ impl Fragment {
 /// - display:contents removed
 /// - Flex/grid children blockified
 /// - Margin collapsing resolved
-pub fn generate_fragments(root: &HtmlBox) -> Fragment {
+pub fn generate_fragments(root: &WebCore) -> Fragment {
     generate_node(root, false)
 }
 
-fn generate_node(node: &HtmlBox, _parent_is_flex_grid: bool) -> Fragment {
+fn generate_node(node: &WebCore, _parent_is_flex_grid: bool) -> Fragment {
     let mut frag = Fragment {
         node_id: node.node_id,
         tag: node.tag.clone(),
@@ -277,16 +277,16 @@ fn track_block_inline(frag: &Fragment, has_block: &mut bool, has_inline: &mut bo
 /// CSS 2.1 §8.3.1: no border-top, no padding-top, no BFC, is block container.
 
 
-// ─── Fragment ↔ HtmlBox conversion ────────────────────────────────────────────
+// ─── Fragment ↔ WebCore conversion ────────────────────────────────────────────
 
-/// Convert a Fragment tree to an HtmlBox tree for layout.
+/// Convert a Fragment tree to an WebCore tree for layout.
 /// The Fragment has structural fixes (anonymous blocks, zeroed margins)
-/// that the HtmlBox tree doesn't. Layout runs on this converted tree,
+/// that the WebCore tree doesn't. Layout runs on this converted tree,
 /// then results are written back to the real DOM.
 ///
 /// Copies ALL fields from the DOM node (not just what Fragment stores),
 /// then applies the Fragment's style overrides (margin zeroing, blockification, etc.).
-pub fn to_htmlbox(frag: &Fragment, dom: &HtmlBox) -> HtmlBox {
+pub fn to_webcore(frag: &Fragment, dom: &WebCore) -> WebCore {
     // Start from a full clone of the DOM node if IDs match, otherwise build from fragment
     let mut hbox = if frag.node_id != 0 && frag.node_id == dom.node_id {
         let mut h = dom.clone();
@@ -294,7 +294,7 @@ pub fn to_htmlbox(frag: &Fragment, dom: &HtmlBox) -> HtmlBox {
         h
     } else {
         // Anonymous fragment or no DOM match — build from fragment data
-        let mut h = HtmlBox::new(&frag.tag);
+        let mut h = WebCore::new(&frag.tag);
         h.node_id = frag.node_id;
         h.text = frag.text.clone();
         h.layout = frag.layout.clone();
@@ -322,15 +322,15 @@ pub fn to_htmlbox(frag: &Fragment, dom: &HtmlBox) -> HtmlBox {
         } else {
             None
         };
-        let dummy = HtmlBox::new("");
-        hbox.children.push(to_htmlbox(fc, dom_child.unwrap_or(&dummy)));
+        let dummy = WebCore::new("");
+        hbox.children.push(to_webcore(fc, dom_child.unwrap_or(&dummy)));
     }
 
     hbox
 }
 
 /// Find a DOM node by node_id anywhere in the subtree (immutable).
-fn find_dom_node(root: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+fn find_dom_node(root: &WebCore, id: u32) -> Option<&WebCore> {
     if root.node_id == id { return Some(root); }
     for child in &root.children {
         if let Some(found) = find_dom_node(child, id) {
@@ -342,10 +342,10 @@ fn find_dom_node(root: &HtmlBox, id: u32) -> Option<&HtmlBox> {
 
 // ─── Write-back ───────────────────────────────────────────────────────────────
 
-/// Copy layout results from a laid-out HtmlBox tree (converted from fragments)
+/// Copy layout results from a laid-out WebCore tree (converted from fragments)
 /// back to the real DOM tree. Uses recursive node_id matching because the
 /// fragment tree may have reparented children (display:contents, anonymous blocks).
-pub fn write_back_htmlbox(laid_out: &HtmlBox, dom: &mut HtmlBox) {
+pub fn write_back_webcore(laid_out: &WebCore, dom: &mut WebCore) {
     // Write this node's layout geometry if node_ids match.
     // Preserve resolved_margin/border/padding values from the DOM's own cascade
     // (margin collapsing changes positioning but not the CSS-specified values).
@@ -390,36 +390,36 @@ pub fn write_back_htmlbox(laid_out: &HtmlBox, dom: &mut HtmlBox) {
                 if let Some(dom_pseudo) = dom.children.iter_mut().find(|c| c.tag == lc.tag) {
                     dom_pseudo.layout = lc.layout.clone();
                     // Recurse for pseudo's children
-                    write_back_htmlbox(lc, dom_pseudo);
+                    write_back_webcore(lc, dom_pseudo);
                 }
             } else {
                 // Regular anonymous box — recurse into its children
-                write_back_htmlbox_into_subtree(lc, dom);
+                write_back_webcore_into_subtree(lc, dom);
             }
             continue;
         }
         // Find matching DOM node in this subtree and write back
         if let Some(dom_node) = find_dom_node_mut(dom, lc.node_id) {
-            write_back_htmlbox(lc, dom_node);
+            write_back_webcore(lc, dom_node);
         }
     }
 }
 
 /// Write back from an anonymous box's children into the DOM subtree.
-fn write_back_htmlbox_into_subtree(anon: &HtmlBox, dom: &mut HtmlBox) {
+fn write_back_webcore_into_subtree(anon: &WebCore, dom: &mut WebCore) {
     for lc in &anon.children {
         if lc.node_id == 0 {
-            write_back_htmlbox_into_subtree(lc, dom);
+            write_back_webcore_into_subtree(lc, dom);
             continue;
         }
         if let Some(dom_node) = find_dom_node_mut(dom, lc.node_id) {
-            write_back_htmlbox(lc, dom_node);
+            write_back_webcore(lc, dom_node);
         }
     }
 }
 
 /// Find a mutable DOM node by node_id anywhere in the subtree.
-fn find_dom_node_mut(root: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
+fn find_dom_node_mut(root: &mut WebCore, id: u32) -> Option<&mut WebCore> {
     if root.node_id == id { return Some(root); }
     for child in &mut root.children {
         if let Some(found) = find_dom_node_mut(child, id) {
@@ -430,7 +430,7 @@ fn find_dom_node_mut(root: &mut HtmlBox, id: u32) -> Option<&mut HtmlBox> {
 }
 
 /// Copy layout results from fragment tree back to DOM tree.
-pub fn write_back(frag: &Fragment, dom: &mut HtmlBox) {
+pub fn write_back(frag: &Fragment, dom: &mut WebCore) {
     if frag.node_id == dom.node_id && frag.node_id != 0 {
         dom.layout = frag.layout.clone();
     }
@@ -454,7 +454,7 @@ pub fn write_back(frag: &Fragment, dom: &mut HtmlBox) {
     }
 }
 
-fn write_back_anon(frag: &Fragment, dom: &mut HtmlBox) {
+fn write_back_anon(frag: &Fragment, dom: &mut WebCore) {
     for fc in &frag.children {
         if fc.node_id == 0 {
             write_back_anon(fc, dom);

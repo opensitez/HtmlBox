@@ -7,11 +7,11 @@
 // - <source> element display: none
 // - Percentage width in intrinsic sizing
 
-use htmlbox::types::*;
-use htmlbox::css::apply_property;
-use htmlbox::{parse_html, load_html, load_html_vp};
+use webcore::types::*;
+use webcore::css::apply_property;
+use webcore::{parse_html, load_html, load_html_vp};
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -19,7 +19,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn find_box_mut<'a, F: Fn(&HtmlBox) -> bool>(root: &'a mut HtmlBox, pred: &F) -> Option<&'a mut HtmlBox> {
+fn find_box_mut<'a, F: Fn(&WebCore) -> bool>(root: &'a mut WebCore, pred: &F) -> Option<&'a mut WebCore> {
     if pred(root) { return Some(root); }
     for child in &mut root.children {
         if let Some(b) = find_box_mut(child, pred) { return Some(b); }
@@ -27,7 +27,7 @@ fn find_box_mut<'a, F: Fn(&HtmlBox) -> bool>(root: &'a mut HtmlBox, pred: &F) ->
     None
 }
 
-fn collect_boxes<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Vec<&'a HtmlBox> {
+fn collect_boxes<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     if pred(root) { result.push(root); }
     for child in &root.children {
@@ -531,18 +531,18 @@ fn grid_before_counter_in_fixed_column() {
 
 #[test]
 fn evaluate_media_min_width_passes() {
-    assert!(htmlbox::css::evaluate_media("(min-width: 1024px)", 1200.0, 800.0));
+    assert!(webcore::css::evaluate_media("(min-width: 1024px)", 1200.0, 800.0));
 }
 
 #[test]
 fn evaluate_media_min_width_fails() {
-    assert!(!htmlbox::css::evaluate_media("(min-width: 1024px)", 800.0, 600.0));
+    assert!(!webcore::css::evaluate_media("(min-width: 1024px)", 800.0, 600.0));
 }
 
 #[test]
 fn evaluate_media_max_width() {
-    assert!(htmlbox::css::evaluate_media("(max-width: 768px)", 600.0, 400.0));
-    assert!(!htmlbox::css::evaluate_media("(max-width: 768px)", 1024.0, 768.0));
+    assert!(webcore::css::evaluate_media("(max-width: 768px)", 600.0, 400.0));
+    assert!(!webcore::css::evaluate_media("(max-width: 768px)", 1024.0, 768.0));
 }
 
 // ============================================================
@@ -589,7 +589,7 @@ fn descendant_selector_nested_deep() {
         </body></html>
     "#, 800.0, 600.0);
     let deep = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "deep")).unwrap();
-    assert!(matches!(deep.style.font_weight, htmlbox::types::FontWeight::Bold | htmlbox::types::FontWeight::Value(700)), "Deeply nested descendant should match");
+    assert!(matches!(deep.style.font_weight, webcore::types::FontWeight::Bold | webcore::types::FontWeight::Value(700)), "Deeply nested descendant should match");
 }
 
 #[test]
@@ -633,12 +633,12 @@ fn child_combinator_direct() {
 
 #[test]
 fn descendant_selector_parse_produces_combinator() {
-    let sel = htmlbox::css::parse_selector(".Parent .Child");
+    let sel = webcore::css::parse_selector(".Parent .Child");
     // Should be: [Class("Parent"), Combinator(Descendant), Class("Child")]
     assert_eq!(sel.parts.len(), 3, "Expected 3 parts: class, combinator, class");
-    assert!(matches!(&sel.parts[0], htmlbox::css::SelectorPart::Class(c) if c == "Parent"));
-    assert!(matches!(&sel.parts[1], htmlbox::css::SelectorPart::Combinator(htmlbox::css::Combinator::Descendant)));
-    assert!(matches!(&sel.parts[2], htmlbox::css::SelectorPart::Class(c) if c == "Child"));
+    assert!(matches!(&sel.parts[0], webcore::css::SelectorPart::Class(c) if c == "Parent"));
+    assert!(matches!(&sel.parts[1], webcore::css::SelectorPart::Combinator(webcore::css::Combinator::Descendant)));
+    assert!(matches!(&sel.parts[2], webcore::css::SelectorPart::Class(c) if c == "Child"));
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn inherit_overrides_lower_specificity_rule() {
     // Parent (.child div) has default 16px font.  h1 with font-size:inherit should be 16px, not 2em=32px.
     let fs = hdr.style.font_size_px(16.0, 16.0);
     assert!((fs - 16.0).abs() < 1.0, "h1 with font-size:inherit should be 16px, got {fs}");
-    assert!(matches!(hdr.style.display, htmlbox::types::Display::Inline), "h1 with display:inline from descendant selector");
+    assert!(matches!(hdr.style.display, webcore::types::Display::Inline), "h1 with display:inline from descendant selector");
 }
 
 #[test]
@@ -765,7 +765,7 @@ fn li_display_inline_renders_horizontally() {
         </ul>
     "#;
     let doc = load_html(html, 800.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 li elements");
     // All items should be display:inline from CSS override
     for (i, item) in items.iter().enumerate() {
@@ -781,7 +781,7 @@ fn li_display_inline_renders_horizontally() {
     }
 }
 
-fn find_all_boxes<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Vec<&'a HtmlBox> {
+fn find_all_boxes<'a>(root: &'a WebCore, pred: &dyn Fn(&WebCore) -> bool) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     if pred(root) { result.push(root); }
     for child in &root.children {
@@ -804,7 +804,7 @@ fn li_display_inline_block_renders_horizontally() {
         </ul>
     "#;
     let doc = load_html(html, 800.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3);
     let y0 = items[0].layout.margin_rect.y;
     for (i, item) in items.iter().enumerate() {
@@ -838,7 +838,7 @@ fn sibling_blocks_do_not_overlap_vertically() {
         b.tag == "div" && b.style.width == CssLength::Px(400.0)
     });
     assert!(!container.is_empty(), "container div not found");
-    let divs: Vec<&HtmlBox> = container[0].children.iter()
+    let divs: Vec<&WebCore> = container[0].children.iter()
         .filter(|b| b.tag == "div")
         .collect();
     assert_eq!(divs.len(), 3, "expected 3 child divs");
@@ -924,7 +924,7 @@ fn wikipedia_tabs_horizontal_layout() {
         </nav>
     "#;
     let doc = load_html(html, 1280.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 li tabs");
     
     // All tabs must be on the same Y line
@@ -966,7 +966,7 @@ fn floated_list_items_horizontal() {
         </div>
     "#;
     let doc = load_html(html, 1280.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 tab li elements");
     
     // Floated items must all be on the same line
@@ -1041,7 +1041,7 @@ fn inline_ul_li_text_renders_with_width() {
     }
 
     // Find the inner li items (display:inline ones from hlist)
-    let inner_lis: Vec<&HtmlBox> = find_all_boxes(hlist[0], &|b| b.tag == "li");
+    let inner_lis: Vec<&WebCore> = find_all_boxes(hlist[0], &|b| b.tag == "li");
     eprintln!("inner lis: {}", inner_lis.len());
     for (i, li) in inner_lis.iter().enumerate() {
         let text = li.children.first()
@@ -1105,7 +1105,7 @@ fn float_container_shrinkwrap_contains_all_float_children() {
         "</div>",
     );
     let doc = load_html(html, 1280.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 li elements");
 
     // All items must be on the same Y line (not wrapping)
@@ -1149,7 +1149,7 @@ fn wikipedia_exact_tabs_structure() {
         "</div>",
     );
     let doc = load_html(html, 1280.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 tab li elements");
     
     // Debug output
@@ -1192,7 +1192,7 @@ fn text_after_float_does_not_overlap() {
         </div>
     "#;
     let doc = load_html(html, 800.0);
-    let paras: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "p");
+    let paras: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs, got {}", paras.len());
     
     // Each paragraph's border_rect must not overlap the previous
@@ -1245,8 +1245,8 @@ fn two_column_float_layout_no_overlap() {
     let doc = load_html(html, 1280.0);
     
     // Find all h2 and p elements
-    let h2s: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "h2");
-    let ps: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "p");
+    let h2s: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "h2");
+    let ps: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "p");
     
     // Within each section, h2 must be above its p
     // "On this day" h2 and p must be below all floated content
@@ -1293,7 +1293,7 @@ fn bidi_dir_ltr_no_text_overlap() {
         "</html>",
     );
     let doc = load_html(html, 800.0);
-    let paras: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "p");
+    let paras: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "p");
     assert!(paras.len() >= 3, "expected 3 paragraphs, got {}", paras.len());
     
     for (i, p) in paras.iter().enumerate() {
@@ -1333,7 +1333,7 @@ fn inline_elements_with_dir_no_overlap() {
         b.tag == "div" && b.style.width == CssLength::Px(400.0)
     );
     assert!(!container.is_empty());
-    let divs: Vec<&HtmlBox> = container[0].children.iter()
+    let divs: Vec<&WebCore> = container[0].children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     
@@ -1382,7 +1382,7 @@ fn table_layout_cells_no_overlap() {
     let doc = load_html(html, 1280.0);
     
     // "On this day" section must be below the table
-    let h2s: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "h2");
+    let h2s: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "h2");
     let table = find_all_boxes(&doc.root, &|b| b.tag == "table");
     assert!(!table.is_empty(), "table not found");
     
@@ -1395,9 +1395,9 @@ fn table_layout_cells_no_overlap() {
         last_h2.layout.border_rect.y, table_bottom);
     
     // Within left column, h2 and p should not overlap
-    let tds: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "td");
+    let tds: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "td");
     for td in &tds {
-        let children: Vec<&HtmlBox> = td.children.iter()
+        let children: Vec<&WebCore> = td.children.iter()
             .filter(|c| c.tag != "#text")
             .collect();
         for i in 1..children.len() {
@@ -1423,11 +1423,11 @@ fn wikipedia_real_page_no_major_overlaps() {
     };
     let css_text = std::fs::read_to_string("/tmp/wiki_css.css").unwrap_or_default();
     
-    let mut doc = htmlbox::html::parse_html_with_base(&html, "https://en.wikipedia.org/wiki/Main_Page");
+    let mut doc = webcore::html::parse_html_with_base(&html, "https://en.wikipedia.org/wiki/Main_Page");
     doc.stylesheet.parse_and_add(&css_text);
     doc.viewport_w = 1280.0;
     doc.viewport_h = 900.0;
-    let mut renderer = htmlbox::renderer::Renderer::new();
+    let mut renderer = webcore::renderer::Renderer::new();
     {
         let eng = renderer.layout_engine();
         eng.viewport_h = 900.0;
@@ -1447,8 +1447,8 @@ fn wikipedia_real_page_no_major_overlaps() {
     assert!(major == 0, "Found {} major overlaps (>20px) on Wikipedia page", major);
 }
 
-fn check_block_overlaps(node: &HtmlBox, overlaps: &mut Vec<String>) {
-    let block_children: Vec<&HtmlBox> = node.children.iter()
+fn check_block_overlaps(node: &WebCore, overlaps: &mut Vec<String>) {
+    let block_children: Vec<&WebCore> = node.children.iter()
         .filter(|c| c.tag != "#text" && c.style.is_block_level() 
                 && c.style.float == Float::None
                 && !matches!(c.style.position, Position::Absolute | Position::Fixed)
@@ -1518,7 +1518,7 @@ fn rtl_flex_row_items_flow_right_to_left() {
         "</div>",
     );
     let doc = load_html(html, 800.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b|
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b|
         b.style.width == CssLength::Px(100.0) && b.style.height == CssLength::Px(50.0)
     );
     assert_eq!(items.len(), 3, "expected 3 flex items");
@@ -1626,12 +1626,12 @@ fn visibility_hidden_opacity_zero_not_painted() {
     );
     let doc = load_html(html, 800.0);
     // The hidden div should be absolute and not affect flow
-    let visible_divs: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b|
+    let visible_divs: Vec<&WebCore> = find_all_boxes(&doc.root, &|b|
         b.tag == "div" && b.style.visibility && b.layout.content_rect.h > 0.0
         && !matches!(b.style.position, Position::Absolute | Position::Fixed)
     );
     // "Visible text" and "More visible text" should not overlap
-    let texts: Vec<&HtmlBox> = visible_divs.iter()
+    let texts: Vec<&WebCore> = visible_divs.iter()
         .filter(|b| b.children.iter().any(|c| c.tag == "#text" && !c.text.trim().is_empty()))
         .cloned().collect();
     if texts.len() >= 2 {
@@ -1730,7 +1730,7 @@ fn text_in_link_inside_flex_item_is_on_screen() {
         "</body></html>",
     );
     let doc = load_html(html, 800.0);
-    let spans: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b|
+    let spans: Vec<&WebCore> = find_all_boxes(&doc.root, &|b|
         b.tag == "span" && !b.children.is_empty() && b.children[0].tag == "#text"
     );
     for (i, span) in spans.iter().enumerate() {
@@ -1757,7 +1757,7 @@ fn text_in_link_inside_flex_item_is_on_screen() {
         }
     }
     // The <a> elements must have non-zero width (text is visible)
-    let links: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b|
+    let links: Vec<&WebCore> = find_all_boxes(&doc.root, &|b|
         b.tag == "a" && b.attributes.get("href").is_some()
     );
     assert!(links.len() >= 3);
@@ -1934,7 +1934,7 @@ fn rtl_grid_narrow_column_wraps_text() {
     assert!(sidebar[0].layout.content_rect.w > 150.0,
         "sidebar width ({:.1}) should be > 150px", sidebar[0].layout.content_rect.w);
     // Sidebar children should have content (not single-char truncation)
-    let divs: Vec<&HtmlBox> = sidebar[0].children.iter()
+    let divs: Vec<&WebCore> = sidebar[0].children.iter()
         .filter(|c| c.tag == "div").collect();
     for (i, d) in divs.iter().enumerate() {
         assert!(d.layout.content_rect.h > 10.0,
@@ -2149,7 +2149,7 @@ fn grid_minmax_0_1fr_with_template_areas() {
         "</ul>",
     );
     let doc = load_html(html, 1280.0);
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 7, "expected 7 grid items");
 
     // p1 (hero) should span 2 columns = ~50% of 1248 = ~600px
@@ -2205,7 +2205,7 @@ fn supports_display_grid_applies_styles() {
         "grid should be display:Grid from @supports, got {:?}",
         grid[0].style.display);
     // Each item should be ~25% of 1248 = ~300px (4 columns)
-    let items: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "li");
+    let items: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 4);
     for (i, item) in items.iter().enumerate() {
         eprintln!("li[{}] w={:.0}", i, item.layout.content_rect.w);
@@ -2321,7 +2321,7 @@ fn flex_nav_links_on_one_line() {
         "</div>",
     );
     let doc = load_html(html, 1000.0);
-    let links: Vec<&HtmlBox> = find_all_boxes(&doc.root, &|b| b.tag == "a");
+    let links: Vec<&WebCore> = find_all_boxes(&doc.root, &|b| b.tag == "a");
     assert!(links.len() >= 7);
     let y0 = links[0].layout.border_rect.y;
     for (i, link) in links.iter().enumerate() {

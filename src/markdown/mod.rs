@@ -10,9 +10,9 @@ use crate::html::load_image_from_src;
 // Mirrors MarkdownParser.cpp
 // ============================================================
 
-// Helper: create a new HtmlBox with appropriate tag defaults
-fn make_box(tag: &str) -> HtmlBox {
-    let mut b = HtmlBox::new(tag);
+// Helper: create a new WebCore with appropriate tag defaults
+fn make_box(tag: &str) -> WebCore {
+    let mut b = WebCore::new(tag);
     // Mirror the UA stylesheet sizes so markdown output looks identical to HTML output.
     // Em values are resolved by the layout engine relative to the element's own font size.
     match tag {
@@ -144,7 +144,7 @@ fn make_box(tag: &str) -> HtmlBox {
 }
 
 // Append a styled text run to a block box
-fn append_run(block: &mut HtmlBox, text: &str, style: ComputedStyle) {
+fn append_run(block: &mut WebCore, text: &str, style: ComputedStyle) {
     if text.is_empty() {
         return;
     }
@@ -251,7 +251,7 @@ impl<'a> InlineParser<'a> {
         Self { refs }
     }
 
-    fn parse(&self, block: &mut HtmlBox, text: &str) {
+    fn parse(&self, block: &mut WebCore, text: &str) {
         let base_style = block.style.clone();
         // Reset inline-specific fields for base style
         let mut s = ComputedStyle::default();
@@ -262,7 +262,7 @@ impl<'a> InlineParser<'a> {
         self.parse_inner(block, text, s);
     }
 
-    fn parse_inner(&self, block: &mut HtmlBox, text: &str, style: ComputedStyle) {
+    fn parse_inner(&self, block: &mut WebCore, text: &str, style: ComputedStyle) {
         let bytes = text.as_bytes();
         let len = bytes.len();
         let mut pos = 0usize;
@@ -597,7 +597,7 @@ impl<'a> InlineParser<'a> {
     }
 }
 
-fn flush_accum(accum: &mut String, block: &mut HtmlBox, style: &ComputedStyle) {
+fn flush_accum(accum: &mut String, block: &mut WebCore, style: &ComputedStyle) {
     if accum.is_empty() {
         return;
     }
@@ -928,7 +928,7 @@ impl<'a> BlockParser<'a> {
         }
     }
 
-    fn parse_blocks(&mut self, parent: &mut HtmlBox) {
+    fn parse_blocks(&mut self, parent: &mut WebCore) {
         while self.pos < self.lines.len() {
             let line = &self.lines[self.pos];
 
@@ -1151,7 +1151,7 @@ impl<'a> BlockParser<'a> {
         }
     }
 
-    fn parse_paragraph(&mut self, parent: &mut HtmlBox) {
+    fn parse_paragraph(&mut self, parent: &mut WebCore) {
         let mut p = make_box("p");
         let mut content = String::new();
 
@@ -1201,7 +1201,7 @@ impl<'a> BlockParser<'a> {
         parent.children.push(p);
     }
 
-    fn parse_list(&mut self, parent: &mut HtmlBox, first_item: ListInfo) {
+    fn parse_list(&mut self, parent: &mut WebCore, first_item: ListInfo) {
         let list_tag = if first_item.ordered { "ol" } else { "ul" };
         let mut list = make_box(list_tag);
         list.data.insert("md-bullet".to_string(), first_item.marker.clone());
@@ -1314,7 +1314,7 @@ impl<'a> BlockParser<'a> {
         parent.children.push(list);
     }
 
-    fn parse_table(&mut self, parent: &mut HtmlBox) {
+    fn parse_table(&mut self, parent: &mut WebCore) {
         let mut table = make_box("table");
         table.data.insert("md-table".to_string(), "true".to_string());
 
@@ -1368,7 +1368,7 @@ impl<'a> BlockParser<'a> {
         parent.children.push(table);
     }
 
-    fn parse_definition_list(&mut self, parent: &mut HtmlBox) {
+    fn parse_definition_list(&mut self, parent: &mut WebCore) {
         let mut dl = make_box("dl");
 
         loop {

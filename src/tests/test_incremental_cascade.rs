@@ -92,7 +92,7 @@ fn incremental_cascade_correctness() {
     clear_cascade_dirty(&mut doc_inc.root);
 
     // Compare: the hovered link should have the same color in both
-    fn find_style(root: &crate::types::HtmlBox, id: u32) -> Option<crate::types::ComputedStyle> {
+    fn find_style(root: &crate::types::WebCore, id: u32) -> Option<crate::types::ComputedStyle> {
         if root.node_id == id { return Some(root.style.clone()); }
         for child in &root.children {
             if let Some(s) = find_style(child, id) { return Some(s); }

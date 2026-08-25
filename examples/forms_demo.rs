@@ -1,4 +1,4 @@
-//! forms_demo — Interactive pizza ordering app using htmlbox.
+//! forms_demo — Interactive pizza ordering app using webcore.
 //!
 //! Uses the same event system as graph_demo and event_playground:
 //! - `renderer.handle_window_event()` for all input routing
@@ -15,10 +15,10 @@ use winit::event_loop::EventLoop;
 use winit::keyboard::{PhysicalKey, KeyCode};
 use winit::window::Window;
 
-use htmlbox::{load_html, Renderer, LayoutEngine};
-use htmlbox::platform::Platform;
-use htmlbox::dom::{self, HtmlEventType};
-use htmlbox::HtmlBox;
+use webcore::{load_html, Renderer, LayoutEngine};
+use webcore::platform::Platform;
+use webcore::dom::{self, HtmlEventType};
+use webcore::WebCore;
 
 const HTML: &str = include_str!("html/forms_demo.html");
 
@@ -26,12 +26,12 @@ struct App {
     window:   Option<Arc<Window>>,
     platform: Option<Platform>,
     renderer: Renderer,
-    doc:      Option<htmlbox::Document>,
+    doc:      Option<webcore::Document>,
     mouse:    (f32, f32),
     width:    f32,
 }
 
-fn update_summary(root: &mut HtmlBox) {
+fn update_summary(root: &mut WebCore) {
     // Read form values and update the summary section
     let name = dom::query_selector(root, "#name")
         .and_then(|n| n.attributes.get("value").cloned())
@@ -105,7 +105,7 @@ impl ApplicationHandler<()> for App {
     fn resumed(&mut self, el: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(el.create_window(
             Window::default_attributes()
-                .with_title("Pizza Builder — htmlbox Forms Demo")
+                .with_title("Pizza Builder — webcore Forms Demo")
                 .with_inner_size(winit::dpi::LogicalSize::new(860u32, 900u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());
@@ -281,7 +281,7 @@ impl ApplicationHandler<()> for App {
 }
 
 fn main() {
-    eprintln!("🍕 Pizza Builder — htmlbox Forms Demo");
+    eprintln!("🍕 Pizza Builder — webcore Forms Demo");
     eprintln!("   Click checkboxes and radio buttons");
     eprintln!("   Click text fields to type");
     eprintln!("   Click 'Place Order' to submit");

@@ -4,9 +4,9 @@
 //
 // DeeplyNestedLayout and MixedFlowLayout use wxBitmap/wxMemoryDC — SKIPPED.
 
-use htmlbox::types::*;
-use htmlbox::css::apply_property;
-use htmlbox::{load_html, parse_html};
+use webcore::types::*;
+use webcore::css::apply_property;
+use webcore::{load_html, parse_html};
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -22,7 +22,7 @@ fn parse_and_layout(html: &str, vw: f32) -> Document {
     load_html(html, vw)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -30,7 +30,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn find_all<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F, out: &mut Vec<&'a HtmlBox>) {
+fn find_all<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F, out: &mut Vec<&'a WebCore>) {
     if pred(root) { out.push(root); }
     for child in &root.children { find_all(child, pred, out); }
 }
@@ -75,7 +75,7 @@ fn layout_adv_min_height_enforced() {
         "<div style='min-height: 200px;'>Short</div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.min_height == CssLength::Px(200.0)
     });
     assert!(div.is_some(), "div with min-height: 200px not found");
@@ -91,7 +91,7 @@ fn layout_adv_max_height_enforced() {
          </div>",
         800.0,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "div" && b.style.max_height != CssLength::None
     });
     assert!(div.is_some(), "div with max-height not found");
@@ -112,7 +112,7 @@ fn layout_adv_margin_collapsing_positive() {
         800.0,
     );
     let mut divs = Vec::new();
-    find_all(&doc.root, &|b: &HtmlBox| b.tag == "div", &mut divs);
+    find_all(&doc.root, &|b: &WebCore| b.tag == "div", &mut divs);
     assert!(divs.len() >= 2, "Expected at least 2 divs");
     let a = divs[0];
     let b = divs[1];
@@ -131,7 +131,7 @@ fn layout_adv_margin_collapsing_equal() {
         800.0,
     );
     let mut divs = Vec::new();
-    find_all(&doc.root, &|b: &HtmlBox| b.tag == "div", &mut divs);
+    find_all(&doc.root, &|b: &WebCore| b.tag == "div", &mut divs);
     assert!(divs.len() >= 2);
     let a = divs[0];
     let b = divs[1];
@@ -148,7 +148,7 @@ fn layout_adv_margin_collapsing_equal() {
 #[test]
 fn layout_adv_article_is_block() {
     let doc = parse("<article>Content</article>");
-    let article = find_box(&doc.root, &|b: &HtmlBox| b.tag == "article");
+    let article = find_box(&doc.root, &|b: &WebCore| b.tag == "article");
     assert!(article.is_some(), "article element not found");
     assert_eq!(article.unwrap().style.display, Display::Block,
         "article should be Display::Block");
@@ -157,7 +157,7 @@ fn layout_adv_article_is_block() {
 #[test]
 fn layout_adv_section_is_block() {
     let doc = parse("<section>Content</section>");
-    let section = find_box(&doc.root, &|b: &HtmlBox| b.tag == "section");
+    let section = find_box(&doc.root, &|b: &WebCore| b.tag == "section");
     assert!(section.is_some(), "section element not found");
     assert_eq!(section.unwrap().style.display, Display::Block);
 }
@@ -165,7 +165,7 @@ fn layout_adv_section_is_block() {
 #[test]
 fn layout_adv_header_is_block() {
     let doc = parse("<header>Content</header>");
-    let header = find_box(&doc.root, &|b: &HtmlBox| b.tag == "header");
+    let header = find_box(&doc.root, &|b: &WebCore| b.tag == "header");
     assert!(header.is_some(), "header element not found");
     assert_eq!(header.unwrap().style.display, Display::Block);
 }
@@ -173,7 +173,7 @@ fn layout_adv_header_is_block() {
 #[test]
 fn layout_adv_footer_is_block() {
     let doc = parse("<footer>Content</footer>");
-    let footer = find_box(&doc.root, &|b: &HtmlBox| b.tag == "footer");
+    let footer = find_box(&doc.root, &|b: &WebCore| b.tag == "footer");
     assert!(footer.is_some(), "footer element not found");
     assert_eq!(footer.unwrap().style.display, Display::Block);
 }
@@ -181,7 +181,7 @@ fn layout_adv_footer_is_block() {
 #[test]
 fn layout_adv_nav_is_block() {
     let doc = parse("<nav>Content</nav>");
-    let nav = find_box(&doc.root, &|b: &HtmlBox| b.tag == "nav");
+    let nav = find_box(&doc.root, &|b: &WebCore| b.tag == "nav");
     assert!(nav.is_some(), "nav element not found");
     assert_eq!(nav.unwrap().style.display, Display::Block);
 }
@@ -189,7 +189,7 @@ fn layout_adv_nav_is_block() {
 #[test]
 fn layout_adv_aside_is_block() {
     let doc = parse("<aside>Content</aside>");
-    let aside = find_box(&doc.root, &|b: &HtmlBox| b.tag == "aside");
+    let aside = find_box(&doc.root, &|b: &WebCore| b.tag == "aside");
     assert!(aside.is_some(), "aside element not found");
     assert_eq!(aside.unwrap().style.display, Display::Block);
 }
@@ -197,7 +197,7 @@ fn layout_adv_aside_is_block() {
 #[test]
 fn layout_adv_main_is_block() {
     let doc = parse("<main>Content</main>");
-    let main_el = find_box(&doc.root, &|b: &HtmlBox| b.tag == "main");
+    let main_el = find_box(&doc.root, &|b: &WebCore| b.tag == "main");
     assert!(main_el.is_some(), "main element not found");
     assert_eq!(main_el.unwrap().style.display, Display::Block);
 }
@@ -205,7 +205,7 @@ fn layout_adv_main_is_block() {
 #[test]
 fn layout_adv_figure_is_block() {
     let doc = parse("<figure><figcaption>Caption</figcaption></figure>");
-    let figure = find_box(&doc.root, &|b: &HtmlBox| b.tag == "figure");
+    let figure = find_box(&doc.root, &|b: &WebCore| b.tag == "figure");
     assert!(figure.is_some(), "figure element not found");
     assert_eq!(figure.unwrap().style.display, Display::Block);
 }
@@ -213,7 +213,7 @@ fn layout_adv_figure_is_block() {
 #[test]
 fn layout_adv_figcaption_is_block() {
     let doc = parse("<figure><figcaption>Caption</figcaption></figure>");
-    let figcaption = find_box(&doc.root, &|b: &HtmlBox| b.tag == "figcaption");
+    let figcaption = find_box(&doc.root, &|b: &WebCore| b.tag == "figcaption");
     assert!(figcaption.is_some(), "figcaption element not found");
     assert_eq!(figcaption.unwrap().style.display, Display::Block);
 }
@@ -243,6 +243,6 @@ fn layout_adv_inline_grid_parsed() {
 // DeeplyNestedLayout — SKIPPED: uses wxBitmap/wxMemoryDC rendering infrastructure
 // MixedFlowLayout    — SKIPPED: uses wxBitmap/wxMemoryDC rendering infrastructure
 
-// TableValignTop/Middle/Bottom — SKIPPED: HtmlBox has no `table_cell_valign` field
+// TableValignTop/Middle/Bottom — SKIPPED: WebCore has no `table_cell_valign` field
 // (the `valign` attribute is applied via `vertical_align` on the cell style).
 // These are tested indirectly through the coverage_gaps valign tests.

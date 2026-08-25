@@ -6,7 +6,7 @@
 use crate::types::*;
 
 // Collect all text from a box's inline_runs (and recursively children)
-fn collect_inline_text(b: &HtmlBox) -> String {
+fn collect_inline_text(b: &WebCore) -> String {
     let mut result = String::new();
     for run in &b.layout.inline_runs {
         let end = run.text_offset + run.length;
@@ -21,7 +21,7 @@ fn collect_inline_text(b: &HtmlBox) -> String {
 }
 
 // Serialize inline content with Markdown formatting
-fn serialize_inline(b: &HtmlBox, block_style: Option<&ComputedStyle>) -> String {
+fn serialize_inline(b: &WebCore, block_style: Option<&ComputedStyle>) -> String {
     let mut result = String::new();
 
     let block_is_bold = block_style.map(|s| s.font_weight == FontWeight::Bold).unwrap_or(false);
@@ -120,7 +120,7 @@ fn serialize_inline(b: &HtmlBox, block_style: Option<&ComputedStyle>) -> String 
     result
 }
 
-fn serialize_block(b: &HtmlBox, out: &mut String, indent: usize, needs_blank_line: &mut bool) {
+fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_line: &mut bool) {
     let tag = b.tag.as_str();
 
     // Footnote section div

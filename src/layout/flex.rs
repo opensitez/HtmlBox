@@ -3,25 +3,25 @@ use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use super::{Constraints, IntrinsicSizes};
 
 /// Resolve a child by path through `display: contents` wrappers.
-fn child_ref<'a>(node: &'a HtmlBox, path: &[usize]) -> &'a HtmlBox {
+fn child_ref<'a>(node: &'a WebCore, path: &[usize]) -> &'a WebCore {
     let mut n = node;
     for &i in path { n = &n.children[i]; }
     n
 }
-fn child_mut<'a>(node: &'a mut HtmlBox, path: &[usize]) -> &'a mut HtmlBox {
+fn child_mut<'a>(node: &'a mut WebCore, path: &[usize]) -> &'a mut WebCore {
     let mut n = node;
     for &i in path { n = &mut n.children[i]; }
     n
 }
 
 /// Collect effective flex children, flattening `display: contents`.
-fn collect_flex_children(node: &HtmlBox) -> Vec<Vec<usize>> {
+fn collect_flex_children(node: &WebCore) -> Vec<Vec<usize>> {
     let mut result = Vec::new();
     let mut path = Vec::new();
     collect_inner(node, &mut path, &mut result);
     result
 }
-fn collect_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+fn collect_inner(node: &WebCore, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
     for (idx, child) in node.children.iter().enumerate() {
         path.push(idx);
         if matches!(child.style.display, Display::Contents) {
@@ -37,7 +37,7 @@ fn collect_inner(node: &HtmlBox, path: &mut Vec<usize>, result: &mut Vec<Vec<usi
 /// Faithful port of C++ LayoutFlex.
 pub fn layout_flex(
     engine:       &LayoutEngine,
-    node:         &mut HtmlBox,
+    node:         &mut WebCore,
     rbox:         &ResolvedBox,
     c:            &Constraints,
 ) -> f32 {
@@ -735,7 +735,7 @@ fn justify_spacing(jc: JustifyContent, free: f32, n: usize, base_gap: f32) -> (f
 
 // ─── effective align-self ─────────────────────────────────────────────────────
 
-fn effective_align_self(child: &HtmlBox, parent_align: AlignItems) -> AlignItems {
+fn effective_align_self(child: &WebCore, parent_align: AlignItems) -> AlignItems {
     match child.style.align_self {
         AlignSelf::Auto      => parent_align,
         AlignSelf::Stretch   => AlignItems::Stretch,
@@ -749,7 +749,7 @@ fn effective_align_self(child: &HtmlBox, parent_align: AlignItems) -> AlignItems
 // ─── finish: set box rects ───────────────────────────────────────────────────
 
 fn finish_flex(
-    node: &mut HtmlBox,
+    node: &mut WebCore,
     rbox: &ResolvedBox,
     content_x: f32, content_y: f32,
     content_w: f32, content_h: f32,
@@ -789,7 +789,7 @@ fn finish_flex(
     node.layout.resolved_content_width = content_w;
 }
 
-fn layout_abs_children(engine: &LayoutEngine, node: &mut HtmlBox, font_px: f32, root_font_px: f32) {
+fn layout_abs_children(engine: &LayoutEngine, node: &mut WebCore, font_px: f32, root_font_px: f32) {
     // CSS spec: containing block for absolutely positioned children is the padding box
     // of the nearest positioned ancestor.
     let containing_rect = if !matches!(node.style.position, Position::Static) {

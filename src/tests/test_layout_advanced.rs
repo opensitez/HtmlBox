@@ -316,7 +316,7 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
 
 // ── Flex-stretch height on initial layout and after viewport resize ───────────
 
-fn find_by_id<'a>(node: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
+fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
     if node.attributes.get("id").map(|s| s == id).unwrap_or(false) { return Some(node); }
     for child in &node.children {
         if let Some(b) = find_by_id(child, id) { return Some(b); }

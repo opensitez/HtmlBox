@@ -16,7 +16,7 @@ pub mod events;
 pub mod registry;
 
 // Re-exported at `dom::` so the path matches the other engine's:
-// `htmlbox::dom::new_document` and `vybe_widgets::dom::new_document` are the
+// `webcore::dom::new_document` and `vybe_widgets::dom::new_document` are the
 // same call under a different browser.
 pub use registry::{
     DocumentId, close_document, is_open, new_document, new_xml_document, with_document,
@@ -24,7 +24,7 @@ pub use registry::{
 
 use std::time::{Duration, Instant};
 use std::sync::{Arc, RwLock};
-use crate::types::{HtmlBox, Document, Color, Display, FontWeight, FontStyle, CssLength, Position};
+use crate::types::{WebCore, Document, Color, Display, FontWeight, FontStyle, CssLength, Position};
 use crate::css::apply_property;
 use crate::layout::hit_test::point_to_hit;
 
@@ -168,7 +168,7 @@ impl HtmlEvent {
 
 /// Event handler callback. Receives the event and a mutable reference to the
 /// DOM root so handlers can query/mutate the tree without unsafe pointer casts.
-pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent, &mut HtmlBox) + Send + Sync + 'static>;
+pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent, &mut WebCore) + Send + Sync + 'static>;
 
 struct EventListenerEntry {
     id:         i32,
@@ -250,7 +250,7 @@ impl EventListeners {
 
     /// Dispatch a non-bubbling event: fires only on the exact target element.
     /// Used for MouseEnter, MouseLeave, Focus, Blur (which do not bubble).
-    pub fn dispatch_direct(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> bool {
+    pub fn dispatch_direct(&self, root: &mut WebCore, mut evt: HtmlEvent) -> bool {
         let target_id = evt.target;
         if target_id == 0 { return false; }
 
@@ -282,7 +282,7 @@ impl EventListeners {
 
     /// Dispatch an event from a hit-test target, bubbling up through ancestors.
     /// Returns `true` if any handler was executed (useful for triggered redraws).
-    pub fn dispatch(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> bool {
+    pub fn dispatch(&self, root: &mut WebCore, mut evt: HtmlEvent) -> bool {
         // Phase 1: collect (node_id, entry_index) matches using immutable access
         let matches: Vec<(u32, Vec<usize>)> = {
             let inner = self.inner.read().unwrap();
@@ -332,7 +332,7 @@ impl EventListeners {
 
     /// Dispatch and return the (possibly modified) event so callers can inspect
     /// `evt.default_prevented` to decide whether to run default behavior.
-    pub fn dispatch_and_return(&self, root: &mut HtmlBox, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
+    pub fn dispatch_and_return(&self, root: &mut WebCore, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
         // Phase 1: collect matches
         let matches: Vec<(u32, Vec<usize>)> = {
             let inner = self.inner.read().unwrap();
@@ -383,7 +383,7 @@ impl EventListeners {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Find a node by node_id in the tree (immutable).
-fn find_node_ref(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
+fn find_node_ref(node: &WebCore, id: u32) -> Option<&WebCore> {
     if node.node_id == id { return Some(node); }
     for child in &node.children {
         if let Some(f) = find_node_ref(child, id) { return Some(f); }
@@ -392,7 +392,7 @@ fn find_node_ref(node: &HtmlBox, id: u32) -> Option<&HtmlBox> {
 }
 
 /// Build path of node_ids `[root, ..., parent, target]` from root down to target.
-fn collect_id_path(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool {
+fn collect_id_path(node: &WebCore, target_id: u32, path: &mut Vec<u32>) -> bool {
     path.push(node.node_id);
     if node.node_id == target_id { return true; }
     for child in &node.children {
@@ -403,7 +403,7 @@ fn collect_id_path(node: &HtmlBox, target_id: u32, path: &mut Vec<u32>) -> bool 
 }
 
 /// Simple CSS selector matching: `tag`, `#id`, `.class`, `*`.
-pub fn matches_simple_selector(b: &HtmlBox, selector: &str) -> bool {
+pub fn matches_simple_selector(b: &WebCore, selector: &str) -> bool {
     if selector == "*" { return true; }
     if let Some(id_sel) = selector.strip_prefix('#') {
         return b.attributes.get("id").map(|s| s == id_sel).unwrap_or(false);
@@ -419,7 +419,7 @@ pub fn matches_simple_selector(b: &HtmlBox, selector: &str) -> bool {
 // ─── DOM class manipulation ───────────────────────────────────────────────────
 
 /// Add a CSS class to a box.
-pub fn add_class(b: &mut HtmlBox, cls: &str) {
+pub fn add_class(b: &mut WebCore, cls: &str) {
     if has_class(b, cls) { return; }
     let entry = b.attributes.entry("class".to_string()).or_default();
     if entry.is_empty() {
@@ -431,7 +431,7 @@ pub fn add_class(b: &mut HtmlBox, cls: &str) {
 }
 
 /// Remove a CSS class from a box.
-pub fn remove_class(b: &mut HtmlBox, cls: &str) {
+pub fn remove_class(b: &mut WebCore, cls: &str) {
     if let Some(val) = b.attributes.get_mut("class") {
         let new: Vec<&str> = val.split_whitespace().filter(|&c| c != cls).collect();
         *val = new.join(" ");
@@ -439,12 +439,12 @@ pub fn remove_class(b: &mut HtmlBox, cls: &str) {
 }
 
 /// Toggle a CSS class on a box.
-pub fn toggle_class(b: &mut HtmlBox, cls: &str) {
+pub fn toggle_class(b: &mut WebCore, cls: &str) {
     if has_class(b, cls) { remove_class(b, cls); } else { add_class(b, cls); }
 }
 
 /// Returns true if the box has the given CSS class.
-pub fn has_class(b: &HtmlBox, cls: &str) -> bool {
+pub fn has_class(b: &WebCore, cls: &str) -> bool {
     b.attributes.get("class")
         .map(|s| s.split_whitespace().any(|c| c == cls))
         .unwrap_or(false)
@@ -453,7 +453,7 @@ pub fn has_class(b: &HtmlBox, cls: &str) -> bool {
 // ─── DOM attribute manipulation ───────────────────────────────────────────────
 
 /// Set an attribute on a box.  Handles `id`, `class`, `style`, `href` specially.
-pub fn set_attribute(b: &mut HtmlBox, attr: &str, value: &str) {
+pub fn set_attribute(b: &mut WebCore, attr: &str, value: &str) {
     match attr {
         "id"    => { b.attributes.insert("id".to_string(), value.to_string()); }
         "class" => { b.attributes.insert("class".to_string(), value.to_string()); }
@@ -463,7 +463,7 @@ pub fn set_attribute(b: &mut HtmlBox, attr: &str, value: &str) {
 }
 
 /// Get an attribute from a box.  Returns `None` if not present.
-pub fn get_attribute<'a>(b: &'a HtmlBox, attr: &str) -> Option<&'a str> {
+pub fn get_attribute<'a>(b: &'a WebCore, attr: &str) -> Option<&'a str> {
     match attr {
         "tag"   => Some(b.tag.as_str()),
         _       => b.attributes.get(attr).map(|s| s.as_str()),
@@ -471,7 +471,7 @@ pub fn get_attribute<'a>(b: &'a HtmlBox, attr: &str) -> Option<&'a str> {
 }
 
 /// Remove an attribute from a box.
-pub fn remove_attribute(b: &mut HtmlBox, attr: &str) {
+pub fn remove_attribute(b: &mut WebCore, attr: &str) {
     match attr {
         "id"    => { b.attributes.remove("id"); }
         "class" => { b.attributes.remove("class"); }
@@ -481,37 +481,37 @@ pub fn remove_attribute(b: &mut HtmlBox, attr: &str) {
 
 // ─── Custom data ─────────────────────────────────────────────────────────────
 
-pub fn set_data(b: &mut HtmlBox, key: &str, value: &str) {
+pub fn set_data(b: &mut WebCore, key: &str, value: &str) {
     b.data.insert(key.to_string(), value.to_string());
 }
 
-pub fn get_data<'a>(b: &'a HtmlBox, key: &str) -> Option<&'a str> {
+pub fn get_data<'a>(b: &'a WebCore, key: &str) -> Option<&'a str> {
     b.data.get(key).map(|s| s.as_str())
 }
 
-pub fn has_data(b: &HtmlBox, key: &str) -> bool {
+pub fn has_data(b: &WebCore, key: &str) -> bool {
     b.data.contains_key(key)
 }
 
-pub fn remove_data(b: &mut HtmlBox, key: &str) {
+pub fn remove_data(b: &mut WebCore, key: &str) {
     b.data.remove(key);
 }
 
 // ─── Visibility ───────────────────────────────────────────────────────────────
 
 /// Hide a box (sets `display: none`).
-pub fn hide(b: &mut HtmlBox) {
+pub fn hide(b: &mut WebCore) {
     b.style.display = Display::None;
 }
 
 /// Show a box (restores block display if hidden).
-pub fn show(b: &mut HtmlBox) {
+pub fn show(b: &mut WebCore) {
     if b.style.display == Display::None {
         b.style.display = Display::Block;
     }
 }
 
-pub fn is_visible(b: &HtmlBox) -> bool {
+pub fn is_visible(b: &WebCore) -> bool {
     b.style.display != Display::None
 }
 
@@ -520,7 +520,7 @@ pub fn is_visible(b: &HtmlBox) -> bool {
 /// Apply a single CSS property to a box's computed style.
 /// Also persists the value in the `style` attribute so that a CSS re-cascade
 /// (e.g. after class toggling) does not overwrite the change.
-pub fn set_style_property(b: &mut HtmlBox, prop: &str, value: &str) {
+pub fn set_style_property(b: &mut WebCore, prop: &str, value: &str) {
     apply_property(&mut b.style, prop, value);
     let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
     upsert_style_attr_prop(style_str, prop, value);
@@ -557,7 +557,7 @@ fn upsert_style_attr_prop(style_str: &mut String, prop: &str, value: &str) {
 
 /// Apply a `key: val; key: val` style string to a box.
 /// Also persists each property in the `style` attribute so re-cascade is lossless.
-pub fn apply_inline_style_str(b: &mut HtmlBox, css: &str) {
+pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
     for decl in css.split(';') {
         let decl = decl.trim();
         if decl.is_empty() { continue; }
@@ -576,7 +576,7 @@ pub fn apply_inline_style_str(b: &mut HtmlBox, css: &str) {
 // ─── Query selector ───────────────────────────────────────────────────────────
 
 /// Returns the first box matching the selector, searching depth-first.
-pub fn query_selector<'a>(root: &'a HtmlBox, selector: &str) -> Option<&'a HtmlBox> {
+pub fn query_selector<'a>(root: &'a WebCore, selector: &str) -> Option<&'a WebCore> {
     if matches_simple_selector(root, selector) { return Some(root); }
     for child in &root.children {
         if let Some(found) = query_selector(child, selector) {
@@ -587,7 +587,7 @@ pub fn query_selector<'a>(root: &'a HtmlBox, selector: &str) -> Option<&'a HtmlB
 }
 
 /// Mutable version of `query_selector`.
-pub fn query_selector_mut<'a>(root: &'a mut HtmlBox, selector: &str) -> Option<&'a mut HtmlBox> {
+pub fn query_selector_mut<'a>(root: &'a mut WebCore, selector: &str) -> Option<&'a mut WebCore> {
     if matches_simple_selector(root, selector) { return Some(root); }
     for child in &mut root.children {
         if let Some(found) = query_selector_mut(child, selector) {
@@ -598,22 +598,22 @@ pub fn query_selector_mut<'a>(root: &'a mut HtmlBox, selector: &str) -> Option<&
 }
 
 /// Returns all boxes matching the selector.
-pub fn query_selector_all<'a>(root: &'a HtmlBox, selector: &str) -> Vec<&'a HtmlBox> {
+pub fn query_selector_all<'a>(root: &'a WebCore, selector: &str) -> Vec<&'a WebCore> {
     let mut out = Vec::new();
     collect_all(root, selector, &mut out);
     out
 }
 
-fn collect_all<'a>(node: &'a HtmlBox, sel: &str, out: &mut Vec<&'a HtmlBox>) {
+fn collect_all<'a>(node: &'a WebCore, sel: &str, out: &mut Vec<&'a WebCore>) {
     if matches_simple_selector(node, sel) { out.push(node); }
     for child in &node.children { collect_all(child, sel, out); }
 }
 
 /// Returns node_ids of all boxes matching the selector.
 /// Callers use `find_box_mut(root, id)` to get `&mut` references one at a time.
-pub fn query_selector_all_ids(root: &HtmlBox, selector: &str) -> Vec<u32> {
+pub fn query_selector_all_ids(root: &WebCore, selector: &str) -> Vec<u32> {
     let mut out = Vec::new();
-    fn collect_ids(node: &HtmlBox, sel: &str, out: &mut Vec<u32>) {
+    fn collect_ids(node: &WebCore, sel: &str, out: &mut Vec<u32>) {
         if matches_simple_selector(node, sel) { out.push(node.node_id); }
         for child in &node.children { collect_ids(child, sel, out); }
     }
@@ -623,16 +623,16 @@ pub fn query_selector_all_ids(root: &HtmlBox, selector: &str) -> Vec<u32> {
 
 // ─── Tree traversal ───────────────────────────────────────────────────────────
 
-pub fn get_first_child(b: &HtmlBox) -> Option<&HtmlBox> {
+pub fn get_first_child(b: &WebCore) -> Option<&WebCore> {
     b.children.first()
 }
 
-pub fn get_last_child(b: &HtmlBox) -> Option<&HtmlBox> {
+pub fn get_last_child(b: &WebCore) -> Option<&WebCore> {
     b.children.last()
 }
 
 /// Find the next sibling of `target` within `parent`. O(1) via linked-list.
-pub fn get_next_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
+pub fn get_next_sibling<'a>(parent: &'a WebCore, target_id: u32) -> Option<&'a WebCore> {
     let target = parent.children.iter().find(|c| c.node_id == target_id)?;
     let next_id = target.next_sibling;
     if next_id == 0 { return None; }
@@ -640,7 +640,7 @@ pub fn get_next_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a H
 }
 
 /// Find the previous sibling of `target` within `parent`. O(1) via linked-list.
-pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a HtmlBox> {
+pub fn get_prev_sibling<'a>(parent: &'a WebCore, target_id: u32) -> Option<&'a WebCore> {
     let target = parent.children.iter().find(|c| c.node_id == target_id)?;
     let prev_id = target.prev_sibling;
     if prev_id == 0 { return None; }
@@ -650,7 +650,7 @@ pub fn get_prev_sibling<'a>(parent: &'a HtmlBox, target_id: u32) -> Option<&'a H
 // ─── DOM tree mutation ────────────────────────────────────────────────────────
 
 /// Append `child` as the last child of `parent`.
-pub fn append_child(parent: &mut HtmlBox, mut child: HtmlBox) {
+pub fn append_child(parent: &mut WebCore, mut child: WebCore) {
     let child_id = child.node_id;
     let old_last = parent.last_child;
     child.parent = parent.node_id;
@@ -670,7 +670,7 @@ pub fn append_child(parent: &mut HtmlBox, mut child: HtmlBox) {
 }
 
 /// Prepend `child` as the first child of `parent`.
-pub fn prepend_child(parent: &mut HtmlBox, mut child: HtmlBox) {
+pub fn prepend_child(parent: &mut WebCore, mut child: WebCore) {
     let child_id = child.node_id;
     let old_first = parent.first_child;
     child.parent = parent.node_id;
@@ -688,7 +688,7 @@ pub fn prepend_child(parent: &mut HtmlBox, mut child: HtmlBox) {
 }
 
 /// Insert `new_node` before the child with `reference_id` within `parent`.
-pub fn insert_before(parent: &mut HtmlBox, reference_id: u32, mut new_node: HtmlBox) -> bool {
+pub fn insert_before(parent: &mut WebCore, reference_id: u32, mut new_node: WebCore) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
@@ -713,7 +713,7 @@ pub fn insert_before(parent: &mut HtmlBox, reference_id: u32, mut new_node: Html
     }
 }
 /// Insert `new_node` after the child with `reference_id` within `parent`.
-pub fn insert_after(parent: &mut HtmlBox, reference_id: u32, mut new_node: HtmlBox) -> bool {
+pub fn insert_after(parent: &mut WebCore, reference_id: u32, mut new_node: WebCore) -> bool {
     if let Some(idx) = parent.children.iter()
         .position(|c| c.node_id == reference_id)
     {
@@ -738,7 +738,7 @@ pub fn insert_after(parent: &mut HtmlBox, reference_id: u32, mut new_node: HtmlB
     }
 }
 /// Remove the child at position `index` from `parent`, returning it.
-pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
+pub fn remove_child_at(parent: &mut WebCore, index: usize) -> Option<WebCore> {
     if index < parent.children.len() {
         Some(parent.children.remove(index))
     } else {
@@ -747,7 +747,7 @@ pub fn remove_child_at(parent: &mut HtmlBox, index: usize) -> Option<HtmlBox> {
 }
 
 /// Remove the child identified by node_id from `parent`, returning it.
-pub fn remove_child(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
+pub fn remove_child(parent: &mut WebCore, node_id: u32) -> Option<WebCore> {
     if let Some(idx) = parent.children.iter().position(|c| c.node_id == node_id) {
         let removed = parent.children.remove(idx);
         let prev = removed.prev_sibling;
@@ -772,28 +772,28 @@ pub fn remove_child(parent: &mut HtmlBox, node_id: u32) -> Option<HtmlBox> {
         None
     }
 }
-/// Deep-clone an element (HtmlBox implements Clone).
-pub fn clone_element(b: &HtmlBox) -> HtmlBox {
+/// Deep-clone an element (WebCore implements Clone).
+pub fn clone_element(b: &WebCore) -> WebCore {
     b.clone()
 }
 
 /// Create a new element with the given tag name.
-pub fn create_element(tag: &str) -> HtmlBox {
-    HtmlBox::new(tag)
+pub fn create_element(tag: &str) -> WebCore {
+    WebCore::new(tag)
 }
 
 // ─── Dirty flag helpers ───────────────────────────────────────────────────────
 
 /// Mark a node as needing re-layout. Call after any mutation that changes
 /// geometry (text content, style, children added/removed).
-pub fn mark_layout_dirty(node: &mut HtmlBox) {
+pub fn mark_layout_dirty(node: &mut WebCore) {
     node.layout.layout_dirty = true;
     node.layout.line_cache.clear();
 }
 
 /// Mark a node as dirty AND propagate `has_dirty_descendant` up from a child
 /// to the root. Call on the root after marking a descendant dirty.
-pub fn propagate_dirty_to_root(root: &mut HtmlBox, target_id: u32) -> bool {
+pub fn propagate_dirty_to_root(root: &mut WebCore, target_id: u32) -> bool {
     if root.node_id == target_id {
         root.layout.layout_dirty = true;
         return true;
@@ -810,12 +810,12 @@ pub fn propagate_dirty_to_root(root: &mut HtmlBox, target_id: u32) -> bool {
 // ─── Text content ─────────────────────────────────────────────────────────────
 
 /// Get the concatenated text content of a box and all descendants.
-pub fn get_text_content(b: &HtmlBox) -> String {
+pub fn get_text_content(b: &WebCore) -> String {
     b.text_content()
 }
 
 /// Replace all children with a single `#text` child containing the given text.
-pub fn set_text_content(b: &mut HtmlBox, text: &str) {
+pub fn set_text_content(b: &mut WebCore, text: &str) {
     // If there's already exactly one #text child, just update its text in place.
     if b.children.len() == 1 && b.children[0].tag == "#text" {
         b.children[0].text = text.to_string();
@@ -827,7 +827,7 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
     b.children.clear();
     b.layout.inline_runs.clear();
     b.layout.line_cache.clear();
-    let mut tn = HtmlBox::new("#text");
+    let mut tn = WebCore::new("#text");
     tn.text = text.to_string();
     // Inherit style from parent so text rendering picks up font/color.
     tn.style = b.style.clone();
@@ -841,14 +841,14 @@ pub fn set_text_content(b: &mut HtmlBox, text: &str) {
 
 // ─── Editing: toggle formatting on selection ──────────────────────────────────
 
-/// Describes a text range within a single `HtmlBox` (local byte offsets).
+/// Describes a text range within a single `WebCore` (local byte offsets).
 pub struct TextRange {
     pub start: usize,
     pub end:   usize,
 }
 
 /// Toggle `font-weight: bold` on the inline runs that overlap `range`.
-pub fn toggle_bold(b: &mut HtmlBox, range: &TextRange) {
+pub fn toggle_bold(b: &mut WebCore, range: &TextRange) {
     let was_bold = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_weight.is_bold());
@@ -861,7 +861,7 @@ pub fn toggle_bold(b: &mut HtmlBox, range: &TextRange) {
 }
 
 /// Toggle `font-style: italic` on the inline runs that overlap `range`.
-pub fn toggle_italic(b: &mut HtmlBox, range: &TextRange) {
+pub fn toggle_italic(b: &mut WebCore, range: &TextRange) {
     let was_italic = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_style == FontStyle::Italic);
@@ -875,7 +875,7 @@ pub fn toggle_italic(b: &mut HtmlBox, range: &TextRange) {
 }
 
 /// Toggle `text-decoration: underline` on overlapping runs.
-pub fn toggle_underline(b: &mut HtmlBox, range: &TextRange) {
+pub fn toggle_underline(b: &mut WebCore, range: &TextRange) {
     let was_underline = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.underline);
@@ -888,7 +888,7 @@ pub fn toggle_underline(b: &mut HtmlBox, range: &TextRange) {
 }
 
 /// Toggle `text-decoration: line-through` on overlapping runs.
-pub fn toggle_strikethrough(b: &mut HtmlBox, range: &TextRange) {
+pub fn toggle_strikethrough(b: &mut WebCore, range: &TextRange) {
     let was = b.layout.inline_runs.iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.strikethrough);
@@ -901,7 +901,7 @@ pub fn toggle_strikethrough(b: &mut HtmlBox, range: &TextRange) {
 }
 
 /// Set font size (in px) on overlapping runs.
-pub fn set_font_size(b: &mut HtmlBox, range: &TextRange, size_px: f32) {
+pub fn set_font_size(b: &mut WebCore, range: &TextRange, size_px: f32) {
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_size = CssLength::Px(size_px);
@@ -910,7 +910,7 @@ pub fn set_font_size(b: &mut HtmlBox, range: &TextRange, size_px: f32) {
 }
 
 /// Set font family on overlapping runs.
-pub fn set_font_family(b: &mut HtmlBox, range: &TextRange, family: &str) {
+pub fn set_font_family(b: &mut WebCore, range: &TextRange, family: &str) {
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.font_family = family.to_string();
@@ -919,7 +919,7 @@ pub fn set_font_family(b: &mut HtmlBox, range: &TextRange, family: &str) {
 }
 
 /// Set text color on overlapping runs.
-pub fn set_text_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
+pub fn set_text_color(b: &mut WebCore, range: &TextRange, color: Color) {
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.color = color;
@@ -928,7 +928,7 @@ pub fn set_text_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
 }
 
 /// Set background color on overlapping runs.
-pub fn set_bg_color(b: &mut HtmlBox, range: &TextRange, color: Color) {
+pub fn set_bg_color(b: &mut WebCore, range: &TextRange, color: Color) {
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
             run.style.background_color = color;
@@ -1143,7 +1143,7 @@ impl Editor {
     }
 
     /// Primary mouse event handler for selection/caret.
-    pub fn handle_mouse_event(&mut self, root: &HtmlBox, etype: HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+    pub fn handle_mouse_event(&mut self, root: &WebCore, etype: HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
         match etype {
             HtmlEventType::MouseDown => {
                 self.mouse_down = true;
@@ -1175,7 +1175,7 @@ impl Editor {
     }
 
     /// Primary keyboard event handler. Returns true if redraw needed.
-    pub fn handle_key_event(&mut self, root: &mut HtmlBox, etype: HtmlEventType, key_code: u32, ch: Option<char>, _ctrl: bool) -> bool {
+    pub fn handle_key_event(&mut self, root: &mut WebCore, etype: HtmlEventType, key_code: u32, ch: Option<char>, _ctrl: bool) -> bool {
         if self.read_only {
             // Allow editing inside contenteditable="true" elements even when the document is read-only.
             // The caret_box may be a child text node, so we walk the tree from root to check ancestry.
@@ -1229,7 +1229,7 @@ impl Editor {
         false
     }
 
-    pub fn insert_char(&mut self, root: &mut HtmlBox, ch: char) {
+    pub fn insert_char(&mut self, root: &mut WebCore, ch: char) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         // Consume the line-start flag before any mutation (collapse_to will clear it too).
         let at_line_start = self.caret_at_line_start;
@@ -1267,7 +1267,7 @@ impl Editor {
         }
     }
 
-    pub fn delete_selection_or_before(&mut self, root: &mut HtmlBox) {
+    pub fn delete_selection_or_before(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
@@ -1286,7 +1286,7 @@ impl Editor {
         }
     }
 
-    pub fn delete_selection_or_at(&mut self, root: &mut HtmlBox) {
+    pub fn delete_selection_or_at(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
@@ -1310,7 +1310,7 @@ impl Editor {
     /// Split the current block element at the caret position, creating a new sibling block.
     /// Uses the DOM API (create_element, insert_after, set_text_content) instead of
     /// direct Vec manipulation.
-    pub fn insert_newline(&mut self, root: &mut HtmlBox) {
+    pub fn insert_newline(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         // Delete selection first.
@@ -1380,7 +1380,7 @@ impl Editor {
 
     /// Insert a `<br>` at the caret position (soft line break within the current block).
     /// Insert a `<br>` at the caret position. Uses DOM API.
-    pub fn insert_br(&mut self, root: &mut HtmlBox) {
+    pub fn insert_br(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         if self.has_selection() {
@@ -1420,7 +1420,7 @@ impl Editor {
     }
 
     /// Toggle the current block between a plain block (`<p>`) and a list item (`<ul><li>`).
-    pub fn toggle_bullet_list(&mut self, root: &mut HtmlBox) {
+    pub fn toggle_bullet_list(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         let is_li = find_box_mut(root, caret_nid).map(|b| b.tag == "li").unwrap_or(false);
@@ -1461,12 +1461,12 @@ impl Editor {
                     .position(|c| c.node_id == caret_nid)
                 {
                     let block = parent.children.remove(idx);
-                    let mut li = HtmlBox::new("li");
+                    let mut li = WebCore::new("li");
                     apply_property(&mut li.style, "display", "list-item");
                     li.text       = block.text;
                     li.children   = block.children;
                     li.layout.inline_runs = block.layout.inline_runs;
-                    let mut ul = HtmlBox::new("ul");
+                    let mut ul = WebCore::new("ul");
                     apply_property(&mut ul.style, "display", "block");
                     ul.children.push(li);
                     parent.children.insert(idx, ul);
@@ -1478,7 +1478,7 @@ impl Editor {
     }
 
     /// Increase the left indent of the current block by `step_px` pixels.
-    pub fn increase_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
+    pub fn increase_indent(&mut self, root: &mut WebCore, step_px: f32) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
@@ -1490,7 +1490,7 @@ impl Editor {
     }
 
     /// Decrease the left indent of the current block by `step_px` pixels (minimum 0).
-    pub fn decrease_indent(&mut self, root: &mut HtmlBox, step_px: f32) {
+    pub fn decrease_indent(&mut self, root: &mut WebCore, step_px: f32) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
@@ -1502,14 +1502,14 @@ impl Editor {
     }
 
     /// Wrap the current block in a `<blockquote>`.
-    pub fn increase_quote_level(&mut self, root: &mut HtmlBox) {
+    pub fn increase_quote_level(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
         if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
             if let Some(idx) = parent.children.iter()
                 .position(|c| c.node_id == caret_nid)
             {
                 let block = parent.children.remove(idx);
-                let mut bq = HtmlBox::new("blockquote");
+                let mut bq = WebCore::new("blockquote");
                 apply_property(&mut bq.style, "display", "block");
                 apply_property(&mut bq.style, "margin-left", "40px");
                 bq.children.push(block);
@@ -1521,7 +1521,7 @@ impl Editor {
     }
 
     /// Unwrap one level of `<blockquote>` around the current block.
-    pub fn decrease_quote_level(&mut self, root: &mut HtmlBox) {
+    pub fn decrease_quote_level(&mut self, root: &mut WebCore) {
         let caret_nid = match self.caret_box { Some(id) => id, None => return };
 
         // Confirm the immediate parent is a <blockquote>.
@@ -1581,7 +1581,7 @@ fn is_prose_tag(tag: &str) -> bool {
                | "li" | "dt" | "dd" | "pre")
 }
 
-pub fn find_box_mut<'a>(root: &'a mut HtmlBox, node_id: u32) -> Option<&'a mut HtmlBox> {
+pub fn find_box_mut<'a>(root: &'a mut WebCore, node_id: u32) -> Option<&'a mut WebCore> {
     if root.node_id == node_id { return Some(root); }
     for child in &mut root.children {
         if let Some(b) = find_box_mut(child, node_id) { return Some(b); }
@@ -1590,7 +1590,7 @@ pub fn find_box_mut<'a>(root: &'a mut HtmlBox, node_id: u32) -> Option<&'a mut H
 }
 
 /// Find the direct parent of a node by node_id.
-pub fn find_parent_mut_by_id<'a>(root: &'a mut HtmlBox, child_id: u32) -> Option<&'a mut HtmlBox> {
+pub fn find_parent_mut_by_id<'a>(root: &'a mut WebCore, child_id: u32) -> Option<&'a mut WebCore> {
     if root.children.iter().any(|c| c.node_id == child_id) {
         return Some(root);
     }
@@ -1601,7 +1601,7 @@ pub fn find_parent_mut_by_id<'a>(root: &'a mut HtmlBox, child_id: u32) -> Option
 }
 
 /// Resolves a global offset (from collect_flat_text) to a specific leaf node and local offset.
-fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut HtmlBox, usize), usize> {
+fn find_node_offset_mut(node: &mut WebCore, mut offset: usize) -> Result<(&mut WebCore, usize), usize> {
     if node.is_text_node() {
         if offset <= node.text.len() {
             return Ok((node, offset));
@@ -1632,7 +1632,7 @@ fn find_node_offset_mut(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut H
 
 /// `contenteditable="true"`.  Used to allow key events inside contenteditable
 /// elements when the document-level editor is otherwise read-only.
-pub fn is_in_contenteditable_by_id(node: &HtmlBox, target_id: u32) -> bool {
+pub fn is_in_contenteditable_by_id(node: &WebCore, target_id: u32) -> bool {
     if node.node_id == target_id {
         return node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
     }
@@ -1646,7 +1646,7 @@ pub fn is_in_contenteditable_by_id(node: &HtmlBox, target_id: u32) -> bool {
     false
 }
 
-fn node_contains_id(node: &HtmlBox, target_id: u32) -> bool {
+fn node_contains_id(node: &WebCore, target_id: u32) -> bool {
     if node.node_id == target_id { return true; }
     for child in &node.children {
         if node_contains_id(child, target_id) { return true; }
@@ -1659,7 +1659,7 @@ fn node_contains_id(node: &HtmlBox, target_id: u32) -> bool {
 /// falls through to the next sibling.  Used by `insert_char` when
 /// `caret_at_line_start` is true — i.e. after `insert_br` placed the caret at
 /// the logical start of the new visual line.
-fn find_node_offset_after_br(node: &mut HtmlBox, mut offset: usize) -> Result<(&mut HtmlBox, usize), usize> {
+fn find_node_offset_after_br(node: &mut WebCore, mut offset: usize) -> Result<(&mut WebCore, usize), usize> {
     if node.is_text_node() {
         // Strict: offset must be *inside* the text (< not <=).
         // offset == text.len() falls through so the caller can try the next sibling.
@@ -1692,13 +1692,13 @@ fn find_node_offset_after_br(node: &mut HtmlBox, mut offset: usize) -> Result<(&
 
 /// Delete bytes `[start, end)` from the flat text of `container`.
 /// Handles ranges that span multiple child text nodes (fixes the single-node bug).
-fn delete_range_full(container: &mut HtmlBox, start: usize, end: usize) {
+fn delete_range_full(container: &mut WebCore, start: usize, end: usize) {
     if start >= end { return; }
     let mut pos = 0usize;
     delete_flat_range(container, &mut pos, start, end);
 }
 
-fn delete_flat_range(node: &mut HtmlBox, pos: &mut usize, start: usize, end: usize) {
+fn delete_flat_range(node: &mut WebCore, pos: &mut usize, start: usize, end: usize) {
     if *pos >= end { return; }
 
     if node.is_text_node() {
@@ -1734,11 +1734,11 @@ fn delete_flat_range(node: &mut HtmlBox, pos: &mut usize, start: usize, end: usi
 }
 
 /// Split the text node at `leaf_nid` at `local_off`, inserting a `<br>` between the halves.
-fn split_node_with_br(root: &mut HtmlBox, leaf_nid: u32, local_off: usize) {
+fn split_node_with_br(root: &mut WebCore, leaf_nid: u32, local_off: usize) {
     split_node_with_br_impl(root, leaf_nid, local_off);
 }
 
-fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) -> bool {
+fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) -> bool {
     // Case A: the leaf is a direct *text-node* child of this node.
     // Only apply when the child is a pure text node (#text).  Element nodes
     // that happen to carry `.text` (e.g. <td>) must NOT be removed from their
@@ -1758,12 +1758,12 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) 
             // Build the replacement nodes
             let mut new_children = Vec::new();
             if !before.is_empty() {
-                let mut bn = HtmlBox::new("#text"); bn.text = before;
+                let mut bn = WebCore::new("#text"); bn.text = before;
                 new_children.push(bn);
             }
-            new_children.push(HtmlBox::new("br"));
+            new_children.push(WebCore::new("br"));
             if !after.is_empty() {
-                let mut an = HtmlBox::new("#text"); an.text = after;
+                let mut an = WebCore::new("#text"); an.text = after;
                 new_children.push(an);
             }
             // Insert at the position where the old node was
@@ -1783,9 +1783,9 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) 
         let split = local_off.min(node.text.len());
         let after  = node.text[split..].to_string();
         node.text  = node.text[..split].to_string();
-        let mut after_node = HtmlBox::new("#text"); after_node.text = after;
+        let mut after_node = WebCore::new("#text"); after_node.text = after;
         node.children.insert(0, after_node);
-        node.children.insert(0, HtmlBox::new("br"));
+        node.children.insert(0, WebCore::new("br"));
         return true;
     }
 
@@ -1799,13 +1799,13 @@ fn split_node_with_br_impl(node: &mut HtmlBox, leaf_nid: u32, local_off: usize) 
 // ─── Block-level insertion helpers ────────────────────────────────────────────
 
 /// Insert a `<hr>` element after the block that currently contains the caret.
-pub fn insert_hr(editor: &Editor, root: &mut HtmlBox) {
+pub fn insert_hr(editor: &Editor, root: &mut WebCore) {
     let caret_id = match editor.caret_box { Some(id) => id, None => return };
     if let Some(parent) = find_parent_mut_by_id(root, caret_id) {
         if let Some(idx) = parent.children.iter()
             .position(|c| c.node_id == caret_id)
         {
-            let mut hr = HtmlBox::new("hr");
+            let mut hr = WebCore::new("hr");
             apply_property(&mut hr.style, "display", "block");
             parent.children.insert(idx + 1, hr);
         }

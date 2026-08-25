@@ -3,9 +3,9 @@
 // NOTE: Smoke tests that require Render(dc, …) are omitted (no rendering DC in Rust).
 // NOTE: Tests referencing box->parent are adapted to use tree walking.
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
-use htmlbox::css::apply_property;
+use webcore::types::*;
+use webcore::{load_html, parse_html};
+use webcore::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -13,7 +13,7 @@ fn parse_and_layout(html: &str, viewport_width: f32) -> Document {
     load_html(html, viewport_width)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -21,7 +21,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
+fn walk_boxes<F: FnMut(&WebCore)>(root: &WebCore, visitor: &mut F) {
     visitor(root);
     for child in &root.children {
         walk_boxes(child, visitor);
@@ -43,14 +43,14 @@ fn flex_three_cards_equal_sizing() {
     let mut doc = parse_and_layout(html, 800.0);
 
     // Simulate a resize by running layout again (same width)
-    let mut engine = htmlbox::LayoutEngine::new();
+    let mut engine = webcore::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     // And again — this is the pattern that degrades on repeated layout
     engine.layout(&mut doc, 800.0);
 
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex).expect("flex container");
-    let cards: Vec<&HtmlBox> = flex.children.iter()
+    let cards: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.style.display != Display::None && c.tag != "#text")
         .collect();
     assert_eq!(cards.len(), 3, "expected 3 flex cards");
@@ -215,7 +215,7 @@ fn flex_basic_row_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     assert_eq!(items.len(), 2);
@@ -233,7 +233,7 @@ fn flex_grow_distribution() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -255,7 +255,7 @@ fn flex_column_layout() {
     });
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -274,7 +274,7 @@ fn flex_gap_between_items() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.layout.content_rect.w > 95.0 && c.layout.content_rect.w < 105.0)
         .collect();
     if items.len() >= 2 {
@@ -410,7 +410,7 @@ fn flex_margin_auto_main_axis() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -450,7 +450,7 @@ fn flex_row_reverse_layout() {
     });
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -476,7 +476,7 @@ fn flex_wrap_second_line_below() {
     });
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -499,7 +499,7 @@ fn flex_shrink_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -565,7 +565,7 @@ fn flex_align_content_space_evenly_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -589,7 +589,7 @@ fn flex_column_stretch_width() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -693,7 +693,7 @@ fn flex_wrap_reverse_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -713,7 +713,7 @@ fn flex_wrap_with_grow() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -736,7 +736,7 @@ fn flex_column_reverse_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -756,7 +756,7 @@ fn flex_column_with_explicit_height() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -780,7 +780,7 @@ fn flex_min_width_constraint() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -799,7 +799,7 @@ fn flex_max_width_constraint() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -821,7 +821,7 @@ fn flex_justify_content_center_single() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -849,7 +849,7 @@ fn flex_space_around_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -870,7 +870,7 @@ fn flex_space_evenly_layout() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {
@@ -894,7 +894,7 @@ fn flex_cross_auto_margin_center() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if !items.is_empty() {
@@ -931,7 +931,7 @@ fn flex_different_grow_ratios() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 3 {
@@ -953,7 +953,7 @@ fn flex_shrink_with_flex_basis() {
     let flex = find_box(&doc.root, &|b| b.style.display == Display::Flex);
     assert!(flex.is_some());
     let flex = flex.unwrap();
-    let items: Vec<&HtmlBox> = flex.children.iter()
+    let items: Vec<&WebCore> = flex.children.iter()
         .filter(|c| c.tag == "div")
         .collect();
     if items.len() >= 2 {

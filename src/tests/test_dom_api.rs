@@ -140,7 +140,7 @@ fn create_and_append_element() {
     assert_eq!(children[0], p);
     assert_eq!(doc.tag_name(p), Some("p"));
 
-    // Verify in HtmlBox tree
+    // Verify in WebCore tree
     let div_box = doc.get_box_by_id(div).unwrap();
     assert_eq!(div_box.children.len(), 1);
     assert_eq!(div_box.children[0].tag, "p");
@@ -176,7 +176,7 @@ fn insert_before_works() {
     assert_eq!(children[0], li_a);
     assert_eq!(children[1], li_b);
 
-    // HtmlBox tree matches
+    // WebCore tree matches
     let ul_box = doc.get_box_by_id(ul).unwrap();
     assert_eq!(ul_box.children.len(), 2);
     assert_eq!(ul_box.children[0].node_id, li_a);
@@ -198,7 +198,7 @@ fn remove_child_works() {
     assert_eq!(remaining[0], items[0]);
     assert_eq!(remaining[1], items[2]);
 
-    // HtmlBox tree matches
+    // WebCore tree matches
     let ul_box = doc.get_box_by_id(ul).unwrap();
     assert_eq!(ul_box.children.len(), 2);
 }
@@ -213,7 +213,7 @@ fn set_attribute_updates_both_trees() {
     // Arena updated
     assert_eq!(doc.get_attribute(div, "data-value"), Some("42".to_string()));
 
-    // HtmlBox updated
+    // WebCore updated
     let div_box = doc.get_box_by_id(div).unwrap();
     assert_eq!(div_box.attributes.get("data-value").map(|s| s.as_str()), Some("42"));
 }

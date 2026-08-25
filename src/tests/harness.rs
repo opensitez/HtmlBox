@@ -19,7 +19,7 @@ pub fn parse(html: &str) -> Document {
 }
 
 /// Walk every box depth-first, calling visitor on each.
-pub fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
+pub fn walk_boxes<F: FnMut(&WebCore)>(root: &WebCore, visitor: &mut F) {
     visitor(root);
     for child in &root.children {
         walk_boxes(child, visitor);
@@ -27,7 +27,7 @@ pub fn walk_boxes<F: FnMut(&HtmlBox)>(root: &HtmlBox, visitor: &mut F) {
 }
 
 /// Find first box matching predicate.
-pub fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+pub fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -36,14 +36,14 @@ pub fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Opt
 }
 
 /// Find all boxes matching predicate (depth-first).
-pub fn find_all_boxes<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Vec<&'a HtmlBox> {
+pub fn find_all_boxes<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Vec<&'a WebCore> {
     let mut result = Vec::new();
     collect_matching(root, pred, &mut result);
     result
 }
 
-fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
-    node: &'a HtmlBox, pred: &F, out: &mut Vec<&'a HtmlBox>
+fn collect_matching<'a, F: Fn(&WebCore) -> bool>(
+    node: &'a WebCore, pred: &F, out: &mut Vec<&'a WebCore>
 ) {
     if pred(node) { out.push(node); }
     for child in &node.children {
@@ -52,7 +52,7 @@ fn collect_matching<'a, F: Fn(&HtmlBox) -> bool>(
 }
 
 /// Count boxes matching predicate.
-pub fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+pub fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);

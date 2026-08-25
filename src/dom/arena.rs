@@ -5,7 +5,7 @@
 //! not pointers, so no reference is ever invalidated.
 //!
 //! This module is the foundation for the engine redesign (see plan.md).
-//! It coexists with the existing `HtmlBox` tree during migration.
+//! It coexists with the existing `WebCore` tree during migration.
 
 use std::collections::HashMap;
 
@@ -673,7 +673,7 @@ mod tests {
         let li1_id = li1;
         let li2_id = li2;
 
-        // Insert a new element before li1 — this is what breaks Vec<HtmlBox>
+        // Insert a new element before li1 — this is what breaks Vec<WebCore>
         let li0 = arena.create_element("li");
         arena.insert_before(parent, li0, li1);
 

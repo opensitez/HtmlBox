@@ -8,8 +8,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use htmlbox::{load_html, Document, Renderer, HtmlEventType};
-use htmlbox::platform::Platform;
+use webcore::{load_html, Document, Renderer, HtmlEventType};
+use webcore::platform::Platform;
 
 const HTML: &str = include_str!("html/subgrid.html");
 
@@ -31,7 +31,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("subgrid demo — htmlbox")
+                    .with_title("subgrid demo — webcore")
                     .with_inner_size(winit::dpi::LogicalSize::new(800u32, 600u32))
             ).unwrap()
         );

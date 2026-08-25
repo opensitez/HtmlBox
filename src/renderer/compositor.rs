@@ -9,7 +9,7 @@
 //! This means scrolling is always instant — we just move pre-rasterized
 //! tiles around. Only content changes trigger rasterization.
 
-use crate::types::{Rect, HtmlBox};
+use crate::types::{Rect, WebCore};
 
 /// Unique layer identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -123,7 +123,7 @@ impl Compositor {
 
     /// Build the layer tree from the DOM after layout.
     /// Walks the DOM tree and creates layers for elements that need them.
-    pub fn build_layers(&mut self, root: &HtmlBox, viewport_w: f32, viewport_h: f32) {
+    pub fn build_layers(&mut self, root: &WebCore, viewport_w: f32, viewport_h: f32) {
         self.layers.clear();
         self.next_id = 0;
 
@@ -137,7 +137,7 @@ impl Compositor {
         self.build_layers_walk(root, root_layer);
     }
 
-    fn build_layers_walk(&mut self, node: &HtmlBox, parent_layer: LayerId) {
+    fn build_layers_walk(&mut self, node: &WebCore, parent_layer: LayerId) {
         use crate::types::*;
 
         if matches!(node.style.display, Display::None) { return; }
@@ -185,7 +185,7 @@ impl Compositor {
     }
 
     /// Determine if a node needs its own compositing layer.
-    fn needs_own_layer(&self, node: &HtmlBox) -> Option<LayerReason> {
+    fn needs_own_layer(&self, node: &WebCore) -> Option<LayerReason> {
         use crate::types::*;
 
         // position:fixed — always gets own layer

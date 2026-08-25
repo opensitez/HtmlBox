@@ -1,13 +1,13 @@
-use htmlbox::*;
+use webcore::*;
 
-fn find_by_text<'a>(node: &'a HtmlBox, needle: &str) -> Option<&'a HtmlBox> {
+fn find_by_text<'a>(node: &'a WebCore, needle: &str) -> Option<&'a WebCore> {
     if node.tag == "h3" && node.children.iter().any(|c| c.text.contains(needle)) { return Some(node); }
     for child in &node.children { if let Some(n) = find_by_text(child, needle) { return Some(n); } }
     None
 }
 
-fn draw_debug_rects(node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap, scale: f32, scroll_y: f32, depth: usize) {
-    if node.tag == "#text" || matches!(node.style.display, htmlbox::types::Display::None) { return; }
+fn draw_debug_rects(node: &WebCore, pixmap: &mut tiny_skia::Pixmap, scale: f32, scroll_y: f32, depth: usize) {
+    if node.tag == "#text" || matches!(node.style.display, webcore::types::Display::None) { return; }
     if node.layout.content_rect.w > 0.0 && node.layout.content_rect.h > 0.0 {
         let x = node.layout.content_rect.x * scale;
         let y = (node.layout.content_rect.y - scroll_y) * scale;
@@ -52,7 +52,7 @@ fn main() {
         eprintln!("Saved /tmp/demo_debug.png scroll_y={:.1}", y_start);
 
         // Dump geometry
-        fn dump(node: &HtmlBox, y_min: f32, y_max: f32, d: usize) {
+        fn dump(node: &WebCore, y_min: f32, y_max: f32, d: usize) {
             if node.tag == "#text" { return; }
             let y = node.layout.border_rect.y;
             if y + node.layout.border_rect.h < y_min || y > y_max { return; }

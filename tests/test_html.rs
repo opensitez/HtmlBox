@@ -1,8 +1,8 @@
 // Ported from cpptests/test_html.cpp
-// Integration tests using the public htmlbox API.
+// Integration tests using the public webcore API.
 
-use htmlbox::types::*;
-use htmlbox::{load_html, parse_html};
+use webcore::types::*;
+use webcore::{load_html, parse_html};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -14,7 +14,7 @@ fn parse_and_layout(html: &str, vw: f32) -> Document {
     load_html(html, vw)
 }
 
-fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
+fn find_box<'a, F: Fn(&WebCore) -> bool>(root: &'a WebCore, pred: &F) -> Option<&'a WebCore> {
     if pred(root) { return Some(root); }
     for child in &root.children {
         if let Some(b) = find_box(child, pred) { return Some(b); }
@@ -22,7 +22,7 @@ fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<
     None
 }
 
-fn count_boxes<F: Fn(&HtmlBox) -> bool>(root: &HtmlBox, pred: &F) -> usize {
+fn count_boxes<F: Fn(&WebCore) -> bool>(root: &WebCore, pred: &F) -> usize {
     let mut n = if pred(root) { 1 } else { 0 };
     for child in &root.children {
         n += count_boxes(child, pred);
@@ -34,8 +34,8 @@ fn doc_text(doc: &Document) -> String {
     doc.root.text_content()
 }
 
-fn get_body(doc: &Document) -> Option<&HtmlBox> {
-    find_box(&doc.root, &|b: &HtmlBox| b.tag == "body")
+fn get_body(doc: &Document) -> Option<&WebCore> {
+    find_box(&doc.root, &|b: &WebCore| b.tag == "body")
 }
 
 // ============================================================
@@ -70,7 +70,7 @@ fn html_multiple_children() {
 fn html_inline_style() {
     // InlineStyle: inline style color parsed into ComputedStyle.
     let doc = parse(r#"<p style="color: red;">Red text</p>"#);
-    let b = find_box(&doc.root, &|b: &HtmlBox| b.style.color == Color::rgb(255, 0, 0));
+    let b = find_box(&doc.root, &|b: &WebCore| b.style.color == Color::rgb(255, 0, 0));
     assert!(b.is_some());
 }
 
@@ -111,7 +111,7 @@ fn html_multiple_style_blocks() {
 fn html_dir_attribute() {
     // DirAttribute: dir="rtl" stored in attributes (no Direction::RTL style field in Rust).
     let doc = parse(r#"<p dir="rtl">Arabic text</p>"#);
-    let b = find_box(&doc.root, &|b: &HtmlBox| {
+    let b = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("dir").map(|v| v == "rtl").unwrap_or(false)
     });
     assert!(b.is_some());
@@ -121,7 +121,7 @@ fn html_dir_attribute() {
 fn html_lang_attribute() {
     // LangAttribute: lang stored as attribute (not a style field in Rust).
     let doc = parse(r#"<p lang="ar">Arabic</p>"#);
-    let b = find_box(&doc.root, &|b: &HtmlBox| {
+    let b = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("lang").map(|v| v == "ar").unwrap_or(false)
     });
     assert!(b.is_some());
@@ -132,7 +132,7 @@ fn html_class_attribute() {
     // ClassAttribute: class stored in attributes map.
     // C++ uses b.className — Rust uses b.attributes.get("class").
     let doc = parse(r#"<div class="foo bar">Test</div>"#);
-    let b = find_box(&doc.root, &|b: &HtmlBox| {
+    let b = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("class").map(|v| v == "foo bar").unwrap_or(false)
     });
     assert!(b.is_some());
@@ -143,7 +143,7 @@ fn html_id_attribute() {
     // IdAttribute: id stored in attributes map.
     // C++ uses b.id — Rust uses b.attributes.get("id").
     let doc = parse(r#"<div id="main">Test</div>"#);
-    let b = find_box(&doc.root, &|b: &HtmlBox| {
+    let b = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "main").unwrap_or(false)
     });
     assert!(b.is_some());
@@ -153,7 +153,7 @@ fn html_id_attribute() {
 fn html_headings_preserved() {
     // HeadingsPreserved: h1, h2, h3 all appear as boxes.
     let doc = parse("<h1>H1</h1><h2>H2</h2><h3>H3</h3>");
-    let heading_count = count_boxes(&doc.root, &|b: &HtmlBox| {
+    let heading_count = count_boxes(&doc.root, &|b: &WebCore| {
         b.tag == "h1" || b.tag == "h2" || b.tag == "h3"
     });
     assert_eq!(heading_count, 3);
@@ -163,7 +163,7 @@ fn html_headings_preserved() {
 fn html_list_elements() {
     // ListElements: three <li> boxes created.
     let doc = parse("<ul><li>A</li><li>B</li><li>C</li></ul>");
-    let li_count = count_boxes(&doc.root, &|b: &HtmlBox| b.tag == "li");
+    let li_count = count_boxes(&doc.root, &|b: &WebCore| b.tag == "li");
     assert_eq!(li_count, 3);
 }
 
@@ -326,7 +326,7 @@ fn html_body_css_color_inherits() {
         r#"<html><head><style>body { color: blue; }</style></head><body><p>Text</p></body></html>"#,
         800.0,
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     let p = p.unwrap();
     assert_eq!(p.style.color.b, 255);
@@ -401,8 +401,8 @@ fn html_body_css_font_size() {
         r#"<html><head><style>body { font-size: 24pt; }</style></head><body><p>Text</p></body></html>"#,
         800.0,
     );
-    let p_default = find_box(&doc_default.root, &|b: &HtmlBox| b.tag == "p");
-    let p_big = find_box(&doc_big.root, &|b: &HtmlBox| b.tag == "p");
+    let p_default = find_box(&doc_default.root, &|b: &WebCore| b.tag == "p");
+    let p_big = find_box(&doc_big.root, &|b: &WebCore| b.tag == "p");
     assert!(p_default.is_some());
     assert!(p_big.is_some());
     let size_default = p_default.unwrap().style.font_size.resolve(16.0, 0.0, 16.0);
@@ -473,7 +473,7 @@ fn html_body_child_overrides_color() {
         r#"<html><head><style>body { color: red; } .special { color: green; }</style></head><body><p class="special">Text</p></body></html>"#,
         800.0,
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     let p = p.unwrap();
     assert_eq!(p.style.color.g, 128); // CSS "green" = #008000
@@ -565,7 +565,7 @@ fn html_content_goes_in_body() {
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
-    let p = find_box(body, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(body, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
 }
 
@@ -732,7 +732,7 @@ fn html_table_full_width_in_body_with_padding() {
     let body = get_body(&doc);
     assert!(body.is_some());
     assert_eq!(body.unwrap().layout.content_rect.w, 752.0);
-    let table = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::Table);
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     assert_eq!(table.unwrap().layout.margin_rect.w, 752.0);
 }
@@ -748,7 +748,7 @@ fn html_table_full_width_in_body_with_padding_and_box_sizing() {
     let body = get_body(&doc);
     assert!(body.is_some());
     assert_eq!(body.unwrap().layout.content_rect.w, 752.0);
-    let table = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::Table);
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     assert_eq!(table.unwrap().layout.margin_rect.w, 752.0);
 }
@@ -764,7 +764,7 @@ fn html_table_in_body_with_margin_and_padding() {
     assert!(body.is_some());
     // contentWidth = 800 - 8 - 8 - 16 - 16 = 752
     assert_eq!(body.unwrap().layout.content_rect.w, 752.0);
-    let table = find_box(&doc.root, &|b: &HtmlBox| b.style.display == Display::Table);
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     assert_eq!(table.unwrap().layout.margin_rect.w, 752.0);
 }
@@ -881,12 +881,12 @@ fn html_double_layout_table_in_body_with_padding() {
     let html = r#"<body style="padding: 16px;"><table style="width: 100%;"><tr><td>A</td><td>B</td><td>C</td></tr></table></body>"#;
 
     let doc1 = parse_and_layout(html, 800.0);
-    let table1 = find_box(&doc1.root, &|b: &HtmlBox| b.style.display == Display::Table);
+    let table1 = find_box(&doc1.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table1.is_some());
     let tw1 = table1.unwrap().layout.margin_rect.w;
 
     let doc2 = parse_and_layout(html, 800.0);
-    let table2 = find_box(&doc2.root, &|b: &HtmlBox| b.style.display == Display::Table);
+    let table2 = find_box(&doc2.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table2.is_some());
     assert_eq!(table2.unwrap().layout.margin_rect.w, tw1);
     assert_eq!(tw1, 752.0); // 800 - 2*8px UA margin - 2*16px body padding
@@ -912,7 +912,7 @@ fn html_title_content_suppressed() {
     let doc = parse("<title>Secret Title</title><p>Hello</p>");
     assert!(!doc_text(&doc).contains("Secret Title"));
     assert!(doc_text(&doc).contains("Hello"));
-    let found = find_box(&doc.root, &|b: &HtmlBox| b.text.contains("Secret Title"));
+    let found = find_box(&doc.root, &|b: &WebCore| b.text.contains("Secret Title"));
     assert!(found.is_none());
 }
 
@@ -941,7 +941,7 @@ fn html_meta_charset_does_not_create_box() {
     let doc = parse(
         r#"<html><head><meta charset="utf-8"></head><body><p>Text</p></body></html>"#,
     );
-    let meta = find_box(&doc.root, &|b: &HtmlBox| b.tag == "meta");
+    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta");
     assert!(meta.is_none());
 }
 
@@ -951,7 +951,7 @@ fn html_meta_viewport_ignored() {
     let doc = parse(
         r#"<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Text</p></body></html>"#,
     );
-    let meta = find_box(&doc.root, &|b: &HtmlBox| b.tag == "meta");
+    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta");
     assert!(meta.is_none());
     assert!(doc_text(&doc).contains("Text"));
 }
@@ -962,7 +962,7 @@ fn html_link_tag_does_not_create_box() {
     let doc = parse(
         r#"<html><head><link rel="stylesheet" href="style.css"></head><body><p>Text</p></body></html>"#,
     );
-    let link = find_box(&doc.root, &|b: &HtmlBox| b.tag == "link");
+    let link = find_box(&doc.root, &|b: &WebCore| b.tag == "link");
     assert!(link.is_none());
 }
 
@@ -994,7 +994,7 @@ fn html_multiple_style_blocks_merge() {
         r#"<html><head><style>p { color: red; }</style><style>.blue { color: blue; }</style><style>h1 { font-size: 20pt; }</style></head><body><p class="blue">Text</p></body></html>"#,
     );
     assert!(doc.stylesheet.rules.len() >= 3);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color.b, 255);
 }
@@ -1005,7 +1005,7 @@ fn html_head_before_body_order() {
     let doc = parse(
         r#"<html><head><style>p { color: green; }</style></head><body><p>Text</p></body></html>"#,
     );
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color.g, 128); // CSS "green" = #008000
 }
@@ -1015,7 +1015,7 @@ fn html_style_in_body_still_works() {
     // StyleInBodyStillWorks: <style> in <body> still parsed.
     let doc = parse(r#"<body><style>p { color: red; }</style><p>Text</p></body>"#);
     assert!(doc.stylesheet.rules.len() >= 1);
-    let p = find_box(&doc.root, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.color.r, 255);
 }
@@ -1070,13 +1070,13 @@ fn html_details_closed_hides_content() {
     let doc = parse(
         r#"<details><summary>Click me</summary><p>Hidden content</p></details>"#,
     );
-    let details = find_box(&doc.root, &|b: &HtmlBox| b.tag == "details");
+    let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
-    let summary = find_box(details, &|b: &HtmlBox| b.tag == "summary");
+    let summary = find_box(details, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     assert_ne!(summary.unwrap().style.display, Display::None);
-    let p = find_box(details, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(details, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_eq!(p.unwrap().style.display, Display::None);
 }
@@ -1087,10 +1087,10 @@ fn html_details_open_shows_content() {
     let doc = parse(
         r#"<details open><summary>Click me</summary><p>Visible content</p></details>"#,
     );
-    let details = find_box(&doc.root, &|b: &HtmlBox| b.tag == "details");
+    let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
-    let p = find_box(details, &|b: &HtmlBox| b.tag == "p");
+    let p = find_box(details, &|b: &WebCore| b.tag == "p");
     assert!(p.is_some());
     assert_ne!(p.unwrap().style.display, Display::None);
 }
@@ -1101,7 +1101,7 @@ fn html_summary_is_list_item() {
     let doc = parse(
         r#"<details><summary>Title</summary><p>Body</p></details>"#,
     );
-    let summary = find_box(&doc.root, &|b: &HtmlBox| b.tag == "summary");
+    let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     assert_eq!(summary.unwrap().style.display, Display::ListItem);
 }
@@ -1113,7 +1113,7 @@ fn html_summary_disclosure_marker_closed() {
     let doc = parse(
         r#"<details><summary>Title</summary><p>Body</p></details>"#,
     );
-    let summary = find_box(&doc.root, &|b: &HtmlBox| b.tag == "summary");
+    let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     assert_eq!(summary.unwrap().style.list_style_type, ListStyleType::Disclosure);
 }
@@ -1124,7 +1124,7 @@ fn html_summary_disclosure_marker_open() {
     let doc = parse(
         r#"<details open><summary>Title</summary><p>Body</p></details>"#,
     );
-    let summary = find_box(&doc.root, &|b: &HtmlBox| b.tag == "summary");
+    let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     assert_eq!(summary.unwrap().style.list_style_type, ListStyleType::Disclosure);
 }
@@ -1145,7 +1145,7 @@ fn html_details_multiple_children() {
     let doc = parse(
         r#"<details><summary>More info</summary><p>Para 1</p><p>Para 2</p><div>Div content</div></details>"#,
     );
-    let details = find_box(&doc.root, &|b: &HtmlBox| b.tag == "details");
+    let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
     let hidden_count = details.children.iter().filter(|ch| {
@@ -1164,7 +1164,7 @@ fn html_details_nested_in_body() {
     assert!(doc_text(&doc).contains("Page"));
     assert!(doc_text(&doc).contains("Show"));
     assert!(doc_text(&doc).contains("After"));
-    let details = find_box(&doc.root, &|b: &HtmlBox| b.tag == "details");
+    let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
 }
 
@@ -1177,7 +1177,7 @@ fn html_attributes_map_populated() {
     // AttributesMapPopulated: id, class, title all in attributes map.
     // C++ uses b.id — Rust uses b.attributes.get("id").
     let doc = parse(r##"<div id="test" class="foo" title="tip">content</div>"##);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "test").unwrap_or(false)
     });
     assert!(div.is_some());
@@ -1191,7 +1191,7 @@ fn html_attributes_map_populated() {
 fn html_attributes_map_custom_data() {
     // AttributesMapCustomData: data-* attribute preserved.
     let doc = parse(r#"<div data-custom="value123">content</div>"#);
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.contains_key("data-custom")
     });
     assert!(div.is_some());
@@ -1204,7 +1204,7 @@ fn html_attributes_map_multiple() {
     let doc = parse(
         r##"<div id="x" role="button" aria-label="close" tabindex="0">X</div>"##,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "x").unwrap_or(false)
     });
     assert!(div.is_some());
@@ -1219,7 +1219,7 @@ fn html_attributes_map_inline_element() {
     // AttributesMapInlineElement: data-type on <span> preserved.
     // C++ uses ParseHTML (no stylesheet) — Rust parse_html includes cascade, same result.
     let doc = parse(r#"<p><span data-type="highlight">text</span></p>"#);
-    let span = find_box(&doc.root, &|b: &HtmlBox| {
+    let span = find_box(&doc.root, &|b: &WebCore| {
         b.tag == "span" && b.attributes.contains_key("data-type")
     });
     assert!(span.is_some());
@@ -1230,7 +1230,7 @@ fn html_attributes_map_inline_element() {
 fn html_attributes_map_img() {
     // AttributesMapImg: src and alt preserved on img box.
     let doc = parse(r##"<div><img src="test.jpg" alt="photo" width="100"></div>"##);
-    let img = find_box(&doc.root, &|b: &HtmlBox| b.tag == "img");
+    let img = find_box(&doc.root, &|b: &WebCore| b.tag == "img");
     assert!(img.is_some());
     let img = img.unwrap();
     assert_eq!(img.attributes.get("alt").map(|s| s.as_str()), Some("photo"));
@@ -1241,7 +1241,7 @@ fn html_attributes_map_img() {
 fn html_attributes_map_boolean_attr() {
     // AttributesMapBooleanAttr: boolean "open" attribute in map.
     let doc = parse(r#"<details open><summary>Title</summary>Body</details>"#);
-    let details = find_box(&doc.root, &|b: &HtmlBox| b.tag == "details");
+    let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     assert!(details.unwrap().attributes.contains_key("open"));
 }
@@ -1252,7 +1252,7 @@ fn html_attributes_map_css_selector() {
     let doc = parse(
         r##"<style>[data-active] { color: red; }</style><div data-active="true">Active</div>"##,
     );
-    let div = find_box(&doc.root, &|b: &HtmlBox| {
+    let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.contains_key("data-active")
     });
     assert!(div.is_some());
