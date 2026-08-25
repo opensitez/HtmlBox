@@ -2603,7 +2603,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rhtmledit"
+name = "htmlbox"
 version = "0.1.0"
 dependencies = [
  "accesskit 0.17.1",
