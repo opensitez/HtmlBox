@@ -7,8 +7,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{Document, Renderer, LayoutEngine, load_html_vp, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{Document, Renderer, LayoutEngine, load_html_vp, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/email.html");
 
@@ -27,7 +27,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("email_demo — rhtmledit")
+                    .with_title("email_demo — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(900u32, 800u32))
             ).unwrap()
         );

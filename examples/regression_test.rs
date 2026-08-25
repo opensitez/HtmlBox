@@ -1,4 +1,4 @@
-use rhtmledit::*;
+use htmlbox::*;
 
 fn find_by_text<'a>(node: &'a HtmlBox, needle: &str) -> Option<&'a HtmlBox> {
     if node.tag == "h3" && node.children.iter().any(|c| c.text.contains(needle)) { return Some(node); }
@@ -7,7 +7,7 @@ fn find_by_text<'a>(node: &'a HtmlBox, needle: &str) -> Option<&'a HtmlBox> {
 }
 
 fn draw_debug_rects(node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap, scale: f32, scroll_y: f32, depth: usize) {
-    if node.tag == "#text" || matches!(node.style.display, rhtmledit::types::Display::None) { return; }
+    if node.tag == "#text" || matches!(node.style.display, htmlbox::types::Display::None) { return; }
     if node.layout.content_rect.w > 0.0 && node.layout.content_rect.h > 0.0 {
         let x = node.layout.content_rect.x * scale;
         let y = (node.layout.content_rect.y - scroll_y) * scale;

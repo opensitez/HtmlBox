@@ -1,5 +1,5 @@
 /// CSS @keyframes animation showcase.
-/// Demonstrates the rhtmledit animation runtime: spin, pulse, bounce, fade,
+/// Demonstrates the htmlbox animation runtime: spin, pulse, bounce, fade,
 /// colour-cycle, staggered dots, ripple, heartbeat.
 
 use std::sync::Arc;
@@ -8,8 +8,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{load_html, Document, Renderer, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{load_html, Document, Renderer, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/animation_demo.html");
 
@@ -33,7 +33,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Animation Demo — rhtmledit")
+                    .with_title("Animation Demo — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(960u32, 700u32))
             ).unwrap()
         );

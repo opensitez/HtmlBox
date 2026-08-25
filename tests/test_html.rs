@@ -1,8 +1,8 @@
 // Ported from cpptests/test_html.cpp
-// Integration tests using the public rhtmledit API.
+// Integration tests using the public htmlbox API.
 
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

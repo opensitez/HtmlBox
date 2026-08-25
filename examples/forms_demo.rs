@@ -1,4 +1,4 @@
-//! forms_demo — Interactive pizza ordering app using rhtmledit.
+//! forms_demo — Interactive pizza ordering app using htmlbox.
 //!
 //! Uses the same event system as graph_demo and event_playground:
 //! - `renderer.handle_window_event()` for all input routing
@@ -15,10 +15,10 @@ use winit::event_loop::EventLoop;
 use winit::keyboard::{PhysicalKey, KeyCode};
 use winit::window::Window;
 
-use rhtmledit::{load_html, Renderer, LayoutEngine};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
-use rhtmledit::HtmlBox;
+use htmlbox::{load_html, Renderer, LayoutEngine};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
+use htmlbox::HtmlBox;
 
 const HTML: &str = include_str!("html/forms_demo.html");
 
@@ -26,7 +26,7 @@ struct App {
     window:   Option<Arc<Window>>,
     platform: Option<Platform>,
     renderer: Renderer,
-    doc:      Option<rhtmledit::Document>,
+    doc:      Option<htmlbox::Document>,
     mouse:    (f32, f32),
     width:    f32,
 }
@@ -105,7 +105,7 @@ impl ApplicationHandler<()> for App {
     fn resumed(&mut self, el: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(el.create_window(
             Window::default_attributes()
-                .with_title("Pizza Builder — rhtmledit Forms Demo")
+                .with_title("Pizza Builder — htmlbox Forms Demo")
                 .with_inner_size(winit::dpi::LogicalSize::new(860u32, 900u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());
@@ -281,7 +281,7 @@ impl ApplicationHandler<()> for App {
 }
 
 fn main() {
-    eprintln!("🍕 Pizza Builder — rhtmledit Forms Demo");
+    eprintln!("🍕 Pizza Builder — htmlbox Forms Demo");
     eprintln!("   Click checkboxes and radio buttons");
     eprintln!("   Click text fields to type");
     eprintln!("   Click 'Place Order' to submit");

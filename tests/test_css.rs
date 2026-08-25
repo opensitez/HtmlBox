@@ -1,12 +1,12 @@
 // Ported from cpptests/test_css.cpp
 // CSS declaration parsing, stylesheet parsing, selector parsing, property application.
 
-use rhtmledit::types::*;
-use rhtmledit::css::{
+use htmlbox::types::*;
+use htmlbox::css::{
     apply_property, parse_declarations, parse_selector, parse_stylesheet,
     SelectorPart, Combinator, PseudoElement,
 };
-use rhtmledit::parse_html;
+use htmlbox::parse_html;
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();

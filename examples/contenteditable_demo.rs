@@ -10,8 +10,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::application::ApplicationHandler;
 
-use rhtmledit::{Document, Renderer, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{Document, Renderer, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/contenteditable.html");
 
@@ -32,7 +32,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Contenteditable Demo — rhtmledit")
+                    .with_title("Contenteditable Demo — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(800u32, 700u32))
             ).unwrap()
         );

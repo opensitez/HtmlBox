@@ -9,8 +9,8 @@
 //   - "Smoke" tests: parse + layout, assert no panic, check key invariants.
 //   - Hit-test tests: use the hit_test API from layout::hit_test.
 //   - Overflow tests: verify box dimensions after layout.
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html, Renderer};
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html, Renderer};
 use tiny_skia::Pixmap;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

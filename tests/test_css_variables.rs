@@ -2,8 +2,8 @@
 // Covers :root, element-level, inheritance, fallbacks, chaining,
 // var() in different property types, and real-world patterns.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
+use htmlbox::types::*;
+use htmlbox::load_html;
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }

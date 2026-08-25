@@ -1,12 +1,12 @@
 #[test]
 fn fixed_center_plus() {
-    use rhtmledit::load_html;
+    use htmlbox::load_html;
     // Use actual demo.html HTML — newline before the +
     let doc = load_html(
         "<div style=\"position: fixed; bottom: 16px; right: 16px; width: 48px; height: 48px; background-color: #3498db; color: white; text-align: center; font-size: 24pt; font-weight: bold; z-index: 100;\">\n+</div>",
         800.0);
     
-    fn find<'a>(node: &'a rhtmledit::HtmlBox, pred: &dyn Fn(&rhtmledit::HtmlBox) -> bool) -> Option<&'a rhtmledit::HtmlBox> {
+    fn find<'a>(node: &'a htmlbox::HtmlBox, pred: &dyn Fn(&htmlbox::HtmlBox) -> bool) -> Option<&'a htmlbox::HtmlBox> {
         if pred(node) { return Some(node); }
         for c in &node.children { if let Some(b) = find(c, pred) { return Some(b); } }
         None
@@ -16,7 +16,7 @@ fn fixed_center_plus() {
     println!("border_rect: {:?}", btn.layout.border_rect);
     println!("content_rect: {:?}", btn.layout.content_rect);
     println!("text_align: {:?}", btn.style.text_align);
-    let flat = rhtmledit::dom::get_text_content(btn);
+    let flat = htmlbox::dom::get_text_content(btn);
     println!("flat text: {:?}", flat);
     println!("num lines: {}", btn.layout.line_cache.len());
     println!("num inline_runs: {}", btn.layout.inline_runs.len());

@@ -4,10 +4,10 @@ use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{Document, Renderer, HtmlBox};
-use rhtmledit::types::{ComponentMeasureFn, ComponentPaintFn};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
+use htmlbox::{Document, Renderer, HtmlBox};
+use htmlbox::types::Component;
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
 use std::sync::Mutex;
 
 const HTML: &str = include_str!("html/graph.html");
@@ -20,14 +20,22 @@ fn parse_csv(s: &str) -> Vec<f32> {
     s.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect()
 }
 
-fn create_graph_component() -> (ComponentMeasureFn, ComponentPaintFn) {
-    let measure = Arc::new(|node: &HtmlBox, _available_w: f32| {
+/// Graph custom component — implements the Component trait for full layout participation.
+struct GraphComponent;
+
+impl Component for GraphComponent {
+    fn measure(&self, node: &HtmlBox, _available_w: f32) -> (f32, f32) {
         let w = get_attr(node, "data-width", "340").parse::<f32>().unwrap_or(340.0);
         let h = get_attr(node, "data-height", "190").parse::<f32>().unwrap_or(190.0);
         (w, h)
-    });
+    }
 
-    let paint = Arc::new(|node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap, x: f32, y: f32, w: f32, h: f32, scale: f32| {
+    fn intrinsic_width(&self, node: &HtmlBox) -> (f32, f32) {
+        let w = get_attr(node, "data-width", "340").parse::<f32>().unwrap_or(340.0);
+        (w, w) // fixed size: min == max
+    }
+
+    fn paint(&self, node: &HtmlBox, pixmap: &mut tiny_skia::Pixmap, x: f32, y: f32, w: f32, h: f32, scale: f32) {
         use tiny_skia::*;
         let mut paint = Paint::default();
         paint.set_color_rgba8(22, 27, 34, 255);
@@ -109,17 +117,17 @@ fn create_graph_component() -> (ComponentMeasureFn, ComponentPaintFn) {
                     let mut pb = PathBuilder::new();
                     let start_rad = sa.to_radians();
                     let _end_rad = (sa + sw).to_radians();
-                    
+
                     if !donut { pb.move_to(cx, cy); }
                     else { pb.move_to(cx + ir * start_rad.cos(), cy + ir * start_rad.sin()); }
-                    
+
                     pb.line_to(cx + r * start_rad.cos(), cy + r * start_rad.sin());
                     let steps = (sw / 5.0).max(5.0) as i32;
                     for s in 1..=steps {
                         let a = (sa + sw * (s as f32 / steps as f32)).to_radians();
                         pb.line_to(cx + r * a.cos(), cy + r * a.sin());
                     }
-                    
+
                     if donut {
                         for s in (0..=steps).rev() {
                             let a = (sa + sw * (s as f32 / steps as f32)).to_radians();
@@ -171,12 +179,12 @@ fn create_graph_component() -> (ComponentMeasureFn, ComponentPaintFn) {
                 }
             }
             "gauge" => {
-                let pct = (values[0] - 95.0) / 5.0; // Hardcoded range for demo
+                let pct = (values[0] - 95.0) / 5.0;
                 let pct = pct.clamp(0.0, 1.0);
                 let cx = x + w / 2.0;
                 let cy = y + h / 2.0 + 20.0;
                 let r = (w.min(h) / 2.0 - 30.0).max(20.0);
-                
+
                 let mut pb_track = PathBuilder::new();
                 for i in 0..=36 {
                     let a = (180.0 + i as f32 * 5.0).to_radians();
@@ -191,7 +199,7 @@ fn create_graph_component() -> (ComponentMeasureFn, ComponentPaintFn) {
                     stroke.line_cap = LineCap::Round;
                     pixmap.stroke_path(&path, &p, &stroke, ts, None);
                 }
-                
+
                 let mut pb_fill = PathBuilder::new();
                 let steps = (pct * 36.0) as i32;
                 for i in 0..=steps {
@@ -210,9 +218,14 @@ fn create_graph_component() -> (ComponentMeasureFn, ComponentPaintFn) {
             }
             _ => { }
         }
-    });
+    }
 
-    (measure, paint)
+    fn accessibility_role(&self) -> &str { "img" }
+
+    fn accessibility_label(&self, node: &HtmlBox) -> Option<String> {
+        let chart_type = get_attr(node, "data-type", "chart");
+        Some(format!("{} chart", chart_type))
+    }
 }
 
 struct AppState {
@@ -301,12 +314,11 @@ struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("graph_demo — rhtmledit").with_inner_size(winit::dpi::LogicalSize::new(1100u32, 860u32))).unwrap());
+        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("graph_demo — htmlbox").with_inner_size(winit::dpi::LogicalSize::new(1100u32, 860u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
 
-        let (measure, paint) = create_graph_component();
-        self.renderer.register_component("graph", measure, paint);
+        self.renderer.register_trait_component("graph", GraphComponent);
         let doc = self.renderer.load_html_vp(HTML, self.width, 860.0);
         
         let state = self.state.clone();
@@ -325,6 +337,7 @@ impl ApplicationHandler for App {
             let next = types[(idx + 1) % types.len()];
             if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
                 dom::set_attribute(target_mut, "data-type", next);
+                target_mut.layout.layout_dirty = true;
             }
 
             let mut st = state.lock().unwrap();
@@ -473,6 +486,8 @@ impl ApplicationHandler for App {
                         ElementState::Released => {
                             doc.process_mouse_event(HtmlEventType::MouseUp, doc_pt, 0);
                             if doc.process_mouse_event(HtmlEventType::Click, doc_pt, 0) {
+                                // Click handlers change attributes/text. The engine
+                                // decides what needs relayout vs repaint.
                                 let mut engine = self.renderer.layout_engine();
                                 engine.layout(doc, self.width);
                             }

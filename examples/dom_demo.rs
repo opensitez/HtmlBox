@@ -5,9 +5,9 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
+use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/dom.html");
 
@@ -363,7 +363,7 @@ fn rand_range(lo: i32, hi: i32) -> i32 {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("dom_demo — rhtmledit").with_inner_size(winit::dpi::LogicalSize::new(1000u32, 800u32))).unwrap());
+        let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("dom_demo — htmlbox").with_inner_size(winit::dpi::LogicalSize::new(1000u32, 800u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
         self.doc = Some(load_html(HTML, self.width));

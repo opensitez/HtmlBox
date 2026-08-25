@@ -2,9 +2,9 @@
 // Float property parsing and float layout tests.
 // NOTE: Smoke tests that require Render(dc, …) are omitted.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::load_html;
+use htmlbox::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

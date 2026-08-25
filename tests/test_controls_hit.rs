@@ -1,5 +1,5 @@
-use rhtmledit::{load_html};
-use rhtmledit::dom::query_selector;
+use htmlbox::{load_html};
+use htmlbox::dom::query_selector;
 
 #[test]
 fn controls_new_game_hit() {
@@ -15,7 +15,7 @@ fn controls_new_game_hit() {
     let cy = r.y + r.h / 2.0;
 
     let pt = (cx, cy);
-    let hit = rhtmledit::layout::hit_test::point_to_hit(&doc.root, pt, 0);
+    let hit = htmlbox::layout::hit_test::point_to_hit(&doc.root, pt, 0);
     assert!(hit.is_some(), "expected a hit result at the button center {:?}", pt);
     let hit_nid = hit.unwrap().node_id;
     let hit_box = doc.get_box_by_id(hit_nid).expect("hit node not found in tree");

@@ -3,9 +3,9 @@
 // NOTE: Smoke tests that require Render(dc, …) are omitted (no rendering DC in Rust).
 // NOTE: Tests referencing box->parent are adapted to use tree walking.
 
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ fn flex_three_cards_equal_sizing() {
     let mut doc = parse_and_layout(html, 800.0);
 
     // Simulate a resize by running layout again (same width)
-    let mut engine = rhtmledit::LayoutEngine::new();
+    let mut engine = htmlbox::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     // And again — this is the pattern that degrades on repeated layout

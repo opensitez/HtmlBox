@@ -5,8 +5,8 @@
 // - compute_intrinsic_width for mixed block/inline content
 // - image aspect ratio preservation
 
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
 
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
@@ -230,7 +230,7 @@ fn img_width_auto_height_specified_sets_aspect_ratio() {
         }
     }
     set_image_dims(&mut doc.root, 1250, 200);
-    let mut engine = rhtmledit::layout::LayoutEngine::new();
+    let mut engine = htmlbox::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");
@@ -258,7 +258,7 @@ fn img_height_auto_width_specified_sets_aspect_ratio() {
         }
     }
     set_image_dims(&mut doc.root, 400, 200);
-    let mut engine = rhtmledit::layout::LayoutEngine::new();
+    let mut engine = htmlbox::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");
@@ -286,7 +286,7 @@ fn img_both_auto_uses_natural_size() {
         }
     }
     set_image_dims(&mut doc.root, 320, 240);
-    let mut engine = rhtmledit::layout::LayoutEngine::new();
+    let mut engine = htmlbox::layout::LayoutEngine::new();
     engine.layout(&mut doc, 800.0);
 
     let img = find_box(&doc.root, &|b| b.tag == "img");

@@ -13,8 +13,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{load_html_vp, Document, Renderer, LayoutEngine, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{load_html_vp, Document, Renderer, LayoutEngine, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/transform_filter_demo.html");
 

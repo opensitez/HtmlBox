@@ -7,10 +7,10 @@
 // the test is written as a comment block marked `// TODO: API not available`.
 // Tests that exercise APIs that *do* exist in Rust are fully ported.
 
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::dom::{
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::layout::LayoutEngine;
+use htmlbox::dom::{
     Editor, TextRange,
     query_selector, query_selector_mut, query_selector_all,
     get_text_content,
@@ -601,7 +601,7 @@ fn nested_list_outdent_to_block_removes_list() {
 // We use set_style_property to toggle on/off.
 #[test]
 fn supersub_toggle_superscript_off_via_style() {
-    use rhtmledit::dom::set_style_property;
+    use htmlbox::dom::set_style_property;
 
     let mut doc = parse("<p><span id=\"t\">2</span></p>");
     let span = query_selector_mut(&mut doc.root, "span").unwrap();
@@ -623,7 +623,7 @@ fn supersub_toggle_superscript_off_via_style() {
 // with no text runs does not panic.
 #[test]
 fn supersub_no_selection_no_crash() {
-    use rhtmledit::dom::set_style_property;
+    use htmlbox::dom::set_style_property;
 
     // An empty paragraph — no inline_runs
     let mut doc = parse("<p></p>");
@@ -656,7 +656,7 @@ fn code_block_has_mono_font() {
 // We test this by applying an inline background-color to a <pre> and checking it.
 #[test]
 fn code_block_has_background_via_style() {
-    use rhtmledit::dom::apply_inline_style_str;
+    use htmlbox::dom::apply_inline_style_str;
 
     let mut doc = parse("<pre>code here</pre>");
     let pre = query_selector_mut(&mut doc.root, "pre").unwrap();

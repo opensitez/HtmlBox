@@ -2,8 +2,8 @@
 // Tests for Markdown parsing, serialization, and round-trip.
 // Widget API tests (MdWidget) are skipped — require wxHtmlEditWidget.
 
-use rhtmledit::types::*;
-use rhtmledit::{parse_markdown, serialize_markdown, parse_html, load_html, LayoutEngine};
+use htmlbox::types::*;
+use htmlbox::{parse_markdown, serialize_markdown, parse_html, load_html, LayoutEngine};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

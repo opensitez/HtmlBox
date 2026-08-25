@@ -1,10 +1,10 @@
 // Ported from cpptests/test_cascade.cpp
 // CSS Cascade Priority Tests: UA stylesheet < author <style> < inline style=""
 
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::layout::LayoutEngine;
+use htmlbox::css::apply_property;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1236,7 +1236,7 @@ fn pseudo_element_selector_does_not_match_real_elements() {
 #[test]
 fn vh_resolves_to_viewport_height() {
     // height: 100vh on a block should equal the viewport height passed to the engine
-    let doc = rhtmledit::load_html_vp(
+    let doc = htmlbox::load_html_vp(
         r#"<div id="box" style="height:100vh; background:red;"></div>"#,
         900.0, 600.0,
     );
@@ -1249,7 +1249,7 @@ fn vh_resolves_to_viewport_height() {
 
 #[test]
 fn vw_resolves_to_viewport_width() {
-    let doc = rhtmledit::load_html_vp(
+    let doc = htmlbox::load_html_vp(
         r#"<div id="box" style="width:50vw; height:10px;"></div>"#,
         800.0, 600.0,
     );
@@ -1263,7 +1263,7 @@ fn vw_resolves_to_viewport_width() {
 #[test]
 fn vh_on_flex_item_resolves_correctly() {
     // A flex item with height:100vh in a column flex container should get full viewport height
-    let doc = rhtmledit::load_html_vp(
+    let doc = htmlbox::load_html_vp(
         r#"<style>
             body { display:flex; flex-direction:column; height:100vh; margin:0; }
             #app  { flex:1; }
@@ -1280,7 +1280,7 @@ fn vh_on_flex_item_resolves_correctly() {
 #[test]
 fn three_column_flex_layout_with_vh() {
     // Regression: email-style three-column layout should lay out all three columns
-    let doc = rhtmledit::load_html_vp(
+    let doc = htmlbox::load_html_vp(
         r#"<style>
             body { display:flex; flex-direction:column; height:100vh; margin:0; }
             .app  { display:flex; flex-direction:row; flex:1; }

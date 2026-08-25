@@ -3,9 +3,9 @@
 // Note: display:contents, flow-root, inline-table, ruby-base are omitted
 // (not yet in Rust Display enum).
 
-use rhtmledit::types::*;
-use rhtmledit::css::apply_property;
-use rhtmledit::{load_html, parse_html};
+use htmlbox::types::*;
+use htmlbox::css::apply_property;
+use htmlbox::{load_html, parse_html};
 
 fn parse(html: &str) -> Document {
     parse_html(html)
@@ -335,8 +335,8 @@ fn display_inline_block_same_line_as_text() {
 #[test]
 fn display_inline_block_layout_stable_on_relayout() {
     // Re-layout should produce stable positions and heights
-    use rhtmledit::LayoutEngine;
-    let mut doc = rhtmledit::parse_html(
+    use htmlbox::LayoutEngine;
+    let mut doc = htmlbox::parse_html(
         "<div style='width:400px'>\
            <span style='display:inline-block; width:80px; height:40px;' id='ib'>IB</span>\
          </div>",

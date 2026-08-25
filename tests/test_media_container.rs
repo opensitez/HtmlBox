@@ -1,9 +1,9 @@
 // Comprehensive @media and @container query tests — covers all media features,
 // complex conditions, nesting, container queries, and responsive patterns.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
-use rhtmledit::load_html_vp;
+use htmlbox::types::*;
+use htmlbox::load_html;
+use htmlbox::load_html_vp;
 
 fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }

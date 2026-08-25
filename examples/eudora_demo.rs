@@ -7,8 +7,8 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/eudora.html");
 
@@ -27,7 +27,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("eudora_demo — rhtmledit")
+                    .with_title("eudora_demo — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 900u32))
             ).unwrap()
         );

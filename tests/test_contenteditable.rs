@@ -5,9 +5,9 @@
 //   - DOM manipulation: toggle_bold, toggle_italic, toggle_underline,
 //     set_font_size, set_text_color using the dom module APIs
 
-use rhtmledit::types::*;
-use rhtmledit::parse_html;
-use rhtmledit::dom::{
+use htmlbox::types::*;
+use htmlbox::parse_html;
+use htmlbox::dom::{
     toggle_bold, toggle_italic, toggle_underline, set_font_size, set_text_color,
     TextRange,
 };
@@ -251,7 +251,7 @@ fn ce_set_text_color_partial() {
 
 #[test]
 fn ce_clone_element_preserves_tag_and_text() {
-    use rhtmledit::dom::clone_element;
+    use htmlbox::dom::clone_element;
     let doc = parse_html("<p>Cloneable</p>");
     let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
     let cloned = clone_element(p);
@@ -262,7 +262,7 @@ fn ce_clone_element_preserves_tag_and_text() {
 
 #[test]
 fn ce_clone_element_is_independent() {
-    use rhtmledit::dom::clone_element;
+    use htmlbox::dom::clone_element;
     let doc = parse_html("<div><p>Original</p></div>");
     let p = find_box(&doc.root, &|b| b.tag == "p").unwrap();
     let cloned = clone_element(p);
@@ -276,11 +276,11 @@ fn ce_clone_element_is_independent() {
 // DecreaseIndentSurvives
 // ============================================================
 
-use rhtmledit::dom::{query_selector_mut, query_selector};
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::dom::Editor;
+use htmlbox::dom::{query_selector_mut, query_selector};
+use htmlbox::layout::LayoutEngine;
+use htmlbox::dom::Editor;
 
-fn parse_and_layout(html: &str) -> rhtmledit::types::Document {
+fn parse_and_layout(html: &str) -> htmlbox::types::Document {
     let mut doc = parse_html(html);
     LayoutEngine::new().layout(&mut doc, 800.0);
     doc
@@ -302,7 +302,7 @@ fn ce_indent_survives_recascade() {
     doc.editor.increase_indent(&mut doc.root, 40.0);
 
     let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => v,
+        htmlbox::types::CssLength::Px(v) => v,
         _ => panic!("expected Px margin after indent"),
     };
     assert!(margin_before > 0.0, "margin-left should be positive after increase_indent");
@@ -310,7 +310,7 @@ fn ce_indent_survives_recascade() {
     doc.recascade();
 
     match &query_selector(&doc.root, "p").unwrap().style.margin_left {
-        rhtmledit::types::CssLength::Px(v) =>
+        htmlbox::types::CssLength::Px(v) =>
             assert!((*v - margin_before).abs() < 0.01,
                 "margin-left must survive recascade; before={} after={}", margin_before, v),
         other => panic!("indent must survive recascade; got {:?}", other),
@@ -330,16 +330,16 @@ fn ce_decrease_indent_survives_recascade() {
     doc.editor.decrease_indent(&mut doc.root, 40.0);
 
     let margin_before = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => v,
-        rhtmledit::types::CssLength::Zero  => 0.0,
+        htmlbox::types::CssLength::Px(v) => v,
+        htmlbox::types::CssLength::Zero  => 0.0,
         _ => panic!("expected Px or Zero margin"),
     };
 
     doc.recascade();
 
     let margin_after = match query_selector(&doc.root, "p").unwrap().style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => v,
-        rhtmledit::types::CssLength::Zero  => 0.0,
+        htmlbox::types::CssLength::Px(v) => v,
+        htmlbox::types::CssLength::Zero  => 0.0,
         _ => panic!("expected Px or Zero margin after recascade"),
     };
     assert!((margin_after - margin_before).abs() < 0.01,
@@ -356,7 +356,7 @@ fn ce_decrease_indent_survives_recascade() {
 #[test]
 fn ce_bullet_list_survives_recascade() {
     // ParserStyleSync, BulletListSurvivesReCascade
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let mut doc = parse_and_layout("<div><p>List item</p></div>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();

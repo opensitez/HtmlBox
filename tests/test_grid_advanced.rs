@@ -1,8 +1,8 @@
 // Comprehensive grid layout tests — covers advanced features, edge cases,
 // and real-world patterns from BBC, AP News, Wikipedia, Al Jazeera.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
+use htmlbox::types::*;
+use htmlbox::load_html;
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }

@@ -1,10 +1,10 @@
 // Ported from cpptests/test_dom.cpp
 // DOM query, traversal, text content, and attribute tests.
 
-use rhtmledit::types::*;
-use rhtmledit::parse_html;
-use rhtmledit::dom::*;
-use rhtmledit::html::serializer::serialize_box;
+use htmlbox::types::*;
+use htmlbox::parse_html;
+use htmlbox::dom::*;
+use htmlbox::html::serializer::serialize_box;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -757,7 +757,7 @@ fn dom_query_selector_by_tag_and_class() {
 #[test]
 fn dom_get_bounding_rect_returns_rect() {
     // After load_html (which runs layout), border_rect is populated.
-    let doc = rhtmledit::load_html(r#"<div><p id="t">Box</p></div>"#, 800.0);
+    let doc = htmlbox::load_html(r#"<div><p id="t">Box</p></div>"#, 800.0);
     let t = query_selector(&doc.root, "#t").unwrap();
     // width and height should be non-negative (may be 0 without font metrics)
     assert!(t.layout.border_rect.w >= 0.0);
@@ -1312,7 +1312,7 @@ fn dom_data_null_box() {
 
 #[test]
 fn dom_get_bounding_rect_absolute_coords() {
-    let doc = rhtmledit::load_html(
+    let doc = htmlbox::load_html(
         r#"<div style="padding:10px;"><p id="inner">Text</p></div>"#,
         800.0,
     );
@@ -1325,7 +1325,7 @@ fn dom_get_bounding_rect_absolute_coords() {
 
 #[test]
 fn dom_get_bounding_rect_nested_elements() {
-    let doc = rhtmledit::load_html(
+    let doc = htmlbox::load_html(
         r#"<div style="padding:20px;"><div style="padding:15px;"><p id="deep">Deep</p></div></div>"#,
         800.0,
     );

@@ -1,8 +1,8 @@
 use std::fs;
-use rhtmledit::{parse_html_with_base, LayoutEngine};
-use rhtmledit::html::serialize_html;
+use htmlbox::{parse_html_with_base, LayoutEngine};
+use htmlbox::html::serialize_html;
 
-fn traverse(node: &rhtmledit::HtmlBox, depth: usize) {
+fn traverse(node: &htmlbox::HtmlBox, depth: usize) {
     if node.tag == "p" {
         println!("[EX] p tag display={:?} text='{}'", node.style.display, node.text_content());
         if node.text_content().contains("Inline image") {
@@ -25,7 +25,7 @@ fn main() {
     let s = fs::read_to_string(path).expect("read demo.html");
     let mut doc = parse_html_with_base(&s, "");
     // Dump children of the paragraph before layout
-    fn dump_children_pre(node: &rhtmledit::HtmlBox) {
+    fn dump_children_pre(node: &htmlbox::HtmlBox) {
         if node.tag == "p" && node.text_content().contains("Inline image") {
             println!("[PRE] p children count={}", node.children.len());
             for ch in &node.children { println!(" [PRE] child tag={} display={:?}", ch.tag, ch.style.display); }
@@ -43,7 +43,7 @@ fn main() {
     traverse(&doc.root, 0);
 
     // Find hero container (contains an img with src="hero") and dump its rects
-    fn dump_hero(node: &rhtmledit::HtmlBox) {
+    fn dump_hero(node: &htmlbox::HtmlBox) {
         let mut found = false;
         for ch in &node.children {
             if ch.tag == "img" && ch.attributes.get("src").map(|s| s == "hero").unwrap_or(false) {

@@ -1,7 +1,7 @@
 // Serialization tests – ported from cpptests/test_serialization.cpp
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::html::serialize_html;
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::html::serialize_html;
 
 /// Parse → Serialize helper
 fn serialize(input: &str) -> String {
@@ -556,8 +556,8 @@ fn br_becomes_newline() {
 
 #[test]
 fn empty_document() {
-    use rhtmledit::html::serialize_html;
-    let doc = rhtmledit::types::Document::new();
+    use htmlbox::html::serialize_html;
+    let doc = htmlbox::types::Document::new();
     // Serializing an empty document should not panic and produce minimal/empty output
     let html = serialize_html(&doc);
     // Either empty or just a root element tag; should not contain content
@@ -568,7 +568,7 @@ fn empty_document() {
 fn unknown_pseudo_element_survives_roundtrip() {
     // ::-webkit-scrollbar and other unknown pseudo-elements should be preserved
     // verbatim through a parse → serialize cycle, just like browsers do.
-    use rhtmledit::html::serialize_html;
+    use htmlbox::html::serialize_html;
     let html = r#"<html><head><style>
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -576,7 +576,7 @@ fn unknown_pseudo_element_survives_roundtrip() {
 ::cue { color: white; background: rgba(0,0,0,0.8); }
 </style></head><body><p>Hello</p></body></html>"#;
 
-    let doc = rhtmledit::load_html(html, 800.0);
+    let doc = htmlbox::load_html(html, 800.0);
     let out = serialize_html(&doc);
 
     assert!(out.contains("::-webkit-scrollbar"),
@@ -591,7 +591,7 @@ fn unknown_pseudo_element_survives_roundtrip() {
 
 #[test]
 fn known_pseudo_elements_survive_roundtrip() {
-    use rhtmledit::html::serialize_html;
+    use htmlbox::html::serialize_html;
     let html = r#"<html><head><style>
 p::before { content: ">> "; color: red; }
 p::after  { content: " <<"; }
@@ -600,7 +600,7 @@ li::marker { color: blue; }
 p::first-line { font-size: 18px; }
 </style></head><body><p>Hi</p></body></html>"#;
 
-    let doc = rhtmledit::load_html(html, 800.0);
+    let doc = htmlbox::load_html(html, 800.0);
     let out = serialize_html(&doc);
 
     assert!(out.contains("p::before"),  "p::before lost");

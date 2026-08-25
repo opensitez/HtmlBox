@@ -1,7 +1,7 @@
 // Grid tests – ported from cpptests/test_grid.cpp
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::css::apply_property;
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }
@@ -1109,8 +1109,8 @@ fn grid_auto_flow_column_dense_layout() {
 fn grid_cell_stretch_border_box() {
     // Regression: with box-sizing: border-box, align-self: stretch was
     // double-subtracting padding/border from the cell height, making content_h = 0.
-    use rhtmledit::{load_html};
-    use rhtmledit::types::{HtmlBox, Display};
+    use htmlbox::{load_html};
+    use htmlbox::types::{HtmlBox, Display};
 
     fn find_grid<'a>(root: &'a HtmlBox) -> Option<&'a HtmlBox> {
         if root.style.display == Display::Grid { return Some(root); }

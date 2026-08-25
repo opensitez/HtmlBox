@@ -7,9 +7,9 @@
 // - <source> element display: none
 // - Percentage width in intrinsic sizing
 
-use rhtmledit::types::*;
-use rhtmledit::css::apply_property;
-use rhtmledit::{parse_html, load_html, load_html_vp};
+use htmlbox::types::*;
+use htmlbox::css::apply_property;
+use htmlbox::{parse_html, load_html, load_html_vp};
 
 fn find_box<'a, F: Fn(&HtmlBox) -> bool>(root: &'a HtmlBox, pred: &F) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }
@@ -531,18 +531,18 @@ fn grid_before_counter_in_fixed_column() {
 
 #[test]
 fn evaluate_media_min_width_passes() {
-    assert!(rhtmledit::css::evaluate_media("(min-width: 1024px)", 1200.0, 800.0));
+    assert!(htmlbox::css::evaluate_media("(min-width: 1024px)", 1200.0, 800.0));
 }
 
 #[test]
 fn evaluate_media_min_width_fails() {
-    assert!(!rhtmledit::css::evaluate_media("(min-width: 1024px)", 800.0, 600.0));
+    assert!(!htmlbox::css::evaluate_media("(min-width: 1024px)", 800.0, 600.0));
 }
 
 #[test]
 fn evaluate_media_max_width() {
-    assert!(rhtmledit::css::evaluate_media("(max-width: 768px)", 600.0, 400.0));
-    assert!(!rhtmledit::css::evaluate_media("(max-width: 768px)", 1024.0, 768.0));
+    assert!(htmlbox::css::evaluate_media("(max-width: 768px)", 600.0, 400.0));
+    assert!(!htmlbox::css::evaluate_media("(max-width: 768px)", 1024.0, 768.0));
 }
 
 // ============================================================
@@ -589,7 +589,7 @@ fn descendant_selector_nested_deep() {
         </body></html>
     "#, 800.0, 600.0);
     let deep = find_box(&doc.root, &|b| b.attributes.get("id").map_or(false, |v| v == "deep")).unwrap();
-    assert!(matches!(deep.style.font_weight, rhtmledit::types::FontWeight::Bold | rhtmledit::types::FontWeight::Value(700)), "Deeply nested descendant should match");
+    assert!(matches!(deep.style.font_weight, htmlbox::types::FontWeight::Bold | htmlbox::types::FontWeight::Value(700)), "Deeply nested descendant should match");
 }
 
 #[test]
@@ -633,12 +633,12 @@ fn child_combinator_direct() {
 
 #[test]
 fn descendant_selector_parse_produces_combinator() {
-    let sel = rhtmledit::css::parse_selector(".Parent .Child");
+    let sel = htmlbox::css::parse_selector(".Parent .Child");
     // Should be: [Class("Parent"), Combinator(Descendant), Class("Child")]
     assert_eq!(sel.parts.len(), 3, "Expected 3 parts: class, combinator, class");
-    assert!(matches!(&sel.parts[0], rhtmledit::css::SelectorPart::Class(c) if c == "Parent"));
-    assert!(matches!(&sel.parts[1], rhtmledit::css::SelectorPart::Combinator(rhtmledit::css::Combinator::Descendant)));
-    assert!(matches!(&sel.parts[2], rhtmledit::css::SelectorPart::Class(c) if c == "Child"));
+    assert!(matches!(&sel.parts[0], htmlbox::css::SelectorPart::Class(c) if c == "Parent"));
+    assert!(matches!(&sel.parts[1], htmlbox::css::SelectorPart::Combinator(htmlbox::css::Combinator::Descendant)));
+    assert!(matches!(&sel.parts[2], htmlbox::css::SelectorPart::Class(c) if c == "Child"));
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn inherit_overrides_lower_specificity_rule() {
     // Parent (.child div) has default 16px font.  h1 with font-size:inherit should be 16px, not 2em=32px.
     let fs = hdr.style.font_size_px(16.0, 16.0);
     assert!((fs - 16.0).abs() < 1.0, "h1 with font-size:inherit should be 16px, got {fs}");
-    assert!(matches!(hdr.style.display, rhtmledit::types::Display::Inline), "h1 with display:inline from descendant selector");
+    assert!(matches!(hdr.style.display, htmlbox::types::Display::Inline), "h1 with display:inline from descendant selector");
 }
 
 #[test]
@@ -1423,11 +1423,11 @@ fn wikipedia_real_page_no_major_overlaps() {
     };
     let css_text = std::fs::read_to_string("/tmp/wiki_css.css").unwrap_or_default();
     
-    let mut doc = rhtmledit::html::parse_html_with_base(&html, "https://en.wikipedia.org/wiki/Main_Page");
+    let mut doc = htmlbox::html::parse_html_with_base(&html, "https://en.wikipedia.org/wiki/Main_Page");
     doc.stylesheet.parse_and_add(&css_text);
     doc.viewport_w = 1280.0;
     doc.viewport_h = 900.0;
-    let mut renderer = rhtmledit::renderer::Renderer::new();
+    let mut renderer = htmlbox::renderer::Renderer::new();
     {
         let eng = renderer.layout_engine();
         eng.viewport_h = 900.0;

@@ -5,9 +5,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::keyboard::{PhysicalKey, KeyCode};
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
+use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/events.html");
 
@@ -54,7 +54,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes()
-                .with_title("events_demo — rhtmledit")
+                .with_title("events_demo — htmlbox")
                 .with_inner_size(winit::dpi::LogicalSize::new(1000u32, 800u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());
@@ -342,7 +342,7 @@ impl ApplicationHandler for App {
 
 /// Find the id of the top-most card under `doc_pt`, if any.
 fn hit_card_id(root: &HtmlBox, doc_pt: (f32, f32)) -> Option<String> {
-    use rhtmledit::layout::hit_test::point_to_hit;
+    use htmlbox::layout::hit_test::point_to_hit;
     let hit = point_to_hit(root, doc_pt, 0)?;
     fn find_node<'a>(node: &'a HtmlBox, id: u32) -> Option<&'a HtmlBox> {
         if node.node_id == id { return Some(node); }

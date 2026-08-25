@@ -1,8 +1,8 @@
 // Visual property tests – ported from cpptests/test_visual.cpp
 // Render smoke and hit-test skipped (require widget / DC infrastructure).
-use rhtmledit::types::*;
-use rhtmledit::{load_html, parse_html};
-use rhtmledit::css::{apply_property, Stylesheet};
+use htmlbox::types::*;
+use htmlbox::{load_html, parse_html};
+use htmlbox::css::{apply_property, Stylesheet};
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }
@@ -343,7 +343,7 @@ fn pseudo_element_before_has_own_style() {
     assert!(bs.is_some(), "before_style should be Some — other declarations were dropped");
     let bs = bs.unwrap();
     assert_eq!(bs.color, Color::rgb(255, 0, 0), "::before color should be red");
-    assert_eq!(bs.font_weight, rhtmledit::types::FontWeight::Bold, "::before font-weight should be bold");
+    assert_eq!(bs.font_weight, htmlbox::types::FontWeight::Bold, "::before font-weight should be bold");
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn pseudo_element_after_has_own_style() {
     assert!(as_.is_some(), "after_style should be Some");
     let c = as_.unwrap().color;
     assert_eq!((c.r, c.g, c.b), (0, 170, 0), "::after color should be #00aa00");
-    assert_eq!(as_.unwrap().font_style, rhtmledit::types::FontStyle::Italic);
+    assert_eq!(as_.unwrap().font_style, htmlbox::types::FontStyle::Italic);
 }
 
 #[test]
@@ -558,7 +558,7 @@ fn placeholder_does_not_apply_to_element() {
 
 /// Helper matching test_rendering.rs: renders HTML into a Pixmap.
 fn render_doc_visual(html: &str, logical_w: u32, logical_h: u32) -> tiny_skia::Pixmap {
-    use rhtmledit::Renderer;
+    use htmlbox::Renderer;
     let mut doc = load_html(html, logical_w as f32);
     let mut renderer = Renderer::new();
     let mut pixmap = tiny_skia::Pixmap::new(logical_w, logical_h).expect("pixmap");
@@ -587,7 +587,7 @@ fn render_complex_smoke() {
 fn hit_test_smoke() {
     // Ported from Visual::HitTestSmoke — verifies that point_to_hit returns
     // a valid (or None) result without panicking.
-    use rhtmledit::point_to_hit;
+    use htmlbox::point_to_hit;
     let doc = load_html("<p>Hello World</p>", 800.0);
     // Point inside the document — may or may not hit a text run, but must not panic.
     let _hit = point_to_hit(&doc.root, (10.0, 10.0), 0);

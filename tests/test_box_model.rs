@@ -1,9 +1,9 @@
 // Ported from cpptests/test_box_model.cpp
 // Box model: margin, padding, border, box-sizing, width/height, colors.
 
-use rhtmledit::types::*;
-use rhtmledit::css::apply_property;
-use rhtmledit::{load_html, parse_html};
+use htmlbox::types::*;
+use htmlbox::css::apply_property;
+use htmlbox::{load_html, parse_html};
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();

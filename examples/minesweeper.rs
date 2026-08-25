@@ -8,9 +8,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use rand::Rng;
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
+use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlBox};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/minesweeper.html");
 
@@ -141,7 +141,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("minesweeper — rhtmledit")
+                    .with_title("minesweeper — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(500u32, 700u32))
             ).unwrap()
         );

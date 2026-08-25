@@ -1,5 +1,5 @@
-use rhtmledit::{load_html};
-use rhtmledit::types::*;
+use htmlbox::{load_html};
+use htmlbox::types::*;
 
 fn find_all<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool, out: &mut Vec<&'a HtmlBox>) {
     if pred(root) { out.push(root); }

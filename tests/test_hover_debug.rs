@@ -1,4 +1,4 @@
-fn find_box_with_hover(node: &rhtmledit::types::HtmlBox, depth: usize) {
+fn find_box_with_hover(node: &htmlbox::types::HtmlBox, depth: usize) {
     if node.style.hover_style.is_some() {
         let hs = node.style.hover_style.as_ref().unwrap();
         println!("{}<{}> class={:?} border_top_color={:?} bg={:?}",
@@ -12,7 +12,7 @@ fn find_box_with_hover(node: &rhtmledit::types::HtmlBox, depth: usize) {
 #[test]
 fn debug_hover_styles() {
     let html = include_str!("../examples/html/graph.html");
-    let doc = rhtmledit::load_html(html, 900.0);
+    let doc = htmlbox::load_html(html, 900.0);
     println!("=== Boxes with hover_style ===");
     find_box_with_hover(&doc.root, 0);
     println!("Total rules with is_hover: {}", doc.stylesheet.rules.iter().filter(|r| r.is_hover).count());

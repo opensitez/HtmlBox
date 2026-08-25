@@ -1,8 +1,8 @@
 /// Port of wxhtmledit/examples/diag.cpp
 /// Diagnostic: dump box tree to see layout results.
 
-use rhtmledit::{load_html, LayoutEngine};
-use rhtmledit::types::{HtmlBox, Display};
+use htmlbox::{load_html, LayoutEngine};
+use htmlbox::types::{HtmlBox, Display};
 
 fn dump_box_tree(node: &HtmlBox, depth: usize) {
     if matches!(node.style.display, Display::None) {

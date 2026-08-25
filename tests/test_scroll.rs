@@ -1,8 +1,8 @@
 // Tests for per-element and viewport scroll: overflow, wheel dispatch,
 // scroll clamping, and scrollbar visibility logic.
 
-use rhtmledit::{load_html, LayoutEngine};
-use rhtmledit::types::*;
+use htmlbox::{load_html, LayoutEngine};
+use htmlbox::types::*;
 
 fn parse_and_layout(html: &str, vw: f32) -> Document {
     load_html(html, vw)

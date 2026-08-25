@@ -18,8 +18,8 @@
 //   - HoverMatchesWhenHoveredBoxSet, HoverDoesNotMatchWhenBoxNotHovered
 //   - HoverAppliesAllPropertiesViaStateAwareCascade
 //   - FocusAppliesOutlineViaStateAwareCascade
-use rhtmledit::css::{SelectorPart, parse_selector};
-use rhtmledit::parse_html;
+use htmlbox::css::{SelectorPart, parse_selector};
+use htmlbox::parse_html;
 
 // ─── Helper: check that a stylesheet rule has a pseudo-class part with the given name ──
 

@@ -11,14 +11,14 @@
 //     these used a manually-built C++ SimpleSelector struct; ported below using
 //     load_html + matches_with_ancestors instead.
 
-use rhtmledit::css::{parse_selector, SelectorPart, AttrOp, Combinator};
-use rhtmledit::parse_html;
+use htmlbox::css::{parse_selector, SelectorPart, AttrOp, Combinator};
+use htmlbox::parse_html;
 
 // ─── Helper: find a box in the tree matching a predicate ─────────────────────
 
-fn find_box<'a, F>(root: &'a rhtmledit::HtmlBox, pred: &F) -> Option<&'a rhtmledit::HtmlBox>
+fn find_box<'a, F>(root: &'a htmlbox::HtmlBox, pred: &F) -> Option<&'a htmlbox::HtmlBox>
 where
-    F: Fn(&rhtmledit::HtmlBox) -> bool,
+    F: Fn(&htmlbox::HtmlBox) -> bool,
 {
     if pred(root) { return Some(root); }
     for child in &root.children {
@@ -30,11 +30,11 @@ where
 // ─── Helper: build an AncestorInfo for a box ─────────────────────────────────
 
 fn ancestor_info(
-    b: &rhtmledit::HtmlBox,
+    b: &htmlbox::HtmlBox,
     child_index: usize,
     sibling_count: usize,
-) -> rhtmledit::css::AncestorInfo {
-    rhtmledit::css::AncestorInfo {
+) -> htmlbox::css::AncestorInfo {
+    htmlbox::css::AncestorInfo {
         tag:              b.tag.clone(),
         attributes:       b.attributes.clone(),
         child_index,
@@ -662,10 +662,10 @@ fn general_sibling_combinator_parsed() {
 // the full cascade (load_html), not just selector matching.
 // ============================================================
 
-use rhtmledit::load_html;
-use rhtmledit::types::{Color, Float, FontWeight};
+use htmlbox::load_html;
+use htmlbox::types::{Color, Float, FontWeight};
 
-fn find_by_id<'a>(root: &'a rhtmledit::HtmlBox, id: &str) -> Option<&'a rhtmledit::HtmlBox> {
+fn find_by_id<'a>(root: &'a htmlbox::HtmlBox, id: &str) -> Option<&'a htmlbox::HtmlBox> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
     for c in &root.children {
         if let Some(r) = find_by_id(c, id) { return Some(r); }

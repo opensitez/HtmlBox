@@ -1,12 +1,12 @@
 // Tests for navigation: hit testing, offset-to-point, and line collection.
 
-use rhtmledit::types::*;
-use rhtmledit::parse_html;
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::layout::hit_test::*;
+use htmlbox::types::*;
+use htmlbox::parse_html;
+use htmlbox::layout::LayoutEngine;
+use htmlbox::layout::hit_test::*;
 
 fn layout(html: &str, width: f32) -> Document {
-    rhtmledit::load_html(html, width)
+    htmlbox::load_html(html, width)
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn nav_multiple_paragraphs_have_increasing_y() {
     // We need the box+offset for each word; use point_to_hit by getting offsets via
     // offset_to_point round trip from the root box.
     // Find each paragraph's box
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
@@ -246,7 +246,7 @@ fn nav_multiple_paragraphs_have_increasing_y() {
 #[test]
 fn nav_heading_and_paragraph_ordering() {
     let doc = layout("<h1>Title</h1><p>Body text here</p>", 800.0);
-    use rhtmledit::dom::query_selector;
+    use htmlbox::dom::query_selector;
     let h1 = query_selector(&doc.root, "h1").unwrap();
     let p  = query_selector(&doc.root, "p").unwrap();
 
@@ -276,7 +276,7 @@ fn nav_click_returns_distinct_offsets_per_box() {
     let here_pos   = text.find("here").expect("'here' not found");
 
     // Find the <p> inside the second blockquote
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     // The last paragraph should contain "After text here"
     let last_p = paras.iter().find(|p| p.text_content().contains("After")).copied();
@@ -325,7 +325,7 @@ fn nav_click_on_each_paragraph_returns_distinct_offsets() {
          <blockquote><p>CCC</p></blockquote>",
         800.0,
     );
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3);
 
@@ -369,7 +369,7 @@ fn nav_wrapped_text_line_ordering() {
         150.0,
     );
     let p = {
-        use rhtmledit::dom::query_selector;
+        use htmlbox::dom::query_selector;
         query_selector(&doc.root, "p").unwrap()
     };
     // First character
@@ -404,7 +404,7 @@ fn nav_flex_items_at_different_x() {
         r#"<div style="display: flex;"><div>Item A</div><div>Item B</div></div>"#,
         800.0,
     );
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let divs = query_selector_all(&doc.root, "div");
     // Find the flex children (they contain "Item A" and "Item B")
     let ia = divs.iter().find(|d| d.text_content().trim() == "Item A").copied();
@@ -425,7 +425,7 @@ fn nav_flex_items_at_different_x() {
 #[test]
 fn nav_list_items_at_increasing_y() {
     let doc = layout("<ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul>", 800.0);
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let items = query_selector_all(&doc.root, "li");
     assert!(items.len() >= 3, "expected at least 3 list items");
 
@@ -477,7 +477,7 @@ fn nav_single_char_document_hittable() {
 #[test]
 fn nav_multiple_blocks_in_div_increasing_y() {
     let doc = layout("<div><p>Para 1</p><p>Para 2</p><p>Para 3</p></div>", 800.0);
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
@@ -504,7 +504,7 @@ fn nav_all_lines_distinct_global_offsets() {
          <blockquote><p>Third</p></blockquote>",
         800.0,
     );
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3, "expected at least 3 paragraphs");
 
@@ -554,7 +554,7 @@ fn nav_click_on_deeply_nested_blockquote_last_line() {
         800.0,
     );
 
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let items = query_selector_all(&doc.root, "li");
     assert!(items.len() >= 4, "expected 4 list items");
 
@@ -582,7 +582,7 @@ fn nav_click_on_two_words_same_line_distinct_offsets() {
     // Two words on one line, clicking at different X positions must give
     // different offsets (proves that X→offset mapping works).
     let doc = layout("<p>Vertical separators</p>", 800.0);
-    use rhtmledit::dom::query_selector;
+    use htmlbox::dom::query_selector;
     let p = query_selector(&doc.root, "p").unwrap();
 
     let p_text = p.text_content();
@@ -625,7 +625,7 @@ fn nav_click_on_two_words_same_line_distinct_offsets() {
 fn nav_collect_lines_basic_equivalent() {
     // Two paragraphs must each be independently hittable (line-level navigation)
     let doc = layout("<p>Line one</p><p>Line two</p>", 800.0);
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 2, "expected at least 2 paragraphs");
     // Both paragraphs must have a layout point
@@ -640,7 +640,7 @@ fn nav_find_line_for_offset_equivalent() {
     // Clicking at the screen position of "Hello" vs "World" must yield
     // different hit results (mimics FindLineForOffset at offsets 0 and end)
     let doc = layout("<p>Hello</p><p>World</p>", 800.0);
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 2);
 
@@ -660,7 +660,7 @@ fn nav_find_line_for_offset_equivalent() {
 fn nav_lines_sorted_by_y_equivalent() {
     // Three paragraphs must have strictly increasing Y positions
     let doc = layout("<p>Line 1</p><p>Line 2</p><p>Line 3</p>", 800.0);
-    use rhtmledit::dom::query_selector_all;
+    use htmlbox::dom::query_selector_all;
     let paras = query_selector_all(&doc.root, "p");
     assert!(paras.len() >= 3);
     let pts: Vec<_> = paras.iter()
@@ -693,7 +693,7 @@ fn nav_wrapped_text_multiple_lines_equivalent() {
         "<p>This is a long paragraph that should wrap across multiple lines in a narrow viewport</p>",
         100.0,
     );
-    use rhtmledit::dom::query_selector;
+    use htmlbox::dom::query_selector;
     let p = query_selector(&doc.root, "p").unwrap();
     let text_len = p.text_content().len();
 

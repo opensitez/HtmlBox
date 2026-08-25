@@ -1,15 +1,20 @@
 [package]
-name = "rhtmledit"
+name = "htmlbox"
 version = "0.1.0"
 edition = "2021"
 description = "HTML/CSS editor and renderer in Rust using tiny-skia"
+license = "MIT OR Apache-2.0" # REQUIRED: Standard Rust dual-license, or choose your own (e.g., "MIT")
+repository = "https://github.com/your-username/htmlbox" # Recommended
+readme = "README.md" # Recommended (if you have one)
+keywords = ["html", "css", "rendering", "skia"] # Optional
+categories = ["gui", "rendering", "web-programming"] # Optional
 
 [lib]
-name = "rhtmledit"
+name = "htmlbox"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rhtmledit"
+name = "htmlbox"
 path = "src/main.rs"
 
 [[example]]
@@ -60,6 +65,15 @@ softbuffer = "0.4"
 bytemuck = "1"
 raw-window-handle = "0.6"
 cosmic-text = "0.18.2"
+# Glyph OUTLINES, for `strokeText`. Already in the tree as cosmic-text's own
+# dependency at this exact version — naming it here does not add a crate, it
+# makes the outline API reachable. cosmic-text re-exports the rasteriser
+# (`SwashCache`) but not `scale::ScaleContext`, and a filled glyph is not a
+# stroked one.
+swash = "0.2"
+# `toDataURL`. Already in the tree; the canvas needs it to hand a page its own
+# pixels, which is the only export route the spec gives a `<canvas>`.
+base64 = "0.21"
 unicode-bidi = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 resvg = "0.44"

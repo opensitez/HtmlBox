@@ -1,9 +1,9 @@
 // Text tests – ported from cpptests/test_text.cpp
 // Font-specific tests (wxFont Get/SetPointSize etc.) and dir="auto" detection
 // tests that use engine.ApplyStylesheet are skipped.
-use rhtmledit::types::*;
-use rhtmledit::parse_html;
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::parse_html;
+use htmlbox::css::apply_property;
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }

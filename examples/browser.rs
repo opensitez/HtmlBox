@@ -1,4 +1,4 @@
-//! Phoenix Browser — a full browser demo built on the rhtmledit engine.
+//! Phoenix Browser — a full browser demo built on the htmlbox engine.
 //! Features: tabs, back/forward history, URL bar, async page/CSS/image loading,
 //! link navigation, per-element scrolling, zoom, and an optional TCP debug server.
 //!
@@ -20,10 +20,10 @@ use winit::window::Window;
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
-use rhtmledit::{hit_test_link, point_to_hit, parse_html_with_hooks, Document, Renderer};
-use rhtmledit::css::apply_cascade_vp;
-use rhtmledit::dom::{self, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{hit_test_link, point_to_hit, parse_html_with_hooks, Document, Renderer};
+use htmlbox::css::apply_cascade_vp;
+use htmlbox::dom::{self, HtmlEventType};
+use htmlbox::platform::Platform;
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
@@ -435,7 +435,7 @@ impl BrowserApp {
                             match bytes_result {
                                 Ok(bytes) => {
                                     // Use engine's decode path (premultiplied alpha, PNG/JPEG/GIF/WebP/SVG)
-                                    if let Some((raw, w, h)) = rhtmledit::html::decode_image_bytes(&bytes) {
+                                    if let Some((raw, w, h)) = htmlbox::html::decode_image_bytes(&bytes) {
                                         let _ = tx.send(LoadResult::Image { tab_id, src, rgba: raw, w, h });
                                         let _ = proxy.send_event(());
                                     }
@@ -459,7 +459,7 @@ impl BrowserApp {
                                 fetch_bytes_with_retry(&bg_src)
                             };
                             if let Ok(bytes) = bytes_result {
-                                if let Some((raw, w, h)) = rhtmledit::html::decode_image_bytes(&bytes) {
+                                if let Some((raw, w, h)) = htmlbox::html::decode_image_bytes(&bytes) {
                                     let _ = tx.send(LoadResult::BgImage { tab_id, src: bg_src, rgba: raw, w, h });
                                     let _ = proxy.send_event(());
                                 }
@@ -475,8 +475,8 @@ impl BrowserApp {
                     let nav = self.pending_navigate.clone();
                     let proxy = self.proxy.clone();
                     let tab_url = url.clone();
-                    doc.on_form_event = Some(Box::new(move |event: &rhtmledit::FormEvent| {
-                        if let rhtmledit::FormEventKind::Submit(action) = &event.kind {
+                    doc.on_form_event = Some(Box::new(move |event: &htmlbox::FormEvent| {
+                        if let htmlbox::FormEventKind::Submit(action) = &event.kind {
                             let target = if action.is_empty() {
                                 tab_url.clone()
                             } else {
@@ -709,7 +709,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                     renderer.render(doc, &mut pm, scale);
                     if inspect_on && inspect_nid != 0 {
                         if let Some(node) = doc.get_box_by_id(inspect_nid) {
-                            rhtmledit::draw_inspect_overlay(node, &mut pm, doc.scroll_x, doc.scroll_y, scale);
+                            htmlbox::draw_inspect_overlay(node, &mut pm, doc.scroll_x, doc.scroll_y, scale);
                         }
                     }
                     let render_ms = t_render.elapsed().as_millis();
@@ -736,7 +736,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                          body{{background:#1e1e1e;margin:0;padding:4px;font:11px monospace}}\
                          </style></head><body>{dom_tree_body}</body></html>"
                     );
-                    let mut dom_doc = rhtmledit::parse_html(&dom_html);
+                    let mut dom_doc = htmlbox::parse_html(&dom_html);
                     { let mut eng = chrome_renderer.layout_engine(); eng.layout(&mut dom_doc, panel_w_logical); }
                     // Scroll DOM tree to selected element
                     if let Some(line) = selected_line {
@@ -762,7 +762,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                     } else {
                         "<html><body style='background:#1e1e1e;color:#666;padding:10px;font:11px monospace'>Right-click to inspect</body></html>".into()
                     };
-                    let mut tabs_doc = rhtmledit::parse_html(&tabs_html);
+                    let mut tabs_doc = htmlbox::parse_html(&tabs_html);
                     { let mut eng = chrome_renderer.layout_engine(); eng.layout(&mut tabs_doc, panel_w_logical); }
                     if let Some(mut pm) = Pixmap::new(panel_w, tabs_h.max(1)) {
                         pm.fill(tiny_skia::Color::from_rgba8(30, 30, 30, 255));
@@ -940,17 +940,17 @@ impl BrowserApp {
                     if let Some(w) = &self.window {
                         use winit::window::CursorIcon;
                         let icon = match ci {
-                            rhtmledit::CSSCursor::Pointer    => CursorIcon::Pointer,
-                            rhtmledit::CSSCursor::Text       => CursorIcon::Text,
-                            rhtmledit::CSSCursor::Move       => CursorIcon::Move,
-                            rhtmledit::CSSCursor::NotAllowed => CursorIcon::NotAllowed,
-                            rhtmledit::CSSCursor::Grab       => CursorIcon::Grab,
-                            rhtmledit::CSSCursor::Grabbing   => CursorIcon::Grabbing,
-                            rhtmledit::CSSCursor::ColResize  => CursorIcon::ColResize,
-                            rhtmledit::CSSCursor::RowResize  => CursorIcon::RowResize,
-                            rhtmledit::CSSCursor::Crosshair  => CursorIcon::Crosshair,
-                            rhtmledit::CSSCursor::Help       => CursorIcon::Help,
-                            rhtmledit::CSSCursor::Wait       => CursorIcon::Wait,
+                            htmlbox::CSSCursor::Pointer    => CursorIcon::Pointer,
+                            htmlbox::CSSCursor::Text       => CursorIcon::Text,
+                            htmlbox::CSSCursor::Move       => CursorIcon::Move,
+                            htmlbox::CSSCursor::NotAllowed => CursorIcon::NotAllowed,
+                            htmlbox::CSSCursor::Grab       => CursorIcon::Grab,
+                            htmlbox::CSSCursor::Grabbing   => CursorIcon::Grabbing,
+                            htmlbox::CSSCursor::ColResize  => CursorIcon::ColResize,
+                            htmlbox::CSSCursor::RowResize  => CursorIcon::RowResize,
+                            htmlbox::CSSCursor::Crosshair  => CursorIcon::Crosshair,
+                            htmlbox::CSSCursor::Help       => CursorIcon::Help,
+                            htmlbox::CSSCursor::Wait       => CursorIcon::Wait,
                             _                                => CursorIcon::Default,
                         };
                         w.set_cursor(winit::window::Cursor::Icon(icon));
@@ -1195,12 +1195,12 @@ impl BrowserApp {
                                 let t: &str = focused.unwrap().attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
                                 if matches!(t, "text" | "password" | "email" | "search") {
                                     // Find parent form and submit
-                                    let action = rhtmledit::find_parent_form_action(&doc.root, doc.focused_box);
+                                    let action = htmlbox::find_parent_form_action(&doc.root, doc.focused_box);
                                     if let Some(ref mut cb) = doc.on_form_event {
-                                        cb(&rhtmledit::FormEvent {
+                                        cb(&htmlbox::FormEvent {
                                             tag: "form".into(),
                                             id: String::new(), name: String::new(),
-                                            kind: rhtmledit::FormEventKind::Submit(action),
+                                            kind: htmlbox::FormEventKind::Submit(action),
                                             element: doc.focused_box,
                                         });
                                     }
@@ -1234,7 +1234,7 @@ impl BrowserApp {
                     // For special keys, pass key code and no char
                     if kc != 0 || ch.is_some() {
                         let effective_kc = if kc != 0 { kc } else { ch.unwrap_or(' ') as u32 };
-                        if doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown,
+                        if doc.process_key_event(htmlbox::dom::HtmlEventType::KeyDown,
                                 effective_kc, ch, false, false, false, false) {
                             return true;
                         }
@@ -1290,12 +1290,12 @@ fn color_swatch(val: &str) -> String {
 
 /// Collect one node_id per rendered line in the DOM tree.
 /// Must exactly match the line output order of `build_dom_tree_html`.
-fn collect_dom_node_ids(node: &rhtmledit::HtmlBox, out: &mut Vec<u32>, depth: usize, max_depth: usize) {
+fn collect_dom_node_ids(node: &htmlbox::HtmlBox, out: &mut Vec<u32>, depth: usize, max_depth: usize) {
     if depth > max_depth { return; }
     if node.tag == "#text" { return; }
-    if matches!(node.style.display, rhtmledit::types::Display::None) { return; }
+    if matches!(node.style.display, htmlbox::types::Display::None) { return; }
     let has_children = node.children.iter().any(|c| c.tag != "#text"
-        && !matches!(c.style.display, rhtmledit::types::Display::None));
+        && !matches!(c.style.display, htmlbox::types::Display::None));
     out.push(node.node_id); // opening tag
     for child in &node.children {
         collect_dom_node_ids(child, out, depth + 1, max_depth);
@@ -1306,15 +1306,15 @@ fn collect_dom_node_ids(node: &rhtmledit::HtmlBox, out: &mut Vec<u32>, depth: us
 }
 
 /// Build DOM tree HTML. Returns (html_string, selected_line_index).
-fn build_dom_tree_html(root: &rhtmledit::HtmlBox, selected_nid: u32) -> (String, Option<usize>) {
+fn build_dom_tree_html(root: &htmlbox::HtmlBox, selected_nid: u32) -> (String, Option<usize>) {
     let mut html = String::new();
     let mut line_count = 0usize;
     let mut selected_line: Option<usize> = None;
 
-    fn walk(node: &rhtmledit::HtmlBox, html: &mut String, depth: usize,
+    fn walk(node: &htmlbox::HtmlBox, html: &mut String, depth: usize,
             selected_nid: u32, line: &mut usize, sel_line: &mut Option<usize>) {
         if node.tag == "#text" { return; }
-        if matches!(node.style.display, rhtmledit::types::Display::None) { return; }
+        if matches!(node.style.display, htmlbox::types::Display::None) { return; }
         if depth > 20 { return; }
 
         let indent = depth * 14;
@@ -1331,7 +1331,7 @@ fn build_dom_tree_html(root: &rhtmledit::HtmlBox, selected_nid: u32) -> (String,
             .unwrap_or_default();
 
         let has_children = node.children.iter().any(|c| c.tag != "#text"
-            && !matches!(c.style.display, rhtmledit::types::Display::None));
+            && !matches!(c.style.display, htmlbox::types::Display::None));
         let arrow = if has_children { "▼ " } else { "  " };
 
         html.push_str(&format!(
@@ -1364,7 +1364,7 @@ fn build_dom_tree_html(root: &rhtmledit::HtmlBox, selected_nid: u32) -> (String,
     (html, selected_line)
 }
 
-fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root: Option<&rhtmledit::HtmlBox>) -> String {
+fn build_inspect_panel_html(node: &htmlbox::HtmlBox, active_tab: u8, doc_root: Option<&htmlbox::HtmlBox>) -> String {
     let s = &node.style;
     let id  = node.attributes.get("id").map(|v| format!("#{v}")).unwrap_or_default();
     let cls = node.attributes.get("class")
@@ -1515,7 +1515,7 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
             }
             // Children summary
             let elem_children: Vec<_> = node.children.iter()
-                .filter(|c| c.tag != "#text" && !matches!(c.style.display, rhtmledit::types::Display::None))
+                .filter(|c| c.tag != "#text" && !matches!(c.style.display, htmlbox::types::Display::None))
                 .collect();
             if !elem_children.is_empty() {
                 html.push_str("<h3>Children</h3>");
@@ -1583,7 +1583,7 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
             html.push_str("<h3>Ancestor Chain</h3>");
             if let Some(root) = doc_root {
                 let mut chain: Vec<String> = Vec::new();
-                fn find_chain(cur: &rhtmledit::HtmlBox, target_id: u32, chain: &mut Vec<String>) -> bool {
+                fn find_chain(cur: &htmlbox::HtmlBox, target_id: u32, chain: &mut Vec<String>) -> bool {
                     let id_str = cur.attributes.get("id").map(|v| format!("#{v}")).unwrap_or_default();
                     let cls_str = cur.attributes.get("class")
                         .map(|v| format!(".{}", v.split_whitespace().take(3).collect::<Vec<_>>().join(".")))
@@ -1647,7 +1647,7 @@ fn build_inspect_panel_html(node: &rhtmledit::HtmlBox, active_tab: u8, doc_root:
             // ── Layout tab: detailed geometry + layout flags ──
             let l = &node.layout;
             html.push_str("<h3>Geometry</h3>");
-            let rects: Vec<(&str, &rhtmledit::Rect)> = vec![
+            let rects: Vec<(&str, &htmlbox::Rect)> = vec![
                 ("content", &l.content_rect), ("padding", &l.padding_rect),
                 ("border", &l.border_rect), ("margin", &l.margin_rect),
             ];
@@ -1806,7 +1806,7 @@ fn normalize_url(s: String) -> String {
 
 /// Propagate layout_dirty upward: if any descendant is dirty, mark the parent dirty too.
 /// Returns true if this node or any descendant is dirty.
-fn propagate_dirty(node: &mut rhtmledit::HtmlBox) -> bool {
+fn propagate_dirty(node: &mut htmlbox::HtmlBox) -> bool {
     let mut any_dirty = node.layout.layout_dirty;
     for child in &mut node.children {
         if propagate_dirty(child) {
@@ -1821,19 +1821,19 @@ fn propagate_dirty(node: &mut rhtmledit::HtmlBox) -> bool {
 
 /// Resolve a (possibly relative) `href` against a `base` URL.
 fn resolve_url(base: &str, href: &str) -> String {
-    rhtmledit::resolve_url(href, base)
+    htmlbox::resolve_url(href, base)
 }
 
 fn shared_client() -> &'static reqwest::blocking::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| rhtmledit::http_client())
+    CLIENT.get_or_init(|| htmlbox::http_client())
 }
 
 fn shared_client_lenient() -> &'static reqwest::blocking::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| rhtmledit::http_client_lenient())
+    CLIENT.get_or_init(|| htmlbox::http_client_lenient())
 }
 
 /// Fetch URL text, returning (body, final_url_after_redirects).
@@ -2053,7 +2053,7 @@ fn dbg_json_num(json: &str, key: &str) -> Option<f32> {
     after[..end].parse().ok()
 }
 
-fn dbg_matches_query(node: &rhtmledit::HtmlBox, query: &str) -> bool {
+fn dbg_matches_query(node: &htmlbox::HtmlBox, query: &str) -> bool {
     if node.tag == "#text" { return false; }
     let query = query.trim();
     let mut tag_q = "";
@@ -2092,7 +2092,7 @@ fn dbg_matches_query(node: &rhtmledit::HtmlBox, query: &str) -> bool {
     true
 }
 
-fn dbg_collect_text(node: &rhtmledit::HtmlBox, out: &mut String) {
+fn dbg_collect_text(node: &htmlbox::HtmlBox, out: &mut String) {
     if node.tag == "#text" {
         if !out.is_empty() && !out.ends_with(' ') { out.push(' '); }
         out.push_str(node.text.trim());
@@ -2100,7 +2100,7 @@ fn dbg_collect_text(node: &rhtmledit::HtmlBox, out: &mut String) {
     for child in &node.children { dbg_collect_text(child, out); }
 }
 
-fn dbg_inspect_json(node: &rhtmledit::HtmlBox) -> String {
+fn dbg_inspect_json(node: &htmlbox::HtmlBox) -> String {
     let s = &node.style;
     let id  = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
     let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
@@ -2133,7 +2133,7 @@ fn dbg_inspect_json(node: &rhtmledit::HtmlBox) -> String {
     )
 }
 
-fn dbg_computed_json(node: &rhtmledit::HtmlBox) -> String {
+fn dbg_computed_json(node: &htmlbox::HtmlBox) -> String {
     use std::fmt::Write;
     let s = &node.style;
     let id  = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
@@ -2201,9 +2201,9 @@ fn dbg_computed_json(node: &rhtmledit::HtmlBox) -> String {
     buf
 }
 
-fn dbg_dump_box(depth: usize, node: &rhtmledit::HtmlBox, buf: &mut String) {
+fn dbg_dump_box(depth: usize, node: &htmlbox::HtmlBox, buf: &mut String) {
     use std::fmt::Write;
-    use rhtmledit::types::Display;
+    use htmlbox::types::Display;
     if matches!(node.style.display, Display::None) { return; }
     let indent = "  ".repeat(depth);
     let tag = if node.tag.is_empty() { "(box)" } else { &node.tag };
@@ -2223,7 +2223,7 @@ fn dbg_dump_box(depth: usize, node: &rhtmledit::HtmlBox, buf: &mut String) {
     for child in &node.children { dbg_dump_box(depth + 1, child, buf); }
 }
 
-fn dbg_serialize_html(node: &rhtmledit::HtmlBox, buf: &mut String, depth: usize) {
+fn dbg_serialize_html(node: &htmlbox::HtmlBox, buf: &mut String, depth: usize) {
     use std::fmt::Write;
     if node.tag == "#text" {
         let t = node.text.trim();
@@ -2346,8 +2346,8 @@ impl BrowserApp {
                 let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
                 if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                     let pt = (x, y + doc.scroll_y);
-                    doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseDown, pt, 0);
-                    doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseUp, pt, 0);
+                    doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseDown, pt, 0);
+                    doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseUp, pt, 0);
                 }
                 self.relayout_active();
                 format!(r#"{{"ok":true,"x":{:.0},"y":{:.0}}}"#, x, y)
@@ -2366,7 +2366,7 @@ impl BrowserApp {
                 let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
                 let changed = if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                     let pt = (x, y + doc.scroll_y);
-                    doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseMove, pt, 0)
+                    doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseMove, pt, 0)
                 } else { false };
                 if changed { self.relayout_active(); }
                 format!(r#"{{"ok":true,"changed":{}}}"#, changed)
@@ -2378,7 +2378,7 @@ impl BrowserApp {
                         let mut any = false;
                         if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                             for ch in text.chars() {
-                                if doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false) {
+                                if doc.process_key_event(htmlbox::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false) {
                                     any = true;
                                 }
                             }
@@ -2409,7 +2409,7 @@ impl BrowserApp {
                             _ => return format!(r#"{{"ok":false,"error":"unknown key: {}"}}"#, dbg_json_escape(&k)),
                         };
                         let changed = if let Some(doc) = self.tabs[self.active].doc.as_mut() {
-                            doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, code, ch, false, false, false, false)
+                            doc.process_key_event(htmlbox::dom::HtmlEventType::KeyDown, code, ch, false, false, false, false)
                         } else { false };
                         if changed { self.relayout_active(); }
                         format!(r#"{{"ok":true,"changed":{}}}"#, changed)
@@ -2563,7 +2563,7 @@ impl BrowserApp {
                         if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                             Document::walk_all_mut(&mut doc.root, &mut |node| {
                                 if dbg_matches_query(node, &sel) {
-                                    rhtmledit::css::apply_property(&mut node.style, &prop, &val);
+                                    htmlbox::css::apply_property(&mut node.style, &prop, &val);
                                     node.layout.layout_dirty = true;
                                     count += 1;
                                 }
@@ -2623,7 +2623,7 @@ impl BrowserApp {
                             self.renderer.render(doc, &mut pm, 1.0);
                             Document::walk_all(&doc.root, &mut |node| {
                                 if dbg_matches_query(node, &sel) {
-                                    rhtmledit::draw_inspect_overlay(node, &mut pm, 0.0, 0.0, 1.0);
+                                    htmlbox::draw_inspect_overlay(node, &mut pm, 0.0, 0.0, 1.0);
                                     count += 1;
                                 }
                             });
@@ -2649,7 +2649,7 @@ impl BrowserApp {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
-                let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+                let nodes = htmlbox::dom::query_selector_all(&doc.root, &selector);
                 let mut items: Vec<String> = Vec::new();
                 for node in nodes {
                     let cr = node.layout.content_rect;
@@ -2685,7 +2685,7 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let props_str = dbg_json_str(line, "props").unwrap_or_default();
-                let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+                let nodes = htmlbox::dom::query_selector_all(&doc.root, &selector);
                 let mut items: Vec<String> = Vec::new();
                 for node in nodes {
                     let mut kv: Vec<String> = Vec::new();
@@ -2735,8 +2735,8 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let text = dbg_json_str(line, "text").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                    rhtmledit::dom::set_text_content(node, &text);
+                if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                    htmlbox::dom::set_text_content(node, &text);
                 }
                 self.relayout_active();
                 r#"{"ok":true}"#.to_string()
@@ -2747,8 +2747,8 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let cls = dbg_json_str(line, "class").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                    rhtmledit::dom::add_class(node, &cls);
+                if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                    htmlbox::dom::add_class(node, &cls);
                 }
                 doc.style_dirty = true;
                 self.relayout_active();
@@ -2760,8 +2760,8 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let cls = dbg_json_str(line, "class").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                    rhtmledit::dom::remove_class(node, &cls);
+                if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                    htmlbox::dom::remove_class(node, &cls);
                 }
                 doc.style_dirty = true;
                 self.relayout_active();
@@ -2773,8 +2773,8 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let cls = dbg_json_str(line, "class").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                    rhtmledit::dom::toggle_class(node, &cls);
+                if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                    htmlbox::dom::toggle_class(node, &cls);
                 }
                 doc.style_dirty = true;
                 self.relayout_active();
@@ -2796,7 +2796,7 @@ impl BrowserApp {
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
                 let state = dbg_json_str(line, "state").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
+                if let Some(node) = htmlbox::dom::query_selector(&doc.root, &selector) {
                     let nid = node.node_id;
                     match state.as_str() {
                         "hover" => { doc.hovered_box = nid; doc.hover_changed = true; }
@@ -2816,7 +2816,7 @@ impl BrowserApp {
                 };
                 let query = dbg_json_str(line, "query").unwrap_or_default().to_lowercase();
                 let mut results: Vec<String> = Vec::new();
-                fn search_walk(node: &rhtmledit::HtmlBox, q: &str, results: &mut Vec<String>) {
+                fn search_walk(node: &htmlbox::HtmlBox, q: &str, results: &mut Vec<String>) {
                     if node.tag == "#text" && node.text.to_lowercase().contains(q) {
                         let pid = node.parent;
                         results.push(format!(r#"{{"node_id":{},"parent_id":{},"text":{}}}"#,
@@ -2833,7 +2833,7 @@ impl BrowserApp {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
+                if let Some(node) = htmlbox::dom::query_selector(&doc.root, &selector) {
                     let l = &node.layout;
                     format!(concat!(
                         r#"{{"ok":true,"tag":"{}","margin":{{"top":{:.1},"right":{:.1},"bottom":{:.1},"left":{:.1}}},"#,
@@ -2858,7 +2858,7 @@ impl BrowserApp {
                 };
                 let css_count = doc.linked_stylesheets.len();
                 let mut img_count = 0u32;
-                rhtmledit::Document::walk_all(&doc.root, &mut |b| {
+                htmlbox::Document::walk_all(&doc.root, &mut |b| {
                     if b.image_data.is_some() { img_count += 1; }
                 });
                 format!(r#"{{"ok":true,"stylesheets":{},"images_loaded":{}}}"#, css_count, img_count)
@@ -2869,8 +2869,8 @@ impl BrowserApp {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
-                    let html = { let mut s = String::new(); rhtmledit::html::serializer::serialize_box(node, &mut s); s };
+                if let Some(node) = htmlbox::dom::query_selector(&doc.root, &selector) {
+                    let html = { let mut s = String::new(); htmlbox::html::serializer::serialize_box(node, &mut s); s };
                     format!(r#"{{"ok":true,"html":{}}}"#, dbg_json_escape(&html))
                 } else {
                     format!(r#"{{"ok":false,"error":"no match"}}"#)
@@ -2889,7 +2889,7 @@ impl BrowserApp {
                 let Some(doc) = self.tabs[self.active].doc.as_ref() else {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
-                fn a11y_walk(node: &rhtmledit::HtmlBox, depth: usize, out: &mut String) {
+                fn a11y_walk(node: &htmlbox::HtmlBox, depth: usize, out: &mut String) {
                     let role = match node.tag.as_str() {
                         "a" => "link", "button" | "input" => "button", "img" => "image",
                         "h1"|"h2"|"h3"|"h4"|"h5"|"h6" => "heading", "nav" => "navigation",
@@ -2925,8 +2925,8 @@ impl BrowserApp {
                 };
                 let from = dbg_json_str(line, "from").unwrap_or_default();
                 let to = dbg_json_str(line, "to").unwrap_or_default();
-                let a = rhtmledit::dom::query_selector(&doc.root, &from).map(|n| n.layout.border_rect);
-                let b = rhtmledit::dom::query_selector(&doc.root, &to).map(|n| n.layout.border_rect);
+                let a = htmlbox::dom::query_selector(&doc.root, &from).map(|n| n.layout.border_rect);
+                let b = htmlbox::dom::query_selector(&doc.root, &to).map(|n| n.layout.border_rect);
                 match (a, b) {
                     (Some(a), Some(b)) => {
                         let dx = b.x - (a.x + a.w); // gap between right of A and left of B
@@ -2989,11 +2989,11 @@ impl BrowserApp {
                 let root_node = if let Some(id) = nid {
                     doc.get_box_by_id(id).unwrap_or(&doc.root)
                 } else if let Some(sel) = root_sel {
-                    rhtmledit::dom::query_selector(&doc.root, &sel).unwrap_or(&doc.root)
+                    htmlbox::dom::query_selector(&doc.root, &sel).unwrap_or(&doc.root)
                 } else {
                     &doc.root
                 };
-                fn tree_json(node: &rhtmledit::HtmlBox, depth: usize, max_depth: usize) -> String {
+                fn tree_json(node: &htmlbox::HtmlBox, depth: usize, max_depth: usize) -> String {
                     let tag = &node.tag;
                     let id = node.attributes.get("id").map(|s| s.as_str()).unwrap_or("");
                     let cls = node.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
@@ -3030,10 +3030,10 @@ impl BrowserApp {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
-                let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+                let nodes = htmlbox::dom::query_selector_all(&doc.root, &selector);
                 let mut paths: Vec<String> = Vec::new();
                 for node in nodes {
-                    fn build_path(root: &rhtmledit::HtmlBox, target_id: u32, path: &mut Vec<String>) -> bool {
+                    fn build_path(root: &htmlbox::HtmlBox, target_id: u32, path: &mut Vec<String>) -> bool {
                         let id = root.attributes.get("id").map(|v| format!("#{v}")).unwrap_or_default();
                         let cls = root.attributes.get("class")
                             .map(|v| format!(".{}", v.split_whitespace().next().unwrap_or("")))
@@ -3058,8 +3058,8 @@ impl BrowserApp {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
                 let selector = dbg_json_str(line, "selector").unwrap_or_default();
-                if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
-                    fn ancestors(root: &rhtmledit::HtmlBox, target_id: u32, chain: &mut Vec<String>) -> bool {
+                if let Some(node) = htmlbox::dom::query_selector(&doc.root, &selector) {
+                    fn ancestors(root: &htmlbox::HtmlBox, target_id: u32, chain: &mut Vec<String>) -> bool {
                         if root.node_id == target_id {
                             let id = root.attributes.get("id").cloned().unwrap_or_default();
                             let cls = root.attributes.get("class").cloned().unwrap_or_default();
@@ -3090,7 +3090,7 @@ impl BrowserApp {
                 };
                 let x = dbg_json_num(line, "x").unwrap_or(0.0) as f32;
                 let y = dbg_json_num(line, "y").unwrap_or(0.0) as f32;
-                if let Some(hit) = rhtmledit::layout::hit_test::point_to_hit(&doc.root, (x, y), 0) {
+                if let Some(hit) = htmlbox::layout::hit_test::point_to_hit(&doc.root, (x, y), 0) {
                     if let Some(node) = doc.get_box_by_id(hit.node_id) {
                         let id = node.attributes.get("id").cloned().unwrap_or_default();
                         let cls = node.attributes.get("class").cloned().unwrap_or_default();
@@ -3114,7 +3114,7 @@ impl BrowserApp {
                 eng.layout(doc, self.width);
                 let full_ms = t0.elapsed().as_micros() as f64 / 1000.0;
                 // Above fold
-                fn mark_dirty(n: &mut rhtmledit::HtmlBox) { n.layout.layout_dirty = true; for c in &mut n.children { mark_dirty(c); } }
+                fn mark_dirty(n: &mut htmlbox::HtmlBox) { n.layout.layout_dirty = true; for c in &mut n.children { mark_dirty(c); } }
                 mark_dirty(&mut doc.root);
                 let t1 = std::time::Instant::now();
                 let _more = eng.layout_above_fold(doc, self.width);
@@ -3301,7 +3301,7 @@ const INSPECTOR_HTML: &str = r##"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>rhtmledit Inspector</title>
+<title>htmlbox Inspector</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font:12px/1.4 Menlo,Monaco,"Courier New",monospace;background:#1e1e1e;color:#d4d4d4;display:flex;flex-direction:column;height:100vh}
@@ -3622,7 +3622,7 @@ fn run_headless(url: Option<String>, port: u16, width: f32, height: f32, cache_d
     }
 
     // Load document
-    let mut doc = rhtmledit::load_html_vp("", width, height);
+    let mut doc = htmlbox::load_html_vp("", width, height);
     let fetch_start = std::time::Instant::now();
 
     // Fetch HTML
@@ -3630,19 +3630,19 @@ fn run_headless(url: Option<String>, port: u16, width: f32, height: f32, cache_d
         let path = url.trim_start_matches("file://");
         std::fs::read_to_string(path).unwrap_or_default()
     } else if url != "about:blank" {
-        rhtmledit::http_client().get(&url).send().ok()
+        htmlbox::http_client().get(&url).send().ok()
             .and_then(|r| r.text().ok()).unwrap_or_default()
     } else { String::new() };
 
     if !html.is_empty() {
-        doc = rhtmledit::html::parse_html_with_base(&html, &url);
+        doc = htmlbox::html::parse_html_with_base(&html, &url);
     }
 
     // Fetch CSS
     for (href, media) in doc.linked_stylesheets.clone() {
         if media == "print" { continue; }
         let css_url = resolve_url(&url, &href);
-        if let Ok(css) = rhtmledit::http_client().get(&css_url).send().and_then(|r| r.text()) {
+        if let Ok(css) = htmlbox::http_client().get(&css_url).send().and_then(|r| r.text()) {
             doc.stylesheet.parse_and_add(&css);
         }
     }
@@ -3671,7 +3671,7 @@ fn run_headless(url: Option<String>, port: u16, width: f32, height: f32, cache_d
                 fetch_bytes_with_retry(src)
             };
             if let Ok(bytes) = bytes_result {
-                if let Some((raw, iw, ih)) = rhtmledit::html::decode_image_bytes(&bytes) {
+                if let Some((raw, iw, ih)) = htmlbox::html::decode_image_bytes(&bytes) {
                     let src2 = src.clone();
                     Document::walk_all_mut(&mut doc.root, &mut |b| {
                         if b.tag == "img" {
@@ -3688,7 +3688,7 @@ fn run_headless(url: Option<String>, port: u16, width: f32, height: f32, cache_d
             }
         }
         // Background images
-        rhtmledit::html::load_background_images(&mut doc.root, &url);
+        htmlbox::html::load_background_images(&mut doc.root, &url);
         renderer.layout_engine().layout(&mut doc, width);
     }
 
@@ -3760,7 +3760,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "find" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
-            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &sel);
+            let nodes = htmlbox::dom::query_selector_all(&doc.root, &sel);
             let items: Vec<String> = nodes.iter().map(|n| {
                 let b = n.layout.border_rect;
                 format!(r#"{{"tag":"{}","id":"{}","class":"{}","x":{},"y":{},"w":{},"h":{}}}"#,
@@ -3773,13 +3773,13 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "navigate" => {
             if let Some(new_url) = dbg_json_str(line, "url") {
                 let new_url = normalize_url(new_url);
-                let html = rhtmledit::http_client().get(&new_url).send().ok()
+                let html = htmlbox::http_client().get(&new_url).send().ok()
                     .and_then(|r| r.text().ok()).unwrap_or_default();
-                *doc = rhtmledit::html::parse_html_with_base(&html, &new_url);
+                *doc = htmlbox::html::parse_html_with_base(&html, &new_url);
                 for (href, media) in doc.linked_stylesheets.clone() {
                     if media == "print" { continue; }
                     let css_url = resolve_url(&new_url, &href);
-                    if let Ok(css) = rhtmledit::http_client().get(&css_url).send().and_then(|r| r.text()) {
+                    if let Ok(css) = htmlbox::http_client().get(&css_url).send().and_then(|r| r.text()) {
                         doc.stylesheet.parse_and_add(&css);
                     }
                 }
@@ -3789,7 +3789,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "tree" => {
             let mut buf = String::new();
-            fn dump(n: &rhtmledit::HtmlBox, buf: &mut String, depth: usize) {
+            fn dump(n: &htmlbox::HtmlBox, buf: &mut String, depth: usize) {
                 let indent = "  ".repeat(depth);
                 let id = n.attributes.get("id").map(|v| format!("#{v}")).unwrap_or_default();
                 let cls = n.attributes.get("class").map(|v| format!(".{}", v.split_whitespace().take(2).collect::<Vec<_>>().join("."))).unwrap_or_default();
@@ -3809,7 +3809,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let nid = dbg_json_num(line, "nid").map(|n| n as u32);
             let depth = dbg_json_num(line, "depth").unwrap_or(3.0) as usize;
             let root_node = if let Some(id) = nid { doc.get_box_by_id(id).unwrap_or(&doc.root) } else { &doc.root };
-            fn tj(n: &rhtmledit::HtmlBox, d: usize, mx: usize) -> String {
+            fn tj(n: &htmlbox::HtmlBox, d: usize, mx: usize) -> String {
                 let cc = n.children.iter().filter(|c| !(c.tag=="#text" && c.text.trim().is_empty())).count();
                 let tp = if n.tag=="#text" { let t:String=n.text.trim().chars().take(60).collect(); format!(r#","text":"{}""#,t.replace('\\',"\\\\").replace('"',"\\\"")) } else { String::new() };
                 let ch = if d<mx && cc>0 { let k:Vec<String>=n.children.iter().filter(|c|!(c.tag=="#text"&&c.text.trim().is_empty())).map(|c|tj(c,d+1,mx)).collect(); format!(r#","children":[{}]"#,k.join(",")) } else if cc>0 { format!(r#","child_count":{cc}"#) } else { String::new() };
@@ -3867,7 +3867,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "box-model" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
-            if let Some(n) = rhtmledit::dom::query_selector(&doc.root, &sel) {
+            if let Some(n) = htmlbox::dom::query_selector(&doc.root, &sel) {
                 let l = &n.layout;
                 format!(r#"{{"ok":true,"tag":"{}","margin":{{"top":{:.1},"right":{:.1},"bottom":{:.1},"left":{:.1}}},"border":{{"top":{:.1},"right":{:.1},"bottom":{:.1},"left":{:.1}}},"padding":{{"top":{:.1},"right":{:.1},"bottom":{:.1},"left":{:.1}}},"content":{{"width":{:.1},"height":{:.1}}}}}"#,
                     n.tag, l.resolved_margin_top,l.resolved_margin_right,l.resolved_margin_bottom,l.resolved_margin_left,
@@ -3878,8 +3878,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "dom-path" | "path" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
-            if let Some(n) = rhtmledit::dom::query_selector(&doc.root, &sel) {
-                fn bp(root: &rhtmledit::HtmlBox, tid: u32, p: &mut Vec<String>) -> bool {
+            if let Some(n) = htmlbox::dom::query_selector(&doc.root, &sel) {
+                fn bp(root: &htmlbox::HtmlBox, tid: u32, p: &mut Vec<String>) -> bool {
                     let id = root.attributes.get("id").map(|v| format!("#{v}")).unwrap_or_default();
                     let cls = root.attributes.get("class").map(|v| format!(".{}", v.split_whitespace().next().unwrap_or(""))).unwrap_or_default();
                     p.push(format!("{}{}{}", root.tag, id, cls)); if root.node_id==tid { return true; }
@@ -3891,8 +3891,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "parent" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
-            if let Some(n) = rhtmledit::dom::query_selector(&doc.root, &sel) {
-                fn anc(r: &rhtmledit::HtmlBox, tid: u32, ch: &mut Vec<String>) -> bool {
+            if let Some(n) = htmlbox::dom::query_selector(&doc.root, &sel) {
+                fn anc(r: &htmlbox::HtmlBox, tid: u32, ch: &mut Vec<String>) -> bool {
                     if r.node_id==tid { ch.push(format!(r#"{{"tag":"{}","nid":{}}}"#,r.tag,r.node_id)); return true; }
                     for c in &r.children { if anc(c,tid,ch) { ch.push(format!(r#"{{"tag":"{}","nid":{}}}"#,r.tag,r.node_id)); return true; } } false
                 }
@@ -3903,7 +3903,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "hit" => {
             let x = dbg_json_num(line, "x").unwrap_or(0.0) as f32;
             let y = dbg_json_num(line, "y").unwrap_or(0.0) as f32;
-            if let Some(hit) = rhtmledit::layout::hit_test::point_to_hit(&doc.root, (x,y), 0) {
+            if let Some(hit) = htmlbox::layout::hit_test::point_to_hit(&doc.root, (x,y), 0) {
                 if let Some(n) = doc.get_box_by_id(hit.node_id) {
                     format!(r#"{{"ok":true,"nid":{},"tag":"{}","class":"{}"}}"#, hit.node_id, n.tag, n.attributes.get("class").unwrap_or(&String::new()))
                 } else { format!(r#"{{"ok":true,"nid":{}}}"#, hit.node_id) }
@@ -3912,7 +3912,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "search" => {
             let q = dbg_json_str(line, "query").unwrap_or_default().to_lowercase();
             let mut results = Vec::new();
-            fn sw(n: &rhtmledit::HtmlBox, q: &str, r: &mut Vec<String>) {
+            fn sw(n: &htmlbox::HtmlBox, q: &str, r: &mut Vec<String>) {
                 if n.tag=="#text" && n.text.to_lowercase().contains(q) {
                     r.push(format!(r#"{{"nid":{},"text":"{}"}}"#, n.node_id, n.text.trim().chars().take(60).collect::<String>().replace('"',"\\\"")));
                 }
@@ -3927,11 +3927,11 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "network" => {
             let mut img = 0u32;
-            rhtmledit::Document::walk_all(&doc.root, &mut |b| { if b.image_data.is_some() { img += 1; } });
+            htmlbox::Document::walk_all(&doc.root, &mut |b| { if b.image_data.is_some() { img += 1; } });
             format!(r#"{{"ok":true,"stylesheets":{},"images":{}}}"#, doc.linked_stylesheets.len(), img)
         }
         "a11y" | "accessibility" => {
-            fn aw(n: &rhtmledit::HtmlBox, d: usize, o: &mut String) {
+            fn aw(n: &htmlbox::HtmlBox, d: usize, o: &mut String) {
                 let role = match n.tag.as_str() { "a"=>"link","button"|"input"=>"button","img"=>"image","h1"|"h2"|"h3"|"h4"|"h5"|"h6"=>"heading","nav"=>"navigation","main"=>"main","ul"|"ol"=>"list","li"=>"listitem","#text"=>{ if !n.text.trim().is_empty(){"text"}else{return}},_=>{n.attributes.get("role").map(|s|s.as_str()).unwrap_or("")}};
                 if !role.is_empty() { let label = n.attributes.get("aria-label").or(n.attributes.get("alt")).cloned().unwrap_or_else(||if n.tag=="#text"{n.text.trim().chars().take(40).collect()}else{String::new()}); o.push_str(&format!("{}{}: {}\n","  ".repeat(d),role,label)); }
                 for c in &n.children { aw(c, d + if !role.is_empty(){1}else{0}, o); }
@@ -3941,14 +3941,14 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         }
         "text" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
-            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &sel);
-            let texts: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", rhtmledit::dom::get_text_content(n).replace('"',"\\\""))).collect();
+            let nodes = htmlbox::dom::query_selector_all(&doc.root, &sel);
+            let texts: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", htmlbox::dom::get_text_content(n).replace('"',"\\\""))).collect();
             format!(r#"{{"ok":true,"count":{},"texts":[{}]}}"#, texts.len(), texts.join(","))
         }
         "attr" => {
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
             let name = dbg_json_str(line, "name").unwrap_or_default();
-            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &sel);
+            let nodes = htmlbox::dom::query_selector_all(&doc.root, &sel);
             let vals: Vec<String> = nodes.iter().map(|n| format!("\"{}\"", n.attributes.get(&name).unwrap_or(&String::new()).replace('"',"\\\""))).collect();
             format!(r#"{{"ok":true,"count":{},"values":[{}]}}"#, vals.len(), vals.join(","))
         }
@@ -3956,8 +3956,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
             let prop = dbg_json_str(line, "prop").unwrap_or_default();
             let val = dbg_json_str(line, "value").unwrap_or_default();
-            if let Some(n) = rhtmledit::dom::query_selector_mut(&mut doc.root, &sel) {
-                rhtmledit::dom::set_style_property(n, &prop, &val);
+            if let Some(n) = htmlbox::dom::query_selector_mut(&mut doc.root, &sel) {
+                htmlbox::dom::set_style_property(n, &prop, &val);
             }
             renderer.layout_engine().layout(doc, width);
             r#"{"ok":true}"#.to_string()
@@ -3981,15 +3981,15 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             if let Some(mut pm) = tiny_skia::Pixmap::new(width as u32, rh) {
                 pm.fill(tiny_skia::Color::WHITE);
                 renderer.render(doc, &mut pm, 1.0);
-                for node in rhtmledit::dom::query_selector_all(&doc.root, &sel) {
-                    rhtmledit::draw_inspect_overlay(node, &mut pm, doc.scroll_x, doc.scroll_y, 1.0);
+                for node in htmlbox::dom::query_selector_all(&doc.root, &sel) {
+                    htmlbox::draw_inspect_overlay(node, &mut pm, doc.scroll_x, doc.scroll_y, 1.0);
                 }
                 let _ = pm.save_png(&out);
                 format!(r#"{{"ok":true,"path":"{}"}}"#, out)
             } else { r#"{"ok":false,"error":"pixmap failed"}"#.to_string() }
         }
         "bench-progressive" => {
-            fn md(n: &mut rhtmledit::HtmlBox) { n.layout.layout_dirty = true; for c in &mut n.children { md(c); } }
+            fn md(n: &mut htmlbox::HtmlBox) { n.layout.layout_dirty = true; for c in &mut n.children { md(c); } }
             md(&mut doc.root);
             let t0 = std::time::Instant::now();
             renderer.layout_engine().layout(doc, width);
@@ -4046,7 +4046,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         // ── Deep inspect ─────────────────────────────────────────────────
         "deep" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
-            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+            let nodes = htmlbox::dom::query_selector_all(&doc.root, &selector);
             let mut items: Vec<String> = Vec::new();
             for node in nodes {
                 let cr = node.layout.content_rect;
@@ -4079,7 +4079,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "css" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let props_str = dbg_json_str(line, "props").unwrap_or_default();
-            let nodes = rhtmledit::dom::query_selector_all(&doc.root, &selector);
+            let nodes = htmlbox::dom::query_selector_all(&doc.root, &selector);
             let mut items: Vec<String> = Vec::new();
             for node in nodes {
                 let mut kv: Vec<String> = Vec::new();
@@ -4149,8 +4149,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             };
             let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
             let pt = (x, y + doc.scroll_y);
-            doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseDown, pt, 0);
-            doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseUp, pt, 0);
+            doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseDown, pt, 0);
+            doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseUp, pt, 0);
             renderer.layout_engine().layout(doc, width);
             format!(r#"{{"ok":true,"x":{:.0},"y":{:.0}}}"#, x, y)
         }
@@ -4166,7 +4166,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             };
             let (x, y) = match coords { Ok(c) => c, Err(e) => return e };
             let pt = (x, y + doc.scroll_y);
-            let changed = doc.process_mouse_event(rhtmledit::dom::HtmlEventType::MouseMove, pt, 0);
+            let changed = doc.process_mouse_event(htmlbox::dom::HtmlEventType::MouseMove, pt, 0);
             if changed { renderer.layout_engine().layout(doc, width); }
             format!(r#"{{"ok":true,"changed":{}}}"#, changed)
         }
@@ -4176,7 +4176,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
                 Some(text) => {
                     let mut any = false;
                     for ch in text.chars() {
-                        if doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false) { any = true; }
+                        if doc.process_key_event(htmlbox::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false) { any = true; }
                     }
                     if any { renderer.layout_engine().layout(doc, width); }
                     format!(r#"{{"ok":true,"typed":{}}}"#, any)
@@ -4204,7 +4204,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
                         s if s.len() == 1 => (s.chars().next().unwrap() as u32, s.chars().next()),
                         _ => return format!(r#"{{"ok":false,"error":"unknown key: {}"}}"#, dbg_json_escape(&k)),
                     };
-                    let changed = doc.process_key_event(rhtmledit::dom::HtmlEventType::KeyDown, code, ch, false, false, false, false);
+                    let changed = doc.process_key_event(htmlbox::dom::HtmlEventType::KeyDown, code, ch, false, false, false, false);
                     if changed { renderer.layout_engine().layout(doc, width); }
                     format!(r#"{{"ok":true,"changed":{}}}"#, changed)
                 }
@@ -4215,7 +4215,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "force-state" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let state = dbg_json_str(line, "state").unwrap_or_default();
-            if let Some(node) = rhtmledit::dom::query_selector(&doc.root, &selector) {
+            if let Some(node) = htmlbox::dom::query_selector(&doc.root, &selector) {
                 let nid = node.node_id;
                 match state.as_str() {
                     "hover" => { doc.hovered_box = nid; doc.hover_changed = true; }
@@ -4246,8 +4246,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "set-text" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let text = dbg_json_str(line, "text").unwrap_or_default();
-            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                rhtmledit::dom::set_text_content(node, &text);
+            if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                htmlbox::dom::set_text_content(node, &text);
             }
             renderer.layout_engine().layout(doc, width);
             r#"{"ok":true}"#.to_string()
@@ -4256,8 +4256,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "add-class" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let cls = dbg_json_str(line, "class").unwrap_or_default();
-            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                rhtmledit::dom::add_class(node, &cls);
+            if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                htmlbox::dom::add_class(node, &cls);
             }
             doc.style_dirty = true;
             renderer.layout_engine().layout(doc, width);
@@ -4266,8 +4266,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "remove-class" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let cls = dbg_json_str(line, "class").unwrap_or_default();
-            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                rhtmledit::dom::remove_class(node, &cls);
+            if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                htmlbox::dom::remove_class(node, &cls);
             }
             doc.style_dirty = true;
             renderer.layout_engine().layout(doc, width);
@@ -4276,8 +4276,8 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
         "toggle-class" => {
             let selector = dbg_json_str(line, "selector").unwrap_or_default();
             let cls = dbg_json_str(line, "class").unwrap_or_default();
-            if let Some(node) = rhtmledit::dom::query_selector_mut(&mut doc.root, &selector) {
-                rhtmledit::dom::toggle_class(node, &cls);
+            if let Some(node) = htmlbox::dom::query_selector_mut(&mut doc.root, &selector) {
+                htmlbox::dom::toggle_class(node, &cls);
             }
             doc.style_dirty = true;
             renderer.layout_engine().layout(doc, width);

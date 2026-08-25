@@ -1,9 +1,9 @@
 // Tests for editing API (toggling styles, contenteditable logic, etc.)
 
-use rhtmledit::dom::*;
-use rhtmledit::types::*;
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::parse_html;
+use htmlbox::dom::*;
+use htmlbox::types::*;
+use htmlbox::layout::LayoutEngine;
+use htmlbox::parse_html;
 
 #[test]
 fn editing_toggle_bold() {

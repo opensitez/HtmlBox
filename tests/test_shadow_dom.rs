@@ -1,9 +1,9 @@
 // Shadow DOM tests — shadow tree rendering, scoped styles, slots, isolation.
 
-use rhtmledit::types::*;
-use rhtmledit::html::parse_html;
-use rhtmledit::load_html;
-use rhtmledit::dom;
+use htmlbox::types::*;
+use htmlbox::html::parse_html;
+use htmlbox::load_html;
+use htmlbox::dom;
 
 fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }
@@ -56,7 +56,7 @@ fn shadow_mode_closed() {
 fn shadow_tree_renders() {
     let mut doc = load_html("<div id='host' style='width:400px'>Light</div>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<p id='sp'>Shadow text</p>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     assert!(by_id(&doc.root,"sp").is_some(), "shadow content found");
 }
@@ -67,7 +67,7 @@ fn shadow_tree_renders() {
 fn scoped_style_applies_inside() {
     let mut doc = load_html("<div id='host' style='width:400px'>L</div>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<style>p{color:red}</style><p id='sp'>S</p>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     if let Some(sp) = by_id(&doc.root,"sp") {
         assert_eq!(sp.style.color.r, 255, "scoped red");
@@ -78,7 +78,7 @@ fn scoped_style_applies_inside() {
 fn scoped_style_no_leak() {
     let mut doc = load_html("<div id='host' style='width:400px'>L</div><p id='out'>Out</p>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<style>p{color:red}</style><p>S</p>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     let out = by_id(&doc.root,"out").unwrap();
     assert_ne!(out.style.color.r, 255, "no leak");
@@ -90,7 +90,7 @@ fn scoped_style_no_leak() {
 fn default_slot_projects() {
     let mut doc = load_html("<div id='host' style='width:400px'><span id='lt'>Projected</span></div>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<div id='w'><slot></slot></div>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     let lt = by_id(&doc.root,"lt");
     assert!(lt.is_some(), "light DOM projected");
@@ -104,7 +104,7 @@ fn named_slots() {
         "</div>",
     ), 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<div id='sa'><slot name='a'></slot></div><div id='sb'><slot name='b'></slot></div>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     assert!(by_id(&doc.root,"sa").is_some(), "slot a container");
     assert!(by_id(&doc.root,"sb").is_some(), "slot b container");
@@ -114,7 +114,7 @@ fn named_slots() {
 fn slot_fallback() {
     let mut doc = load_html("<div id='host' style='width:400px'></div>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<slot><span id='fb'>Default</span></slot>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     assert!(by_id(&doc.root,"fb").is_some(), "fallback shown");
 }
@@ -128,7 +128,7 @@ fn css_vars_cross_boundary() {
         "<div id='host' style='width:400px'>L</div>",
     ), 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<style>p{color:var(--c)}</style><p id='sp'>S</p>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     if let Some(sp) = by_id(&doc.root,"sp") {
         assert_eq!(sp.style.color.r, 0xff, "var crosses shadow r={}", sp.style.color.r);
@@ -141,7 +141,7 @@ fn css_vars_cross_boundary() {
 fn inherited_styles_cross() {
     let mut doc = load_html("<div id='host' style='width:400px;font-size:24px;color:#336699'>L</div>", 500.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<p id='sp'>S</p>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 500.0);
     if let Some(sp) = by_id(&doc.root,"sp") {
         assert_eq!(sp.style.color.r, 0x33, "color inherited");
@@ -154,7 +154,7 @@ fn inherited_styles_cross() {
 fn shadow_has_layout_dimensions() {
     let mut doc = load_html("<div id='host' style='width:300px'>L</div>", 400.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<div id='inner' style='height:100px'>Shadow</div>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 400.0);
     if let Some(inner) = by_id(&doc.root,"inner") {
         assert!((inner.layout.content_rect.h - 100.0).abs() < 5.0, "h={:.0}", inner.layout.content_rect.h);
@@ -167,7 +167,7 @@ fn shadow_has_layout_dimensions() {
 fn empty_shadow_no_crash() {
     let mut doc = load_html("<div id='host' style='width:300px'>Light</div>", 400.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 400.0);
     assert!(by_id(&doc.root,"host").unwrap().layout.content_rect.w >= 0.0);
 }
@@ -176,7 +176,7 @@ fn empty_shadow_no_crash() {
 fn shadow_only_style_no_crash() {
     let mut doc = load_html("<div id='host' style='width:300px'>L</div>", 400.0);
     attach(&mut doc.root, "host", ShadowMode::Open, "<style>:host{background:red}</style>");
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 400.0);
     assert!(by_id(&doc.root,"host").unwrap().layout.content_rect.w >= 0.0);
 }
@@ -198,7 +198,7 @@ fn custom_button() {
         "<style>:host{padding:8px 16px;background:#06c;color:white;border-radius:4px}</style>",
         "<slot></slot>",
     ));
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 800.0);
     assert!(by_id(&doc.root,"btn").unwrap().layout.content_rect.w > 30.0, "button renders");
 }
@@ -216,7 +216,7 @@ fn card_component() {
         "<style>.c{border:1px solid #ddd;border-radius:8px}.h{padding:12px;background:#f5f5f5}.b{padding:16px}</style>",
         "<div class='c'><div class='h'><slot name='title'></slot></div><div class='b'><slot name='body'></slot></div></div>",
     ));
-    let mut r = rhtmledit::renderer::Renderer::new();
+    let mut r = htmlbox::renderer::Renderer::new();
     r.layout_engine().layout(&mut doc, 400.0);
     assert!(by_id(&doc.root,"card").unwrap().layout.content_rect.h > 30.0, "card has height");
 }

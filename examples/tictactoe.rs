@@ -73,9 +73,9 @@ fn best_ai_move(board: &mut [Option<char>;9]) -> Option<usize> {
     }
     best_move
 }
-use rhtmledit::{Document, Renderer, HtmlBox};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
+use htmlbox::{Document, Renderer, HtmlBox};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
 
 const HTML: &str = include_str!("html/tictactoe.html");
 
@@ -102,7 +102,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("tictactoe — rhtmledit")
+                    .with_title("tictactoe — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(500u32, 700u32))
             ).unwrap()
         );

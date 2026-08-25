@@ -1,7 +1,7 @@
 // Hover tests – ported from cpptests/test_hover.cpp
 // Only CSS property parsing tests are portable; hover state/render tests skipped.
-use rhtmledit::types::*;
-use rhtmledit::parse_html;
+use htmlbox::types::*;
+use htmlbox::parse_html;
 
 fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }

@@ -2,8 +2,8 @@
 // Coverage gap tests for table cell block layout, BR line breaks, rect consistency.
 // Widget-specific tests (InsertHR, Backspace, etc.) are omitted.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
+use htmlbox::types::*;
+use htmlbox::load_html;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-//! Accessibility tree builder for rhtmledit.
+//! Accessibility tree builder for htmlbox.
 //!
 //! Converts the live `Document` box tree into an `accesskit::TreeUpdate` that can
 //! be pushed to an `accesskit_winit::Adapter`.  Every visible `HtmlBox` becomes
@@ -8,7 +8,7 @@
 //! # Usage
 //! ```ignore
 //! // After every layout rebuild:
-//! let update = rhtmledit::accessibility::build_tree(&doc, platform.scale_factor());
+//! let update = htmlbox::accessibility::build_tree(&doc, platform.scale_factor());
 //! adapter.update_if_active(|| update);
 //! ```
 //!
@@ -20,7 +20,7 @@
 //! let event_loop = EventLoop::<ActionRequestEvent>::with_user_event().build().unwrap();
 //! let proxy = event_loop.create_proxy();
 //! let adapter = accesskit_winit::Adapter::new(&window,
-//!     || rhtmledit::accessibility::build_tree(&doc, scale),
+//!     || htmlbox::accessibility::build_tree(&doc, scale),
 //!     proxy);
 //!
 //! // In your event handler — call for every WindowEvent:

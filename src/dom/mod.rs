@@ -16,7 +16,7 @@ pub mod events;
 pub mod registry;
 
 // Re-exported at `dom::` so the path matches the other engine's:
-// `rhtmledit::dom::new_document` and `vybe_widgets::dom::new_document` are the
+// `htmlbox::dom::new_document` and `vybe_widgets::dom::new_document` are the
 // same call under a different browser.
 pub use registry::{
     DocumentId, close_document, is_open, new_document, new_xml_document, with_document,

@@ -1,8 +1,8 @@
 // Comprehensive tests for CSS units, calc/clamp/min/max functions,
 // box-sizing interactions, and ::before/::after pseudo-elements.
 
-use rhtmledit::types::*;
-use rhtmledit::load_html;
+use htmlbox::types::*;
+use htmlbox::load_html;
 
 fn by_id<'a>(root: &'a HtmlBox, id: &str) -> Option<&'a HtmlBox> {
     if root.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(root); }

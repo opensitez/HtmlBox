@@ -1,7 +1,7 @@
 #[test]
 fn badge_align_center_no_stretch() {
-    use rhtmledit::load_html;
-    use rhtmledit::types::{HtmlBox, AlignItems};
+    use htmlbox::load_html;
+    use htmlbox::types::{HtmlBox, AlignItems};
 
     fn find_box<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
         if pred(root) { return Some(root); }
@@ -17,7 +17,7 @@ fn badge_align_center_no_stretch() {
         300.0);
     
     // Check parent's align-items
-    let parent = find_box(&doc.root, &|b| b.style.display == rhtmledit::types::Display::Flex).unwrap();
+    let parent = find_box(&doc.root, &|b| b.style.display == htmlbox::types::Display::Flex).unwrap();
     println!("parent align_items: {:?}", parent.style.align_items);
     assert_eq!(parent.style.align_items, AlignItems::Center, "align-items should be Center");
     

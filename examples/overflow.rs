@@ -8,8 +8,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use winit::event::{ElementState, MouseButton};
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
-use rhtmledit::platform::Platform;
+use htmlbox::{load_html, Document, Renderer, LayoutEngine, HtmlEventType};
+use htmlbox::platform::Platform;
 
 const HTML: &str = include_str!("html/overflow.html");
 
@@ -28,7 +28,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("overflow — rhtmledit")
+                    .with_title("overflow — htmlbox")
                     .with_inner_size(winit::dpi::LogicalSize::new(1000u32, 700u32))
             ).unwrap()
         );

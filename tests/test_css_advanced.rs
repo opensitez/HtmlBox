@@ -1,8 +1,8 @@
 // Ported from cpptests/test_css_advanced.cpp
 // Advanced CSS property parsing tests
 
-use rhtmledit::types::*;
-use rhtmledit::css::apply_property;
+use htmlbox::types::*;
+use htmlbox::css::apply_property;
 
 fn style_with(prop: &str, val: &str) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -555,11 +555,11 @@ fn css_adv_inset_block_end() {
 fn css_adv_hover_background_color() {
     // hover-background-color was removed; hover styles are now stored as a
     // full ComputedStyle clone in hover_style. Test via cascade instead.
-    use rhtmledit::parse_html;
+    use htmlbox::parse_html;
     let doc = parse_html(
         "<html><head><style>div:hover { background-color: yellow; }</style></head>\
          <body><div>x</div></body></html>");
-    fn find<'a>(b: &'a rhtmledit::types::HtmlBox, tag: &str) -> Option<&'a rhtmledit::types::HtmlBox> {
+    fn find<'a>(b: &'a htmlbox::types::HtmlBox, tag: &str) -> Option<&'a htmlbox::types::HtmlBox> {
         if b.tag == tag { return Some(b); }
         for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
         None
@@ -571,11 +571,11 @@ fn css_adv_hover_background_color() {
 
 #[test]
 fn css_adv_hover_color() {
-    use rhtmledit::parse_html;
+    use htmlbox::parse_html;
     let doc = parse_html(
         "<html><head><style>div:hover { color: green; }</style></head>\
          <body><div>x</div></body></html>");
-    fn find<'a>(b: &'a rhtmledit::types::HtmlBox, tag: &str) -> Option<&'a rhtmledit::types::HtmlBox> {
+    fn find<'a>(b: &'a htmlbox::types::HtmlBox, tag: &str) -> Option<&'a htmlbox::types::HtmlBox> {
         if b.tag == tag { return Some(b); }
         for c in &b.children { if let Some(f) = find(c, tag) { return Some(f); } }
         None
@@ -630,7 +630,7 @@ fn css_adv_border_bottom_right_radius() {
 // Media Queries — @media rule parsing
 // ============================================================
 
-use rhtmledit::css::parse_stylesheet;
+use htmlbox::css::parse_stylesheet;
 
 #[test]
 fn css_adv_media_query_parsed() {

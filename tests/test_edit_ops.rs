@@ -4,19 +4,19 @@
 // insert_hr, insert_br, toggle_bullet_list, increase/decrease_indent,
 // increase/decrease_quote_level.
 
-use rhtmledit::dom::{
+use htmlbox::dom::{
     Editor, TextRange,
     query_selector, query_selector_mut, query_selector_all,
     get_text_content, insert_hr,
     toggle_bold,
 };
-use rhtmledit::layout::LayoutEngine;
-use rhtmledit::parse_html;
-use rhtmledit::types::HtmlBox;
+use htmlbox::layout::LayoutEngine;
+use htmlbox::parse_html;
+use htmlbox::types::HtmlBox;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn parse_and_layout(html: &str) -> rhtmledit::types::Document {
+fn parse_and_layout(html: &str) -> htmlbox::types::Document {
     let mut doc = parse_html(html);
     LayoutEngine::new().layout(&mut doc, 800.0);
     doc
@@ -427,7 +427,7 @@ fn increase_indent_adds_margin_left() {
     );
     // Computed style should reflect 40px
     match &p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
+        htmlbox::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("expected Px(40), got {:?}", other),
     }
 }
@@ -444,7 +444,7 @@ fn increase_indent_accumulates() {
 
     let p = query_selector(&doc.root, "p").unwrap();
     match &p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((*v - 80.0).abs() < 0.01),
+        htmlbox::types::CssLength::Px(v) => assert!((*v - 80.0).abs() < 0.01),
         other => panic!("expected Px(80), got {:?}", other),
     }
 }
@@ -460,7 +460,7 @@ fn decrease_indent_reduces_margin_left() {
 
     let p = query_selector(&doc.root, "p").unwrap();
     match &p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
+        htmlbox::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("expected Px(40), got {:?}", other),
     }
 }
@@ -476,8 +476,8 @@ fn decrease_indent_does_not_go_below_zero() {
 
     let p = query_selector(&doc.root, "p").unwrap();
     match &p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!(*v >= 0.0, "margin-left must not go negative"),
-        rhtmledit::types::CssLength::Zero  => {} // ok
+        htmlbox::types::CssLength::Px(v) => assert!(*v >= 0.0, "margin-left must not go negative"),
+        htmlbox::types::CssLength::Zero  => {} // ok
         other => panic!("unexpected {:?}", other),
     }
 }
@@ -496,7 +496,7 @@ fn indent_survives_recascade() {
 
     let p = query_selector(&doc.root, "p").unwrap();
     match &p.style.margin_left {
-        rhtmledit::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
+        htmlbox::types::CssLength::Px(v) => assert!((*v - 40.0).abs() < 0.01),
         other => panic!("indent should survive recascade; got {:?}", other),
     }
 }
@@ -622,7 +622,7 @@ fn enter_in_blockquote_inserts_br() {
 
 #[test]
 fn key_enter_splits_paragraph() {
-    use rhtmledit::dom::HtmlEventType;
+    use htmlbox::dom::HtmlEventType;
     let mut doc = parse_and_layout("<p>AB</p>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -644,7 +644,7 @@ fn key_enter_splits_paragraph() {
 
 #[test]
 fn key_enter_does_not_insert_literal_newline() {
-    use rhtmledit::dom::HtmlEventType;
+    use htmlbox::dom::HtmlEventType;
     let mut doc = parse_and_layout("<p>Hello</p>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -732,7 +732,7 @@ fn space_then_letter_in_grid_div() {
 /// byte offset that the arrows moved to — not at the original click position.
 #[test]
 fn arrow_right_twice_then_enter_splits_at_correct_offset() {
-    use rhtmledit::dom::HtmlEventType;
+    use htmlbox::dom::HtmlEventType;
     let mut doc = parse_and_layout("<p>Hello world</p>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -758,7 +758,7 @@ fn arrow_right_twice_then_enter_splits_at_correct_offset() {
 /// flat-text position, preserving text before and after the caret.
 #[test]
 fn arrow_right_into_inline_child_then_enter() {
-    use rhtmledit::dom::HtmlEventType;
+    use htmlbox::dom::HtmlEventType;
     // flat text: "ABCDEF" (6 bytes)
     let mut doc = parse_and_layout("<p>AB<b>CD</b>EF</p>");
     {
@@ -782,7 +782,7 @@ fn arrow_right_into_inline_child_then_enter() {
 /// Arrow left then Enter: split must be at the position moved to, not the original.
 #[test]
 fn arrow_left_then_enter_splits_at_moved_position() {
-    use rhtmledit::dom::HtmlEventType;
+    use htmlbox::dom::HtmlEventType;
     let mut doc = parse_and_layout("<p>Hello world</p>");
     {
         let p = query_selector_mut(&mut doc.root, "p").unwrap();
@@ -839,7 +839,7 @@ fn absolute_child_gets_nonzero_layout() {
 /// The parent's flat text must not include the absolute child's text.
 #[test]
 fn absolute_child_excluded_from_parent_flat_text() {
-    use rhtmledit::layout::inline_layout::collect_flat_text;
+    use htmlbox::layout::inline_layout::collect_flat_text;
     let html = r#"<div id="rel" style="position: relative;">
         normal text
         <span id="abs" style="position: absolute; top: 0; left: 0;">abs text</span>

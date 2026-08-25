@@ -6,10 +6,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 use winit::keyboard::{PhysicalKey, KeyCode};
 
-use rhtmledit::{load_html, Document, Renderer, LayoutEngine};
-use rhtmledit::platform::Platform;
-use rhtmledit::dom::{self, HtmlEventType};
-use rhtmledit::HtmlBox;
+use htmlbox::{load_html, Document, Renderer, LayoutEngine};
+use htmlbox::platform::Platform;
+use htmlbox::dom::{self, HtmlEventType};
+use htmlbox::HtmlBox;
 
 const HTML: &str = include_str!("html/event_playground.html");
 
@@ -126,7 +126,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes()
-                .with_title("Event Playground — rhtmledit")
+                .with_title("Event Playground — htmlbox")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 800u32))
         ).unwrap());
         let platform = Platform::new_windowed(window.clone());

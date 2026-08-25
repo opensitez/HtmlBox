@@ -15,8 +15,8 @@
 //   .rail-right { float:left; width:320px; margin-left:-320px; } produced
 //   margin_rect.w = 0 instead of 320.
 
-use rhtmledit::load_html;
-use rhtmledit::types::*;
+use htmlbox::load_html;
+use htmlbox::types::*;
 
 fn find<'a>(root: &'a HtmlBox, pred: &dyn Fn(&HtmlBox) -> bool) -> Option<&'a HtmlBox> {
     if pred(root) { return Some(root); }
