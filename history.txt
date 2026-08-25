@@ -1,0 +1,7 @@
+# current
+
+# 202508
+- version 0.2
+- rename to webcore, it is not just about html
+- tag 0.2
+
