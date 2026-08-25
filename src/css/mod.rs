@@ -5257,64 +5257,7 @@ fn build_pseudo_style_shared(
     Some((content, Box::new(ps)))
 }
 
-/// Create or update a ::before/::after child box on a node.
-/// Handles flex/grid blockification, positioned pseudo-elements, and stale removal.
-/// `is_before` = true for ::before (insert at index 0), false for ::after (push to end).
-fn apply_pseudo_child(
-    node: &mut crate::types::HtmlBox,
-    is_before: bool,
-) {
-    let tag = if is_before { "::before" } else { "::after" };
-    let content = if is_before { &node.style.before_content } else { &node.style.after_content };
-    let pseudo_style = if is_before { &node.style.before_style } else { &node.style.after_style };
 
-    let is_grid_or_flex = matches!(node.style.display,
-        Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
-    let is_positioned = pseudo_style.as_ref().map_or(false, |ps|
-        matches!(ps.position, Position::Absolute | Position::Fixed));
-    let is_block = pseudo_style.as_ref().map_or(false, |ps|
-        ps.is_block_level());
-    let has_content = !content.is_empty()
-        || (is_grid_or_flex && pseudo_style.is_some());
-
-    let should_create = (is_grid_or_flex && has_content)
-        || (is_positioned && pseudo_style.is_some())
-        || (is_block && !content.is_empty());
-
-    if should_create {
-        let existing = node.children.iter().position(|c| c.tag == tag);
-        let mut pseudo_box = crate::types::HtmlBox::new(tag);
-        pseudo_box.text = content.clone();
-        pseudo_box.tag = tag.to_string();
-        if let Some(ps) = pseudo_style {
-            pseudo_box.style = *ps.clone();
-        }
-        // Blockify inline pseudo-elements in grid/flex containers (not positioned ones)
-        if is_grid_or_flex && !pseudo_box.style.is_positioned()
-            && matches!(pseudo_box.style.display, Display::Inline)
-        {
-            pseudo_box.style.display = Display::Block;
-        }
-        if let Some(idx) = existing {
-            node.children[idx] = pseudo_box;
-        } else if is_before {
-            node.children.insert(0, pseudo_box);
-        } else {
-            node.children.push(pseudo_box);
-        }
-        // Clear content so it doesn't also render inline
-        if is_before {
-            node.style.before_content = String::new();
-        } else {
-            node.style.after_content = String::new();
-        }
-    } else {
-        // Remove stale pseudo child from a prior cascade pass
-        if let Some(idx) = node.children.iter().position(|c| c.tag == tag) {
-            node.children.remove(idx);
-        }
-    }
-}
 
 fn apply_cascade_inner(
     root: &mut crate::types::HtmlBox,

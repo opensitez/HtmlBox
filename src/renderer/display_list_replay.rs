@@ -1366,18 +1366,7 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
     }
 }
 
-fn circle_path_4q(cx: f32, cy: f32, r: f32) -> Option<tiny_skia::Path> {
-    // Approximate circle with 4 cubic bezier curves (kappa = 0.5522847498)
-    let k = r * 0.5522847498;
-    let mut pb = PathBuilder::new();
-    pb.move_to(cx, cy - r);
-    pb.cubic_to(cx + k, cy - r, cx + r, cy - k, cx + r, cy);
-    pb.cubic_to(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
-    pb.cubic_to(cx - k, cy + r, cx - r, cy + k, cx - r, cy);
-    pb.cubic_to(cx - r, cy - k, cx - k, cy - r, cx, cy - r);
-    pb.close();
-    pb.finish()
-}
+
 
 fn build_clip_mask(rect: &Rect, radius: &[f32; 4], pw: u32, ph: u32, scale: f32) -> Option<tiny_skia::Mask> {
     let mut mask = tiny_skia::Mask::new(pw, ph)?;

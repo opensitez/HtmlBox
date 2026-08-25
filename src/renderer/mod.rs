@@ -321,7 +321,7 @@ impl Renderer {
         // Check what changed since last render
         let layout_changed = doc.layout_generation != self.cached_layout_generation;
         let hover_changed = doc.hovered_box != self.cached_hovered_id;
-        let scroll_only = !layout_changed && !hover_changed && !self.display_list_dirty
+        let _scroll_only = !layout_changed && !hover_changed && !self.display_list_dirty
             && self.cached_display_list.is_some();
 
         // Only rebuild display list when layout/hover changed — NOT on scroll.
@@ -477,30 +477,7 @@ impl Renderer {
         if let Some(path) = pb.finish() { let mut stroke = Stroke::default(); stroke.width = width; pixmap.stroke_path(&path, &paint, &stroke, ts, mask); }
     }
 
-    /// Walk the DOM tree and paint any custom components.
-    /// Rasterize a single tile from the cached display list.
-    fn rasterize_tile(&mut self, tx: i32, ty: i32, _scroll_x: f32, _scroll_y: f32, scale: f32) {
-        if let Some(tile) = self.tile_manager.tiles.get_mut(&(tx, ty)) {
-            // Clear tile
-            tile.pixmap.fill(tiny_skia::Color::WHITE);
 
-            // Replay display list into the tile, offset so the tile covers
-            // its region of the document
-            let tile_scroll_x = tx as f32 * tiles::TILE_SIZE;
-            let tile_scroll_y = ty as f32 * tiles::TILE_SIZE;
-
-            if let Some(ref list) = self.cached_display_list {
-                // Build a display list clipped to this tile's region
-                // For now, replay the full list with tile-relative scroll offset
-                // (the replay clips to the pixmap bounds automatically)
-                display_list_replay::replay_with_text(
-                    list, &mut tile.pixmap, scale,
-                    &mut self.font_system, &mut self.swash_cache,
-                );
-            }
-            tile.dirty = false;
-        }
-    }
 
     fn paint_custom_components(&self, node: &HtmlBox, pixmap: &mut Pixmap, sx: f32, sy: f32, scale: f32) {
         // Trait-based component — same coordinate contract as legacy: logical coords, scale passed separately
