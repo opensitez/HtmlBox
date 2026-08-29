@@ -175,7 +175,7 @@ impl std::fmt::Debug for AncestorBloom {
 #[derive(Clone, Debug, Default)]
 pub struct AncestorInfo {
     pub tag:                String,
-    pub attributes:         HashMap<String, String>,
+    pub attributes:         crate::dom::attrs::AttrMap,
     pub child_index:        usize,   // 0-based position among parent's children
     pub sibling_count:      usize,   // total children of parent
     pub type_child_index:   usize,   // 0-based among same-tag siblings
@@ -332,7 +332,7 @@ impl CssSelector {
     fn matches_with_ancestors_ctx_raw(
         &self,
         tag: &str,
-        attrs: &HashMap<String, String>,
+        attrs: &crate::dom::attrs::AttrMap,
         child_index: usize,
         sibling_count: usize,
         ancestors: &[AncestorInfo],
@@ -348,7 +348,7 @@ impl CssSelector {
 pub fn matches_selector_with_ancestors(
     parts: &[SelectorPart],
     tag: &str,
-    attrs: &HashMap<String, String>,
+    attrs: &crate::dom::attrs::AttrMap,
     child_index: usize,
     sibling_count: usize,
     ancestors: &[AncestorInfo],
@@ -431,7 +431,7 @@ pub fn matches_selector_with_ancestors(
                 Combinator::AdjacentSibling => {
                     // Match left_parts against the immediately previous non-text sibling
                     if let Some(last) = ctx.prev_siblings.last() {
-                        let mut sib_attrs = HashMap::new();
+                        let mut sib_attrs = crate::dom::attrs::AttrMap::new();
                         if !last.1.is_empty() { sib_attrs.insert("id".to_string(), last.1.clone()); }
                         if !last.2.is_empty() { sib_attrs.insert("class".to_string(), last.2.clone()); }
                         left_parts.iter().all(|p| matches_part_with_context(
@@ -444,7 +444,7 @@ pub fn matches_selector_with_ancestors(
                 Combinator::GeneralSibling => {
                     // Match left_parts against ANY previous non-text sibling
                     ctx.prev_siblings.iter().any(|sib| {
-                        let mut sib_attrs = HashMap::new();
+                        let mut sib_attrs = crate::dom::attrs::AttrMap::new();
                         if !sib.1.is_empty() { sib_attrs.insert("id".to_string(), sib.1.clone()); }
                         if !sib.2.is_empty() { sib_attrs.insert("class".to_string(), sib.2.clone()); }
                         left_parts.iter().all(|p| matches_part_with_context(
@@ -460,7 +460,7 @@ pub fn matches_selector_with_ancestors(
 fn matches_part_with_context(
     part: &SelectorPart,
     tag: &str,
-    attrs: &HashMap<String, String>,
+    attrs: &crate::dom::attrs::AttrMap,
     child_index: usize,
     sibling_count: usize,
     ancestors: &[AncestorInfo],
@@ -732,7 +732,7 @@ fn is_form_control(tag: &str) -> bool {
 /// disabled, unless it sits in that fieldset's FIRST `<legend>`. The legend
 /// exemption needs to know which legend is first among its siblings, which the
 /// ancestor chain does record — `child_index` on the legend's own entry.
-fn is_actually_disabled(tag: &str, attrs: &HashMap<String, String>, ancestors: &[AncestorInfo]) -> bool {
+fn is_actually_disabled(tag: &str, attrs: &crate::dom::attrs::AttrMap, ancestors: &[AncestorInfo]) -> bool {
     if !is_form_control(tag) { return false; }
     if attrs.contains_key("disabled") { return true; }
     // Walk from the element outwards. A `<legend>` seen on the way up shields
@@ -759,7 +759,7 @@ fn is_actually_disabled(tag: &str, attrs: &HashMap<String, String>, ancestors: &
 
 /// Can this element be `required`? Only the controls that take the attribute —
 /// `:optional` is "requirable but not required", so a `<div>` is neither.
-fn is_requirable(tag: &str, attrs: &HashMap<String, String>) -> bool {
+fn is_requirable(tag: &str, attrs: &crate::dom::attrs::AttrMap) -> bool {
     match tag {
         "select" | "textarea" => true,
         "input" => !matches!(
@@ -6494,6 +6494,12 @@ fn apply_cascade_inner(
         // Take shadow root temporarily to satisfy borrow checker
         let mut sr = root.shadow_root.take().unwrap();
         sr.stylesheet.rebuild_index();
+        // `:host` — the shadow stylesheet styling its own host. The matcher
+        // cannot answer it (it has no idea whose shadow tree a rule came from),
+        // so it is applied HERE, where the host and its shadow stylesheet are
+        // both in hand. `:host` rules were returning false unconditionally,
+        // which made the single most common shadow-CSS rule inert.
+        apply_host_rules(root, &sr.stylesheet, &local_vars, ancestors);
         cascade_children(
             &mut sr.children, &sr.stylesheet, &style, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
@@ -6532,7 +6538,7 @@ struct CascadeWorkItem {
     /// Path from root to this node (indices into children arrays).
     node_path: Vec<usize>,
     tag: String,
-    attributes: HashMap<String, String>,
+    attributes: crate::dom::attrs::AttrMap,
     class_attr: String,
     id: Option<String>,
     ancestors: Vec<AncestorInfo>,
@@ -7625,3 +7631,103 @@ rt   { display: ruby-text; font-size: 0.5em; }
   outline-offset: 2px;
 }
 "##;
+
+/// Apply a shadow stylesheet's `:host`, `:host(sel)` and `:host-context(sel)`
+/// rules to the host element.
+///
+/// Specificity order is preserved; these land on top of the document's own
+/// cascade for the host, which is where the spec puts them — a shadow tree's
+/// `:host` rule is weaker than an author rule targeting the host from outside
+/// only by origin, and both are author origin here, so later wins.
+fn apply_host_rules(
+    host: &mut WebCore,
+    shadow_sheet: &Stylesheet,
+    vars: &HashMap<String, String>,
+    ancestors: &[AncestorInfo],
+) {
+    let mut matched: Vec<(u32, usize)> = Vec::new();
+    for (ri, rule) in shadow_sheet.rules.iter().enumerate() {
+        if rule.pseudo_element != PseudoElement::None { continue; }
+        for sel in &rule.selectors {
+            let Some(inner) = host_selector_argument(sel) else { continue };
+            // `:host` alone matches unconditionally; `:host(sel)` and
+            // `:host-context(sel)` match when the host itself matches `sel`.
+            let hit = match inner {
+                HostArg::Bare => true,
+                HostArg::Host(arg) => matches_bare(arg, &host.tag, &host.attributes, Some(host)),
+                // `:host-context(sel)` matches when the host OR ANY ANCESTOR
+                // matches `sel` — that is the whole point of it, and matching
+                // only the host made `:host-context(.dark)` inside
+                // `<body class=dark>` do nothing.
+                HostArg::Context(arg) => {
+                    matches_bare(arg, &host.tag, &host.attributes, Some(host))
+                        || ancestors.iter().any(|a| matches_bare(arg, &a.tag, &a.attributes, None))
+                }
+            };
+            if hit { matched.push((rule.specificity, ri)); break; }
+        }
+    }
+    if matched.is_empty() { return; }
+    matched.sort_by_key(|(sp, _)| *sp);
+    for (_, ri) in &matched {
+        for (prop, val) in &shadow_sheet.rules[*ri].declarations {
+            let resolved = resolve_var_references(val, vars);
+            apply_property(&mut host.style, prop, &resolved);
+        }
+    }
+    for (_, ri) in &matched {
+        for (prop, val) in &shadow_sheet.rules[*ri].important_declarations {
+            let resolved = resolve_var_references(val, vars);
+            apply_property(&mut host.style, prop, &resolved);
+        }
+    }
+}
+
+/// If `sel` is a `:host` form, return its argument: `None` for bare `:host`,
+/// `Some(arg)` for `:host(arg)` / `:host-context(arg)`. `None` overall when the
+/// selector is not a host selector at all.
+fn host_selector_argument(sel: &CssSelector) -> Option<HostArg<'_>> {
+    for part in &sel.parts {
+        if let SelectorPart::PseudoClass(name) = part {
+            if name == "host" { return Some(HostArg::Bare); }
+            if let Some(rest) = name.strip_prefix("host(") {
+                return Some(HostArg::Host(rest.trim_end_matches(')')));
+            }
+            if let Some(rest) = name.strip_prefix("host-context(") {
+                return Some(HostArg::Context(rest.trim_end_matches(')')));
+            }
+        }
+    }
+    None
+}
+
+/// Which `:host` form a selector uses, and its argument.
+enum HostArg<'a> {
+    /// `:host`
+    Bare,
+    /// `:host(sel)` — the host itself must match `sel`.
+    Host(&'a str),
+    /// `:host-context(sel)` — the host OR AN ANCESTOR must match `sel`.
+    Context(&'a str),
+}
+
+/// Match a bare compound selector against one element's tag and attributes.
+fn matches_bare(
+    sel: &str,
+    tag: &str,
+    attrs: &crate::dom::attrs::AttrMap,
+    node: Option<&WebCore>,
+) -> bool {
+    let parsed = parse_selector(sel);
+    if parsed.parts.is_empty() { return false; }
+    let empty = std::collections::HashSet::new();
+    let ctx = MatchContext {
+        focused_box: 0, keyboard_focus: false,
+        type_child_index: 0, type_sibling_count: 1,
+        html_box: node, hover_chain: &empty,
+        element_id: node.map(|n| n.node_id).unwrap_or(0),
+        prev_siblings: &[],
+    };
+    parsed.parts.iter().all(|p|
+        matches_part_with_context(p, tag, attrs, 0, 1, &[], &ctx))
+}

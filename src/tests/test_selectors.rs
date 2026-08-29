@@ -15,7 +15,7 @@ fn selectors_tag_match() {
 #[test]
 fn selectors_class_match() {
     let mut b = WebCore::new("div");
-    b.attributes.insert("class".into(), "foo bar".into());
+    b.attributes.insert("class", "foo bar");
     assert!(parse_selector(".foo").matches_box(&b));
     assert!(parse_selector(".bar").matches_box(&b));
     assert!(!parse_selector(".baz").matches_box(&b));
@@ -24,7 +24,7 @@ fn selectors_class_match() {
 #[test]
 fn selectors_id_match() {
     let mut b = WebCore::new("div");
-    b.attributes.insert("id".into(), "main".into());
+    b.attributes.insert("id", "main");
     assert!(parse_selector("#main").matches_box(&b));
     assert!(!parse_selector("#other").matches_box(&b));
 }
@@ -32,7 +32,7 @@ fn selectors_id_match() {
 #[test]
 fn selectors_tag_and_class_combined() {
     let mut b = WebCore::new("p");
-    b.attributes.insert("class".into(), "intro".into());
+    b.attributes.insert("class", "intro");
     assert!(parse_selector("p.intro").matches_box(&b));
     assert!(!parse_selector("div.intro").matches_box(&b));
 }
@@ -40,7 +40,7 @@ fn selectors_tag_and_class_combined() {
 #[test]
 fn selectors_tag_and_id_combined() {
     let mut b = WebCore::new("div");
-    b.attributes.insert("id".into(), "header".into());
+    b.attributes.insert("id", "header");
     assert!(parse_selector("div#header").matches_box(&b));
     assert!(!parse_selector("p#header").matches_box(&b));
 }
@@ -54,7 +54,7 @@ fn selectors_universal_selector() {
 #[test]
 fn selectors_multiple_class_selector() {
     let mut b = WebCore::new("div");
-    b.attributes.insert("class".into(), "foo bar baz".into());
+    b.attributes.insert("class", "foo bar baz");
     assert!(parse_selector(".foo.bar").matches_box(&b));
     assert!(parse_selector(".foo.baz").matches_box(&b));
     assert!(!parse_selector(".foo.missing").matches_box(&b));

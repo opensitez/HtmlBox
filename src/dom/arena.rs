@@ -49,6 +49,10 @@ pub enum NodeType {
     /// `<?target data?>`. Carries a TARGET, which is what `nodeName` answers
     /// for it, and which is why `tag` holds the target rather than a tag name.
     ProcessingInstruction,
+    /// `<!DOCTYPE html>`. Not an element and not character data: it holds a
+    /// name and two identifiers, answers `nodeType` 10, and sits as the
+    /// document's FIRST CHILD (measured: `document.firstChild === doctype`).
+    DocumentType,
     /// A `DocumentFragment` — a parent with no place in the document.
     ///
     /// The point of it is what INSERTING one does: the fragment's children move
@@ -76,7 +80,7 @@ pub struct Node {
     pub prev_sibling: NodeId,
 
     // ── Data ──
-    pub attributes: HashMap<String, String>,
+    pub attributes: crate::dom::attrs::AttrMap,
     pub text: String,
 
     /// The node's namespace URI, or `None` for the null namespace.
@@ -116,7 +120,7 @@ impl Node {
             last_child: NodeId::NONE,
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             namespace: None,
             attribute_ns: HashMap::new(),
             text: String::new(),
@@ -137,7 +141,7 @@ impl Node {
             last_child: NodeId::NONE,
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             namespace: None,
             attribute_ns: HashMap::new(),
             text: text.into(),
@@ -155,7 +159,7 @@ impl Node {
             last_child: NodeId::NONE,
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             namespace: None,
             attribute_ns: HashMap::new(),
             text: text.into(),
@@ -216,7 +220,7 @@ impl DomArena {
             last_child: NodeId::NONE,
             next_sibling: NodeId::NONE,
             prev_sibling: NodeId::NONE,
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             namespace: None,
             attribute_ns: HashMap::new(),
             text: String::new(),
@@ -244,6 +248,21 @@ impl DomArena {
     /// Create a new comment node — `document.createComment()`.
     pub fn create_comment(&mut self, text: &str) -> NodeId {
         self.alloc(Node::new_comment(text))
+    }
+
+    /// Create the `DocumentType` node for `<!DOCTYPE name PUBLIC … SYSTEM …>`.
+    ///
+    /// The public and system identifiers ride in `attributes` rather than in
+    /// two new `Node` fields: every node in the arena would grow by two
+    /// `String`s to serve the at-most-one node per document that uses them.
+    /// They are not reachable as attributes — `node_type` is `DocumentType`,
+    /// so `getAttribute` never routes here.
+    pub fn create_doctype(&mut self, name: &str, public_id: &str, system_id: &str) -> NodeId {
+        let mut node = Node::new_element(name);
+        node.node_type = NodeType::DocumentType;
+        node.attributes.insert("publicId", public_id);
+        node.attributes.insert("systemId", system_id);
+        self.alloc(node)
     }
 
     /// `document.createElementNS(namespace, qualifiedName)`.
@@ -310,6 +329,17 @@ impl DomArena {
     pub fn get_mut(&mut self, id: NodeId) -> &mut Node {
         debug_assert!(id.is_some() && (id.index()) < self.nodes.len());
         &mut self.nodes[id.index()]
+    }
+
+    /// Borrow a node only if `id` names a live one.
+    ///
+    /// `get` asserts, which is right for an id that came out of the arena and
+    /// wrong for one that came from a caller. Shadow-tree nodes and the
+    /// reserved Window/Document ids are real node ids that were never in the
+    /// arena, so every public entry point that takes a `u32` from outside has
+    /// to ask rather than index.
+    pub fn try_get(&self, id: NodeId) -> Option<&Node> {
+        self.is_alive(id).then(|| &self.nodes[id.index()])
     }
 
     pub fn is_alive(&self, id: NodeId) -> bool {
@@ -434,7 +464,7 @@ impl DomArena {
     // ── Attribute Mutation (sets dirty flags) ──
 
     pub fn set_attribute(&mut self, id: NodeId, key: &str, value: &str) {
-        self.get_mut(id).attributes.insert(key.to_string(), value.to_string());
+        self.get_mut(id).attributes.insert(key, value);
         // Class/style changes need re-style; others might too (presentational attrs)
         self.mark_dirty(id, DirtyFlags::STYLE);
     }
@@ -765,4 +795,21 @@ mod tests {
         assert!(arena.get(t).dirty.contains(DirtyFlags::LAYOUT));
         assert!(arena.get(root).dirty.contains(DirtyFlags::LAYOUT));
     }
+}
+
+/// Allocate an id for a `ShadowRoot`.
+///
+/// Shadow roots are not stored in the arena — they hang off their host in the
+/// render tree — so they cannot take an arena slot, but they still need an id
+/// no element will ever collide with. These count DOWN from just below the
+/// reserved `Window`/`Document` ids while element ids count up.
+pub fn next_shadow_node_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(u32::MAX - 2);
+    NEXT.fetch_sub(1, Ordering::Relaxed)
+}
+
+/// Is `id` one of the ids `next_shadow_node_id` hands out?
+pub fn is_shadow_node_id(id: u32) -> bool {
+    id != 0 && id > u32::MAX - 1_000_000 && id < u32::MAX - 1
 }

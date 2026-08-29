@@ -146,6 +146,12 @@ impl EngineFrame {
         self.needs_layout = true;
         self.needs_paint = true;
         self.engine.invalidate_cascade();
+        // HTML §7.9: `DOMContentLoaded` once the document is parsed, then
+        // `load` once it and its resources are ready. Both fired nowhere
+        // before, so `window.onload` — the single most-used handler on the
+        // web — never ran.
+        self.doc.fire_window_event("DOMContentLoaded");
+        self.doc.fire_window_event("load");
     }
 
     /// Set the full body HTML content (keeps existing <head> stylesheets).
@@ -250,6 +256,9 @@ impl EngineFrame {
             self.viewport_h = h;
             self.engine.viewport_w = w;
             self.engine.viewport_h = h;
+            // `window.onresize`. It resolved as a handler name and nothing ever
+            // fired it, so a page that laid itself out on resize never ran.
+            self.doc.fire_window_event("resize");
             self.needs_style = true;  // media queries may change
             self.needs_layout = true;
             self.needs_paint = true;
@@ -275,6 +284,9 @@ impl EngineFrame {
         if (new_y - self.doc.scroll_y).abs() > 0.01 || (new_x - self.doc.scroll_x).abs() > 0.01 {
             self.doc.scroll_y = new_y;
             self.doc.scroll_x = new_x;
+            // `window.onscroll` — fired AFTER the offset moves, so a handler
+            // reading the scroll position sees the new one.
+            self.doc.fire_window_event("scroll");
             self.needs_paint = true; // repaint only, no layout
         }
     }
@@ -488,8 +500,8 @@ impl EngineFrame {
     }
 
     /// Dispatch a DOM event through capture → target → bubble.
-    pub fn dispatch_event(&self, event: &mut crate::dom::events::DomEvent) -> bool {
-        self.doc.event_targets.dispatch_event(&self.doc.arena, event)
+    pub fn dispatch_event(&mut self, event: &mut crate::dom::events::DomEvent) -> bool {
+        self.doc.dispatch_dom_event(event)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -545,13 +557,13 @@ impl EngineFrame {
                 let mut e = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Blur);
                 e.target = old;
                 e.related_target = node_id;
-                self.doc.events.dispatch(&mut self.doc.root, e);
+                self.doc.dispatch_input_event(e);
             }
             if node_id != 0 {
                 let mut e = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Focus);
                 e.target = node_id;
                 e.related_target = old;
-                self.doc.events.dispatch(&mut self.doc.root, e);
+                self.doc.dispatch_input_event(e);
             }
             self.mark_style_dirty();
         }

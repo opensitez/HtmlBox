@@ -13,7 +13,6 @@
 //! The DOM is never modified during layout.
 
 use crate::types::*;
-use std::collections::HashMap;
 
 // ─── LayoutNode trait ─────────────────────────────────────────────────────────
 //
@@ -33,7 +32,7 @@ pub trait LayoutNode {
     fn layout_mut(&mut self) -> &mut LayoutBox;
     fn children(&self) -> &[Self] where Self: Sized;
     fn children_mut(&mut self) -> &mut Vec<Self> where Self: Sized;
-    fn attributes(&self) -> &HashMap<String, String>;
+    fn attributes(&self) -> &crate::dom::attrs::AttrMap;
     fn image_width(&self) -> u32;
     fn image_height(&self) -> u32;
     fn svg_viewbox_w(&self) -> f32;
@@ -60,7 +59,7 @@ impl LayoutNode for Fragment {
     fn layout_mut(&mut self) -> &mut LayoutBox { &mut self.layout }
     fn children(&self) -> &[Fragment] { &self.children }
     fn children_mut(&mut self) -> &mut Vec<Fragment> { &mut self.children }
-    fn attributes(&self) -> &HashMap<String, String> { &self.attributes }
+    fn attributes(&self) -> &crate::dom::attrs::AttrMap { &self.attributes }
     fn image_width(&self) -> u32 { self.image_width }
     fn image_height(&self) -> u32 { self.image_height }
     fn svg_viewbox_w(&self) -> f32 { self.svg_viewbox_w }
@@ -87,7 +86,7 @@ impl LayoutNode for WebCore {
     fn layout_mut(&mut self) -> &mut LayoutBox { &mut self.layout }
     fn children(&self) -> &[WebCore] { &self.children }
     fn children_mut(&mut self) -> &mut Vec<WebCore> { &mut self.children }
-    fn attributes(&self) -> &HashMap<String, String> { &self.attributes }
+    fn attributes(&self) -> &crate::dom::attrs::AttrMap { &self.attributes }
     fn image_width(&self) -> u32 { self.image_width }
     fn image_height(&self) -> u32 { self.image_height }
     fn svg_viewbox_w(&self) -> f32 { self.svg_viewbox_w }
@@ -121,7 +120,7 @@ pub struct Fragment {
     /// Children (owned, like WebCore).
     pub children: Vec<Fragment>,
     /// HTML attributes.
-    pub attributes: HashMap<String, String>,
+    pub attributes: crate::dom::attrs::AttrMap,
     /// Component cached dimensions.
     pub component_width: f32,
     pub component_height: f32,
@@ -152,7 +151,7 @@ impl Fragment {
             style: ComputedStyle::default(),
             layout: LayoutBox::default(),
             children: Vec::new(),
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             component_width: 0.0,
             component_height: 0.0,
             image_width: 0,

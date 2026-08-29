@@ -162,11 +162,14 @@ fn tab_fires_focus_event() {
     let focused_count = Arc::new(Mutex::new(0u32));
     let fc = focused_count.clone();
 
-    // "button" selector matches both buttons; Focus is direct (non-bubbling) so
-    // it fires on the focused element directly.
-    doc.events.add("button", HtmlEventType::Focus, Box::new(move |_evt, _root| {
-        *fc.lock().unwrap() += 1;
-    }));
+    // One listener per button, the DOM way. `focus` does not bubble, so it
+    // fires on the focused element itself.
+    for id in doc.query_selector_all("button") {
+        let c = fc.clone();
+        doc.add_event_listener(id, "focus",
+            Box::new(move |_evt, _d| { *c.lock().unwrap() += 1; }),
+            crate::dom::events::ListenerOptions::default());
+    }
 
     doc.focus_next(); // A gets focus → Focus fires on A
     doc.focus_next(); // B gets focus → Focus fires on B

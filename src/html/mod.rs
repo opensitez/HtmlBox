@@ -1,9 +1,10 @@
+pub mod doctype;
 pub mod forms;
 pub mod serializer;
 pub mod streaming;
 pub mod entities;
+pub mod validity;
 
-use std::collections::HashMap;
 use crate::types::{WebCore, Document, Display, ListStyleType};
 use crate::css::{Stylesheet, apply_property, apply_cascade, ua_stylesheet};
 
@@ -593,11 +594,11 @@ fn decode_refs(s: &str, in_attribute: bool) -> String {
 #[derive(Debug, Clone)]
 enum Token {
     Text(String),
-    OpenTag  { tag: String, attrs: HashMap<String, String>, self_closing: bool },
+    OpenTag  { tag: String, attrs: crate::dom::attrs::AttrMap, self_closing: bool },
     CloseTag { tag: String },
     /// Comment DATA, `<!--` and `-->` already stripped.
     Comment(String),
-    Doctype,
+    Doctype(crate::html::doctype::Doctype),
 }
 
 /// `html[start..end]`, clamped so a truncated tag cannot build a range that
@@ -654,8 +655,14 @@ fn tokenize(html: &str) -> Vec<Token> {
                 continue;
             }
             if i + 9 <= bytes.len() && bytes[i..i+9].eq_ignore_ascii_case(b"<!doctype") {
-                let end = html[i..].find('>').map(|e| i + e + 1).unwrap_or(html.len());
-                tokens.push(Token::Doctype);
+                let found = html[i..].find('>').map(|e| i + e + 1);
+                let end = found.unwrap_or(html.len());
+                // The token used to be a unit variant — the name and the two
+                // identifiers were read and dropped, which is why `doctype`
+                // and `compatMode` had nothing to answer from.
+                let inner_end = if found.is_some() { end - 1 } else { end };
+                let inner = crate::html::doctype::parse_doctype(&html[i + 9..inner_end]);
+                tokens.push(Token::Doctype(inner));
                 i = end;
                 continue;
             }
@@ -683,7 +690,7 @@ fn tokenize(html: &str) -> Vec<Token> {
                 // in the wild write it, and dropping it lost the line break.
                 if tag == "br" {
                     tokens.push(Token::OpenTag {
-                        tag, attrs: HashMap::new(), self_closing: true,
+                        tag, attrs: crate::dom::attrs::AttrMap::new(), self_closing: true,
                     });
                 } else {
                     tokens.push(Token::CloseTag { tag });
@@ -773,7 +780,7 @@ fn find_tag_end(html: &str, start: usize) -> usize {
     html.len()
 }
 
-fn parse_tag_attrs(s: &str) -> (String, HashMap<String, String>) {
+fn parse_tag_attrs(s: &str) -> (String, crate::dom::attrs::AttrMap) {
     let mut iter = s.splitn(2, |c: char| c.is_whitespace());
     let tag = iter.next().unwrap_or("").to_ascii_lowercase();
     let rest = iter.next().unwrap_or("").trim();
@@ -781,8 +788,8 @@ fn parse_tag_attrs(s: &str) -> (String, HashMap<String, String>) {
     (tag, attrs)
 }
 
-fn parse_attrs(s: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
+fn parse_attrs(s: &str) -> crate::dom::attrs::AttrMap {
+    let mut map = crate::dom::attrs::AttrMap::new();
     let mut i = 0;
     let bytes = s.as_bytes();
     while i < bytes.len() {
@@ -797,7 +804,7 @@ fn parse_attrs(s: &str) -> HashMap<String, String> {
             // FIRST occurrence wins. The tokenizer's attribute-name state drops
             // a duplicate rather than overwriting, so `<div CLASS=x class=y>`
             // is `class="x"`. `insert` gave the last one, which is the opposite.
-            map.entry(name).or_default();
+            map.entry_or_default(name);
             continue;
         }
         i += 1;
@@ -815,7 +822,7 @@ fn parse_attrs(s: &str) -> HashMap<String, String> {
             while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' { i += 1; }
             decode_entities_attr(&s[start..i])
         };
-        map.entry(name).or_insert(value);
+        map.or_insert(name, value);
     }
     map
 }
@@ -1181,7 +1188,7 @@ fn add_presentational_style(node: &mut WebCore, prop: &str, value: &str) {
     if already { return; }
     let decl = format!("{}:{}", prop, value);
     node.attributes.insert(
-        "style".into(),
+        "style",
         if existing.trim().is_empty() { decl } else { format!("{};{}", existing, decl) },
     );
 }
@@ -1194,7 +1201,7 @@ fn apply_presentational_attrs(node: &mut WebCore) {
     if tag == "body" {
         if let Some(text_color) = attrs.get("text") {
             let text_color = text_color.clone();
-            node.attributes.entry("color".to_string()).or_insert(text_color);
+            if !node.attributes.contains_key("color") { node.attributes.insert("color", text_color); }
         }
     }
 
@@ -1265,7 +1272,7 @@ fn apply_presentational_attrs(node: &mut WebCore) {
                     let w = n * 0.6;
                     let style_str = format!("width:{}em", w);
                     let existing = node.attributes.get("style").cloned().unwrap_or_default();
-                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                    node.attributes.insert("style", if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
                 }
             }
             // `rows`/`cols` are presentational HINTS. They apply to the
@@ -1403,12 +1410,12 @@ struct HtmlParser {
     arena:              crate::dom::arena::DomArena,
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
-    on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
+    on_open_tag: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap) + 'static>>,
     /// Optional host callback for `<script>` and `<noscript>` tags.
     /// Receives (tag, attrs, raw_content) and returns true if the host handled it.
     /// If None or returns false: `<noscript>` content is parsed as HTML (shown to
     /// the user as fallback), `<script>` is discarded.
-    on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
+    on_script: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static>>,
     /// Whether the head has been closed — the one bit of HTML §13.2.6's
     /// insertion-mode state this parser needs.
     ///
@@ -1439,6 +1446,9 @@ struct HtmlParser {
     /// `<b>` and `<section>` together; the pending `<b>` has to survive the
     /// return so `y` is still bold at the level above.
     pending_format: Vec<WebCore>,
+    /// The document's `<!DOCTYPE>`, if it had one. `None` is quirks mode —
+    /// the commonest way a real page ends up there.
+    doctype: Option<crate::html::doctype::Doctype>,
 }
 
 impl HtmlParser {
@@ -1457,6 +1467,7 @@ impl HtmlParser {
             head_closed: false,
             head_children: Vec::new(),
             pending_format: Vec::new(),
+            doctype: None,
         }
     }
 
@@ -1485,7 +1496,7 @@ impl HtmlParser {
         children.extend(wrapped);
     }
 
-    fn push_head_node(&mut self, tag: &str, attrs: HashMap<String, String>, text: String) {
+    fn push_head_node(&mut self, tag: &str, attrs: crate::dom::attrs::AttrMap, text: String) {
         let mut node = self.new_box(tag);
         node.attributes = attrs;
         node.text = text;
@@ -1512,7 +1523,7 @@ impl HtmlParser {
 
     /// Fire the host hook (if any) for an open tag.
     #[inline]
-    fn fire_hook(&mut self, tag: &str, attrs: &HashMap<String, String>) {
+    fn fire_hook(&mut self, tag: &str, attrs: &crate::dom::attrs::AttrMap) {
         if let Some(ref mut f) = self.on_open_tag {
             f(tag, attrs);
         }
@@ -1691,7 +1702,12 @@ impl HtmlParser {
                     stack.last_mut().unwrap().node.children.push(node);
                 }
 
-                Some(Token::Doctype) => {
+                Some(Token::Doctype(_)) => {
+                    // ⛔ A doctype reaching ELEMENT content is a parse error
+                    // and is ignored outright — measured: `<body><!DOCTYPE
+                    // foo>` leaves `document.doctype` null and the mode
+                    // quirks. Recording it here would invent a doctype the
+                    // page does not have.
                     self.pos += 1;
                 }
 
@@ -2100,6 +2116,12 @@ impl HtmlParser {
                     children: shadow_children,
                     stylesheet,
                     mode: shadow_mode,
+                    node_id: crate::dom::arena::next_shadow_node_id(),
+                    delegates_focus: false,
+                    slot_assignment: crate::types::SlotAssignment::Named,
+                    clonable: false,
+                    serializable: false,
+                    adopted_stylesheets: Vec::new(),
                 }));
             }
         }
@@ -2224,7 +2246,7 @@ impl HtmlParser {
     fn handle_tag(
         &mut self,
         tag: String,
-        attrs: HashMap<String, String>,
+        attrs: crate::dom::attrs::AttrMap,
         self_closing: bool,
         children: &mut Vec<WebCore>,
         ol_counter: &mut i32,
@@ -2619,7 +2641,7 @@ fn is_head_content_tag(tag: &str) -> bool {
 fn handle_head_tag(
     parser: &mut HtmlParser,
     tag: &str,
-    attrs: HashMap<String, String>,
+    attrs: crate::dom::attrs::AttrMap,
     self_closing: bool,
 ) -> bool {
     match tag {
@@ -2714,7 +2736,7 @@ fn parse_html_children(
                     body_children.push(node);
                 }
             }
-            Some(Token::CloseTag { .. }) | Some(Token::Doctype) => {
+            Some(Token::CloseTag { .. }) | Some(Token::Doctype(_)) => {
                 parser.pos += 1;
             }
             Some(Token::Text(t)) => {
@@ -2838,7 +2860,7 @@ pub fn parse_html_with_base(html: &str, base_url: &str) -> Document {
 /// ```
 pub fn parse_html_with_hooks<F>(html: &str, base_url: &str, hook: F) -> Document
 where
-    F: FnMut(&str, &HashMap<String, String>) + 'static,
+    F: FnMut(&str, &crate::dom::attrs::AttrMap) + 'static,
 {
     parse_html_full(html, base_url, Some(Box::new(hook)), None)
 }
@@ -2862,8 +2884,8 @@ where
 /// ```
 pub fn parse_html_with_scripts<F, S>(html: &str, base_url: &str, hook: F, on_script: S) -> Document
 where
-    F: FnMut(&str, &HashMap<String, String>) + 'static,
-    S: FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static,
+    F: FnMut(&str, &crate::dom::attrs::AttrMap) + 'static,
+    S: FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static,
 {
     parse_html_full(html, base_url, Some(Box::new(hook)), Some(Box::new(on_script)))
 }
@@ -2871,8 +2893,8 @@ where
 fn parse_html_full(
     html: &str,
     base_url: &str,
-    on_open_tag: Option<Box<dyn FnMut(&str, &HashMap<String, String>) + 'static>>,
-    on_script: Option<Box<dyn FnMut(&str, &HashMap<String, String>, &str) -> bool + 'static>>,
+    on_open_tag: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap) + 'static>>,
+    on_script: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static>>,
 ) -> Document {
     // SVG blocks are now handled inline by the tokenizer/parser — no pre-pass needed.
     let tokens = tokenize(html);
@@ -2894,7 +2916,14 @@ fn parse_html_full(
     while parser.pos < parser.tokens.len() {
         match parser.tokens.get(parser.pos).cloned() {
             None => break,
-            Some(Token::Doctype) => { parser.pos += 1; }
+            Some(Token::Doctype(dt)) => {
+                // ⛔ THIS is the loop a real document's doctype reaches — it
+                // sits before `<html>`, so the element-level arm never sees
+                // it. Only the FIRST counts; a second anywhere is a parse
+                // error the spec ignores.
+                if parser.doctype.is_none() { parser.doctype = Some(dt); }
+                parser.pos += 1;
+            }
             Some(Token::Comment(data)) => {
                 // A comment at document level is a NODE like any other. It was
                 // dropped here even after comments became nodes elsewhere, so
@@ -3059,6 +3088,17 @@ fn parse_html_full(
     let title = parser.title.clone();
     let linked_stylesheets = parser.linked_stylesheets.clone();
 
+    // The doctype becomes a real node so it has an id from the same space as
+    // everything else, and `document.childNodes` can put it before `<html>`.
+    let quirks = crate::html::doctype::quirks_mode(parser.doctype.as_ref());
+    let doctype_id = match &parser.doctype {
+        Some(dt) => parser
+            .arena
+            .create_doctype(&dt.name, &dt.public_id, &dt.system_id)
+            .0,
+        None => 0,
+    };
+
     let mut doc = Document {
         root: html_box,
         nodes: crate::types::NodeArena::new(),
@@ -3067,6 +3107,9 @@ fn parse_html_full(
         title,
         base_url: base_url.to_string(),
         arena: parser.arena,
+        doctype: doctype_id,
+        quirks,
+        character_set: "UTF-8".to_string(),
         next_node_id: parser.next_node_id,
         node_index: std::collections::HashMap::new(),
         // This function IS the HTML parser, so whatever it produces is an HTML
@@ -3077,7 +3120,6 @@ fn parse_html_full(
         linked_stylesheets,
         editor: crate::dom::Editor::new(),
         canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
-        events: crate::dom::EventListeners::new(),
         event_targets: crate::dom::events::EventTargetMap::new(),
         scroll_x: 0.0,
         scroll_y: 0.0,
@@ -3093,6 +3135,7 @@ fn parse_html_full(
         drag_start_doc_pt: (0.0, 0.0),
         drag_active:       false,
         visited_urls:      std::collections::HashSet::new(),
+        custom_validity:   std::collections::HashMap::new(),
         viewport_w:        0.0,
         viewport_h:        0.0,
         keyboard_focus:    false,

@@ -148,8 +148,7 @@ impl Renderer {
                     evt.delta_x = dx; evt.delta_y = dy;
                     let hit_id = crate::layout::hit_test::point_to_hit(&doc.root, doc_pt, 0).map(|h| h.node_id).unwrap_or(0);
                     evt.target = hit_id;
-                    let events = doc.events.clone();
-                    events.dispatch(&mut doc.root, evt);
+                    doc.dispatch_input_event(evt);
                     return doc.process_wheel_event_xy(doc_pt, -dx, -dy);
                 }
                 false
@@ -207,8 +206,7 @@ impl Renderer {
                 if let Some(doc) = doc {
                     let mut evt = crate::dom::HtmlEvent::new(crate::dom::HtmlEventType::Resize);
                     evt.client_pos = (size.width as f32, size.height as f32);
-                    let events = doc.events.clone();
-                    events.dispatch(&mut doc.root, evt);
+                    doc.dispatch_input_event(evt);
                 }
                 false
             }

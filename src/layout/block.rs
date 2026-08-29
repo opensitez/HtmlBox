@@ -67,7 +67,12 @@ fn is_empty_block(node: &WebCore, rbox: &ResolvedBox) -> bool {
     if rbox.content_height.is_some() { return false; }
     if !node.style.min_height.is_auto() { return false; }
     // Has in-flow block children?
-    for child in &node.children {
+    //
+    // `effective_children`, not `children`: a shadow HOST has an empty light
+    // tree and all its content in the shadow root. Asking `children` said
+    // "empty block", so the host collapsed to zero height and its shadow
+    // content was never laid out at all — shadow DOM rendered nothing.
+    for child in node.effective_children() {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
         if !matches!(child.style.float, Float::None) { continue; }
@@ -103,7 +108,7 @@ fn compute_intrinsic_width_inner(node: &WebCore) -> f32 {
         && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
     if is_row_flex {
         let mut total = 0.0f32;
-        for ch in &node.children {
+        for ch in node.effective_children() {
             if matches!(ch.style.display, Display::None) { continue; }
             if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
             if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
@@ -130,8 +135,9 @@ fn compute_intrinsic_width_inner(node: &WebCore) -> f32 {
     let is_flex_or_grid = matches!(node.style.display,
         Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid);
 
-    // Children
-    for ch in &node.children {
+    // Children — the EFFECTIVE ones, so a shadow host measures its shadow
+    // tree rather than its (empty) light tree.
+    for ch in node.effective_children() {
         if matches!(ch.style.display, Display::None) { continue; }
         if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
         // Inline-display children: measure text nodes and inline elements that were

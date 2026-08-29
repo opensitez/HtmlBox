@@ -1,7 +1,7 @@
 //! Tests for the NodeId-based event dispatch with capture/bubble phases.
 
 use crate::html::parse_html;
-use crate::dom::events::{DomEvent, EventPhase, EventTargetMap};
+use crate::dom::events::{DomEvent, EventPhase};
 use crate::dom::arena::NodeId;
 use std::sync::{Arc, Mutex};
 
@@ -16,28 +16,27 @@ fn setup() -> (crate::types::Document, u32, u32, u32) {
 
 #[test]
 fn bubble_fires_target_then_ancestors() {
-    let (doc, outer, middle, inner) = setup();
+    let (mut doc, outer, middle, inner) = setup();
     let log: Arc<Mutex<Vec<(u32, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut targets = EventTargetMap::new();
 
     // Register bubble listeners on all three
     let log1 = log.clone();
-    targets.add_event_listener(inner, "click", Box::new(move |e| {
+    doc.add_event_listener(inner, "click", Box::new(move |e, _d: &mut crate::Document| {
         log1.lock().unwrap().push((e.current_target, "inner".into()));
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let log2 = log.clone();
-    targets.add_event_listener(middle, "click", Box::new(move |e| {
+    doc.add_event_listener(middle, "click", Box::new(move |e, _d: &mut crate::Document| {
         log2.lock().unwrap().push((e.current_target, "middle".into()));
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let log3 = log.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |e| {
+    doc.add_event_listener(outer, "click", Box::new(move |e, _d: &mut crate::Document| {
         log3.lock().unwrap().push((e.current_target, "outer".into()));
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     let result = log.lock().unwrap();
     assert_eq!(result.len(), 3, "all three should fire");
@@ -48,30 +47,29 @@ fn bubble_fires_target_then_ancestors() {
 
 #[test]
 fn capture_fires_before_bubble() {
-    let (doc, outer, _middle, inner) = setup();
+    let (mut doc, outer, _middle, inner) = setup();
     let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut targets = EventTargetMap::new();
 
     // Capture listener on outer
     let log1 = log.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |_| {
+    doc.add_event_listener(outer, "click", Box::new(move |_, _d: &mut crate::Document| {
         log1.lock().unwrap().push("outer-capture".into());
-    }), true);
+    }), crate::dom::events::ListenerOptions::capture(true));
 
     // Bubble listener on outer
     let log2 = log.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |_| {
+    doc.add_event_listener(outer, "click", Box::new(move |_, _d: &mut crate::Document| {
         log2.lock().unwrap().push("outer-bubble".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     // Bubble listener on inner
     let log3 = log.clone();
-    targets.add_event_listener(inner, "click", Box::new(move |_| {
+    doc.add_event_listener(inner, "click", Box::new(move |_, _d: &mut crate::Document| {
         log3.lock().unwrap().push("inner-bubble".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     let result = log.lock().unwrap();
     assert_eq!(result.len(), 3);
@@ -82,28 +80,27 @@ fn capture_fires_before_bubble() {
 
 #[test]
 fn stop_propagation_stops_bubble() {
-    let (doc, outer, middle, inner) = setup();
+    let (mut doc, outer, middle, inner) = setup();
     let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut targets = EventTargetMap::new();
 
     let log1 = log.clone();
-    targets.add_event_listener(inner, "click", Box::new(move |_| {
+    doc.add_event_listener(inner, "click", Box::new(move |_, _d: &mut crate::Document| {
         log1.lock().unwrap().push("inner".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let log2 = log.clone();
-    targets.add_event_listener(middle, "click", Box::new(move |e| {
+    doc.add_event_listener(middle, "click", Box::new(move |e, _d: &mut crate::Document| {
         log2.lock().unwrap().push("middle".into());
         e.stop_propagation();
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let log3 = log.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |_| {
+    doc.add_event_listener(outer, "click", Box::new(move |_, _d: &mut crate::Document| {
         log3.lock().unwrap().push("outer".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     let result = log.lock().unwrap();
     assert_eq!(result.len(), 2, "outer should NOT fire");
@@ -113,42 +110,40 @@ fn stop_propagation_stops_bubble() {
 
 #[test]
 fn prevent_default_is_readable() {
-    let (doc, _outer, _middle, inner) = setup();
-    let mut targets = EventTargetMap::new();
+    let (mut doc, _outer, _middle, inner) = setup();
 
-    targets.add_event_listener(inner, "click", Box::new(|e| {
+    doc.add_event_listener(inner, "click", Box::new(|e, _d: &mut crate::Document| {
         e.prevent_default();
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     assert!(event.default_prevented(), "preventDefault should be set");
 }
 
 #[test]
 fn event_phase_is_correct() {
-    let (doc, outer, _middle, inner) = setup();
+    let (mut doc, outer, _middle, inner) = setup();
     let phases: Arc<Mutex<Vec<EventPhase>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut targets = EventTargetMap::new();
 
     let p1 = phases.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |e| {
+    doc.add_event_listener(outer, "click", Box::new(move |e, _d: &mut crate::Document| {
         p1.lock().unwrap().push(e.phase);
-    }), true); // capture
+    }), crate::dom::events::ListenerOptions::capture(true)); // capture
 
     let p2 = phases.clone();
-    targets.add_event_listener(inner, "click", Box::new(move |e| {
+    doc.add_event_listener(inner, "click", Box::new(move |e, _d: &mut crate::Document| {
         p2.lock().unwrap().push(e.phase);
-    }), false); // target/bubble
+    }), crate::dom::events::ListenerOptions::capture(false)); // target/bubble
 
     let p3 = phases.clone();
-    targets.add_event_listener(outer, "click", Box::new(move |e| {
+    doc.add_event_listener(outer, "click", Box::new(move |e, _d: &mut crate::Document| {
         p3.lock().unwrap().push(e.phase);
-    }), false); // bubble
+    }), crate::dom::events::ListenerOptions::capture(false)); // bubble
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     let result = phases.lock().unwrap();
     assert_eq!(result[0], EventPhase::Capture);
@@ -158,44 +153,42 @@ fn event_phase_is_correct() {
 
 #[test]
 fn remove_listener_works() {
-    let (doc, _outer, _middle, inner) = setup();
+    let (mut doc, _outer, _middle, inner) = setup();
     let count: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
-    let mut targets = EventTargetMap::new();
 
     let c = count.clone();
-    let id = targets.add_event_listener(inner, "click", Box::new(move |_| {
+    let id = doc.add_event_listener(inner, "click", Box::new(move |_, _d: &mut crate::Document| {
         *c.lock().unwrap() += 1;
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
     assert_eq!(*count.lock().unwrap(), 1);
 
-    targets.remove_event_listener(id);
+    doc.remove_event_listener(id);
 
     let mut event2 = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event2);
+    doc.dispatch_event(&mut event2);
     assert_eq!(*count.lock().unwrap(), 1, "should not fire after removal");
 }
 
 #[test]
 fn different_event_types_dont_interfere() {
-    let (doc, _outer, _middle, inner) = setup();
+    let (mut doc, _outer, _middle, inner) = setup();
     let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut targets = EventTargetMap::new();
 
     let l1 = log.clone();
-    targets.add_event_listener(inner, "click", Box::new(move |_| {
+    doc.add_event_listener(inner, "click", Box::new(move |_, _d: &mut crate::Document| {
         l1.lock().unwrap().push("click".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let l2 = log.clone();
-    targets.add_event_listener(inner, "mousedown", Box::new(move |_| {
+    doc.add_event_listener(inner, "mousedown", Box::new(move |_, _d: &mut crate::Document| {
         l2.lock().unwrap().push("mousedown".into());
-    }), false);
+    }), crate::dom::events::ListenerOptions::capture(false));
 
     let mut event = DomEvent::new("click", inner);
-    targets.dispatch_event(&doc.arena, &mut event);
+    doc.dispatch_event(&mut event);
 
     let result = log.lock().unwrap();
     assert_eq!(result.len(), 1);
@@ -212,7 +205,7 @@ fn frame_on_off_integration() {
     let clicked = Arc::new(Mutex::new(false));
     let c = clicked.clone();
 
-    let id = frame.on(btn, "click", Box::new(move |_| {
+    let id = frame.on(btn, "click", Box::new(move |_, _d: &mut crate::Document| {
         *c.lock().unwrap() = true;
     }));
 

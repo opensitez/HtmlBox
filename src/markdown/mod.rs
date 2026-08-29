@@ -364,7 +364,7 @@ impl<'a> InlineParser<'a> {
                             let alt = &text[alt_start..alt_end];
                             let url = &text[url_start..url_end];
                             let mut img = make_box("img");
-                            img.attributes.insert("src".to_string(), url.to_string());
+                            img.attributes.insert("src", url);
                             img.data.insert("md-alt".to_string(), alt.to_string());
                             // Load image pixel data (file path or data URL)
                             if let Some((data, w, h)) = load_image_from_src(url, "") {

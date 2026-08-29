@@ -1744,7 +1744,7 @@ pub struct WebCore {
     pub tag:        String,
     pub node_id:    u32,                // Stable identity — index into Document.nodes
     pub style:      ComputedStyle,
-    pub attributes: HashMap<String, String>,
+    pub attributes: crate::dom::attrs::AttrMap,
     pub text:       String,             // Own text content
 
     // ── Tree structure (linked-list children, O(1) insert/remove) ────────
@@ -1847,6 +1847,14 @@ pub struct WebCore {
     pub input_cursor: usize,
     /// Selection anchor (char index). When equal to input_cursor, no selection.
     pub input_sel_anchor: usize,
+    /// `selectionDirection` (HTML §4.10.19.3).
+    ///
+    /// ⛔ Not derivable from `input_cursor` vs `input_sel_anchor`. A selection
+    /// of (2,5) is reachable in THREE states — none, forward and backward —
+    /// and Chrome reports all three: `setSelectionRange(2,5)` answers `"none"`
+    /// while `setSelectionRange(2,5,"forward")` answers `"forward"`, with the
+    /// same two offsets. The ordering of the pair can only carry two.
+    pub input_sel_direction: SelectionDirection,
 
     // Custom data store (arbitrary key/value pairs set by application code)
     pub data: HashMap<String, String>,
@@ -1883,6 +1891,34 @@ pub struct ShadowRoot {
     pub stylesheet: crate::css::Stylesheet,
     /// Open (inspectable) or closed (opaque).
     pub mode: ShadowMode,
+    /// The shadow root's own node id.
+    ///
+    /// A `ShadowRoot` IS a node in the spec — a `DocumentFragment` — and
+    /// `attachShadow` returns it. Without an id it could only be named through
+    /// its host, so `delegatesFocus`, `activeElement`, `adoptedStyleSheets` and
+    /// the rest had nothing to hang on.
+    pub node_id: u32,
+    /// `shadowRoot.delegatesFocus`.
+    pub delegates_focus: bool,
+    /// `shadowRoot.slotAssignment` — "named" (default) or "manual".
+    pub slot_assignment: SlotAssignment,
+    /// `shadowRoot.clonable`.
+    pub clonable: bool,
+    /// `shadowRoot.serializable`.
+    pub serializable: bool,
+    /// `shadowRoot.adoptedStyleSheets` — constructed sheets applied to the
+    /// tree, kept as their source text.
+    pub adopted_stylesheets: Vec<String>,
+}
+
+/// `ShadowRootInit.slotAssignment`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SlotAssignment {
+    /// Slots are matched by the `slot` attribute.
+    #[default]
+    Named,
+    /// Slots are assigned explicitly through `slot.assign()`.
+    Manual,
 }
 
 /// Which grammar a document was built from.
@@ -2144,7 +2180,7 @@ impl WebCore {
             tag: tag.into(),
             node_id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             style: ComputedStyle::default(),
-            attributes: HashMap::new(),
+            attributes: crate::dom::attrs::AttrMap::new(),
             text: String::new(),
             parent: 0,
             first_child: 0,
@@ -2181,6 +2217,7 @@ impl WebCore {
             dirty_value: false,
             input_cursor: 0,
             input_sel_anchor: 0,
+            input_sel_direction: SelectionDirection::None,
 
             data: HashMap::new(),
             matched_rules: Vec::new(),
@@ -2195,6 +2232,45 @@ impl WebCore {
     /// Attach a shadow root to this element. Parses `html` as the shadow tree
     /// and extracts `<style>` blocks into a scoped stylesheet.
     pub fn attach_shadow(&mut self, mode: ShadowMode, html: &str) {
+        let (children, stylesheet) = Self::build_shadow_content(html);
+        // The shadow root takes the next node id, so it can be named like any
+        // other node.
+        let node_id = crate::dom::arena::next_shadow_node_id();
+        self.shadow_root = Some(Box::new(ShadowRoot {
+            children, stylesheet, mode, node_id,
+            delegates_focus: false,
+            slot_assignment: SlotAssignment::Named,
+            clonable: false,
+            serializable: false,
+            adopted_stylesheets: Vec::new(),
+        }));
+    }
+
+    /// `shadowRoot.innerHTML = html` — replace the CONTENT of an existing
+    /// shadow root.
+    ///
+    /// ⛔ Not `attach_shadow` again. A `ShadowRoot` is a node with an identity
+    /// that survives its content being rewritten: in a browser the object a
+    /// page holds from `attachShadow()` is the same object after
+    /// `root.innerHTML = …`. Re-attaching minted a NEW root id, so the id the
+    /// caller was handed stopped naming anything — `node_type` on it answered
+    /// 0 instead of 11. Everything else the root carries — the mode,
+    /// `delegatesFocus`, `slotAssignment`, the adopted stylesheets — survives
+    /// for the same reason.
+    pub fn set_shadow_content(&mut self, html: &str) -> bool {
+        let (children, stylesheet) = Self::build_shadow_content(html);
+        match self.shadow_root.as_mut() {
+            Some(root) => {
+                root.children = children;
+                root.stylesheet = stylesheet;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Parse a shadow tree's markup into its children and its scoped sheet.
+    fn build_shadow_content(html: &str) -> (Vec<WebCore>, crate::css::Stylesheet) {
         let doc = crate::html::parse_html(html);
         let mut children = doc.root.children;
         // Move <body> children up: the parser wraps a fragment in
@@ -2226,7 +2302,25 @@ impl WebCore {
             // it was seeded with (see `css::AUTHOR_ORIGIN_BOOST`).
             stylesheet.parse_and_add_author(&styles_css);
         }
-        self.shadow_root = Some(Box::new(ShadowRoot { children, stylesheet, mode }));
+        // ⛔ Renumber the whole shadow subtree.
+        //
+        // `parse_html` builds a FRESH document, whose node ids start at 1 —
+        // the same numbers the host document has already handed out. Left
+        // alone, a shadow child collides with a light-DOM node: asking a
+        // shadow `<p>` for its rect answered the HOST's rect, because
+        // `find_webcore` reached the light node with that id first. Every
+        // node-keyed API — layout, hit-testing, event dispatch, the arena
+        // bridge — was reading the wrong node.
+        //
+        // The shadow id space counts DOWN from just below the reserved
+        // Window/Document ids while the arena counts up, so a number drawn
+        // from it can never be an arena node's.
+        fn renumber(node: &mut WebCore) {
+            node.node_id = crate::dom::arena::next_shadow_node_id();
+            for child in &mut node.children { renumber(child); }
+        }
+        for child in &mut children { renumber(child); }
+        (children, stylesheet)
     }
 
     pub fn get_attr(&self, name: &str) -> Option<&str> {
@@ -2353,7 +2447,7 @@ impl WebCore {
 // ─── Document ─────────────────────────────────────────────────────────────────
 
 pub use crate::css::Stylesheet;
-use crate::dom::{Editor, EventListeners, HtmlEvent, HtmlEventType};
+use crate::dom::{Editor, HtmlEvent, HtmlEventType};
 use crate::layout::LayoutEngine;
 
 /// Active scrollbar drag state (set by `process_scrollbar_event`).
@@ -2721,7 +2815,6 @@ pub struct Document {
     /// The pixels stay on the element in `WebCore::image_data`; this is what
     /// persists between two calls from a page. See `canvas::CanvasSurfaces`.
     pub canvas_surfaces: crate::canvas::CanvasSurfaces,
-    pub events:          EventListeners,
     /// NodeId-based event system with capture/bubble phases.
     pub event_targets:   crate::dom::events::EventTargetMap,
     /// Viewport scroll position in logical pixels (managed by Renderer::render).
@@ -2750,6 +2843,26 @@ pub struct Document {
     pub drag_active:       bool,
     /// Set of link hrefs the user has clicked (for :visited pseudo-class).
     pub visited_urls:    std::collections::HashSet<String>,
+    /// `setCustomValidity()` messages, keyed by element.
+    ///
+    /// Custom validity is STATE, not content — there is no attribute for it,
+    /// and a page that sets one and reloads loses it. Keeping it beside the
+    /// document rather than on the element is also what lets a control that
+    /// was never touched cost nothing.
+    pub custom_validity: HashMap<u32, String>,
+    /// The `DocumentType` node's id, or 0 when the document had no doctype.
+    pub doctype: u32,
+    /// The rendering mode the doctype selected (HTML §13.2.6.4.1).
+    ///
+    /// Stored as the full tri-state even though `compatMode` collapses two of
+    /// them: limited-quirks is a real mode with its own line-box rule, and a
+    /// field that only ever answers through the collapse could not tell it
+    /// from no-quirks.
+    pub quirks: crate::html::doctype::QuirksMode,
+    /// `document.characterSet`. Always the encoding the bytes were DECODED
+    /// with — `parse_html` takes a Rust `&str`, which is UTF-8 by
+    /// construction, and `parse_html_bytes` records what it sniffed.
+    pub character_set: String,
     /// Last known logical viewport size — kept in sync by LayoutEngine::layout.
     pub viewport_w:      f32,
     pub viewport_h:      f32,
@@ -2871,7 +2984,6 @@ impl Document {
             linked_stylesheets: Vec::new(),
             editor:          Editor::new(),
             canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
-            events:          EventListeners::new(),
             event_targets:   crate::dom::events::EventTargetMap::new(),
             scroll_x:        0.0,
             scroll_y:        0.0,
@@ -2887,6 +2999,10 @@ impl Document {
             drag_start_doc_pt: (0.0, 0.0),
             drag_active:       false,
             visited_urls:      std::collections::HashSet::new(),
+            custom_validity:   HashMap::new(),
+            doctype:           0,
+            quirks:            crate::html::doctype::QuirksMode::Quirks,
+            character_set:     "UTF-8".to_string(),
             viewport_w:        0.0,
             viewport_h:        0.0,
             keyboard_focus:    false,
@@ -3580,12 +3696,12 @@ impl Document {
                         let mut e = HtmlEvent::new(HtmlEventType::DragStart);
                         e.target = self.drag_source; e.doc_pos = self.drag_start_doc_pt;
                         e.client_pos = (self.drag_start_doc_pt.0, self.drag_start_doc_pt.1 - self.scroll_y);
-                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
+                        if self.dispatch_input_event(e).0 { redraw = true; }
                     }
                     if self.drag_active {
                         let mut e = HtmlEvent::new(HtmlEventType::Drag);
                         e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
+                        if self.dispatch_input_event(e).0 { redraw = true; }
                     }
                 }
             }
@@ -3627,18 +3743,18 @@ impl Document {
                         if old_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Blur);
                             e.target = old_focus; e.related_target = new_focus;
-                            self.events.dispatch(&mut self.root, e);
+                            self.dispatch_input_event(e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
                             e.target = old_focus; e.related_target = new_focus;
-                            self.events.dispatch(&mut self.root, e);
+                            self.dispatch_input_event(e);
                         }
                         if new_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Focus);
                             e.target = new_focus; e.related_target = old_focus;
-                            self.events.dispatch(&mut self.root, e);
+                            self.dispatch_input_event(e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
                             e.target = new_focus; e.related_target = old_focus;
-                            self.events.dispatch(&mut self.root, e);
+                            self.dispatch_input_event(e);
                         }
                         // Always recascade when focus changes so :focus/:focus-visible update.
                         self.stylesheet.rebuild_index();
@@ -3694,7 +3810,7 @@ impl Document {
                     if was_dragging {
                             let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
                         e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.events.dispatch(&mut self.root, e) { redraw = true; }
+                        if self.dispatch_input_event(e).0 { redraw = true; }
                     }
                     self.drag_source = 0;
                     self.drag_active = false;
@@ -3765,7 +3881,7 @@ impl Document {
                         let mut click = HtmlEvent::new(HtmlEventType::Click);
                         click.target = hit_node_id; click.doc_pos = doc_pt; click.client_pos = client_pos;
                         click.button = button;
-                        if self.events.dispatch(&mut self.root, click) { redraw = true; }
+                        if self.dispatch_input_event(click).0 { redraw = true; }
 
                         // Form element interactions
                         // The second half of the popup rule: an OPEN DROPDOWN
@@ -3997,7 +4113,7 @@ impl Document {
                             let mut dbl = HtmlEvent::new(HtmlEventType::DblClick);
                             dbl.target = hit_node_id; dbl.doc_pos = doc_pt; dbl.client_pos = client_pos;
                             dbl.button = button;
-                            if self.events.dispatch(&mut self.root, dbl) { redraw = true; }
+                            if self.dispatch_input_event(dbl).0 { redraw = true; }
                             // Reset so triple-click doesn't re-trigger.
                             self.last_click_target = 0;
                             self.last_click_time   = None;
@@ -4021,7 +4137,7 @@ impl Document {
             _ => {}
         }
 
-        let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
+        let (handled, mut evt) = self.dispatch_input_event(evt);
         if handled { redraw = true; }
 
         // Also dispatch through the NodeId-based event system (capture/bubble).
@@ -4031,9 +4147,21 @@ impl Document {
             dom_evt.client_x = client_pos.0;
             dom_evt.client_y = client_pos.1;
             dom_evt.button = button;
-            if self.event_targets.dispatch_on_tree(&self.root, &mut dom_evt) {
+            // The MODIFIERS travel with the event. They were left at their
+            // defaults, so `event.ctrlKey` was false in every listener however
+            // the user actually clicked — a ctrl-click was indistinguishable
+            // from a plain one.
+            dom_evt.ctrl_key  = evt.ctrl_key;
+            dom_evt.shift_key = evt.shift_key;
+            dom_evt.alt_key   = evt.alt_key;
+            dom_evt.meta_key  = evt.meta_key;
+            dom_evt.related_target = evt.related_target;
+            if self.dispatch_dom_event(&mut dom_evt) {
                 redraw = true;
             }
+            // A listener that cancelled the event must stop the default
+            // action, exactly as one registered the older way does.
+            if dom_evt.default_prevented() { evt.default_prevented = true; }
         }
 
         // Only perform editor/default behavior if not prevented by handlers.
@@ -4072,8 +4200,11 @@ impl Document {
                 let mut e = HtmlEvent::new($t);
                 e.target = $tgt; e.related_target = $rel;
                 e.doc_pos = doc_pt; e.client_pos = client_pos;
-                if $bubble { self.events.dispatch(&mut self.root, e) }
-                else       { self.events.dispatch_direct(&mut self.root, e) }
+                // `bubbles` is a property of the event TYPE, so the same call
+                // serves both: `mouseenter`/`mouseleave` fire on the target and
+                // stop, `mouseover`/`mouseout` propagate.
+                let _ = $bubble;
+                self.dispatch_input_event(e).0
             }};
         }
         if old_id != 0 {
@@ -4094,15 +4225,14 @@ impl Document {
             let mut e = crate::dom::events::DomEvent::new("mouseout", old_id);
             e.related_target = new_id;
             e.client_x = client_pos.0; e.client_y = client_pos.1;
-            self.event_targets.dispatch_on_tree(&self.root, &mut e);
+            self.dispatch_dom_event(&mut e);
         }
         if new_id != 0 {
             let mut e = crate::dom::events::DomEvent::new("mouseover", new_id);
             e.related_target = old_id;
             e.client_x = client_pos.0; e.client_y = client_pos.1;
-            self.event_targets.dispatch_on_tree(&self.root, &mut e);
+            self.dispatch_dom_event(&mut e);
         }
-
         redraw
     }
 
@@ -4126,7 +4256,7 @@ impl Document {
         evt.alt_key = alt;
         evt.meta_key = meta;
 
-        let (handled, evt) = self.events.dispatch_and_return(&mut self.root, evt);
+        let (handled, mut evt) = self.dispatch_input_event(evt);
 
         // Also dispatch through NodeId-based event system (capture/bubble).
         let target = if self.focused_box != 0 { self.focused_box } else { self.root.node_id };
@@ -4138,9 +4268,17 @@ impl Document {
             dom_evt.shift_key = shift;
             dom_evt.alt_key = alt;
             dom_evt.meta_key = meta;
-            if self.event_targets.dispatch_on_tree(&self.root, &mut dom_evt) {
+            // `KeyboardEvent.key` — the character or named key. It was left
+            // empty, so a listener reading `event.key` (the member the spec
+            // points every keyboard handler at) got nothing at all.
+            dom_evt.key = match ch {
+                Some(c) => c.to_string(),
+                None => crate::dom::events::key_name_for_code(key_code).to_string(),
+            };
+            if self.dispatch_dom_event(&mut dom_evt) {
                 // handled via new system
             }
+            if dom_evt.default_prevented() { evt.default_prevented = true; }
         }
 
         let mut redraw = handled;
@@ -4839,18 +4977,18 @@ impl Document {
         if old_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Blur);
             e.target = old_focus; e.related_target = new_focus;
-            self.events.dispatch(&mut self.root, e);
+            self.dispatch_input_event(e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
             e.target = old_focus; e.related_target = new_focus;
-            self.events.dispatch(&mut self.root, e);
+            self.dispatch_input_event(e);
         }
         if new_focus != 0 {
             let mut e = HtmlEvent::new(HtmlEventType::Focus);
             e.target = new_focus; e.related_target = old_focus;
-            self.events.dispatch(&mut self.root, e);
+            self.dispatch_input_event(e);
             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
             e.target = new_focus; e.related_target = old_focus;
-            self.events.dispatch(&mut self.root, e);
+            self.dispatch_input_event(e);
         }
         self.stylesheet.rebuild_index();
         self.hovered_box = 0;
@@ -5397,6 +5535,70 @@ fn resolve_slots_inner(shadow_children: &mut Vec<WebCore>, light_children: &[Web
 }
 
 /// Returns true if this element is a text-editable form input.
+/// `selectionDirection` — the third state that the cursor/anchor pair cannot
+/// hold (HTML §4.10.19.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionDirection {
+    /// The platform default: a selection with no direction of its own.
+    #[default]
+    None,
+    Forward,
+    Backward,
+}
+
+impl SelectionDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SelectionDirection::None => "none",
+            SelectionDirection::Forward => "forward",
+            SelectionDirection::Backward => "backward",
+        }
+    }
+
+    /// Parse the IDL value. An unrecognised string is **not** an error — the
+    /// IDL type is a plain `DOMString`, so `selectionDirection = "bogus"`
+    /// stores the platform default rather than throwing (measured: Chrome
+    /// answers `"none"`).
+    pub fn parse(value: &str) -> SelectionDirection {
+        match value {
+            "forward" => SelectionDirection::Forward,
+            "backward" => SelectionDirection::Backward,
+            _ => SelectionDirection::None,
+        }
+    }
+}
+
+/// Does the **text selection API** apply to this control (HTML §4.10.19.3)?
+///
+/// ⛔ Not [`is_text_input`], and not `ValueMode::Value` either. `number`,
+/// `date`, `range` and `color` all hold a value and all accept typing, and
+/// Chrome answers `null` for `selectionStart` on every one of them: the
+/// selection API is defined only over `text`, `search`, `url`, `tel` and
+/// `password`, plus `<textarea>`. An input with no `type` — or an unrecognised
+/// one — is in the Text state, so it is supported (measured).
+pub fn selection_api_applies(node: &WebCore) -> bool {
+    match node.tag.as_str() {
+        "textarea" => true,
+        "input" => {
+            let t = node
+                .attributes
+                .get("type")
+                .map(|s| s.trim().to_ascii_lowercase())
+                .unwrap_or_else(|| "text".into());
+            match t.as_str() {
+                "text" | "search" | "url" | "tel" | "password" => true,
+                // Every OTHER named state is unsupported; anything the parser
+                // does not recognise falls back to Text, which is.
+                "hidden" | "email" | "number" | "date" | "month" | "week" | "time"
+                | "datetime-local" | "range" | "color" | "checkbox" | "radio" | "file"
+                | "submit" | "image" | "reset" | "button" => false,
+                _ => true,
+            }
+        }
+        _ => false,
+    }
+}
+
 pub fn is_text_input(node: &WebCore) -> bool {
     match node.tag.as_str() {
         "textarea" => true,
@@ -5541,6 +5743,9 @@ pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char
 
     node.input_cursor = new_cursor;
     node.input_sel_anchor = new_cursor;
+    // The keystroke collapsed the selection; the direction it was made in is
+    // gone with it.
+    node.input_sel_direction = SelectionDirection::None;
 
     if changed {
         // Typing sets the VALUE and raises the dirty value flag (HTML
@@ -5631,7 +5836,6 @@ impl Clone for Document {
             // a document starts from the default context, the same way it
             // starts with no event listeners.
             canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
-            events:          self.events.clone(),
             event_targets:   crate::dom::events::EventTargetMap::new(), // listeners not cloned
             scroll_x:        self.scroll_x,
             scroll_y:        self.scroll_y,
@@ -5647,6 +5851,10 @@ impl Clone for Document {
             drag_start_doc_pt: self.drag_start_doc_pt,
             drag_active:     self.drag_active,
             visited_urls:    self.visited_urls.clone(),
+            custom_validity: self.custom_validity.clone(),
+            doctype: self.doctype,
+            quirks: self.quirks,
+            character_set: self.character_set.clone(),
             viewport_w:      self.viewport_w,
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
@@ -6236,4 +6444,94 @@ fn bderiv(p1: f32, p2: f32, t: f32) -> f32 {
     3.0 * (1.0 - t) * (1.0 - t) * p1
         + 6.0 * (1.0 - t) * t * (p2 - p1)
         + 3.0 * t * t * (1.0 - p2)
+}
+
+impl Document {
+    /// Dispatch a DOM event from inside the engine.
+    ///
+    /// Moves the listener map out so handlers can be given `&mut Document`,
+    /// merges back anything they registered, and sweeps `once` listeners.
+    /// Every engine dispatch goes through here so none of them can forget a
+    /// step.
+    pub fn dispatch_dom_event(&mut self, event: &mut crate::dom::events::DomEvent) -> bool {
+        if event.target == 0 { return false; }
+        // DOM §2.9's dispatch flag: an event already in flight cannot be
+        // dispatched again. Without the guard a handler that re-dispatches its
+        // own event recurses until the stack runs out.
+        if event.is_dispatching() { return false; }
+        // `Window` is an EventTarget but not a node, so it has no tree path —
+        // the event fires on it directly.
+        if crate::dom::events::is_window_target(event.target) {
+            let map = std::mem::take(&mut self.event_targets);
+            let handled = map.dispatch_path(event, &[crate::dom::events::WINDOW_TARGET], self);
+            let added = std::mem::replace(&mut self.event_targets, map);
+            self.event_targets.merge_from(added);
+            self.event_targets.sweep_removed();
+            return handled;
+        }
+        let map = std::mem::take(&mut self.event_targets);
+        let root = std::mem::replace(&mut self.root, WebCore::new("#placeholder"));
+        let handled = map.dispatch_on_tree(&root, event, self);
+        self.root = root;
+        let added = std::mem::replace(&mut self.event_targets, map);
+        self.event_targets.merge_from(added);
+        self.event_targets.sweep_removed();
+        handled
+    }
+}
+
+impl Document {
+    /// The `Window` event target — `window.addEventListener(...)`.
+    pub fn window_target(&self) -> u32 { crate::dom::events::WINDOW_TARGET }
+
+    /// Fire a window-level event: `load`, `resize`, `scroll`, `popstate`,
+    /// `hashchange`, `beforeunload` and the rest of `WindowEventHandlers`.
+    ///
+    /// Returns false if a handler cancelled it, which is what `beforeunload`
+    /// and `unload` are asked for.
+    pub fn fire_window_event(&mut self, event_type: &str) -> bool {
+        let mut e = crate::dom::events::DomEvent::new(
+            event_type, crate::dom::events::WINDOW_TARGET);
+        self.dispatch_dom_event(&mut e);
+        !e.default_prevented()
+    }
+}
+
+impl Document {
+    /// Dispatch an engine input event to BOTH listener systems.
+    ///
+    /// `HtmlEvent` is the engine's internal input record and `DomEvent` is the
+    /// WHATWG one; every input has to reach both or half the listeners on a
+    /// page never run. Only `click`, `mouseover`, `mouseout` and the keyboard
+    /// types were bridged, so `addEventListener("input")`, `"change"`,
+    /// `"submit"`, `"focus"` and `"blur"` — among the most-used handlers on the
+    /// web — were registered, stored, and never called.
+    ///
+    /// Returns whether anything handled it. A DOM listener that cancels the
+    /// event cancels the default action too.
+    pub fn dispatch_input_event(&mut self, mut evt: crate::dom::HtmlEvent) -> (bool, crate::dom::HtmlEvent) {
+        let handled = false;
+        if evt.target == 0 { return (handled, evt); }
+        let mut dom = crate::dom::events::DomEvent::new(evt.event_type.as_str(), evt.target);
+        dom.client_x       = evt.client_pos.0;
+        dom.client_y       = evt.client_pos.1;
+        dom.button         = evt.button;
+        dom.key_code       = evt.key_code;
+        dom.char_code      = evt.char_code;
+        dom.ctrl_key       = evt.ctrl_key;
+        dom.shift_key      = evt.shift_key;
+        dom.alt_key        = evt.alt_key;
+        dom.meta_key       = evt.meta_key;
+        dom.delta_x        = evt.delta_x;
+        dom.delta_y        = evt.delta_y;
+        dom.related_target = evt.related_target;
+        dom.key = match evt.char_code {
+            Some(c) => c.to_string(),
+            None => crate::dom::events::key_name_for_code(evt.key_code).to_string(),
+        };
+        dom.set_scroll_offset(self.scroll_x, self.scroll_y);
+        let dom_handled = self.dispatch_dom_event(&mut dom);
+        if dom.default_prevented() { evt.default_prevented = true; }
+        (handled || dom_handled, evt)
+    }
 }

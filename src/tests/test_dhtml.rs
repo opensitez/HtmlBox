@@ -130,7 +130,7 @@ fn click_event_fires_handler() {
 
     let clicked = Arc::new(Mutex::new(false));
     let c = clicked.clone();
-    f.on(btn, "click", Box::new(move |_| {
+    f.on(btn, "click", Box::new(move |_, _d: &mut crate::Document| {
         *c.lock().unwrap() = true;
     }));
 
@@ -162,7 +162,7 @@ fn prevent_default_works() {
     let mut f = frame(r#"<a id="link" href="/page">Go</a>"#);
     let link = f.doc.get_element_by_id("link").unwrap();
 
-    f.on(link, "click", Box::new(|e| {
+    f.on(link, "click", Box::new(|e, _d: &mut crate::Document| {
         e.prevent_default();
     }));
 

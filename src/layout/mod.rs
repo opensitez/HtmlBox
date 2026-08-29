@@ -1476,17 +1476,16 @@ impl LayoutEngine {
             self.pos_cb.set(Rect::new(est_padding_x, est_padding_y, est_padding_w, self.viewport_h));
         }
 
-        // Shadow DOM: swap shadow children into node.children for layout so all
-        // existing layout code (inline, block, flex, grid) works unchanged.
-        let has_shadow = node.shadow_root.is_some();
-        let saved_light_children = if has_shadow {
-            let sr = node.shadow_root.as_mut().unwrap();
-            let shadow_children = std::mem::take(&mut sr.children);
-            let light = std::mem::replace(&mut node.children, shadow_children);
-            Some(light)
-        } else {
-            None
-        };
+        // Shadow DOM: layout reads `effective_children()`, which answers the
+        // shadow tree when there is one. There used to be a swap here that
+        // moved the shadow children into `node.children` "so all existing
+        // layout code works unchanged" — but it emptied `shadow_root.children`
+        // for the duration, and `effective_children()` reads exactly that. So
+        // every caller of the accessor (the formatting-context dispatch,
+        // `has_block_children`, block, grid) saw an EMPTY child list and laid
+        // out nothing, while flex — which read `node.children` directly —
+        // worked. Shadow DOM rendered nothing, and which paths were affected
+        // depended on which accessor each happened to use.
 
         // Replaced elements (input, select, textarea, img) cannot be flex/grid
         // containers per CSS spec — blockify for dispatch WITHOUT mutating style.
@@ -1563,14 +1562,6 @@ impl LayoutEngine {
                 }
             }
         };
-
-        // Restore shadow/light children after layout
-        if let Some(light) = saved_light_children {
-            let shadow_children = std::mem::replace(&mut node.children, light);
-            if let Some(ref mut sr) = node.shadow_root {
-                sr.children = shadow_children;
-            }
-        }
 
         self.pos_cb.set(old_pos_cb);
         self.layout_depth.set(depth);

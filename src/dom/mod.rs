@@ -10,8 +10,11 @@
 /// elements, and `createElementNS` with this URI is an ordinary HTML element.
 pub const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 
+pub mod attrs;
+pub mod token_list;
 pub mod arena;
 pub mod api;
+pub mod event_handlers;
 pub mod events;
 pub mod registry;
 
@@ -168,218 +171,6 @@ impl HtmlEvent {
 
 /// Event handler callback. Receives the event and a mutable reference to the
 /// DOM root so handlers can query/mutate the tree without unsafe pointer casts.
-pub type HtmlEventCallback = Box<dyn Fn(&mut HtmlEvent, &mut WebCore) + Send + Sync + 'static>;
-
-struct EventListenerEntry {
-    id:         i32,
-    selector:   String,
-    event_type: HtmlEventType,
-    callback:   HtmlEventCallback,
-}
-
-struct EventListenersInner {
-    entries: Vec<EventListenerEntry>,
-    next_id: i32,
-}
-
-/// Holds all registered event listeners.  Store one in your application state.
-#[derive(Clone, Default)]
-pub struct EventListeners {
-    inner: Arc<RwLock<EventListenersInner>>,
-}
-
-impl Default for EventListenersInner {
-    fn default() -> Self {
-        Self { entries: Vec::new(), next_id: 1 }
-    }
-}
-
-impl std::fmt::Debug for EventListeners {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let inner = self.inner.read().unwrap();
-        f.debug_struct("EventListeners")
-            .field("entry_count", &inner.entries.len())
-            .field("next_id", &inner.next_id)
-            .finish()
-    }
-}
-
-impl EventListeners {
-    pub fn new() -> Self {
-        Self { inner: Arc::new(RwLock::new(EventListenersInner::default())) }
-    }
-
-    /// Register a listener.  Returns an ID that can be used to remove it later.
-    pub fn add(
-        &self,
-        selector:   impl Into<String>,
-        event_type: HtmlEventType,
-        callback:   HtmlEventCallback,
-    ) -> i32 {
-        let mut inner = self.inner.write().unwrap();
-        let id = inner.next_id;
-        inner.next_id += 1;
-        inner.entries.push(EventListenerEntry {
-            id,
-            selector: selector.into(),
-            event_type,
-            callback,
-        });
-        id
-    }
-
-    pub fn remove(&self, id: i32) {
-        self.inner.write().unwrap().entries.retain(|e| e.id != id);
-    }
-
-    pub fn remove_by_selector(&self, selector: &str) {
-        self.inner.write().unwrap().entries.retain(|e| e.selector != selector);
-    }
-
-    pub fn remove_by_selector_and_type(&self, selector: &str, t: HtmlEventType) {
-        self.inner.write().unwrap().entries.retain(|e| !(e.selector == selector && e.event_type == t));
-    }
-
-    pub fn remove_all(&self) {
-        self.inner.write().unwrap().entries.clear();
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.read().unwrap().entries.is_empty()
-    }
-
-    /// Dispatch a non-bubbling event: fires only on the exact target element.
-    /// Used for MouseEnter, MouseLeave, Focus, Blur (which do not bubble).
-    pub fn dispatch_direct(&self, root: &mut WebCore, mut evt: HtmlEvent) -> bool {
-        let target_id = evt.target;
-        if target_id == 0 { return false; }
-
-        // Phase 1: collect matching entry IDs (immutable borrow of root + entries)
-        let matches: Vec<usize> = {
-            let inner = self.inner.read().unwrap();
-            if inner.entries.is_empty() { return false; }
-            let b = match find_node_ref(root, target_id) {
-                Some(n) => n, None => return false,
-            };
-            inner.entries.iter().enumerate()
-                .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
-                .map(|(i, _)| i)
-                .collect()
-        };
-        if matches.is_empty() { return false; }
-
-        // Phase 2: call handlers with mutable root
-        evt.current_target = target_id;
-        let inner = self.inner.read().unwrap();
-        let mut handled = false;
-        for &ei in &matches {
-            (inner.entries[ei].callback)(&mut evt, root);
-            handled = true;
-            if evt.propagation_stopped { break; }
-        }
-        handled || evt.default_prevented
-    }
-
-    /// Dispatch an event from a hit-test target, bubbling up through ancestors.
-    /// Returns `true` if any handler was executed (useful for triggered redraws).
-    pub fn dispatch(&self, root: &mut WebCore, mut evt: HtmlEvent) -> bool {
-        // Phase 1: collect (node_id, entry_index) matches using immutable access
-        let matches: Vec<(u32, Vec<usize>)> = {
-            let inner = self.inner.read().unwrap();
-            if inner.entries.is_empty() { return false; }
-            let target_id = evt.target;
-
-            if target_id != 0 {
-                let mut path: Vec<u32> = Vec::new();
-                collect_id_path(root, target_id, &mut path);
-                path.iter().rev().filter_map(|&nid| {
-                    let b = find_node_ref(root, nid)?;
-                    let eis: Vec<usize> = inner.entries.iter().enumerate()
-                        .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
-                        .map(|(i, _)| i)
-                        .collect();
-                    if eis.is_empty() { None } else { Some((nid, eis)) }
-                }).collect()
-            } else {
-                let eis: Vec<usize> = inner.entries.iter().enumerate()
-                    .filter(|(_, e)| {
-                        e.event_type == evt.event_type && {
-                            let sel = e.selector.as_str();
-                            sel == "*" || sel == "html" || sel == "body"
-                        }
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                if eis.is_empty() { vec![] } else { vec![(root.node_id, eis)] }
-            }
-        };
-        if matches.is_empty() { return false; }
-
-        // Phase 2: call handlers with mutable root
-        let inner = self.inner.read().unwrap();
-        let mut handled = false;
-        for (nid, eis) in &matches {
-            evt.current_target = *nid;
-            for &ei in eis {
-                (inner.entries[ei].callback)(&mut evt, root);
-                handled = true;
-                if evt.propagation_stopped { break; }
-            }
-            if evt.propagation_stopped { break; }
-        }
-        handled || evt.default_prevented
-    }
-
-    /// Dispatch and return the (possibly modified) event so callers can inspect
-    /// `evt.default_prevented` to decide whether to run default behavior.
-    pub fn dispatch_and_return(&self, root: &mut WebCore, mut evt: HtmlEvent) -> (bool, HtmlEvent) {
-        // Phase 1: collect matches
-        let matches: Vec<(u32, Vec<usize>)> = {
-            let inner = self.inner.read().unwrap();
-            if inner.entries.is_empty() { return (false, evt); }
-            let target_id = evt.target;
-            if target_id != 0 {
-                let mut path: Vec<u32> = Vec::new();
-                collect_id_path(root, target_id, &mut path);
-                path.iter().rev().filter_map(|&nid| {
-                    let b = find_node_ref(root, nid)?;
-                    let eis: Vec<usize> = inner.entries.iter().enumerate()
-                        .filter(|(_, e)| e.event_type == evt.event_type && matches_simple_selector(b, &e.selector))
-                        .map(|(i, _)| i)
-                        .collect();
-                    if eis.is_empty() { None } else { Some((nid, eis)) }
-                }).collect()
-            } else {
-                let eis: Vec<usize> = inner.entries.iter().enumerate()
-                    .filter(|(_, e)| {
-                        e.event_type == evt.event_type && {
-                            let sel = e.selector.as_str();
-                            sel == "*" || sel == "html" || sel == "body"
-                        }
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                if eis.is_empty() { vec![] } else { vec![(root.node_id, eis)] }
-            }
-        };
-        if matches.is_empty() { return (false, evt); }
-
-        // Phase 2: call handlers with mutable root
-        let inner = self.inner.read().unwrap();
-        let mut handled = false;
-        for (nid, eis) in &matches {
-            evt.current_target = *nid;
-            for &ei in eis {
-                (inner.entries[ei].callback)(&mut evt, root);
-                handled = true;
-                if evt.propagation_stopped { break; }
-            }
-            if evt.propagation_stopped { break; }
-        }
-        (handled || evt.default_prevented, evt)
-    }
-}
-
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Find a node by node_id in the tree (immutable).
@@ -421,7 +212,7 @@ pub fn matches_simple_selector(b: &WebCore, selector: &str) -> bool {
 /// Add a CSS class to a box.
 pub fn add_class(b: &mut WebCore, cls: &str) {
     if has_class(b, cls) { return; }
-    let entry = b.attributes.entry("class".to_string()).or_default();
+    let entry = b.attributes.entry_or_default("class");
     if entry.is_empty() {
         *entry = cls.to_string();
     } else {
@@ -455,10 +246,10 @@ pub fn has_class(b: &WebCore, cls: &str) -> bool {
 /// Set an attribute on a box.  Handles `id`, `class`, `style`, `href` specially.
 pub fn set_attribute(b: &mut WebCore, attr: &str, value: &str) {
     match attr {
-        "id"    => { b.attributes.insert("id".to_string(), value.to_string()); }
-        "class" => { b.attributes.insert("class".to_string(), value.to_string()); }
+        "id"    => { b.attributes.insert("id", value); }
+        "class" => { b.attributes.insert("class", value); }
         "style" => { apply_inline_style_str(b, value); }
-        _       => { b.attributes.insert(attr.to_string(), value.to_string()); }
+        _       => { b.attributes.insert(attr, value); }
     }
 }
 
@@ -522,7 +313,7 @@ pub fn is_visible(b: &WebCore) -> bool {
 /// (e.g. after class toggling) does not overwrite the change.
 pub fn set_style_property(b: &mut WebCore, prop: &str, value: &str) {
     apply_property(&mut b.style, prop, value);
-    let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+    let style_str = b.attributes.entry_or_default("style");
     upsert_style_attr_prop(style_str, prop, value);
     mark_layout_dirty(b);
 }
@@ -566,7 +357,7 @@ pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
             let val  = decl[colon+1..].trim();
             if !prop.is_empty() && !val.is_empty() {
                 apply_property(&mut b.style, prop, val);
-                let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+                let style_str = b.attributes.entry_or_default("style");
                 upsert_style_attr_prop(style_str, prop, val);
             }
         }
@@ -1479,7 +1270,7 @@ impl Editor {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", current + step_px);
             apply_property(&mut b.style, "margin-left", &new_val);
-            let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+            let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
     }
@@ -1491,7 +1282,7 @@ impl Editor {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", (current - step_px).max(0.0));
             apply_property(&mut b.style, "margin-left", &new_val);
-            let style_str = b.attributes.entry("style".to_string()).or_insert_with(String::new);
+            let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
     }

@@ -16,11 +16,20 @@ pub fn escape_html(text: &str) -> String {
             '<'  => out.push_str("&lt;"),
             '>'  => out.push_str("&gt;"),
             '"'  => out.push_str("&quot;"),
+            '\u{00A0}' => out.push_str("&nbsp;"),
             _    => out.push(ch),
         }
     }
     out
 }
+
+/// HTML §13.3 "escaping a string", attribute mode.
+///
+/// The spec escapes `&`, U+00A0 and `"` here and leaves `<`/`>` alone; Blink
+/// escapes those two as well. We follow Blink, because the difference is not
+/// observable — `&lt;` inside an attribute value parses back to `<` either
+/// way — and it keeps the Chrome differential exact.
+pub fn escape_attr(value: &str) -> String { escape_html(value) }
 
 // ─── Length serialization ─────────────────────────────────────────────────────
 
@@ -558,59 +567,21 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
     out.push('<');
     out.push_str(tag);
 
-    // Attributes from the map — skip the field-managed ones that get their
-    // own dedicated handling below.
-    const FIELD_ATTRS: &[&str] = &["id", "class", "style", "src", "href"];
-    let mut attr_pairs: Vec<(&String, &String)> = node.attributes.iter()
-        .filter(|(k, _)| !FIELD_ATTRS.contains(&k.as_str()))
-        .collect();
-    attr_pairs.sort_by_key(|(k, _)| k.as_str()); // deterministic output
-    for (k, v) in attr_pairs {
+    // HTML §13.3 — attributes are written in the element's attribute-list
+    // order, which is the order they were set. `AttrMap` is a list for exactly
+    // this reason; the old code sorted the map's keys "for deterministic
+    // output", which was deterministic and wrong. Chrome on
+    // `<div id=d zebra=1 alpha=2>` writes `id="d" zebra="1" alpha="2"`.
+    //
+    // The value is always quoted, even when empty: Chrome serializes
+    // `<input checked>` as `checked=""`, and a bare name is not what any
+    // browser writes.
+    for (k, v) in node.attributes.iter() {
         out.push(' ');
         out.push_str(k);
-        if !v.is_empty() {
-            out.push_str("=\"");
-            out.push_str(&escape_html(v));
-            out.push('"');
-        }
-    }
-
-    // Field-managed attributes (may have been modified after parse).
-    if let Some(id) = node.attributes.get("id") {
-        if !id.is_empty() {
-            out.push_str(" id=\"");
-            out.push_str(&escape_html(id));
-            out.push('"');
-        }
-    }
-    if let Some(cls) = node.attributes.get("class") {
-        if !cls.is_empty() {
-            out.push_str(" class=\"");
-            out.push_str(&escape_html(cls));
-            out.push('"');
-        }
-    }
-    if let Some(src) = node.attributes.get("src") {
-        if !src.is_empty() {
-            out.push_str(" src=\"");
-            out.push_str(&escape_html(src));
-            out.push('"');
-        }
-    }
-    if let Some(href) = node.attributes.get("href") {
-        if !href.is_empty() {
-            out.push_str(" href=\"");
-            out.push_str(&escape_html(href));
-            out.push('"');
-        }
-    }
-    // Inline style (from `style` attribute, if present).
-    if let Some(inline_css) = node.attributes.get("style") {
-        if !inline_css.is_empty() {
-            out.push_str(" style=\"");
-            out.push_str(&escape_html(inline_css));
-            out.push('"');
-        }
+        out.push_str("=\"");
+        out.push_str(&escape_attr(v));
+        out.push('"');
     }
 
     // Void elements: self-close, no children.
@@ -724,16 +695,12 @@ pub fn serialize_html(doc: &Document) -> String {
 
     if root_is_document_element {
         html.push_str("<html");
-        let mut root_attrs: Vec<(&String, &String)> = root.attributes.iter().collect();
-        root_attrs.sort_by_key(|(k, _)| k.as_str());
-        for (name, value) in root_attrs {
+        for (name, value) in root.attributes.iter() {
             html.push(' ');
             html.push_str(name);
-            if !value.is_empty() {
-                html.push_str("=\"");
-                html.push_str(&escape_html(value));
-                html.push('"');
-            }
+            html.push_str("=\"");
+            html.push_str(&escape_attr(value));
+            html.push('"');
         }
         html.push_str(">\n<head>\n");
         // The document's OWN head elements — title, meta, link. They belong in

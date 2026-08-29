@@ -3,14 +3,20 @@ use crate::layout::{LayoutEngine, ResolvedBox, layout_positioned, shift_rects};
 use super::{Constraints, IntrinsicSizes};
 
 /// Resolve a child by path through `display: contents` wrappers.
+// Depth 0 goes through `effective_children`, so a shadow host's items are its
+// SHADOW tree. Below that it is ordinary children, matching grid's resolver.
 fn child_ref<'a>(node: &'a WebCore, path: &[usize]) -> &'a WebCore {
     let mut n = node;
-    for &i in path { n = &n.children[i]; }
+    for (depth, &i) in path.iter().enumerate() {
+        n = if depth == 0 { &n.effective_children()[i] } else { &n.children[i] };
+    }
     n
 }
 fn child_mut<'a>(node: &'a mut WebCore, path: &[usize]) -> &'a mut WebCore {
     let mut n = node;
-    for &i in path { n = &mut n.children[i]; }
+    for (depth, &i) in path.iter().enumerate() {
+        n = if depth == 0 { &mut n.effective_children_mut()[i] } else { &mut n.children[i] };
+    }
     n
 }
 
@@ -22,7 +28,7 @@ fn collect_flex_children(node: &WebCore) -> Vec<Vec<usize>> {
     result
 }
 fn collect_inner(node: &WebCore, path: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
-    for (idx, child) in node.children.iter().enumerate() {
+    for (idx, child) in node.effective_children().iter().enumerate() {
         path.push(idx);
         if matches!(child.style.display, Display::Contents) {
             collect_inner(child, path, result);

@@ -784,7 +784,7 @@ mod tests {
     fn el(tag: &str, attrs: &[(&str, &str)]) -> WebCore {
         let mut n = WebCore::new(tag);
         for (k, v) in attrs {
-            n.attributes.insert((*k).into(), (*v).into());
+            n.attributes.insert((*k), (*v));
         }
         n
     }
