@@ -21,6 +21,33 @@ Add `webcore` to your `Cargo.toml`:
 webcore = "0.2.0"
 ```
 
+## Minimal Example
+
+Here is a basic example of how to parse HTML and render it to a PNG image using `webcore`.
+
+```rust
+use webcore::{load_html_with_base, Renderer};
+use tiny_skia::Pixmap;
+
+fn main() {
+    let html = "<h1>Hello WebCore!</h1><p>Rendering HTML in Rust.</p>";
+    
+    // Parse the HTML document
+    let mut doc = load_html_with_base(html, "http://localhost/");
+    
+    // Setup the renderer and layout the document
+    let mut renderer = Renderer::new(800, 600, 1.0);
+    renderer.layout(&mut doc);
+    
+    // Create a pixel buffer and render to it
+    let mut pixmap = Pixmap::new(800, 600).unwrap();
+    renderer.paint(&doc, &mut pixmap.as_mut());
+    
+    // Save the output to a PNG file
+    pixmap.save_png("output.png").unwrap();
+}
+```
+
 ## Examples
 
 The repository includes several examples demonstrating the capabilities of `webcore`. You can run them using `cargo run --example <name>`:
