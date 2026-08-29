@@ -1324,11 +1324,18 @@ fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) 
     let cr = node.layout.content_rect;
     let font_px = node.style.font_size_px(16.0, 16.0).max(1.0);
     let value = if tag == "select" {
-        // For select, get the text of the selected option (or first option)
-        node.children.iter()
-            .find(|c| c.tag == "option" && c.attributes.get("selected").is_some())
-            .or_else(|| node.children.iter().find(|c| c.tag == "option"))
-            .map(|opt| option_label(opt))
+        // The shown text is "the label of an option of which selectedness is
+        // set to true" (HTML §15.5.16) — SELECTEDNESS, not the `selected`
+        // attribute, which is only the default. Reading the attribute meant a
+        // drop-down the user had changed kept painting the author's choice.
+        //
+        // With nothing selected there is nothing to show, which is the normal
+        // resting state of a list box. The old fallback to the first option
+        // drew a label for a selection that did not exist.
+        crate::html::forms::list_of_options(node)
+            .iter()
+            .find(|o| o.selectedness)
+            .map(|opt| crate::html::forms::option_label(opt))
             .unwrap_or_default()
     } else {
         crate::types::input_value(node)
@@ -1349,37 +1356,20 @@ fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) 
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    // A `<select>` carries its option labels and which one is selected: a list
-    // box paints the options itself, and only the element knows them.
-    // Selectedness is the `selected` ATTRIBUTE here, which is where
-    // `set_selected_index` records it.
-    let (options, selected) = if tag == "select" {
-        let mut labels = Vec::new();
-        let mut chosen = -1i32;
-        for child in &node.children {
-            match child.tag.as_str() {
-                "option" => {
-                    if child.attributes.contains_key("selected") {
-                        chosen = labels.len() as i32;
-                    }
-                    labels.push(option_label(child));
-                }
-                "optgroup" => {
-                    for gc in &child.children {
-                        if gc.tag == "option" {
-                            if gc.attributes.contains_key("selected") {
-                                chosen = labels.len() as i32;
-                            }
-                            labels.push(option_label(gc));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        (labels, chosen)
+    // A `<select>` carries its option labels and which of them are selected: a
+    // list box paints the options itself, and only the element knows them.
+    //
+    // `selected` is the FIRST selected option, for the single-select highlight;
+    // `selected_all` is every one, which is what a `multiple` list box needs
+    // and what a single index could never express.
+    let (options, selected, selected_all) = if tag == "select" {
+        let opts = crate::html::forms::list_of_options(node);
+        let labels: Vec<String> = opts.iter().map(|o| crate::html::forms::option_label(o)).collect();
+        let all: Vec<bool> = opts.iter().map(|o| o.selectedness).collect();
+        let first = all.iter().position(|s| *s).map(|i| i as i32).unwrap_or(-1);
+        (labels, first, all)
     } else {
-        (Vec::new(), -1)
+        (Vec::new(), -1, Vec::new())
     };
 
     list.push(PaintCmd::FormElement {
@@ -1399,6 +1389,7 @@ fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) 
         vertical: !matches!(node.style.writing_mode, crate::types::WritingMode::HorizontalTB),
         options,
         selected,
+        selected_all,
     });
 }
 

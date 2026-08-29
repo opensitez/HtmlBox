@@ -94,7 +94,7 @@ fn max_resolves_to_larger() {
 fn parse_clamp_three_args() {
     let val = parse_length("clamp(200px, 50%, 600px)");
     match &val {
-        CssLength::Clamp(_, _, _) => {} // ok
+        CssLength::Clamp(_) => {} // ok
         other => panic!("expected Clamp, got {:?}", other),
     }
 }

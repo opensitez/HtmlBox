@@ -1,5 +1,7 @@
+pub mod forms;
 pub mod serializer;
 pub mod streaming;
+pub mod entities;
 
 use std::collections::HashMap;
 use crate::types::{WebCore, Document, Display, ListStyleType};
@@ -469,74 +471,121 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 // ─── HTML Entities ─────────────────────────────────────────────────────────
 
+/// WHATWG HTML §13.5 "numeric character reference end state": the code points
+/// that are NOT the character they name.
+///
+/// `&#128;` is not U+0080, it is `€`. The range 0x80–0x9F is Windows-1252
+/// mistaken for Latin-1 by a generation of authoring tools, and the spec spells
+/// out the substitution rather than let a page render control characters.
+fn numeric_replacement(cp: u32) -> Option<char> {
+    Some(match cp {
+        0x00 | 0xD800..=0xDFFF => '\u{FFFD}', // null and lone surrogates
+        0x80 => '\u{20AC}', 0x82 => '\u{201A}', 0x83 => '\u{0192}',
+        0x84 => '\u{201E}', 0x85 => '\u{2026}', 0x86 => '\u{2020}',
+        0x87 => '\u{2021}', 0x88 => '\u{02C6}', 0x89 => '\u{2030}',
+        0x8A => '\u{0160}', 0x8B => '\u{2039}', 0x8C => '\u{0152}',
+        0x8E => '\u{017D}', 0x91 => '\u{2018}', 0x92 => '\u{2019}',
+        0x93 => '\u{201C}', 0x94 => '\u{201D}', 0x95 => '\u{2022}',
+        0x96 => '\u{2013}', 0x97 => '\u{2014}', 0x98 => '\u{02DC}',
+        0x99 => '\u{2122}', 0x9A => '\u{0161}', 0x9B => '\u{203A}',
+        0x9C => '\u{0153}', 0x9E => '\u{017E}', 0x9F => '\u{0178}',
+        _ if cp > 0x10FFFF => '\u{FFFD}',
+        _ => return None,
+    })
+}
+
+/// Decode character references in TEXT.
 pub fn decode_entities(s: &str) -> String {
+    decode_refs(s, false)
+}
+
+/// Decode character references in an ATTRIBUTE VALUE.
+///
+/// The one difference from text is the legacy rule: a semicolon-less name
+/// followed by `=` or an alphanumeric is NOT a reference here, so a query
+/// string like `?a=1&copy=2` keeps its literal `&copy`. In text the same
+/// characters would resolve to `©`.
+pub fn decode_entities_attr(s: &str) -> String {
+    decode_refs(s, true)
+}
+
+fn decode_refs(s: &str, in_attribute: bool) -> String {
     let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
     let mut i = 0;
     while i < s.len() {
-        let b = s.as_bytes()[i];
-        if b != b'&' {
-            // Find next '&' or end, copy the whole chunk at once.
+        if bytes[i] != b'&' {
             let start = i;
             i += 1;
-            while i < s.len() && s.as_bytes()[i] != b'&' { i += 1; }
+            while i < s.len() && bytes[i] != b'&' { i += 1; }
             out.push_str(&s[start..i]);
             continue;
         }
-        // Look ahead for ';' within a reasonable range (HTML entity names are short).
-        // If no ';' found, treat '&' as literal.
         let after = i + 1;
-        match s[after..].find(';') {
-            Some(semi) if semi <= 32 => {
-                let name = &s[after..after + semi];
-                out.push_str(&resolve_entity(name));
-                i = after + semi + 1;
+        // Numeric: `&#123;` / `&#x1F600;`
+        if after < s.len() && bytes[after] == b'#' {
+            let mut j = after + 1;
+            let hex = j < s.len() && (bytes[j] | 0x20) == b'x';
+            if hex { j += 1; }
+            let digits_start = j;
+            while j < s.len()
+                && (if hex { bytes[j].is_ascii_hexdigit() } else { bytes[j].is_ascii_digit() })
+            { j += 1; }
+            if j > digits_start {
+                let radix = if hex { 16 } else { 10 };
+                let cp = u32::from_str_radix(&s[digits_start..j], radix).unwrap_or(0xFFFD);
+                let ch = numeric_replacement(cp)
+                    .or_else(|| char::from_u32(cp))
+                    .unwrap_or('\u{FFFD}');
+                out.push(ch);
+                // A missing `;` is a parse error, not a reason to keep the text.
+                i = if j < s.len() && bytes[j] == b';' { j + 1 } else { j };
+                continue;
             }
-            _ => {
+            out.push('&');
+            i += 1;
+            continue;
+        }
+        // Named: consume the LONGEST name in the table that matches here.
+        // Longest-first is what makes `&notin;` the set operator and `&notit;`
+        // the legacy `&not` followed by `it;` — a shortest match, or a match
+        // that required the semicolon, gets both of those wrong.
+        let window = (after + entities::MAX_NAME_LEN).min(s.len());
+        let mut matched: Option<(usize, &'static str)> = None;
+        let mut k = window;
+        while k > after {
+            if s.is_char_boundary(k) {
+                if let Some(exp) = entities::lookup(&s[after..k]) {
+                    matched = Some((k, exp));
+                    break;
+                }
+            }
+            k -= 1;
+        }
+        match matched {
+            Some((end, exp)) => {
+                let had_semi = bytes[end - 1] == b';';
+                // Legacy (no semicolon) inside an attribute value: not a
+                // reference when the next character could continue a name.
+                let legacy_blocked = in_attribute
+                    && !had_semi
+                    && end < s.len()
+                    && (bytes[end] == b'=' || bytes[end].is_ascii_alphanumeric());
+                if legacy_blocked {
+                    out.push('&');
+                    i += 1;
+                } else {
+                    out.push_str(exp);
+                    i = end;
+                }
+            }
+            None => {
                 out.push('&');
                 i += 1;
             }
         }
     }
     out
-}
-
-fn resolve_entity(name: &str) -> String {
-    if name.starts_with('#') {
-        let code_str = &name[1..];
-        let code = if code_str.starts_with('x') || code_str.starts_with('X') {
-            u32::from_str_radix(&code_str[1..], 16).ok()
-        } else {
-            code_str.parse::<u32>().ok()
-        };
-        if let Some(cp) = code {
-            if let Some(c) = char::from_u32(cp) {
-                return c.to_string();
-            }
-        }
-        return format!("&#{};", name);
-    }
-    let ch = match name {
-        "amp"   => "&",  "lt"    => "<",  "gt"    => ">",
-        "quot"  => "\"", "apos"  => "'",  "nbsp"  => "\u{00A0}",
-        "copy"  => "©",  "reg"   => "®",  "trade" => "™",
-        "mdash" => "—",  "ndash" => "–",  "hellip"=> "…",
-        "laquo" => "«",  "raquo" => "»",  "lsaquo"=> "‹",  "rsaquo"=> "›",
-        "lsquo" => "\u{2018}", "rsquo" => "\u{2019}",
-        "ldquo" => "\u{201C}", "rdquo" => "\u{201D}",
-        "bull"  => "•",  "middot"=> "·",
-        "times" => "×",  "divide"=> "÷",
-        "eacute"=> "é",  "egrave"=> "è",  "ecirc" => "ê",  "euml"  => "ë",
-        "aacute"=> "á",  "agrave"=> "à",  "acirc" => "â",  "auml"  => "ä",
-        "oacute"=> "ó",  "ograve"=> "ò",  "ocirc" => "ô",  "ouml"  => "ö",
-        "uacute"=> "ú",  "ugrave"=> "ù",  "ucirc" => "û",  "uuml"  => "ü",
-        "iacute"=> "í",  "igrave"=> "ì",  "icirc" => "î",  "iuml"  => "ï",
-        "ntilde"=> "ñ",  "ccedil"=> "ç",  "szlig" => "ß",
-        "aring" => "å",  "aelig" => "æ",  "oslash"=> "ø",
-        "alpha" => "α",  "beta"  => "β",  "gamma" => "γ",  "delta" => "δ",
-        "euro"  => "€",  "pound" => "£",  "yen"   => "¥",  "cent"  => "¢",
-        _       => return format!("&{};", name),
-    };
-    ch.to_string()
 }
 
 // ─── Tokenizer ─────────────────────────────────────────────────────────────
@@ -546,8 +595,27 @@ enum Token {
     Text(String),
     OpenTag  { tag: String, attrs: HashMap<String, String>, self_closing: bool },
     CloseTag { tag: String },
-    Comment,
+    /// Comment DATA, `<!--` and `-->` already stripped.
+    Comment(String),
     Doctype,
+}
+
+/// `html[start..end]`, clamped so a truncated tag cannot build a range that
+/// runs backwards.
+///
+/// `<` and `</` at end-of-input are the cases that bite: the tag "ends" at the
+/// end of the string, so `end - 1` lands BEFORE the start of the name and the
+/// slice panicked. A browser meets a document cut off mid-tag constantly and
+/// must simply stop tokenizing there.
+fn tag_slice(html: &str, start: usize, end: usize) -> &str {
+    let start = start.min(html.len());
+    let end = end.max(start).min(html.len());
+    // Both ends must sit on a char boundary or the slice panics on UTF-8.
+    let mut s = start;
+    while s < html.len() && !html.is_char_boundary(s) { s += 1; }
+    let mut e = end.max(s);
+    while e < html.len() && !html.is_char_boundary(e) { e += 1; }
+    &html[s..e]
 }
 
 fn tokenize(html: &str) -> Vec<Token> {
@@ -558,8 +626,30 @@ fn tokenize(html: &str) -> Vec<Token> {
     while i < bytes.len() {
         if bytes[i] == b'<' {
             if html[i..].starts_with("<!--") {
-                let end = html[i..].find("-->").map(|e| i + e + 3).unwrap_or(html.len());
-                tokens.push(Token::Comment);
+                // Carry the DATA. It used to be dropped at the token, which is
+                // why no comment could ever reach the tree however the parser
+                // was fixed downstream.
+                // Search AFTER the `<!--`. Searching the whole slice found the
+                // `-->` INSIDE the opener for `<!-->` — the `-` `-` `>` at
+                // offset 2 — and built a byte range that ran backwards, which
+                // panicked the tokenizer on markup a browser accepts.
+                //
+                // `<!-->` and `<!--->` are empty comments: §13.2.5.43-45 end
+                // the comment on a `>` met in the comment-start states rather
+                // than treating it as data.
+                let rest = &html[i + 4..];
+                let (data, end) = if let Some(r) = rest.strip_prefix('>') {
+                    let _ = r;
+                    (String::new(), i + 5)
+                } else if rest.starts_with("->") {
+                    (String::new(), i + 6)
+                } else {
+                    match rest.find("-->") {
+                        Some(e) => (rest[..e].to_string(), i + 4 + e + 3),
+                        None    => (rest.to_string(), html.len()),
+                    }
+                };
+                tokens.push(Token::Comment(data));
                 i = end;
                 continue;
             }
@@ -569,26 +659,67 @@ fn tokenize(html: &str) -> Vec<Token> {
                 i = end;
                 continue;
             }
+            // BOGUS COMMENT (§13.2.5.41). `<!` that is not a comment or a
+            // doctype, and `<?`, are comments — not tags. They used to fall
+            // through to the generic open-tag path, so `<div><!bogus><p>x</p>`
+            // built an ELEMENT named `!bogus` that then swallowed the `<p>` as
+            // its child. Everything after a stray `<!` was reparented.
+            if i + 1 < bytes.len() && (bytes[i + 1] == b'!' || bytes[i + 1] == b'?') {
+                let found = html[i..].find('>').map(|e| i + e + 1);
+                let end = found.unwrap_or(html.len());
+                // `<!` drops both bytes, `<?` keeps the `?` as data, per spec.
+                let data_start = if bytes[i + 1] == b'!' { i + 2 } else { i + 1 };
+                let data_end = if found.is_some() { end - 1 } else { end };
+                tokens.push(Token::Comment(html[data_start..data_end].to_string()));
+                i = end;
+                continue;
+            }
             if i + 1 < bytes.len() && bytes[i + 1] == b'/' {
                 let end = html[i..].find('>').map(|e| i + e + 1).unwrap_or(html.len());
-                let inner = &html[i + 2..end.saturating_sub(1)];
+                let inner = tag_slice(html, i + 2, end.saturating_sub(1));
                 let tag = inner.trim().to_ascii_lowercase();
-                tokens.push(Token::CloseTag { tag });
+                // `</br>` is a `<br>` (HTML §13.2.6.4.7 spells this out: the end
+                // tag is a parse error and is HANDLED as the start tag). Pages
+                // in the wild write it, and dropping it lost the line break.
+                if tag == "br" {
+                    tokens.push(Token::OpenTag {
+                        tag, attrs: HashMap::new(), self_closing: true,
+                    });
+                } else {
+                    tokens.push(Token::CloseTag { tag });
+                }
                 i = end;
                 continue;
             }
             let end = find_tag_end(html, i);
-            let tag_src = &html[i + 1..end.saturating_sub(1)];
-            let self_closing = tag_src.trim_end().ends_with('/');
+            let tag_src = tag_slice(html, i + 1, end.saturating_sub(1));
+            let had_slash = tag_src.trim_end().ends_with('/');
             let tag_src = tag_src.trim_end_matches('/').trim();
             let (tag, attrs) = parse_tag_attrs(tag_src);
+            // HTML §13.2.6.4.7 in full: "A start tag whose tag name is
+            // 'image' — change the token's tag name to 'img' and reprocess."
+            // It is not an alias, it is a rename, and pages rely on it.
+            let tag = if tag == "image" { "img".to_string() } else { tag };
             let is_void = is_void_element(&tag);
-            tokens.push(Token::OpenTag { tag: tag.clone(), attrs, self_closing: self_closing || is_void });
+            // A trailing `/` on a non-void HTML element is IGNORED — `<div/>x`
+            // opens a div and `x` goes INSIDE it. Only foreign content (SVG,
+            // MathML) honours self-closing syntax, and only a void element is
+            // self-closing on its own. Treating the slash as authoritative made
+            // `<div/>` an empty element and put the rest of the document beside
+            // it instead of within.
+            let self_closing = is_void || (had_slash && is_foreign_content_tag(&tag));
+            tokens.push(Token::OpenTag { tag: tag.clone(), attrs, self_closing });
             i = end;
             // Raw text / foreign content elements: content must not be parsed as HTML.
             // <svg> is foreign content — collect everything until </svg> as raw text
             // so inner SVG elements (path, circle, etc.) don't interfere with HTML parsing.
-            if matches!(tag.as_str(), "style" | "script" | "noscript" | "svg") && !(self_closing || is_void) {
+            // RAWTEXT and RCDATA elements: the content is TEXT. `<title>a<b>c`
+            // has no `<b>` element in it, and `<textarea><p>x</p>` holds the
+            // literal markup as its value — parsing them as HTML built elements
+            // no browser has and lost the characters that made up the tags.
+            if matches!(tag.as_str(),
+                        "style" | "script" | "noscript" | "svg" | "title" | "textarea")
+                && !(self_closing || is_void) {
                 let close_pat = format!("</{}", tag);
                 let raw_end = crate::css::find_case_insensitive(&html[i..], &close_pat)
                     .map(|e| i + e)
@@ -663,7 +794,10 @@ fn parse_attrs(s: &str) -> HashMap<String, String> {
         if name.is_empty() { i += 1; continue; }
         while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
         if i >= bytes.len() || bytes[i] != b'=' {
-            map.insert(name, String::new());
+            // FIRST occurrence wins. The tokenizer's attribute-name state drops
+            // a duplicate rather than overwriting, so `<div CLASS=x class=y>`
+            // is `class="x"`. `insert` gave the last one, which is the opposite.
+            map.entry(name).or_default();
             continue;
         }
         i += 1;
@@ -673,15 +807,15 @@ fn parse_attrs(s: &str) -> HashMap<String, String> {
             i += 1;
             let start = i;
             while i < bytes.len() && bytes[i] != q { i += 1; }
-            let v = decode_entities(&s[start..i]);
+            let v = decode_entities_attr(&s[start..i]);
             if i < bytes.len() { i += 1; }
             v
         } else {
             let start = i;
             while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' { i += 1; }
-            decode_entities(&s[start..i])
+            decode_entities_attr(&s[start..i])
         };
-        map.insert(name, value);
+        map.entry(name).or_insert(value);
     }
     map
 }
@@ -697,6 +831,50 @@ fn is_void_element(tag: &str) -> bool {
 /// Elements whose content should be completely suppressed (no box, no text)
 /// HTML implicit closing rules (HTML spec §12.2.6.4).
 /// Returns true if seeing `new_tag` as an open tag should auto-close `current`.
+/// The formatting elements of HTML §13.2.4.3.
+///
+/// What sets them apart is that closing an ANCESTOR does not end them: when
+/// `</b>` in `<b>1<i>2</b>3` implicitly closes the `<i>`, the `<i>` is
+/// reconstructed afterwards so `3` is still italic. Nothing else in the parser
+/// behaves that way — `<section><span>x</section>y` leaves `y` unwrapped,
+/// because `span` is not on this list.
+fn is_formatting_element(tag: &str) -> bool {
+    matches!(tag,
+        "a" | "b" | "big" | "code" | "em" | "font" | "i" | "nobr"
+        | "s" | "small" | "strike" | "strong" | "tt" | "u")
+}
+
+/// HTML §13.2.4.2's "special" category — the elements that break out of a
+/// formatting element rather than nest inside it. Used to find the adoption
+/// agency's furthest block.
+fn is_special_element(tag: &str) -> bool {
+    matches!(tag,
+        "address" | "applet" | "area" | "article" | "aside" | "base" | "basefont"
+        | "bgsound" | "blockquote" | "body" | "br" | "button" | "caption" | "center"
+        | "col" | "colgroup" | "dd" | "details" | "dir" | "div" | "dl" | "dt"
+        | "embed" | "fieldset" | "figcaption" | "figure" | "footer" | "form"
+        | "frame" | "frameset" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head"
+        | "header" | "hgroup" | "hr" | "html" | "iframe" | "img" | "input"
+        | "keygen" | "li" | "link" | "listing" | "main" | "marquee" | "menu"
+        | "meta" | "nav" | "noembed" | "noframes" | "noscript" | "object" | "ol"
+        | "p" | "param" | "plaintext" | "pre" | "script" | "search" | "section"
+        | "select" | "source" | "style" | "summary" | "table" | "tbody" | "td"
+        | "template" | "textarea" | "tfoot" | "th" | "thead" | "title" | "tr"
+        | "track" | "ul" | "wbr" | "xmp")
+}
+
+/// Elements whose subtree is FOREIGN content, where XML self-closing syntax
+/// (`<circle/>`) is real. HTML elements ignore a trailing slash.
+/// Start tags that "in select" handles as `</select>` (HTML §13.2.6.4.16).
+/// Everything else stays inside the select.
+fn closes_select(tag: &str) -> bool {
+    matches!(tag, "input" | "keygen" | "textarea" | "select")
+}
+
+fn is_foreign_content_tag(tag: &str) -> bool {
+    matches!(tag, "svg" | "math")
+}
+
 fn should_auto_close(current: &str, new_tag: &str) -> bool {
     match current {
         // <p> closes when a block-level element opens
@@ -709,6 +887,10 @@ fn should_auto_close(current: &str, new_tag: &str) -> bool {
             "plaintext" | "pre" | "search" | "section" | "summary" |
             "table" | "ul" | "xmp"
         ),
+        // A heading closes on another heading (HTML §13.2.6.4.7: an h1-h6 start
+        // tag while one is open is a parse error that pops it).
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" =>
+            matches!(new_tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"),
         // <li> closes on another <li>
         "li" => new_tag == "li",
         // <dt> closes on <dt> or <dd>
@@ -750,8 +932,11 @@ pub fn default_display(tag: &str) -> &'static str {
         | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "blockquote" | "hr"
         | "section" | "article" | "aside" | "nav" | "header" | "footer" | "main"
         | "address" | "figure" | "figcaption" | "details" | "center"
-        | "form" | "fieldset" | "legend" | "hgroup" | "search"
+        | "form" | "fieldset" | "legend" | "hgroup" | "search" | "dialog"
             => "block",
+        // A projection point, not a box — its assigned nodes lay out as if they
+        // were children of the slot's parent (HTML §15.3.4).
+        "slot" => "contents",
         "summary" => "list-item",
         "li"    => "list-item",
         "table" => "table",
@@ -769,13 +954,237 @@ pub fn default_display(tag: &str) -> &'static str {
         "rt"   => "ruby-text",
         // Non-visual: display:none
         "head" | "style" | "script" | "title" | "meta" | "link" | "noscript"
-        | "option" | "optgroup" | "datalist" => "none",
+        | "option" | "optgroup" | "datalist" | "track" => "none",
         // Everything else is inline
         _ => "inline",
     }
 }
 
+// ─── Table structure (HTML §13.2.6.4.9 "in table") ─────────────────────────
+
+/// May this node sit directly inside a `<table>`?
+///
+/// The spec's "in table" insertion mode handles exactly these; anything else is
+/// foster-parented out. Whitespace-only text is kept — it is the newline
+/// between `<table>` and `<tr>` that every hand-written table has, and moving
+/// it would put a stray text node before every table on the web.
+fn allowed_in_table(node: &WebCore) -> bool {
+    match node.tag.as_str() {
+        "caption" | "colgroup" | "col" | "thead" | "tbody" | "tfoot" | "tr"
+        | "form" | "script" | "template" | "style" | "#comment" => true,
+        // A bare cell is table content: the row it needs is IMPLIED, not
+        // missing (see `wrap_bare_cells_in_row`). Fostering it out instead
+        // emptied `<table><td>x</td></table>` of everything it had.
+        "td" | "th" => true,
+        "#text" => node.text.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Give bare `<td>`/`<th>` children of a table an implied `<tr>`.
+///
+/// `<table><td>x</td></table>` is `table > tbody > tr > td` in every browser —
+/// the "in table" mode inserts the row the author left out, the same way it
+/// inserts the `<tbody>`. Without it the cells were not table content, so they
+/// were foster-parented out and the table came back empty.
+fn wrap_bare_cells_in_row(table: &mut WebCore) {
+    if !table.children.iter().any(|c| c.tag == "td" || c.tag == "th") { return; }
+    let children = std::mem::take(&mut table.children);
+    let mut out: Vec<WebCore> = Vec::new();
+    let mut row: Option<WebCore> = None;
+    for child in children {
+        if child.tag == "td" || child.tag == "th" {
+            let r = row.get_or_insert_with(|| {
+                let mut n = WebCore::new("tr");
+                apply_property(&mut n.style, "display", default_display("tr"));
+                n
+            });
+            r.children.push(child);
+        } else {
+            if let Some(r) = row.take() { out.push(r); }
+            out.push(child);
+        }
+    }
+    if let Some(r) = row.take() { out.push(r); }
+    table.children = out;
+}
+
+/// Group a table's stray `<tr>` children into implied `<tbody>` elements.
+///
+/// `<table><tr>` parses to `table > tbody > tr` in every browser: the tree
+/// builder inserts the `<tbody>` the author left out. Without it the DOM is a
+/// shape no real page ever sees — `table > tr` — so `tbody` selectors,
+/// `:nth-child`, and `HTMLTableElement.tBodies` all disagree with a browser.
+///
+/// Consecutive runs are grouped into ONE `<tbody>`, and a run is not broken by
+/// the whitespace between rows, so `<table>\n<tr>…\n<tr>…\n</table>` yields a
+/// single tbody like it should rather than one per row.
+fn group_rows_into_tbody(table: &mut WebCore) {
+    wrap_bare_cells_in_row(table);
+    if !table.children.iter().any(|c| c.tag == "tr") { return; }
+    let children = std::mem::take(&mut table.children);
+    let mut out: Vec<WebCore> = Vec::new();
+    let mut current: Option<WebCore> = None;
+    // Whitespace held back, so it only joins a run that actually continues.
+    let mut pending_ws: Vec<WebCore> = Vec::new();
+    for child in children {
+        let is_ws = child.is_text_node() && child.text.trim().is_empty();
+        if child.tag == "tr" {
+            let tbody = current.get_or_insert_with(|| {
+                let mut b = WebCore::new("tbody");
+                apply_property(&mut b.style, "display", default_display("tbody"));
+                b
+            });
+            tbody.children.append(&mut pending_ws);
+            tbody.children.push(child);
+        } else if is_ws && current.is_some() {
+            pending_ws.push(child);
+        } else {
+            if let Some(tbody) = current.take() { out.push(tbody); }
+            out.append(&mut pending_ws);
+            out.push(child);
+        }
+    }
+    if let Some(tbody) = current.take() { out.push(tbody); }
+    out.append(&mut pending_ws);
+    table.children = out;
+}
+
+/// Valid parents for an element that only belongs inside a table.
+/// `None` when the tag is not table-only and may appear anywhere.
+fn table_part_parents(tag: &str) -> Option<&'static [&'static str]> {
+    match tag {
+        "caption" | "colgroup" | "thead" | "tbody" | "tfoot" => Some(&["table"]),
+        "tr" => Some(&["table", "thead", "tbody", "tfoot"]),
+        "td" | "th" => Some(&["tr"]),
+        "col" => Some(&["colgroup"]),
+        _ => None,
+    }
+}
+
+/// Drop table parts that are not inside a table, keeping their content.
+///
+/// `<div><td>orphan</td></div>` has no table anywhere, and the "in body"
+/// insertion mode ignores a `<td>` start tag outright — so a browser keeps the
+/// text and no cell. We were building the element, which put a `display:
+/// table-cell` box in the middle of a block flow and made `querySelector("td")`
+/// answer on a document with no table in it.
+fn unwrap_misplaced_table_parts(node: &mut WebCore) {
+    if node.tag == "template" { return; }
+    for child in &mut node.children {
+        unwrap_misplaced_table_parts(child);
+    }
+    let parent_tag = node.tag.clone();
+    // Index-based and IN PLACE. A `WebCore` is ~4KB, so moving one into a local
+    // costs 4KB of STACK per recursion level — a page 80 elements deep
+    // overflowed the stack before it finished parsing. Nothing here holds a
+    // node by value.
+    let mut i = 0;
+    while i < node.children.len() {
+        let misplaced = table_part_parents(&node.children[i].tag)
+            .map(|ok| !ok.contains(&parent_tag.as_str()))
+            .unwrap_or(false);
+        if misplaced {
+            // The element is ignored and its CONTENT takes its place — then the
+            // loop re-examines that content against this parent, because
+            // promoting a `<tr>`'s children leaves `<td>`s somewhere that
+            // cannot hold them either. `i` deliberately does not advance.
+            let promoted = std::mem::take(&mut node.children[i].children);
+            node.children.splice(i..=i, promoted);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Move a table-level `<form>`'s children out into the table.
+///
+/// HTML §13.2.6.4.9 keeps the `<form>` (the form element pointer is set) but
+/// inserts nothing into it — the rows that follow are inserted into the TABLE.
+/// Chrome gives `table > [form, tbody > tr]`; we were nesting the rows inside
+/// the form, which put a block box between the table and its rows.
+fn hoist_table_form_children(table: &mut WebCore) {
+    if !table.children.iter().any(|c| c.tag == "form" && !c.children.is_empty()) { return; }
+    let children = std::mem::take(&mut table.children);
+    let mut out = Vec::with_capacity(children.len());
+    for mut child in children {
+        if child.tag == "form" {
+            let inner = std::mem::take(&mut child.children);
+            out.push(child);
+            out.extend(inner);
+        } else {
+            out.push(child);
+        }
+    }
+    table.children = out;
+}
+
+/// Apply the table fix-ups to `node`'s subtree.
+///
+/// Foster parenting first: content that may not sit in a table is moved out to
+/// just BEFORE the table, in order, as a sibling. `<div><table>stray<tr>…`
+/// becomes `<div>stray<table><tbody><tr>…` — which is what Chrome produces, and
+/// why the text used to render inside the table box instead of above it.
+fn normalize_tables(node: &mut WebCore) {
+    for child in &mut node.children {
+        normalize_tables(child);
+    }
+    if !node.children.iter().any(|c| c.tag == "table") { return; }
+    // In place, by index: a `WebCore` is ~4KB and this recurses once per level,
+    // so moving nodes through locals put kilobytes on the stack per element and
+    // a deep page overflowed before it finished parsing.
+    let mut i = 0;
+    while i < node.children.len() {
+        if node.children[i].tag != "table" {
+            i += 1;
+            continue;
+        }
+        // Foster parenting: content that may not sit in a table moves out to
+        // just BEFORE the table, in order, as a sibling.
+        let mut fostered: Vec<WebCore> = Vec::new();
+        let mut k = 0;
+        while k < node.children[i].children.len() {
+            if allowed_in_table(&node.children[i].children[k]) {
+                k += 1;
+            } else {
+                fostered.push(node.children[i].children.remove(k));
+            }
+        }
+        hoist_table_form_children(&mut node.children[i]);
+        group_rows_into_tbody(&mut node.children[i]);
+        let moved = fostered.len();
+        node.children.splice(i..i, fostered);
+        i += moved + 1;
+    }
+}
+
 // ─── Apply presentational attributes ───────────────────────────────────────
+
+/// Apply a presentational hint through the element's `style` attribute,
+/// WITHOUT overwriting a declaration the author already wrote there.
+///
+/// The style attribute is the only place a parse-time value survives: the
+/// cascade rebuilds `node.style` from scratch, so writing the hint directly
+/// onto the computed style loses it to the UA sheet. Writing the attribute is
+/// therefore how the hint has to travel — but it must be written ONCE.
+/// Appending unconditionally made `rows="3"` add `height:4.2em` on every
+/// serialize → reparse cycle, so a saved-and-reloaded page grew
+/// `style="height:4.2em;height:4.2em;…"` without bound.
+///
+/// Skipping when the property is already present also gives the hint the right
+/// PRECEDENCE for free: an author's own `style="height:10px"` stays.
+fn add_presentational_style(node: &mut WebCore, prop: &str, value: &str) {
+    let existing = node.attributes.get("style").cloned().unwrap_or_default();
+    let already = existing.split(';').any(|d| {
+        d.split(':').next().map(|k| k.trim().eq_ignore_ascii_case(prop)).unwrap_or(false)
+    });
+    if already { return; }
+    let decl = format!("{}:{}", prop, value);
+    node.attributes.insert(
+        "style".into(),
+        if existing.trim().is_empty() { decl } else { format!("{};{}", existing, decl) },
+    );
+}
 
 fn apply_presentational_attrs(node: &mut WebCore) {
     let attrs = node.attributes.clone();
@@ -789,7 +1198,16 @@ fn apply_presentational_attrs(node: &mut WebCore) {
         }
     }
 
-    for (attr, val) in &attrs {
+    // Sorted, because `attrs` is a HashMap and two presentational attributes on
+    // one element can map to the SAME property — `bgcolor` and
+    // `background-color` both set the background, `size` and `width` both size
+    // an `<input>`. Applied in hash order, which element won was decided by the
+    // process's hash seed, the same way declaration blocks were before
+    // `css::Declarations`. Sorting is not the spec's order, but it is an order:
+    // the same document renders the same way twice.
+    let mut ordered_attrs: Vec<(&String, &String)> = attrs.iter().collect();
+    ordered_attrs.sort_by(|a, b| a.0.cmp(b.0));
+    for (attr, val) in ordered_attrs {
         match attr.as_str() {
             "align" => match val.as_str() {
                 "center"  => apply_property(&mut node.style, "text-align", "center"),
@@ -850,20 +1268,21 @@ fn apply_presentational_attrs(node: &mut WebCore) {
                     node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
                 }
             }
+            // `rows`/`cols` are presentational HINTS. They apply to the
+            // computed style directly and must NOT be written into the `style`
+            // ATTRIBUTE: an author's inline style is a document fact, and
+            // appending to it made the hint reappear on every serialize →
+            // reparse cycle (`style="height:4.2em;height:4.2em;…"`), growing
+            // without bound. It also silently outranked the author's own CSS,
+            // which is the opposite of what a hint does.
             "rows" if tag == "textarea" => {
                 if let Ok(n) = val.parse::<f32>() {
-                    let h = n * 1.4;
-                    let style_str = format!("height:{}em", h);
-                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
-                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                    add_presentational_style(node, "height", &format!("{}em", n * 1.4));
                 }
             }
             "cols" if tag == "textarea" => {
                 if let Ok(n) = val.parse::<f32>() {
-                    let w = n * 0.6;
-                    let style_str = format!("width:{}em", w);
-                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
-                    node.attributes.insert("style".into(), if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
+                    add_presentational_style(node, "width", &format!("{}em", n * 0.6));
                 }
             }
             "size" if tag == "font" => {
@@ -999,6 +1418,27 @@ struct HtmlParser {
     /// would happily re-enter head parsing halfway down a page and swallow
     /// markup that belongs in the body.
     head_closed: bool,
+    /// The head's ELEMENT children, in source order.
+    ///
+    /// The head's contents were consumed and thrown away — the title lifted
+    /// into `Document.title`, the stylesheets into the cascade — so `<head>`
+    /// was an empty element and `querySelector("title")` answered nothing in a
+    /// document that plainly had one. Consuming and keeping are not exclusive:
+    /// the title still lands in `Document.title` and the CSS still reaches the
+    /// cascade, and the nodes exist so the DOM can name them. Nothing here
+    /// renders — `head` is `display: none` in the UA sheet, so its subtree
+    /// never reaches layout.
+    head_children: Vec<WebCore>,
+    /// Formatting elements closed implicitly and waiting to be re-opened —
+    /// HTML §13.2.4.3's "list of active formatting elements", reconstructed
+    /// lazily when content arrives.
+    ///
+    /// On the PARSER rather than in `parse_children_into`, because a formatting
+    /// element can be closed by an end tag that also ends the element that
+    /// function was collecting children for. `<section><b>x</section>y` closes
+    /// `<b>` and `<section>` together; the pending `<b>` has to survive the
+    /// return so `y` is still bold at the level above.
+    pending_format: Vec<WebCore>,
 }
 
 impl HtmlParser {
@@ -1015,7 +1455,42 @@ impl HtmlParser {
             on_open_tag: None,
             on_script: None,
             head_closed: false,
+            head_children: Vec::new(),
+            pending_format: Vec::new(),
         }
+    }
+
+    /// Record a head element (`title`/`meta`/`link`/`style`/`base`) as a node.
+    /// `text` is the element's text content, empty for the void ones.
+    /// Wrap freshly-appended nodes in the formatting elements waiting to be
+    /// reconstructed, outermost first.
+    ///
+    /// The element stack in `parse_children_into` re-opens a pending formatting
+    /// element by pushing a FRAME; a document-level loop has no stack, so it
+    /// wraps instead. Same rule, same result for the shape that reaches here:
+    /// `<section><b>x</section>y` leaves `y` inside a fresh `<b>`.
+    /// `had_pending` must be sampled BEFORE the token was processed: a token
+    /// can CREATE the pending entry itself — `</section>` in
+    /// `<section><b>x</section>` closes the `<b>` — and the element it closed
+    /// must not then be wrapped in a copy of it.
+    fn reconstruct_into(&mut self, children: &mut Vec<WebCore>, from: usize, had_pending: bool) {
+        if !had_pending || self.pending_format.is_empty() || children.len() <= from { return; }
+        let inner: Vec<WebCore> = children.drain(from..).collect();
+        let mut wrapped = inner;
+        for tpl in std::mem::take(&mut self.pending_format).into_iter().rev() {
+            let mut node = tpl;
+            node.children = wrapped;
+            wrapped = vec![node];
+        }
+        children.extend(wrapped);
+    }
+
+    fn push_head_node(&mut self, tag: &str, attrs: HashMap<String, String>, text: String) {
+        let mut node = self.new_box(tag);
+        node.attributes = attrs;
+        node.text = text;
+        apply_property(&mut node.style, "display", "none");
+        self.head_children.push(node);
     }
 
     /// Create an WebCore with a fresh sequential node_id.
@@ -1062,6 +1537,18 @@ impl HtmlParser {
             ol_counter: i32,
         }
 
+        /// Re-open the formatting elements an end tag closed out from under.
+        ///
+        /// HTML §13.2.4.3's "reconstruct the active formatting elements", run
+        /// LAZILY like the spec does: the templates sit in `pending` until real
+        /// content arrives, so `<p><b>1<i>2</b></p>` does not gain a stray empty
+        /// `<i>`. Outermost first, which is the order `pending` is built in.
+        fn reconstruct(stack: &mut Vec<Frame>, pending: &mut Vec<WebCore>) {
+            for tpl in pending.drain(..) {
+                stack.push(Frame { parent_tag: tpl.tag.clone(), node: tpl, ol_counter: 0 });
+            }
+        }
+
         // Bottom frame collects the top-level children that will be returned.
         let mut stack: Vec<Frame> = Vec::new();
         stack.push(Frame {
@@ -1083,11 +1570,86 @@ impl HtmlParser {
                     // the matching ancestor, or ignore if truly stray).
                     let match_idx = stack.iter().rposition(|f| f.parent_tag == tag);
 
+                    // The adoption agency's "furthest block" case: a BLOCK was
+                    // opened inside a formatting element and is still open when
+                    // the formatting element ends — `<b>1<p>2</b>3</p>`.
+                    //
+                    // Reconstruction is not enough here, because the block has
+                    // to come OUT of the formatting element: the answer is
+                    // `<b>1</b><p><b>2</b>3</p>`, where the block is now a
+                    // SIBLING of `<b>` and carries a copy of it around the
+                    // content it already had. Closing normally instead nested
+                    // the block inside `<b>` and left `3` outside the `<p>`
+                    // entirely.
+                    let furthest_block = match_idx.filter(|_| is_formatting_element(&tag))
+                        .and_then(|idx| {
+                            stack.iter().enumerate().skip(idx + 1)
+                                .find(|(_, f)| is_special_element(&f.parent_tag))
+                                .map(|(i, _)| i)
+                        });
+
+                    if let (Some(idx), Some(fb_idx)) = (match_idx, furthest_block) {
+                        // Everything above the block closes into it as usual.
+                        while stack.len() > fb_idx + 1 {
+                            let frame = stack.pop().unwrap();
+                            if is_formatting_element(&frame.parent_tag) {
+                                let mut fresh = self.new_box(&frame.parent_tag);
+                                fresh.attributes = frame.node.attributes.clone();
+                                fresh.style = frame.node.style.clone();
+                                self.pending_format.insert(0, fresh);
+                            }
+                            let mut node = frame.node;
+                            Self::post_process_node(&mut node, &self.base_url);
+                            stack.last_mut().unwrap().node.children.push(node);
+                        }
+                        self.pos += 1;
+                        let mut fb = stack.pop().unwrap();
+                        // The block keeps its content, wrapped in a copy of the
+                        // formatting element it used to be inside.
+                        if !fb.node.children.is_empty() {
+                            let fmt = &stack[idx].node;
+                            let mut wrapper = self.new_box(&tag);
+                            wrapper.attributes = fmt.attributes.clone();
+                            wrapper.style = fmt.style.clone();
+                            wrapper.children = std::mem::take(&mut fb.node.children);
+                            fb.node.children = vec![wrapper];
+                        }
+                        // Anything between the formatting element and the block
+                        // closes normally; then the formatting element itself.
+                        while stack.len() > idx {
+                            let frame = stack.pop().unwrap();
+                            let mut node = frame.node;
+                            Self::post_process_node(&mut node, &self.base_url);
+                            if stack.is_empty() {
+                                // The formatting element was the bottom frame —
+                                // nothing to reparent into, so fall back to the
+                                // ordinary close.
+                                *children = node.children;
+                                return;
+                            }
+                            stack.last_mut().unwrap().node.children.push(node);
+                        }
+                        // The block stays OPEN, now a sibling of what closed.
+                        stack.push(fb);
+                        continue;
+                    }
+
                     if let Some(idx) = match_idx {
                         // Pop frames from top down to (and including) the match.
                         // Non-matching frames above the match are implicitly closed.
                         while stack.len() > idx + 1 {
                             let frame = stack.pop().unwrap();
+                            // A FORMATTING element closed this way is not really
+                            // over — it is re-opened after the end tag so the
+                            // text that follows keeps its formatting. Popped
+                            // innermost-first, so each goes at the FRONT to keep
+                            // the original nesting order on the way back in.
+                            if is_formatting_element(&frame.parent_tag) {
+                                let mut fresh = self.new_box(&frame.parent_tag);
+                                fresh.attributes = frame.node.attributes.clone();
+                                fresh.style = frame.node.style.clone();
+                                self.pending_format.insert(0, fresh);
+                            }
                             let mut node = frame.node;
                             Self::post_process_node(&mut node, &self.base_url);
                             stack.last_mut().unwrap().node.children.push(node);
@@ -1103,13 +1665,33 @@ impl HtmlParser {
                         let mut node = frame.node;
                         Self::post_process_node(&mut node, &self.base_url);
                         stack.last_mut().unwrap().node.children.push(node);
+                    } else if tag == "p" {
+                        // `</p>` with no open `<p>` is not ignored: the spec
+                        // inserts an element for a `<p>` START tag and then
+                        // closes it, so `<p><div>x</div></p>` ends with an
+                        // EMPTY paragraph after the div. Every browser has it.
+                        self.pos += 1;
+                        let mut node = self.new_box("p");
+                        apply_property(&mut node.style, "display", default_display("p"));
+                        stack.last_mut().unwrap().node.children.push(node);
                     } else {
                         // Stray close tag with no matching open — ignore it.
                         self.pos += 1;
                     }
                 }
 
-                Some(Token::Comment) | Some(Token::Doctype) => {
+                Some(Token::Comment(data)) => {
+                    // A comment is a NODE. It was dropped at the token, so
+                    // `<div>a<!--x-->b</div>` reached the DOM as `ab` and no
+                    // comment could ever be read back or serialised.
+                    self.pos += 1;
+                    let mut node = self.new_box("#comment");
+                    node.text = data;
+                    apply_property(&mut node.style, "display", "none");
+                    stack.last_mut().unwrap().node.children.push(node);
+                }
+
+                Some(Token::Doctype) => {
                     self.pos += 1;
                 }
 
@@ -1126,6 +1708,9 @@ impl HtmlParser {
                         || text_val == " "
                         || text_val == "\n";
                     if keep {
+                        // Content arriving is what makes a pending formatting
+                        // element real — see `reconstruct`.
+                        reconstruct(&mut stack, &mut self.pending_format);
                         let mut text_node = self.new_box("#text");
                         text_node.text = text_val;
                         stack.last_mut().unwrap().node.children.push(text_node);
@@ -1133,6 +1718,23 @@ impl HtmlParser {
                 }
 
                 Some(Token::OpenTag { tag, attrs, self_closing }) => {
+                    // The BOTTOM frame is the element the CALLER already opened,
+                    // so this call cannot pop it — closing it means returning and
+                    // letting the caller finish the node and re-read this token at
+                    // its own level. The auto-close loop further down only reaches
+                    // frames this call pushed (`stack.len() > 1`), so without this
+                    // the implicit close silently did not happen for the element a
+                    // recursion started on: `<p>a<div>b` nested the div inside the
+                    // p, and `<p>a<p>b` nested p in p. `<body><p>a<div>` was right
+                    // only because the body arm gives the stack a second frame.
+                    // That makes the bug fire on exactly the shape `set_inner_html`
+                    // and every generated fragment produce — markup with no <body>.
+                    if stack.len() == 1
+                        && (should_auto_close(&stack[0].parent_tag, &tag)
+                            || (stack[0].parent_tag == "select" && closes_select(&tag)))
+                    {
+                        break; // token NOT consumed; the caller sees it next
+                    }
                     self.pos += 1;
 
                     // Script/noscript: give the host first chance to handle it.
@@ -1140,10 +1742,26 @@ impl HtmlParser {
                     // as fallback HTML, script is discarded.
                     if matches!(tag.as_str(), "script" | "noscript") {
                         let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
+                        // The ELEMENT stays in the DOM with its source as a text
+                        // child, whatever the host does with the content.
+                        // Dropping it meant `document.scripts` was empty and a
+                        // `<script>` could not be found, moved or re-read — and
+                        // `<script>` is `display: none`, so nothing is drawn.
+                        let mut script_node = self.new_box(&tag);
+                        script_node.attributes = attrs.clone();
+                        script_node.text = content.clone();
+                        apply_property(&mut script_node.style, "display", "none");
+                        stack.last_mut().unwrap().node.children.push(script_node);
                         let host_handled = if let Some(ref mut f) = self.on_script {
                             f(&tag, &attrs, &content)
                         } else { false };
-                        if !host_handled && tag == "noscript" && !content.is_empty() {
+                        // Scripting is ENABLED, so `<noscript>` is RAWTEXT: its
+                        // content is the text above and is NOT parsed. Parsing
+                        // it as fallback markup is the scripting-DISABLED
+                        // behaviour, and doing both put the same content in the
+                        // tree twice — once as text, once as elements.
+                        let parse_noscript_fallback = false;
+                        if parse_noscript_fallback && !host_handled && tag == "noscript" && !content.is_empty() {
                             // Parse noscript content as HTML and insert into current frame
                             let inner_tokens = tokenize(&content);
                             let mut inner_parser = HtmlParser::new(inner_tokens);
@@ -1217,28 +1835,46 @@ impl HtmlParser {
                         if !self_closing { self.skip_until_close(&tag); }
                         continue;
                     }
-                    // Style block: extract CSS
-                    // Inside <template shadowrootmode>, keep <style> as a node
-                    // (will be extracted into shadow stylesheet by post_process_node)
+                    // Style block: the CSS goes to the cascade AND the element
+                    // stays in the tree.
+                    //
+                    // Only a `<style>` inside `<template shadowrootmode>` used
+                    // to become a node, so `querySelector("style")` answered
+                    // something in a shadow template and nothing on an ordinary
+                    // page — the same element, present or absent depending on
+                    // where it was written. It is `display: none` in the UA
+                    // sheet, so keeping it changes nothing that is drawn.
+                    //
+                    // The template case still skips the cascade: those rules
+                    // are scoped to the shadow root and `post_process_node`
+                    // lifts them into its stylesheet.
                     if tag == "style" {
+                        // The NODE keeps the author's source; only the CASCADE
+                        // sees the normalized copy. Storing the normalized text
+                        // on the node meant `styleEl.textContent` came back
+                        // rewritten — an author's `18pt` read as `24.0000px` —
+                        // and a serialize/reparse round-trip rewrote the page's
+                        // own stylesheet.
                         let css = self.collect_raw_text_until("style");
-                        let css = normalize_css_text(&css);
-                        // Inside <template shadowrootmode>, keep <style> as a node
-                        // (will be extracted into shadow stylesheet by post_process_node)
                         let cur_parent = stack.last().map(|f| f.parent_tag.as_str()).unwrap_or(parent_tag);
-                        if cur_parent == "template" {
-                            let mut style_node = self.new_box("style");
-                            style_node.text = css;
-                            stack.last_mut().unwrap().node.children.push(style_node);
-                        } else {
-                            self.stylesheet.parse_and_add(&css);
+                        if cur_parent != "template" {
+                            self.stylesheet.parse_and_add(&normalize_css_text(&css));
                         }
+                        let mut style_node = self.new_box("style");
+                        style_node.text = css;
+                        apply_property(&mut style_node.style, "display", "none");
+                        stack.last_mut().unwrap().node.children.push(style_node);
                         continue;
                     }
-                    // Title
+                    // Title. A `<title>` met outside the head is a parse error
+                    // that the spec processes "using the rules for the in head
+                    // insertion mode" — so it belongs to the head element, not
+                    // to wherever it was written.
                     if tag == "title" {
                         let text = self.collect_raw_text_until("title");
                         self.title = text.trim().to_string();
+                        let title = self.title.clone();
+                        self.push_head_node("title", attrs, title);
                         continue;
                     }
 
@@ -1264,7 +1900,7 @@ impl HtmlParser {
                                     set_image_on_node(&mut node, data, w, h);
                                 }
                             }
-                            node.attributes.insert("_resolved_src".to_string(), resolved);
+                            node.resolved_src = resolved;
                         }
                     }
                     // Background image
@@ -1293,6 +1929,77 @@ impl HtmlParser {
                         node.style.list_style_type = ListStyleType::Disclosure;
                     }
 
+                    // `<a>` and `<nobr>` close a still-open element of their own
+                    // kind (HTML §13.2.6.4.7 runs the adoption agency for them
+                    // on the start tag). `<a href=1>1<a href=2>2</a>` is two
+                    // sibling links in every browser; nesting them made the
+                    // whole rest of the document a child of the first one.
+                    //
+                    // Formatting elements between the two are reconstructed, so
+                    // `<a>1<b>2<a>3` keeps `3` bold — the same rule as an end
+                    // tag, because that is what this effectively is.
+                    // "in select" (HTML §13.2.6.4.16): `<input>`, `<keygen>`,
+                    // `<textarea>` and a nested `<select>` are parse errors
+                    // handled as `</select>`, so the element lands AFTER the
+                    // select rather than inside it. Only those four — a `<div>`
+                    // in a select stays where it was written.
+                    if stack.last().map(|f| f.parent_tag == "select").unwrap_or(false)
+                        && closes_select(&tag)
+                    {
+                        // The `stack.len() == 1` case was handled before the
+                        // token was consumed, above.
+                        let frame = stack.pop().unwrap();
+                        let mut closed = frame.node;
+                        Self::post_process_node(&mut closed, &self.base_url);
+                        stack.last_mut().unwrap().node.children.push(closed);
+                    }
+
+                    // `<html>` and `<body>` start tags met again are parse
+                    // errors whose ATTRIBUTES merge onto the existing element;
+                    // they never create a second one. Building an element made
+                    // `<body class=a>…<body class=b>` give a document two
+                    // bodies, one nested in the other.
+                    if matches!(tag.as_str(), "html" | "body") {
+                        continue;
+                    }
+
+                    // A `<form>` while a form is open is IGNORED — the form
+                    // element pointer is already set, and the spec inserts
+                    // nothing (HTML §13.2.6.4.7). Nesting them gave a document
+                    // two form owners for the same controls.
+                    if tag == "form" && stack.iter().any(|f| f.parent_tag == "form") {
+                        continue;
+                    }
+
+                    // `<button>` joins `<a>`/`<nobr>`: a second `<button>` ends
+                    // the first rather than nesting inside it.
+                    //
+                    // `<table>` belongs here too — the "in table" mode closes an
+                    // open table on a nested `<table>` start tag — but only when
+                    // the open table is not the element this call was started
+                    // for. Handing that case back to the caller mid-stack needs
+                    // the token to be re-dispatched by the same insertion mode
+                    // that opened it, which this parser does not model yet; see
+                    // KNOWN_GAPS in `test_tree_construction`.
+                    if matches!(tag.as_str(), "a" | "nobr" | "button") {
+                        if let Some(idx) = stack.iter().rposition(|f| f.parent_tag == tag) {
+                            if idx > 0 {
+                                while stack.len() > idx {
+                                    let frame = stack.pop().unwrap();
+                                    if stack.len() > idx && is_formatting_element(&frame.parent_tag) {
+                                        let mut fresh = self.new_box(&frame.parent_tag);
+                                        fresh.attributes = frame.node.attributes.clone();
+                                        fresh.style = frame.node.style.clone();
+                                        self.pending_format.insert(0, fresh);
+                                    }
+                                    let mut closed = frame.node;
+                                    Self::post_process_node(&mut closed, &self.base_url);
+                                    stack.last_mut().unwrap().node.children.push(closed);
+                                }
+                            }
+                        }
+                    }
+
                     // HTML implicit closing: certain tags auto-close the
                     // current open element before opening a new one.
                     // Without this, unclosed <li>/<p>/<td>/etc. nest inside
@@ -1309,6 +2016,11 @@ impl HtmlParser {
                             break;
                         }
                     }
+
+                    // After the implicit closes, before the element goes in:
+                    // an element start tag is content too, so it re-opens any
+                    // formatting element still waiting.
+                    reconstruct(&mut stack, &mut self.pending_format);
 
                     if self_closing {
                         // Void element — post-process then push to current frame.
@@ -1380,7 +2092,9 @@ impl HtmlParser {
                 // Start with UA stylesheet so shadow tree gets default styles
                 let mut stylesheet = crate::css::ua_stylesheet();
                 if !shadow_css.is_empty() {
-                    stylesheet.parse_and_add(&shadow_css);
+                    // Author origin: a shadow root's own `<style>` outranks the
+                    // UA sheet it is layered on, the same as a document's.
+                    stylesheet.parse_and_add_author(&shadow_css);
                 }
                 node.shadow_root = Some(Box::new(crate::types::ShadowRoot {
                     children: shadow_children,
@@ -1406,72 +2120,52 @@ impl HtmlParser {
         // The selected option's text is shown inline; others are display:none.
         // When the dropdown opens, all options are rendered as a popup.
         if node.tag == "select" {
-            let mut selected_idx: usize = 0;
-            let mut _found_selected = false;
-            let mut opt_count = 0usize;
-            // Find which option is selected
-            for child in &node.children {
-                if child.tag == "option" {
-                    if child.attributes.contains_key("selected") {
-                        selected_idx = opt_count;
-                        _found_selected = true;
-                    }
-                    opt_count += 1;
-                } else if child.tag == "optgroup" {
-                    for gc in &child.children {
-                        if gc.tag == "option" {
-                            if gc.attributes.contains_key("selected") {
-                                selected_idx = opt_count;
-                                _found_selected = true;
-                            }
-                            opt_count += 1;
-                        }
-                    }
-                }
-            }
-            node.data.insert("_selected_idx".into(), selected_idx.to_string());
-            // Set all options to display:none except put the selected text as a visible child
-            // Keep the original options for the dropdown popup
-            let mut selected_text = String::new();
-            opt_count = 0;
-            for child in &mut node.children {
-                if child.tag == "option" {
-                    if opt_count == selected_idx {
-                        // Extract text for display
-                        for tc in &child.children {
-                            if tc.tag == "#text" { selected_text.push_str(&tc.text); }
-                        }
-                    }
-                    // All options hidden — shown only in dropdown popup
-                    apply_property(&mut child.style, "display", "none");
-                    opt_count += 1;
-                } else if child.tag == "optgroup" {
-                    apply_property(&mut child.style, "display", "none");
-                    for gc in &mut child.children {
-                        if gc.tag == "option" {
-                            if opt_count == selected_idx {
-                                for tc in &gc.children {
-                                    if tc.tag == "#text" { selected_text.push_str(&tc.text); }
-                                }
-                            }
-                            opt_count += 1;
-                        }
+            // `<option selected>` in the markup seeds SELECTEDNESS, exactly as
+            // `<input checked>` seeds checkedness, and the attribute stays put
+            // as the default a form reset restores to.
+            //
+            // Then the selectedness setting algorithm decides what a document
+            // with no `selected` anywhere shows. ⛔ Its auto-select step is
+            // guarded on a display size of 1, so a DROP-DOWN lands on its first
+            // enabled option and a LIST BOX is left with nothing selected —
+            // which is the state HTML says it starts in. This used to default
+            // an index to 0 unconditionally and every list box opened with a
+            // highlighted first row.
+            crate::html::forms::for_each_option_mut(node, &mut |option, _| {
+                option.selectedness = option.attributes.contains_key("selected");
+                option.dirty_selectedness = false;
+            });
+            crate::html::forms::run_selectedness_setting_algorithm(node);
+
+
+            // The options are hidden either way: a drop-down shows one label,
+            // and a list box's rows are painted by the control itself rather
+            // than laid out as boxes.
+            fn hide_options(node: &mut WebCore) {
+                for child in &mut node.children {
+                    if matches!(child.tag.as_str(), "option" | "optgroup") {
+                        apply_property(&mut child.style, "display", "none");
+                        hide_options(child);
                     }
                 }
             }
-            // Add a display text node for the currently selected option
-            let mut display_node = WebCore::new("#text");
-            display_node.text = selected_text.trim().to_string();
-            node.children.push(display_node);
+            hide_options(node);
+
+            // ⛔ NO display text node. A drop-down's label is not a child of
+            // the select — the author never wrote it, and inventing one put a
+            // text node in `childNodes` that doubled `textContent` and came
+            // back duplicated through every serialize/reparse round
+            // (`<option>Thin</option>Thin` became `ThinThin`).
+            //
+            // Nothing needed it: the painter reads the label straight off the
+            // option whose selectedness is set (`display_list_builder`), which
+            // is also the only reading that tracks a selection the user has
+            // changed since parse.
             // Set overflow hidden so options don't leak
             apply_property(&mut node.style, "overflow", "hidden");
         }
-        // <input>: save defaultValue for form reset, create text child for buttons
+        // <input>: seed the control's state from its content attributes.
         if node.tag == "input" {
-            // Save original value for form reset
-            if let Some(val) = node.attributes.get("value").cloned() {
-                node.attributes.entry("defaultValue".to_string()).or_insert(val);
-            }
             // `<input checked>` in the markup seeds CHECKEDNESS, and the
             // attribute stays as the default a reset restores to. The
             // `defaultChecked` attribute this used to invent was never a
@@ -1480,6 +2174,11 @@ impl HtmlParser {
             if node.attributes.contains_key("checked") {
                 node.checkedness = true;
             }
+            // "Invoke the value sanitization algorithm, if one is defined for
+            // the type attribute's state." For a range that is what turns a
+            // step-mismatched or out-of-bounds `value` into the number the
+            // control actually holds, before anything paints or reads it.
+            crate::html::forms::seed_input_value(node);
             let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
             match input_type {
                 "submit" | "button" | "reset" => {
@@ -1501,7 +2200,7 @@ impl HtmlParser {
                     // Image input: treat src like <img src>
                     if let Some(src) = node.attributes.get("src").cloned() {
                         let resolved = resolve_url(&src, base_url);
-                        node.attributes.insert("_resolved_src".into(), resolved);
+                        node.resolved_src = resolved;
                     }
                 }
                 _ => {}
@@ -1563,13 +2262,20 @@ impl HtmlParser {
         }
         if tag == "style" {
             let css = self.collect_raw_text_until("style");
-            let css = normalize_css_text(&css);
-            self.stylesheet.parse_and_add(&css);
+            self.stylesheet.parse_and_add(&normalize_css_text(&css));
+            // The element stays in the tree — see the sibling arm in
+            // `parse_children_into`.
+            let mut style_node = self.new_box("style");
+            style_node.text = css;
+            apply_property(&mut style_node.style, "display", "none");
+            children.push(style_node);
             return;
         }
         if tag == "title" {
             let text = self.collect_raw_text_until("title");
             self.title = text.trim().to_string();
+            let title = self.title.clone();
+            self.push_head_node("title", attrs, title);
             return;
         }
 
@@ -1622,7 +2328,7 @@ impl HtmlParser {
                         set_image_on_node(&mut node, data, w, h);
                     }
                 }
-                node.attributes.insert("_resolved_src".to_string(), resolved);
+                node.resolved_src = resolved;
             }
         }
         // Canvas/video/audio: set default dimensions from width/height attributes
@@ -1827,19 +2533,20 @@ fn resolve_picture_source(picture: &mut WebCore, base_url: &str, vw: f32, vh: f3
         // Find the child <img> and set its src + dimensions from the source
         for child in &mut picture.children {
             if child.tag == "img" {
-                let resolved = resolve_url(&url, base_url);
-                child.attributes.insert("src".to_string(), url);
-                child.attributes.insert("_resolved_src".to_string(), resolved);
+                // Only the RESOLVED url changes. `src` is the author's content
+                // attribute and picking a `<source>` does not rewrite it —
+                // `img.src` still reads back what the markup said, and the
+                // chosen candidate is what `currentSrc` reports. Overwriting
+                // the attribute made `<picture>` mutate the document.
+                child.resolved_src = resolve_url(&url, base_url);
                 // Transfer width/height from the matched <source> so the image
                 // is sized correctly (the <source> often has larger dimensions
-                // than the fallback <img>).
+                // than the fallback <img>). Applied to the STYLE, not to the
+                // width/height content attributes, for the same reason.
                 if let Some(ref w) = best_width {
-                    child.attributes.insert("width".to_string(), w.clone());
-                    // Also set CSS style so layout picks it up after cascade
                     crate::css::apply_property(&mut child.style, "width", &format!("{}px", w));
                 }
                 if let Some(ref h) = best_height {
-                    child.attributes.insert("height".to_string(), h.clone());
                     crate::css::apply_property(&mut child.style, "height", &format!("{}px", h));
                 }
                 break;
@@ -1885,50 +2592,98 @@ fn parse_head_content(parser: &mut HtmlParser) {
             }
             Some(Token::OpenTag { tag, attrs, self_closing }) => {
                 parser.pos += 1;
-                match tag.as_str() {
-                    "script" | "noscript" => {
-                        let content = if !self_closing { parser.collect_raw_text_until(&tag) } else { String::new() };
-                        if let Some(ref mut f) = parser.on_script {
-                            f(&tag, &attrs, &content);
-                        }
-                        // In <head>, noscript fallback content is not rendered.
-                    }
-                    "style" => {
-                        parser.fire_hook(&tag, &attrs);
-                        let css = parser.collect_raw_text_until("style");
-                        let css = normalize_css_text(&css);
-                        parser.stylesheet.parse_and_add(&css);
-                    }
-                    "title" => {
-                        parser.fire_hook(&tag, &attrs);
-                        let text = parser.collect_raw_text_until("title");
-                        parser.title = text.trim().to_string();
-                    }
-                    "link" => {
-                        let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
-                        let media = attrs.get("media").map(|s| s.as_str()).unwrap_or("");
-                        let is_print_only = media.eq_ignore_ascii_case("print");
-                        // Don't fire hook for print-only stylesheets — they
-                        // shouldn't be fetched/applied in screen rendering.
-                        if !(rel == "stylesheet" && is_print_only) {
-                            parser.fire_hook(&tag, &attrs);
-                        }
-                        let href = attrs.get("href").cloned().unwrap_or_default();
-                        if rel == "stylesheet" && !href.is_empty() {
-                            parser.linked_stylesheets.push((href, media.to_string()));
-                        }
-                    }
-                    _ => {
-                        parser.fire_hook(&tag, &attrs);
-                        if !self_closing {
-                            parser.skip_until_close(&tag);
-                        }
-                    }
+                if !handle_head_tag(parser, &tag, attrs, self_closing) {
+                    // Not head content, but we are inside an explicit <head>:
+                    // the spec's "in head" mode ignores it. Skip its subtree so
+                    // it does not leak into the head's children.
+                    if !self_closing { parser.skip_until_close(&tag); }
                 }
             }
             _ => { parser.pos += 1; }
         }
     }
+}
+
+/// Is this a tag the "in head" insertion mode owns?
+///
+/// Used both inside an explicit `<head>` and by the implied-head path — a
+/// document that opens with a bare `<style>` and never writes `<head>` still
+/// puts that style in the head, which is where `document.head.children` and
+/// every browser expect to find it.
+fn is_head_content_tag(tag: &str) -> bool {
+    matches!(tag, "script" | "noscript" | "style" | "title" | "link" | "meta"
+                | "base" | "template")
+}
+
+/// Process one "in head" start tag. Returns false if `tag` is not head content.
+fn handle_head_tag(
+    parser: &mut HtmlParser,
+    tag: &str,
+    attrs: HashMap<String, String>,
+    self_closing: bool,
+) -> bool {
+    match tag {
+        "script" | "noscript" => {
+            let content = if !self_closing { parser.collect_raw_text_until(tag) } else { String::new() };
+            if let Some(ref mut f) = parser.on_script {
+                f(tag, &attrs, &content);
+            }
+            // In <head>, noscript fallback content is not rendered.
+        }
+        "style" => {
+            parser.fire_hook(tag, &attrs);
+            let css = parser.collect_raw_text_until("style");
+            parser.stylesheet.parse_and_add(&normalize_css_text(&css));
+            parser.push_head_node("style", attrs, css);
+        }
+        "title" => {
+            parser.fire_hook(tag, &attrs);
+            let text = parser.collect_raw_text_until("title");
+            parser.title = text.trim().to_string();
+            let title = parser.title.clone();
+            parser.push_head_node("title", attrs, title);
+        }
+        "link" => {
+            let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+            let media = attrs.get("media").map(|s| s.as_str()).unwrap_or("");
+            let is_print_only = media.eq_ignore_ascii_case("print");
+            // Don't fire hook for print-only stylesheets — they
+            // shouldn't be fetched/applied in screen rendering.
+            if !(rel == "stylesheet" && is_print_only) {
+                parser.fire_hook(tag, &attrs);
+            }
+            let href = attrs.get("href").cloned().unwrap_or_default();
+            let media_owned = media.to_string();
+            let want_sheet = rel == "stylesheet" && !href.is_empty();
+            parser.push_head_node("link", attrs, String::new());
+            if want_sheet {
+                parser.linked_stylesheets.push((href, media_owned));
+            }
+        }
+        "meta" | "base" => {
+            parser.fire_hook(tag, &attrs);
+            parser.push_head_node(tag, attrs, String::new());
+        }
+        "template" => {
+            parser.fire_hook(tag, &attrs);
+            // The content is parsed and KEPT. `<template>` is head content, and
+            // its children are a staged fragment — skipping the subtree the way
+            // an unknown head tag is skipped threw the fragment away and let its
+            // contents leak into the body.
+            let mut node = parser.new_box("template");
+            node.attributes = attrs;
+            apply_property(&mut node.style, "display", "none");
+            if !self_closing {
+                let mut children = Vec::new();
+                let mut ol = 0i32;
+                parser.parse_children_into("template", &mut children, &mut ol);
+                node.children = children;
+            }
+            parser.head_children.push(node);
+        }
+        _ => return false,
+    }
+    true
 }
 
 // ─── html-level children parser ──────────────────────────────────────────────
@@ -1947,7 +2702,19 @@ fn parse_html_children(
                 parser.pos += 1;
                 break;
             }
-            Some(Token::CloseTag { .. }) | Some(Token::Comment) | Some(Token::Doctype) => {
+            Some(Token::Comment(data)) => {
+                parser.pos += 1;
+                // A comment BEFORE `<html>` is a child of the Document, not of
+                // the body — and this tree has no document node to hold it, so
+                // it is dropped rather than moved somewhere it does not belong.
+                if parser.head_closed {
+                    let mut node = parser.new_box("#comment");
+                    node.text = data;
+                    apply_property(&mut node.style, "display", "none");
+                    body_children.push(node);
+                }
+            }
+            Some(Token::CloseTag { .. }) | Some(Token::Doctype) => {
                 parser.pos += 1;
             }
             Some(Token::Text(t)) => {
@@ -1960,7 +2727,10 @@ fn parse_html_children(
                     parser.head_closed = true;
                     let mut node = parser.new_box("#text");
                     node.text = collapsed;
+                    let had_pending = !parser.pending_format.is_empty();
+                    let from = body_children.len();
                     body_children.push(node);
+                    parser.reconstruct_into(body_children, from, had_pending);
                 }
             }
             Some(Token::OpenTag { tag, attrs, self_closing }) => {
@@ -1985,8 +2755,24 @@ fn parse_html_children(
                             parser.parse_children_into("body", body_children, ol_counter);
                         }
                     }
+                    // Head content met before any body content belongs to the
+                    // IMPLIED head (§13.2.6.4.3 "before head" → "in head"),
+                    // even though the document never wrote `<head>`. A page
+                    // that opens with a bare `<style>` — which most of the
+                    // example pages do — was putting it in the body, so
+                    // `document.head` was empty and the element sat in the
+                    // flow. Chrome puts it in the head; so does this now.
+                    _ if !parser.head_closed && is_head_content_tag(&tag) => {
+                        handle_head_tag(parser, &tag, attrs, self_closing);
+                    }
                     _ => {
+                        // Anything else is body content, and body content ends
+                        // the implied head.
+                        parser.head_closed = true;
+                        let had_pending = !parser.pending_format.is_empty();
+                        let from = body_children.len();
                         parser.handle_tag(tag, attrs, self_closing, body_children, ol_counter);
+                        parser.reconstruct_into(body_children, from, had_pending);
                     }
                 }
                 // Suppress unused warning for html_box (it's passed by mut for possible future use)
@@ -2108,7 +2894,22 @@ fn parse_html_full(
     while parser.pos < parser.tokens.len() {
         match parser.tokens.get(parser.pos).cloned() {
             None => break,
-            Some(Token::Comment) | Some(Token::Doctype) => { parser.pos += 1; }
+            Some(Token::Doctype) => { parser.pos += 1; }
+            Some(Token::Comment(data)) => {
+                // A comment at document level is a NODE like any other. It was
+                // dropped here even after comments became nodes elsewhere, so
+                // `<p>x</p><!--c-->` lost its trailing comment.
+                parser.pos += 1;
+                // A comment BEFORE `<html>` is a child of the Document, not of
+                // the body — and this tree has no document node to hold it, so
+                // it is dropped rather than moved somewhere it does not belong.
+                if parser.head_closed {
+                    let mut node = parser.new_box("#comment");
+                    node.text = data;
+                    apply_property(&mut node.style, "display", "none");
+                    body_children.push(node);
+                }
+            }
             Some(Token::Text(t)) => {
                 parser.pos += 1;
                 let collapsed = collapse_whitespace(&t);
@@ -2119,12 +2920,24 @@ fn parse_html_full(
                     parser.head_closed = true;
                     let mut node = parser.new_box("#text");
                     node.text = collapsed;
+                    let had_pending = !parser.pending_format.is_empty();
+                    let from = body_children.len();
                     body_children.push(node);
+                    parser.reconstruct_into(&mut body_children, from, had_pending);
                 }
             }
             Some(Token::CloseTag { tag }) => {
                 parser.pos += 1;
                 if tag == "html" || tag == "body" { break; }
+                // `</p>` with nothing open inserts an empty paragraph — the
+                // same rule as inside an element, and documents hit it at top
+                // level too (`<p>a</p></p>` ends with an empty `<p>`).
+                if tag == "p" {
+                    parser.head_closed = true;
+                    let mut node = parser.new_box("p");
+                    apply_property(&mut node.style, "display", default_display("p"));
+                    body_children.push(node);
+                }
             }
             Some(Token::OpenTag { tag, attrs, self_closing }) => {
                 parser.pos += 1;
@@ -2167,9 +2980,22 @@ fn parse_html_full(
                             parser.parse_children_into("body", &mut body_children, &mut ol_counter);
                         }
                     }
+                    // Head content before any body content belongs to the
+                    // IMPLIED head — see the matching arm in
+                    // `parse_html_children`. Most of the example pages open
+                    // with a bare `<style>` and no `<head>` at all, and it was
+                    // landing in the body.
+                    _ if !parser.head_closed && is_head_content_tag(&tag) => {
+                        handle_head_tag(&mut parser, &tag, attrs, self_closing);
+                    }
                     _ => {
-                        // Content outside html/body goes into body
+                        // Content outside html/body goes into body, and ends
+                        // the implied head.
+                        parser.head_closed = true;
+                        let had_pending = !parser.pending_format.is_empty();
+                        let from = body_children.len();
                         parser.handle_tag(tag, attrs, self_closing, &mut body_children, &mut ol_counter);
+                        parser.reconstruct_into(&mut body_children, from, had_pending);
                     }
                 }
             }
@@ -2192,21 +3018,38 @@ fn parse_html_full(
     // what is rendered.
     let mut head_box = parser.new_box("head");
     apply_property(&mut head_box.style, "display", default_display("head"));
+    head_box.children = std::mem::take(&mut parser.head_children);
 
-    html_box.children = vec![head_box, body_box];
+    // §13.2.6.4.19 "in frameset" — a `<frameset>` REPLACES the body: the
+    // document element gets `head` and `frameset`, and there is no body at all.
+    // The frameset was landing inside a body, so `document.body` answered an
+    // element a frameset document does not have and the frames were nested a
+    // level too deep.
+    let frameset = body_box.children.iter().position(|c| c.tag == "frameset");
+    if let Some(at) = frameset {
+        let mut fs = body_box.children.remove(at);
+        apply_property(&mut fs.style, "display", "block");
+        html_box.children = vec![head_box, fs];
+    } else {
+        html_box.children = vec![head_box, body_box];
+    }
+
+    // §13.2.6.4.9 — table structure. Runs on the finished tree rather than
+    // inside the element stack because both halves need a table's PARENT:
+    // foster parenting moves a node out to become the table's sibling, and it
+    // has to happen before the rows are grouped or the stray content would be
+    // sealed inside the `<tbody>` that grouping creates.
+    normalize_tables(&mut html_box);
+    unwrap_misplaced_table_parts(&mut html_box);
 
     // Wire arena parent-child relationships to mirror the WebCore tree.
     wire_arena_children(&mut parser.arena, &html_box);
 
     // Build combined stylesheet (UA + author)
     let mut stylesheet = ua_stylesheet();
-    // Author rules must always win over UA rules regardless of selector specificity.
-    // Boost every author rule's specificity by a large constant so that even
-    // `* { padding: 0 }` (sp=0+100_000) beats `ul { padding-left: 40px }` (sp=1).
-    for mut rule in parser.stylesheet.rules {
-        rule.specificity = rule.specificity.saturating_add(100_000);
-        stylesheet.rules.push(rule);
-    }
+    // Author rules must always win over UA rules regardless of selector
+    // specificity — see `css::AUTHOR_ORIGIN_BOOST`.
+    stylesheet.push_author_rules(parser.stylesheet.rules);
     for (k, v) in parser.stylesheet.variables {
         stylesheet.variables.insert(k, v);
     }
@@ -2255,6 +3098,9 @@ fn parse_html_full(
         keyboard_focus:    false,
         caret_blink_epoch: std::time::Instant::now(), open_select: 0,
         open_picker: 0, dropdown_hover_idx: -1,
+        // Transient interaction state, like the two popups beside it: a freshly
+        // parsed document is holding nothing.
+        dragging_range: 0, range_drag_origin: String::new(),
         active_animations:     Vec::new(),
         transition_states:     std::collections::HashMap::new(),
         prev_styles:           std::collections::HashMap::new(),

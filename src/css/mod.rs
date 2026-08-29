@@ -15,7 +15,17 @@ pub enum SelectorPart {
     Universal,
     PseudoClass(String),
     PseudoElement(String),
-    Attribute { name: String, op: AttrOp, value: String },
+    /// `[name]`, `[name=value]`, and the rest, with Selectors §6.3's optional
+    /// case-sensitivity flag.
+    ///
+    /// `case_sensitive` is what the SELECTOR asked for, not what HTML defaults
+    /// to: `None` means the author wrote no flag and the document's own rule
+    /// applies, `Some(false)` is an explicit `i`, `Some(true)` an explicit `s`.
+    /// The distinction matters because HTML makes a set of attribute VALUES
+    /// case-insensitive on its own (`type`, `dir`, `align`, …) — the UA
+    /// stylesheet spells those `[type=hidden i]`, and without the flag the
+    /// parser folded the ` i` into the value and the rule matched nothing.
+    Attribute { name: String, op: AttrOp, value: String, case_sensitive: Option<bool> },
     Combinator(Combinator),
     /// :not(selector)
     Not(Box<CssSelector>),
@@ -29,6 +39,57 @@ pub enum SelectorPart {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttrOp { Exists, Eq, Contains, StartsWith, EndsWith, Includes, DashMatch }
+
+/// Is `name` a pseudo-class this engine RECOGNISES? Functional forms arrive
+/// spelled `nth-child(2n+1)`, so the name is taken up to the `(`.
+///
+/// Recognising is not the same as matching. `:valid` is on this list and always
+/// answers false, because constraint validation is not built yet — that is a
+/// missing FEATURE. `:bogus` is not on the list, which makes the selector
+/// INVALID, and an invalid selector takes its whole rule down with it
+/// (Selectors §3.1). The two have to be told apart before the matcher can stop
+/// failing open, or `input:invalid { border: red }` would drop every border it
+/// was meant to draw.
+///
+/// A vendor-prefixed name is treated as recognised-but-never-matching rather
+/// than invalid: `:-webkit-autofill` is a real pseudo-class in the engine whose
+/// User-Agent string we send, and dropping the author's rule outright is the
+/// more damaging of the two wrong answers.
+pub fn is_known_pseudo_class(name: &str) -> bool {
+    let base = name.split('(').next().unwrap_or(name);
+    if base.starts_with('-') { return true; }
+    matches!(base,
+        // Selectors §6 — structural
+        "root" | "empty" | "scope"
+        | "first-child" | "last-child" | "only-child"
+        | "first-of-type" | "last-of-type" | "only-of-type"
+        | "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type"
+        | "nth-col" | "nth-last-col"
+        // Selectors §4/§5 — logical and linguistic. `not`/`is`/`where`/`has`
+        // become their own SelectorPart and never reach here; they are listed
+        // so a bare `:is` without an argument list is still recognised.
+        | "not" | "is" | "where" | "has" | "matches" | "any"
+        | "dir" | "lang"
+        // Selectors §7 — location
+        | "any-link" | "link" | "visited" | "local-link" | "target" | "target-within"
+        // Selectors §8 — user action
+        | "hover" | "active" | "focus" | "focus-visible" | "focus-within"
+        // Selectors §9/§10 — time-dimensional and resource state
+        | "current" | "past" | "future"
+        | "playing" | "paused" | "seeking" | "buffering" | "stalled"
+        | "muted" | "volume-locked"
+        // HTML §4.16.3 and CSS-UI §3 — input state
+        | "enabled" | "disabled" | "read-only" | "read-write"
+        | "placeholder-shown" | "default" | "checked" | "indeterminate" | "blank"
+        | "valid" | "invalid" | "in-range" | "out-of-range"
+        | "required" | "optional" | "user-valid" | "user-invalid" | "autofill"
+        // HTML §4.16.3 — display state
+        | "fullscreen" | "modal" | "picture-in-picture" | "popover-open"
+        | "open" | "closed" | "heading"
+        // Shadow tree
+        | "host" | "host-context" | "defined" | "state" | "slotted"
+    )
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Combinator { Descendant, Child, AdjacentSibling, GeneralSibling }
@@ -45,6 +106,12 @@ pub struct CssSelector {
     /// True when selector is a single simple selector (`.class`, `tag`, `#id`) with
     /// no combinators. The candidate_rules index already matched it → skip full matching.
     pub is_simple: bool,
+    /// False when the selector contains something this engine does not
+    /// recognise — today, an unknown pseudo-class. Selectors §3.1 makes such a
+    /// selector invalid, and a rule whose selector list contains an invalid
+    /// selector is dropped entirely, so this is checked by the STYLESHEET
+    /// parser and not by the matcher.
+    pub valid: bool,
 }
 
 // ─── Bloom filter for fast ancestor rejection ────────────────────────────────
@@ -160,7 +227,14 @@ impl CssSelector {
                 SelectorPart::Combinator(_) | SelectorPart::PseudoClass(_) |
                 SelectorPart::PseudoElement(_) | SelectorPart::Attribute { .. }))
             && !has_hover && !has_active && !has_visited;
-        Self { parts, has_hover, has_active, has_visited, base_parts, is_simple }
+        Self { parts, has_hover, has_active, has_visited, base_parts, is_simple, valid: true }
+    }
+
+    /// `new`, but carrying a validity verdict the parser worked out.
+    pub fn new_checked(parts: Vec<SelectorPart>, valid: bool) -> Self {
+        let mut s = Self::new(parts);
+        s.valid = valid;
+        s
     }
 
     pub fn specificity(&self) -> u32 {
@@ -399,7 +473,7 @@ fn matches_part_with_context(
         SelectorPart::Class(cls) => attrs.get("class")
             .map(|s| s.split_whitespace().any(|c| c == cls))
             .unwrap_or(false),
-        SelectorPart::Attribute { name, op, value } => {
+        SelectorPart::Attribute { name, op, value, case_sensitive } => {
             // **An attribute NAME in a selector is ASCII case-insensitive for
             // an HTML document.** HTML folds attribute names on the way in, so
             // `[DATA-Foo]` and `[data-foo]` name the same attribute — and a
@@ -419,17 +493,30 @@ fn matches_part_with_context(
                     .find(|(key, _)| key.eq_ignore_ascii_case(name))
                     .map(|(_, v)| v)
             });
-            match found {
-                None     => false,
-                Some(av) => match op {
-                    AttrOp::Exists     => true,
-                    AttrOp::Eq         => av == value,
-                    AttrOp::Includes   => av.split_whitespace().any(|w| w == value),
-                    AttrOp::StartsWith => av.starts_with(value.as_str()),
-                    AttrOp::EndsWith   => av.ends_with(value.as_str()),
-                    AttrOp::Contains   => av.contains(value.as_str()),
-                    AttrOp::DashMatch  => av == value || av.starts_with(&format!("{}-", value)),
+            // Selectors §6.3. An explicit `s` forces case-sensitive matching,
+            // an explicit `i` forces case-insensitive; with no flag the value
+            // is matched case-sensitively, which is what HTML asks for on every
+            // attribute the UA sheet does not tag with `i`.
+            let fold = case_sensitive == &Some(false);
+            let av_owned;
+            let val_owned;
+            let (av_cmp, val_cmp): (&str, &str) = match found {
+                None => return false,
+                Some(av) if fold => {
+                    av_owned  = av.to_ascii_lowercase();
+                    val_owned = value.to_ascii_lowercase();
+                    (&av_owned, &val_owned)
                 }
+                Some(av) => (av.as_str(), value.as_str()),
+            };
+            match op {
+                AttrOp::Exists     => true,
+                AttrOp::Eq         => av_cmp == val_cmp,
+                AttrOp::Includes   => av_cmp.split_whitespace().any(|w| w == val_cmp),
+                AttrOp::StartsWith => av_cmp.starts_with(val_cmp),
+                AttrOp::EndsWith   => av_cmp.ends_with(val_cmp),
+                AttrOp::Contains   => av_cmp.contains(val_cmp),
+                AttrOp::DashMatch  => av_cmp == val_cmp || av_cmp.starts_with(&format!("{}-", val_cmp)),
             }
         }
         SelectorPart::Not(inner) => {
@@ -459,7 +546,21 @@ fn matches_part_with_context(
                 "last-of-type"  => ctx.type_child_index + 1 == ctx.type_sibling_count,
                 "only-of-type"  => ctx.type_sibling_count == 1,
                 "root"         => tag.eq_ignore_ascii_case("html"),
-                "empty"        => false, // can't tell from style alone
+                // Selectors §14.3 — no element children and no TEXT children.
+                // Comments and processing instructions do not count, which is
+                // why this asks `is_element`/`is_text_node` rather than
+                // `children.is_empty()`: since comments became real nodes,
+                // `<div><!--x--></div>` has a child and is still `:empty`.
+                //
+                // `html_box` is `None` when the subject is an ANCESTOR being
+                // matched for a combinator, and false is the right answer
+                // there: an `:empty` element has no descendants for the rest of
+                // the selector to have matched.
+                "empty" => match ctx.html_box {
+                    Some(b) => !b.children.iter().any(|c|
+                        c.is_element() || (c.is_text_node() && !c.text.is_empty())),
+                    None => false,
+                },
                 // Focus
                 "focus" => {
                     if ctx.focused_box != 0 {
@@ -506,8 +607,13 @@ fn matches_part_with_context(
                     ctx.html_box.map(|b| b.checkedness).unwrap_or_else(|| attrs.contains_key("checked"))
                         || attrs.contains_key("selected")
                 }
-                "disabled"   => attrs.contains_key("disabled"),
-                "enabled"    => !attrs.contains_key("disabled") && matches!(tag, "input" | "button" | "select" | "textarea"),
+                // Disabledness is INHERITED from a disabled `<fieldset>`
+                // (HTML §4.10.19.6), so the attribute on the element itself is
+                // only half the question. The ancestor chain carries each
+                // ancestor's attributes, which is what makes the second half
+                // answerable on the raw tag+attrs path as well as the box path.
+                "disabled"   => is_actually_disabled(tag, attrs, ancestors),
+                "enabled"    => is_form_control(tag) && !is_actually_disabled(tag, attrs, ancestors),
                 "read-only"  => attrs.contains_key("readonly") || !matches!(tag, "input" | "textarea" | "select" | "button"),
                 "read-write" => !attrs.contains_key("readonly") && matches!(tag, "input" | "textarea" | "select" | "button"),
                 // Link
@@ -524,7 +630,55 @@ fn matches_part_with_context(
                         false
                     }
                 }
-                "placeholder-shown" | "required" | "optional" | "valid" | "invalid" => false,
+                // HTML §4.16.3. `required`/`optional` are a partition over the
+                // controls that CAN be required — a `<div required>` is
+                // neither, and neither is an `<input type=button required>`.
+                "required" => is_requirable(tag, attrs) && attrs.contains_key("required"),
+                "optional" => is_requirable(tag, attrs) && !attrs.contains_key("required"),
+                // The placeholder is showing when there IS one and the control
+                // is empty. The box carries the live value; `value` is the
+                // fallback for the paths that match on bare tag+attrs.
+                "placeholder-shown" => {
+                    let has_placeholder = attrs.get("placeholder")
+                        .map(|p| !p.is_empty()).unwrap_or(false);
+                    if !has_placeholder || !matches!(tag, "input" | "textarea") { return false; }
+                    match ctx.html_box.and_then(|b| b.value_state.as_ref()) {
+                        Some(v) => v.is_empty(),
+                        None    => attrs.get("value").map(|v| v.is_empty()).unwrap_or(true),
+                    }
+                }
+                // A checkbox or radio put in the indeterminate state by script.
+                // It is NOT the `indeterminate` content attribute — there isn't
+                // one — so a box is the only place the answer can come from.
+                "indeterminate" => ctx.html_box
+                    .map(|b| b.data.get("indeterminate").map(|v| v == "true").unwrap_or(false))
+                    .unwrap_or(false),
+                // `:default` covers two things, and only one of them is
+                // answerable here. A checkbox, radio or option that was checked
+                // IN THE MARKUP is `:default` — the attribute, deliberately,
+                // not the current checkedness, so unticking a box does not stop
+                // it being the default.
+                //
+                // The other half is the form's DEFAULT BUTTON: the first submit
+                // button in tree order whose form owner is this form. That
+                // needs to compare an element against its siblings through a
+                // form owner, and the matcher is given one element plus its
+                // ancestors — so answering it here would mean "every submit
+                // button is the default", which is a wrong answer rather than a
+                // missing one. It is left out until the match context can carry
+                // the form.
+                "default" => match tag {
+                    "input"  => attrs.contains_key("checked"),
+                    "option" => attrs.contains_key("selected"),
+                    _ => false,
+                },
+                // Constraint validation is not implemented, so every one of
+                // these answers "no". They are RECOGNISED (see
+                // `is_known_pseudo_class`) so that `input:invalid { … }` keeps
+                // its rule instead of having it dropped as a syntax error —
+                // a missing feature, not an invalid selector.
+                "valid" | "invalid" | "in-range" | "out-of-range"
+                | "user-valid" | "user-invalid" | "blank" | "autofill" => false,
                 _ => {
                     // nth-child(expr) / nth-of-type(expr)
                     if let Some(inner) = pc.strip_prefix("nth-child(").and_then(|s| s.strip_suffix(')')) {
@@ -545,13 +699,75 @@ fn matches_part_with_context(
                     if pc.starts_with("host(") || pc.starts_with("host-context(") || pc == "host" {
                         return false;
                     }
-                    // Unknown pseudo-class: fail-open for forward compat
-                    true
+                    // Everything left is a pseudo-class this engine recognises
+                    // but has no state for — `:target` with no URL fragment,
+                    // `:modal`, `:fullscreen`, `:lang()`, the media-resource
+                    // ones. They do not match.
+                    //
+                    // This used to `return true` "for forward compat", which
+                    // meant `:target` matched EVERY element and any typo styled
+                    // the whole document. Selectors are validated at parse time
+                    // now (`is_known_pseudo_class`), so an unrecognised name has
+                    // already taken its rule down before reaching the matcher
+                    // and there is nothing left here to be lenient about.
+                    false
                 }
             }
         }
         SelectorPart::PseudoElement(_) => false, // pseudo-elements never match real elements
         SelectorPart::Combinator(_)    => true,
+    }
+}
+
+/// The elements `:enabled` / `:disabled` are defined over (HTML §4.16.3):
+/// form controls, plus `<fieldset>`, `<optgroup>` and `<option>`.
+fn is_form_control(tag: &str) -> bool {
+    matches!(tag, "input" | "button" | "select" | "textarea"
+                | "fieldset" | "optgroup" | "option")
+}
+
+/// Is this element disabled, counting a disabled `<fieldset>` ancestor?
+///
+/// HTML §4.10.19.6: a control inside a disabled `<fieldset>` is itself
+/// disabled, unless it sits in that fieldset's FIRST `<legend>`. The legend
+/// exemption needs to know which legend is first among its siblings, which the
+/// ancestor chain does record — `child_index` on the legend's own entry.
+fn is_actually_disabled(tag: &str, attrs: &HashMap<String, String>, ancestors: &[AncestorInfo]) -> bool {
+    if !is_form_control(tag) { return false; }
+    if attrs.contains_key("disabled") { return true; }
+    // Walk from the element outwards. A `<legend>` seen on the way up shields
+    // the element from the fieldset that legend belongs to — but only if it is
+    // that fieldset's first legend, and only for the fieldset immediately
+    // outside it.
+    let mut shielded_by_legend = false;
+    for anc in ancestors.iter().rev() {
+        if anc.tag == "legend" {
+            // The FIRST `<legend>` child, not the first child: in
+            // `<fieldset disabled><p>x</p><legend><input></legend>` the legend
+            // is child 1 and still shields. `type_child_index` counts among
+            // same-tag siblings, which is exactly that question.
+            shielded_by_legend = anc.type_child_index == 0;
+            continue;
+        }
+        if anc.tag == "fieldset" && anc.attributes.contains_key("disabled") && !shielded_by_legend {
+            return true;
+        }
+        shielded_by_legend = false;
+    }
+    false
+}
+
+/// Can this element be `required`? Only the controls that take the attribute —
+/// `:optional` is "requirable but not required", so a `<div>` is neither.
+fn is_requirable(tag: &str, attrs: &HashMap<String, String>) -> bool {
+    match tag {
+        "select" | "textarea" => true,
+        "input" => !matches!(
+            attrs.get("type").map(|s| s.to_ascii_lowercase()).as_deref(),
+            Some("hidden") | Some("range") | Some("color") | Some("submit")
+            | Some("image") | Some("reset") | Some("button")
+        ),
+        _ => false,
     }
 }
 
@@ -664,11 +880,94 @@ impl Default for PseudoElement {
     fn default() -> Self { Self::None }
 }
 
+/// How far an AUTHOR rule outranks a UA rule.
+///
+/// CSS Cascade §6.1 orders NORMAL declarations UA < user < author, and origin
+/// is checked before specificity — so author `* { padding: 0 }` (specificity 0)
+/// beats UA `ul { padding-left: 40px }` (specificity 1). Origin is encoded by
+/// adding this to every author rule's specificity, which keeps the whole
+/// cascade a single sorted list. Real specificities are three digits per
+/// component; nothing legitimate comes near 100 000.
+///
+/// For IMPORTANT declarations that order REVERSES (§6.3) — see
+/// [`is_author_origin`], which the `!important` passes use to apply UA rules
+/// LAST instead of first.
+pub const AUTHOR_ORIGIN_BOOST: u32 = 100_000;
+
+/// Was this matched rule's specificity boosted, i.e. does it come from an
+/// author stylesheet rather than the UA sheet?
+pub fn is_author_origin(specificity: u32) -> bool {
+    specificity >= AUTHOR_ORIGIN_BOOST
+}
+
+/// One declaration block, **in source order**.
+///
+/// CSS Cascade §6.4.4 breaks a tie between two declarations of equal origin and
+/// specificity by ORDER OF APPEARANCE — the later one wins. That is not a
+/// nicety: `border: 5px solid; border-top: none` and `margin: 20px;
+/// margin-top: 0` are ordinary CSS, and they only mean what they say if the
+/// shorthand is applied before the longhand that follows it.
+///
+/// This was a `HashMap<String, String>`, so the block was applied in hash
+/// order — and Rust's default hasher is seeded per PROCESS, so the order was
+/// different on every run. The two blocks above each flipped a coin at startup:
+/// `examples/html/subgrid.html` rendered 1978, 1979 or 1980 pixels tall
+/// depending on whether `border-top: none` happened to be applied before or
+/// after the `border` shorthand it was written to override.
+///
+/// A Vec keeps the order the parser saw. `insert` drops any earlier entry for
+/// the same property and appends, because a re-declared property takes the
+/// LATER position: in `border-top: dashed; border: 5px; border-top: none` the
+/// winning `border-top` is the one after the shorthand.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Declarations {
+    entries: Vec<(String, String)>,
+}
+
+impl Declarations {
+    pub fn new() -> Self { Self::default() }
+
+    /// Set `prop`, moving it to the end of the block.
+    pub fn insert(&mut self, prop: String, value: String) {
+        self.entries.retain(|(k, _)| k != &prop);
+        self.entries.push((prop, value));
+    }
+
+    pub fn get(&self, prop: &str) -> Option<&String> {
+        self.entries.iter().find(|(k, _)| k == prop).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, prop: &str) -> bool {
+        self.entries.iter().any(|(k, _)| k == prop)
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (String, String)> { self.entries.iter() }
+    pub fn keys(&self) -> impl Iterator<Item = &String> { self.entries.iter().map(|(k, _)| k) }
+    pub fn values(&self) -> impl Iterator<Item = &String> { self.entries.iter().map(|(_, v)| v) }
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+}
+
+impl<'a> IntoIterator for &'a Declarations {
+    type Item = &'a (String, String);
+    type IntoIter = std::slice::Iter<'a, (String, String)>;
+    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+}
+
+impl FromIterator<(String, String)> for Declarations {
+    fn from_iter<T: IntoIterator<Item = (String, String)>>(iter: T) -> Self {
+        let mut d = Declarations::new();
+        for (k, v) in iter { d.insert(k, v); }
+        d
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CssRule {
     pub selectors:           Vec<CssSelector>,
-    pub declarations:        HashMap<String, String>,
-    pub important_declarations: HashMap<String, String>,
+    pub declarations:        Declarations,
+    pub important_declarations: Declarations,
     /// Pre-resolved declarations: (PropertyId, value_string).
     /// Populated during `compile_declarations()`. Used by the cascade for
     /// fast enum dispatch instead of string matching.
@@ -690,8 +989,8 @@ impl Default for CssRule {
     fn default() -> Self {
         Self {
             selectors:           Vec::new(),
-            declarations:        HashMap::new(),
-            important_declarations: HashMap::new(),
+            declarations:        Declarations::new(),
+            important_declarations: Declarations::new(),
             compiled_decls:      Vec::new(),
             compiled_important:  Vec::new(),
             specificity:         0,
@@ -1182,6 +1481,30 @@ impl Stylesheet {
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
     /// `css_base_url` is the URL of the CSS file itself, used to resolve relative url()
     /// references (e.g. `url('../image.jpg')` in an external stylesheet).
+    /// Parse `css` as **author-origin** CSS and append it.
+    ///
+    /// The difference from `parse_and_add` is the origin: rules added this way
+    /// carry [`AUTHOR_ORIGIN_BOOST`], so they outrank the UA sheet the way an
+    /// author sheet must. `parse_and_add` builds the UA sheet itself and any
+    /// caller that seeds a stylesheet with `ua_stylesheet()` and then adds page
+    /// CSS wants THIS — otherwise a shadow root's own `<style>` loses to
+    /// `input { width: 200px }` on specificity alone.
+    pub fn parse_and_add_author(&mut self, css: &str) {
+        let before = self.rules.len();
+        self.parse_and_add(css);
+        for rule in &mut self.rules[before..] {
+            rule.specificity = rule.specificity.saturating_add(AUTHOR_ORIGIN_BOOST);
+        }
+    }
+
+    /// Append already-parsed rules as author-origin.
+    pub fn push_author_rules(&mut self, rules: impl IntoIterator<Item = CssRule>) {
+        for mut rule in rules {
+            rule.specificity = rule.specificity.saturating_add(AUTHOR_ORIGIN_BOOST);
+            self.rules.push(rule);
+        }
+    }
+
     pub fn parse_and_add_with_base(&mut self, css: &str, css_base_url: &str) {
         let resolved = resolve_css_urls(css, css_base_url);
         self.parse_and_add(&resolved);
@@ -1968,6 +2291,20 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
         let (declarations, important_declarations) = parse_declarations_important(decl_block);
         if declarations.is_empty() && important_declarations.is_empty() { continue; }
 
+        // A rule's selector list is NOT forgiving (Selectors §3.1): if any one
+        // selector in it is invalid, the entire rule is dropped — `div,
+        // p:bogus { color: red }` leaves `div` unstyled too. Checked over the
+        // whole list before a single rule is built, because the loop below
+        // emits one `CssRule` per comma-separated selector and would otherwise
+        // keep the good half.
+        let list_is_valid = split_selectors(selector_text).iter().all(|sel_str| {
+            let sel_str = sel_str.trim();
+            if sel_str.is_empty() { return true; }
+            let (sel_for_match, _) = strip_pseudo_element(sel_str);
+            parse_selector(&sel_for_match).valid
+        });
+        if !list_is_valid { continue; }
+
         // Split comma-separated selectors (respecting parentheses)
         for sel_str in split_selectors(selector_text) {
             let sel_str = sel_str.trim();
@@ -2129,9 +2466,9 @@ pub fn parse_declarations(block: &str) -> HashMap<String, String> {
 
 /// Parse declarations, splitting into (normal, important) maps.
 /// Properties with `!important` go into the second map.
-pub fn parse_declarations_important(block: &str) -> (HashMap<String, String>, HashMap<String, String>) {
-    let mut normal = HashMap::new();
-    let mut important = HashMap::new();
+pub fn parse_declarations_important(block: &str) -> (Declarations, Declarations) {
+    let mut normal = Declarations::new();
+    let mut important = Declarations::new();
     for decl in block.split(';') {
         let decl = decl.trim();
         if decl.is_empty() { continue; }
@@ -2182,6 +2519,10 @@ fn strip_important(val: &str) -> String {
 /// Parse a single CSS selector string into a CssSelector.
 pub fn parse_selector(s: &str) -> CssSelector {
     let mut parts = Vec::new();
+    // Selectors §3.1 — an unrecognised simple selector makes the whole complex
+    // selector invalid. Recorded rather than acted on here: whether that kills
+    // the rule depends on where the selector sits, and only the caller knows.
+    let mut valid = true;
     let mut chars = s.chars().peekable();
 
     while let Some(&ch) = chars.peek() {
@@ -2244,10 +2585,14 @@ pub fn parse_selector(s: &str) -> CssSelector {
                     let args = read_balanced_parens(&mut chars);
                     if !is_elem {
                         match name.as_str() {
+                            // `:not()` and `:has()` take a NON-forgiving list —
+                            // one unrecognised branch invalidates the selector
+                            // that contains them.
                             "not" => {
                                 let selectors: Vec<CssSelector> = args.split(',')
                                     .map(|s| parse_selector(s.trim()))
                                     .collect();
+                                if selectors.iter().any(|s| !s.valid) { valid = false; }
                                 if selectors.len() == 1 {
                                     parts.push(SelectorPart::Not(Box::new(selectors.into_iter().next().unwrap())));
                                 } else {
@@ -2257,23 +2602,33 @@ pub fn parse_selector(s: &str) -> CssSelector {
                                     }
                                 }
                             }
+                            // `:is()` and `:where()` take a FORGIVING list
+                            // (Selectors §3.5): an unrecognised branch drops
+                            // itself and the rest of the list still matches.
+                            // That is the whole point of them — `:is(a, :bogus)`
+                            // is how a page targets a selector some engines do
+                            // not have yet.
                             "is" => {
                                 let selectors: Vec<CssSelector> = args.split(',')
                                     .map(|s| parse_selector(s.trim()))
+                                    .filter(|s| s.valid)
                                     .collect();
                                 parts.push(SelectorPart::Is(selectors));
                             }
                             "where" => {
                                 let selectors: Vec<CssSelector> = args.split(',')
                                     .map(|s| parse_selector(s.trim()))
+                                    .filter(|s| s.valid)
                                     .collect();
                                 parts.push(SelectorPart::Where(selectors));
                             }
                             "has" => {
                                 let inner_sel = parse_selector(args.trim());
+                                if !inner_sel.valid { valid = false; }
                                 parts.push(SelectorPart::Has(Box::new(inner_sel)));
                             }
                             _ => {
+                                if !is_known_pseudo_class(&name) { valid = false; }
                                 let full_name = format!("{}({})", name, args);
                                 parts.push(SelectorPart::PseudoClass(full_name));
                             }
@@ -2285,14 +2640,15 @@ pub fn parse_selector(s: &str) -> CssSelector {
                 } else if is_elem {
                     parts.push(SelectorPart::PseudoElement(name));
                 } else {
+                    if !is_known_pseudo_class(&name) { valid = false; }
                     parts.push(SelectorPart::PseudoClass(name));
                 }
             }
             '[' => {
                 chars.next();
                 let attr_str: String = chars.by_ref().take_while(|&c| c != ']').collect();
-                let (name, op, value) = parse_attr_selector(&attr_str);
-                parts.push(SelectorPart::Attribute { name, op, value });
+                let (name, op, value, case_sensitive) = parse_attr_selector(&attr_str);
+                parts.push(SelectorPart::Attribute { name, op, value, case_sensitive });
             }
             '*' => {
                 chars.next();
@@ -2309,7 +2665,7 @@ pub fn parse_selector(s: &str) -> CssSelector {
         }
     }
 
-    CssSelector::new(parts)
+    CssSelector::new_checked(parts, valid)
 }
 
 fn read_ident(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
@@ -2372,26 +2728,68 @@ fn read_balanced_parens(chars: &mut std::iter::Peekable<std::str::Chars>) -> Str
     s
 }
 
-fn parse_attr_selector(s: &str) -> (String, AttrOp, String) {
-    if let Some(op_pos) = s.find("~=") {
-        return (s[..op_pos].trim().to_string(), AttrOp::Includes, strip_quotes(&s[op_pos+2..].trim()));
+fn parse_attr_selector(s: &str) -> (String, AttrOp, String, Option<bool>) {
+    let (name_and_value, op): (&str, AttrOp) = if let Some(p) = s.find("~=") {
+        (&s[p..], AttrOp::Includes)
+    } else if let Some(p) = s.find("|=") {
+        (&s[p..], AttrOp::DashMatch)
+    } else if let Some(p) = s.find("^=") {
+        (&s[p..], AttrOp::StartsWith)
+    } else if let Some(p) = s.find("$=") {
+        (&s[p..], AttrOp::EndsWith)
+    } else if let Some(p) = s.find("*=") {
+        (&s[p..], AttrOp::Contains)
+    } else if let Some(p) = s.find('=') {
+        (&s[p..], AttrOp::Eq)
+    } else {
+        // `[name]` — no value, so no flag either.
+        return (s.trim().to_string(), AttrOp::Exists, String::new(), None);
+    };
+    let op_len = if matches!(op, AttrOp::Eq) { 1 } else { 2 };
+    let name = s[..s.len() - name_and_value.len()].trim().to_string();
+    let (value, case_sensitive) = split_attr_flag(&name_and_value[op_len..]);
+    (name, op, value, case_sensitive)
+}
+
+/// Peel Selectors §6.3's trailing case-sensitivity flag off an attribute
+/// selector's value.
+///
+/// The flag is a bare `i` or `s` after the value, so it is only a flag when it
+/// stands alone: `[type=hidden i]` carries one and `[class~=hi]` does not, and
+/// `[title="i"]` does not either — a quoted value ends at its closing quote and
+/// anything after it is the flag, which is why the quoted case is checked
+/// first rather than trimmed away up front.
+fn split_attr_flag(raw: &str) -> (String, Option<bool>) {
+    let raw = raw.trim();
+    let flag_of = |c: char| match c {
+        'i' | 'I' => Some(Some(false)),
+        's' | 'S' => Some(Some(true)),
+        _ => None,
+    };
+    // Quoted value: the flag is whatever follows the closing quote.
+    if let Some(quote) = raw.chars().next().filter(|c| *c == '"' || *c == '\'') {
+        if let Some(end) = raw[1..].find(quote).map(|i| i + 1) {
+            let value = raw[1..end].to_string();
+            let rest = raw[end + 1..].trim();
+            let flag = if rest.chars().count() == 1 {
+                flag_of(rest.chars().next().unwrap()).unwrap_or(None)
+            } else {
+                None
+            };
+            return (value, flag);
+        }
     }
-    if let Some(op_pos) = s.find("|=") {
-        return (s[..op_pos].trim().to_string(), AttrOp::DashMatch, strip_quotes(&s[op_pos+2..].trim()));
+    // Unquoted value: a flag has to be separated from it by whitespace,
+    // otherwise `[lang=fi]` would read its own `i` as the flag.
+    if let Some((head, tail)) = raw.rsplit_once(char::is_whitespace) {
+        let tail = tail.trim();
+        if tail.chars().count() == 1 {
+            if let Some(flag) = flag_of(tail.chars().next().unwrap()) {
+                return (strip_quotes(head.trim()), flag);
+            }
+        }
     }
-    if let Some(op_pos) = s.find("^=") {
-        return (s[..op_pos].trim().to_string(), AttrOp::StartsWith, strip_quotes(&s[op_pos+2..].trim()));
-    }
-    if let Some(op_pos) = s.find("$=") {
-        return (s[..op_pos].trim().to_string(), AttrOp::EndsWith, strip_quotes(&s[op_pos+2..].trim()));
-    }
-    if let Some(op_pos) = s.find("*=") {
-        return (s[..op_pos].trim().to_string(), AttrOp::Contains, strip_quotes(&s[op_pos+2..].trim()));
-    }
-    if let Some(op_pos) = s.find('=') {
-        return (s[..op_pos].trim().to_string(), AttrOp::Eq, strip_quotes(&s[op_pos+1..].trim()));
-    }
-    (s.trim().to_string(), AttrOp::Exists, String::new())
+    (strip_quotes(raw), None)
 }
 
 fn strip_quotes(s: &str) -> String {
@@ -3481,7 +3879,7 @@ fn parse_length_inner(v: &str) -> CssLength {
         let args = split_top_level_commas(inner);
         if args.len() >= 2 {
             let vals: Vec<CssLength> = args.iter().map(|a| parse_length(a.trim())).collect();
-            return CssLength::Min(vals.into_boxed_slice());
+            return CssLength::Min(Box::new(vals));
         }
         return parse_length(inner);
     }
@@ -3489,7 +3887,7 @@ fn parse_length_inner(v: &str) -> CssLength {
         let args = split_top_level_commas(inner);
         if args.len() >= 2 {
             let vals: Vec<CssLength> = args.iter().map(|a| parse_length(a.trim())).collect();
-            return CssLength::Max(vals.into_boxed_slice());
+            return CssLength::Max(Box::new(vals));
         }
         return parse_length(inner);
     }
@@ -3499,7 +3897,7 @@ fn parse_length_inner(v: &str) -> CssLength {
             let min = parse_length(args[0].trim());
             let val = parse_length(args[1].trim());
             let max = parse_length(args[2].trim());
-            return CssLength::Clamp(Box::new(min), Box::new(val), Box::new(max));
+            return CssLength::Clamp(Box::new([min, val, max]));
         }
         // Fallback: treat as calc
         return parse_length(inner);
@@ -3547,7 +3945,7 @@ fn parse_calc(expr: &str) -> CssLength {
         if vals[5] != 0.0 { return CssLength::Vh(vals[5]); }
         return CssLength::Px(vals[1]);
     }
-    CssLength::Calc(vals)
+    CssLength::Calc(Box::new(vals))
 }
 
 /// Parse calc() expression into a CalcNode tree (handles nested min/max/clamp).
@@ -4716,7 +5114,7 @@ fn apply_container_cascade_inner(
             element_id: node.node_id,
             prev_siblings: &[],
         };
-        let mut cont_matched: Vec<(u32, HashMap<String, String>)> = Vec::new();
+        let mut cont_matched: Vec<(u32, Declarations)> = Vec::new();
         for rule in &stylesheet.rules {
             if rule.container_condition.is_empty() { continue; }
             if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) { continue; }
@@ -5244,13 +5642,18 @@ fn build_pseudo_style_shared(
             }
         }
     }
-    for &(_, ri) in matched.iter() {
-        for (prop, val) in &rules[ri].important_declarations {
-            let resolved = resolve_var_references(val, vars);
-            if prop == "content" {
-                content = resolve_content_value(&resolved);
-            } else {
-                apply_property(&mut ps, prop, &resolved);
+    // `!important` reverses the origin order (CSS Cascade §6.3): author first,
+    // then UA, so a UA `!important` on a pseudo-element still wins.
+    for author_pass in [true, false] {
+        for &(sp, ri) in matched.iter() {
+            if is_author_origin(sp) != author_pass { continue; }
+            for (prop, val) in &rules[ri].important_declarations {
+                let resolved = resolve_var_references(val, vars);
+                if prop == "content" {
+                    content = resolve_content_value(&resolved);
+                } else {
+                    apply_property(&mut ps, prop, &resolved);
+                }
             }
         }
     }
@@ -5291,9 +5694,9 @@ fn apply_cascade_inner(
         return;
     }
 
-    // Text nodes are not elements — they inherit from their parent but
-    // must never match CSS selectors (including `*`).
-    if root.tag == "#text" {
+    // Text and comment nodes are not elements — they inherit from their
+    // parent but must never match CSS selectors (including `*`).
+    if !root.is_element() {
         if let Some(p) = parent_style {
             root.style.inherit_from(p);
         }
@@ -5614,19 +6017,30 @@ fn apply_cascade_inner(
             }
         }
     }
-    // Second pass: !important declarations override everything (applied in specificity order).
-    for &(_, ri) in &matched {
-        let rule = &stylesheet.rules[ri];
-        if has_vars && rule.has_var_refs {
-            for (prop, val) in &rule.important_declarations {
-                if prop.starts_with("--") { continue; }
-                let resolved = resolve_var_references(val, &local_vars);
-                if resolved.trim().is_empty() && val.contains("var(") { continue; }
-                apply_property(&mut style, prop, &resolved);
-            }
-        } else {
-            for &(id, ref val) in &rule.compiled_important {
-                apply_css_value(&mut style, id, val);
+    // Second pass: `!important`, in CSS Cascade §6.3 order — which REVERSES the
+    // origin ranking. A UA `!important` beats an author `!important`, so the UA
+    // rules are applied LAST here even though they were applied first above.
+    // `matched` is sorted by boosted specificity, so filtering on origin keeps
+    // specificity order within each pass.
+    //
+    // Applying `matched` in one sweep let a page write
+    // `input[type=hidden] { display: block !important }` and reveal a hidden
+    // field — Chrome answers `display: none` there, and now so does this.
+    for author_pass in [true, false] {
+        for &(sp, ri) in &matched {
+            if is_author_origin(sp) != author_pass { continue; }
+            let rule = &stylesheet.rules[ri];
+            if has_vars && rule.has_var_refs {
+                for (prop, val) in &rule.important_declarations {
+                    if prop.starts_with("--") { continue; }
+                    let resolved = resolve_var_references(val, &local_vars);
+                    if resolved.trim().is_empty() && val.contains("var(") { continue; }
+                    apply_property(&mut style, prop, &resolved);
+                }
+            } else {
+                for &(id, ref val) in &rule.compiled_important {
+                    apply_css_value(&mut style, id, val);
+                }
             }
         }
     }
@@ -5713,7 +6127,7 @@ fn apply_cascade_inner(
         }
         (n, i)
     } else {
-        (HashMap::new(), HashMap::new())
+        (Declarations::new(), Declarations::new())
     };
     // Merge inline hover-* properties into hover_style
     if !inline_hover_props.is_empty() {
@@ -5729,20 +6143,29 @@ fn apply_cascade_inner(
         style.hover_style = Some(Box::new(hs));
     }
 
-    // Apply !important stylesheet declarations — these override inline styles
-    for &(_, ri) in &matched {
+    // `!important`, in CSS Cascade §6.4.1 order — bottom to top:
+    //   author sheet important → inline important → UA important.
+    // The style attribute is author origin, so it outranks author RULES but
+    // still loses to the UA sheet's `!important`; the UA pass therefore comes
+    // last, not first.
+    for &(sp, ri) in &matched {
+        if !is_author_origin(sp) { continue; }
         for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
             apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
-
-    // Apply inline style !important declarations — highest priority
     for (prop, val) in &inline_important {
         let resolved = resolve_var_references(val, &local_vars);
         if resolved.trim() == "inherit" {
             if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
         } else {
             apply_property(&mut style, prop, &resolved);
+        }
+    }
+    for &(sp, ri) in &matched {
+        if is_author_origin(sp) { continue; }
+        for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
+            apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
 
@@ -6005,10 +6428,10 @@ fn apply_cascade_inner(
         let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
             *type_running.get(tag.as_str()).unwrap_or(&0)
         }).collect();
-        let n_elem_children = children.iter().filter(|c| c.tag != "#text").count();
+        let n_elem_children = children.iter().filter(|c| c.is_element()).count();
         let mut elem_pos = 0usize;
         let elem_indices: Vec<usize> = children.iter().map(|c| {
-            if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+            if !c.is_element() { 0 } else { let p = elem_pos; elem_pos += 1; p }
         }).collect();
         // Track previous siblings for `+` and `~` combinator matching
         let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
@@ -6017,7 +6440,7 @@ fn apply_cascade_inner(
         // clone the cached style instead of running the full cascade.
         let mut style_cache: HashMap<(String, String), ComputedStyle> = HashMap::new();
         for (i, child) in children.iter_mut().enumerate() {
-            let (ci, ns) = if child.tag == "#text" {
+            let (ci, ns) = if !child.is_element() {
                 (i, n_children)
             } else {
                 (elem_indices[i], n_elem_children)
@@ -6025,7 +6448,7 @@ fn apply_cascade_inner(
 
             // Try style sharing before full cascade
             let child_class = child.attributes.get("class").cloned().unwrap_or_default();
-            let can_share = child.tag != "#text"
+            let can_share = child.is_element()
                 && child.tag != "::before" && child.tag != "::after"
                 && !child.attributes.contains_key("id")
                 && !child.attributes.contains_key("style")
@@ -6055,8 +6478,8 @@ fn apply_cascade_inner(
             if can_share && !style_cache.contains_key(&share_key) {
                 style_cache.insert(share_key, child.style.clone());
             }
-            // Record this child as a previous sibling (skip text nodes)
-            if child.tag != "#text" {
+            // Record this child as a previous sibling (skip non-elements)
+            if child.is_element() {
                 let id = child.attributes.get("id").cloned().unwrap_or_default();
                 let cls = child.attributes.get("class").cloned().unwrap_or_default();
                 prev_siblings.push((child.tag.clone(), id, cls));
@@ -6146,8 +6569,8 @@ fn flatten_tree_for_cascade(
     out: &mut Vec<CascadeWorkItem>,
 ) {
     if ancestors.len() >= MAX_CASCADE_DEPTH { return; }
-    // Skip text nodes and pseudo-elements — they don't match CSS selectors.
-    if node.tag == "#text" || node.tag == "::before" || node.tag == "::after" {
+    // Skip non-elements and pseudo-elements — they don't match CSS selectors.
+    if !node.is_element() || node.tag == "::before" || node.tag == "::after" {
         return;
     }
 
@@ -6191,14 +6614,14 @@ fn flatten_tree_for_cascade(
         let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
             *type_running.get(tag.as_str()).unwrap_or(&0)
         }).collect();
-        let n_elem_children = node.children.iter().filter(|c| c.tag != "#text").count();
+        let n_elem_children = node.children.iter().filter(|c| c.is_element()).count();
         let mut elem_pos = 0usize;
         let elem_indices: Vec<usize> = node.children.iter().map(|c| {
-            if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+            if !c.is_element() { 0 } else { let p = elem_pos; elem_pos += 1; p }
         }).collect();
 
         for (i, child) in node.children.iter().enumerate() {
-            let (ci, ns) = if child.tag == "#text" {
+            let (ci, ns) = if !child.is_element() {
                 (i, n_children)
             } else {
                 (elem_indices[i], n_elem_children)
@@ -6344,7 +6767,7 @@ fn apply_matched_results(
         return;
     }
 
-    if root.tag == "#text" {
+    if !root.is_element() {
         if let Some(p) = parent_style {
             root.style.inherit_from(p);
         }
@@ -6592,7 +7015,7 @@ fn apply_matched_results(
         }
         (n, i)
     } else {
-        (HashMap::new(), HashMap::new())
+        (Declarations::new(), Declarations::new())
     };
     if !inline_hover_props.is_empty() {
         let mut hs = if let Some(existing) = style.hover_style.take() {
@@ -6607,20 +7030,25 @@ fn apply_matched_results(
         style.hover_style = Some(Box::new(hs));
     }
 
-    // !important stylesheet declarations
-    for &(_, ri) in &matched {
+    // `!important`, CSS Cascade §6.4.1 order: author sheet → inline → UA.
+    for &(sp, ri) in &matched {
+        if !is_author_origin(sp) { continue; }
         for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
             apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
-
-    // !important inline declarations
     for (prop, val) in &inline_important {
         let resolved = resolve_var_references(val, local_vars);
         if resolved.trim() == "inherit" {
             if let Some(p) = parent_style { copy_property_from_parent(&mut style, p, prop); }
         } else {
             apply_property(&mut style, prop, &resolved);
+        }
+    }
+    for &(sp, ri) in &matched {
+        if is_author_origin(sp) { continue; }
+        for &(id, ref val) in &stylesheet.rules[ri].compiled_important {
+            apply_css_value_with_vars(&mut style, id, val, &local_vars);
         }
     }
 
@@ -6888,13 +7316,13 @@ fn cascade_children_parallel(
     let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
         *type_running.get(tag.as_str()).unwrap_or(&0)
     }).collect();
-    let n_elem_children = children.iter().filter(|c| c.tag != "#text").count();
+    let n_elem_children = children.iter().filter(|c| c.is_element()).count();
     let mut elem_pos = 0usize;
     let elem_indices: Vec<usize> = children.iter().map(|c| {
-        if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+        if !c.is_element() { 0 } else { let p = elem_pos; elem_pos += 1; p }
     }).collect();
     for (i, child) in children.iter_mut().enumerate() {
-        let (ci, ns) = if child.tag == "#text" {
+        let (ci, ns) = if !child.is_element() {
             (i, n_children)
         } else {
             (elem_indices[i], n_elem_children)
@@ -6937,13 +7365,13 @@ fn cascade_children_sequential(
     let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
         *type_running.get(tag.as_str()).unwrap_or(&0)
     }).collect();
-    let n_elem_children = children.iter().filter(|c| c.tag != "#text").count();
+    let n_elem_children = children.iter().filter(|c| c.is_element()).count();
     let mut elem_pos = 0usize;
     let elem_indices: Vec<usize> = children.iter().map(|c| {
-        if c.tag == "#text" { 0 } else { let p = elem_pos; elem_pos += 1; p }
+        if !c.is_element() { 0 } else { let p = elem_pos; elem_pos += 1; p }
     }).collect();
     for (i, child) in children.iter_mut().enumerate() {
-        let (ci, ns) = if child.tag == "#text" {
+        let (ci, ns) = if !child.is_element() {
             (i, n_children)
         } else {
             (elem_indices[i], n_elem_children)
@@ -7011,10 +7439,24 @@ pub fn ua_stylesheet() -> Stylesheet {
 }
 
 const UA_CSS: &str = r##"
+/* HTML §15.3.1 — hidden elements. */
 head, link, meta, script, style, title { display: none; }
-area, base, basefont, datalist, noembed, noframes, param, rp, source, template { display: none; }
+area, base, basefont, datalist, noembed, noframes, param, rp, source, track, template { display: none; }
 picture { display: contents; }
-[hidden] { display: none; }
+/* `<slot>` is a projection point, not a box: its assigned nodes lay out as if
+   they were children of the slot's parent. Without this it defaulted to
+   `inline` and wrapped every projected block in an inline box. */
+slot { display: contents; }
+/* `hidden` hides everything EXCEPT `hidden=until-found`, which stays in the
+   layout so find-in-page can reveal it, and `<embed>`, which the spec keeps
+   loaded at zero size because plugins historically had side effects. */
+[hidden]:not([hidden=until-found i]):not(embed) { display: none; }
+[hidden=until-found i]:not(embed) { content-visibility: hidden; }
+embed[hidden] { display: inline; height: 0; width: 0; }
+/* Scripting is enabled, so `<noscript>` never renders. `!important` because
+   the spec says so: a page must not be able to reveal its no-script fallback
+   with a stylesheet. */
+noscript { display: none !important; }
 html { display: block; }
 body { display: block; margin: 8px; }
 article, aside, nav, section { display: block; }
@@ -7044,6 +7486,26 @@ summary { display: list-item; list-style-type: disclosure-closed; }
    purpose: a revealed child keeps its own `display`, and a rule that forced
    `block` would turn a revealed `<span>` into one. */
 details:not([open]) > *:not(summary) { display: none; }
+/* HTML §15.3.3 — `<dialog>`.
+   A dialog is a block that is HIDDEN until it is open, and it is the UA sheet
+   that says so. `show()`/`close()` used to write `display` as an INLINE style
+   to compensate for this rule being absent; that made a closed dialog render
+   in flow whenever it had never been opened, and made an opened one immune to
+   the author's own `display`. The rule below is the whole mechanism, so those
+   two writes are gone from `show_dialog`/`close_dialog`. */
+dialog:not([open]) { display: none; }
+dialog {
+  display: block;
+  position: absolute;
+  left: 0; right: 0;
+  width: fit-content;
+  height: fit-content;
+  margin: auto;
+  border-width: 1px; border-style: solid; border-color: black;
+  padding: 1em;
+  background-color: white;
+  color: black;
+}
 pre, listing, plaintext, xmp { display: block; font-family: monospace; white-space: pre; margin-top: 1em; margin-bottom: 1em; }
 hr  { display: block; margin-top: 0.5em; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; height: 0; border-top-width: 1px; border-top-style: solid; border-top-color: silver; overflow: hidden; }
 dl, ol, ul, menu, dir { display: block; margin-top: 1em; margin-bottom: 1em; }
@@ -7093,6 +7555,16 @@ tr    { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
 th { font-weight: bold; text-align: center; }
 thead, tbody, tfoot, tr { vertical-align: middle; }
+/* A `<form>` that the tree builder left sitting between table rows is not
+   rendered at all (HTML §15.3.9). The form is still in the DOM and still owns
+   its controls — it just has no box, which is why this is `display` and not a
+   parser rule. */
+:is(table, thead, tbody, tfoot, tr) > form { display: none !important; }
+/* `hidden` on a table part has to beat that part's own `display`. `[hidden]`
+   is one class-level higher than a bare tag, so the general rule already wins;
+   these exist because `!important` on the table `display` values in some
+   sheets does not lose to it. Kept explicit so the intent survives. */
+tbody[hidden], thead[hidden], tfoot[hidden], tr[hidden], col[hidden], colgroup[hidden] { display: none; }
 button, input[type=submit], input[type=button], input[type=reset] {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 1px 6px; cursor: default; background-color: #e8e8e8; border: 1px solid #767676;
@@ -7107,7 +7579,7 @@ input:focus, select:focus, textarea:focus {
 input:disabled, select:disabled, textarea:disabled, button:disabled {
   opacity: 0.6; cursor: default;
 }
-input[type=hidden] { display: none; }
+input[type=hidden i] { display: none !important; }
 /* An image button IS an image (HTML §4.10.5.1.19), so it takes the box an
    `<img>` takes — not the 200px text-field default the bare `input` rule
    gives it, which squashed every image into a field-shaped strip. `width`

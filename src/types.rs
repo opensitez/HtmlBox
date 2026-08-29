@@ -253,16 +253,24 @@ pub enum CssLength {
     Vw(f32),
     /// Viewport-height percentage (1vh = 1% of viewport height).
     Vh(f32),
+    // ── The four rare variants below are BOXED, and the reason is size ──
+    // `CssLength` appears 53 times in `ComputedStyle`, so its width dominates:
+    // an inline `Calc([f32; 6])` (24 bytes) or a three-Box `Clamp` (24 bytes)
+    // made every length 32 bytes and `ComputedStyle` 3352. Every element owns
+    // one, so a 100k-node page carried ~335 MB of style — and the cascade
+    // recurses with several of them live per frame, which is what limited
+    // nesting depth. Boxing the rare shapes costs one allocation on the few
+    // lengths that use them and takes the common ones to 16 bytes.
     /// `calc()` — linear combination [percent, px, em, rem, vw, vh].
-    Calc([f32; 6]),
+    Calc(Box<[f32; 6]>),
     /// `calc()` with non-linear parts (min/max nested inside calc).
     CalcExpr(Box<CalcNode>),
     /// `min()` — resolves to the smallest value.
-    Min(Box<[CssLength]>),
+    Min(Box<Vec<CssLength>>),
     /// `max()` — resolves to the largest value.
-    Max(Box<[CssLength]>),
+    Max(Box<Vec<CssLength>>),
     /// `clamp(min, val, max)` — resolves to val clamped between min and max.
-    Clamp(Box<CssLength>, Box<CssLength>, Box<CssLength>),
+    Clamp(Box<[CssLength; 3]>),
     Auto,
     Zero,
     None,
@@ -328,7 +336,8 @@ impl CssLength {
             CssLength::Max(vals) => vals.iter()
                 .map(|v| v.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h))
                 .fold(f32::NEG_INFINITY, f32::max),
-            CssLength::Clamp(min, val, max) => {
+            CssLength::Clamp(parts) => {
+                let (min, val, max) = (&parts[0], &parts[1], &parts[2]);
                 let min_v = min.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
                 let val_v = val.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
                 let max_v = max.resolve_vp(parent_font_px, containing_px, root_font_px, viewport_w, viewport_h);
@@ -1758,6 +1767,14 @@ pub struct WebCore {
     pub component_height: f32,
 
     // Image pixel data for <img> and replaced elements (RGBA8, row-major)
+    /// Absolute URL this element's image was resolved to.
+    ///
+    /// A FIELD and not an attribute. It used to be stored as `_resolved_src` in
+    /// `attributes`, which put an invented attribute on the WHATWG surface:
+    /// `img.attributes` listed it, `getAttributeNames()` returned it, and it
+    /// was serialized into the markup. Internal state may look however it
+    /// likes, but not by pretending to be a content attribute.
+    pub resolved_src: String,
     pub image_data:   Option<Vec<u8>>,
     pub image_width:  u32,
     pub image_height: u32,
@@ -1798,6 +1815,34 @@ pub struct WebCore {
     /// interaction or by setting the `checked` IDL member; while it is false
     /// the content attribute still drives checkedness.
     pub dirty_checked: bool,
+    /// **Selectedness** of an `<option>` (HTML §4.10.10) — the same separation
+    /// `checkedness` draws, for the same reason. The `selected` CONTENT
+    /// ATTRIBUTE is `defaultSelected`, the state a form reset restores to; this
+    /// is what is selected right now.
+    ///
+    /// Selection lived in the parent `<select>`'s `data["_selected_idx"]`, a
+    /// single index, so two things were inexpressible: a `multiple` list box
+    /// with several rows picked, and a list box with NOTHING picked — which is
+    /// not an edge case but the state HTML says a fresh list box is in, since
+    /// the selectedness setting algorithm auto-selects only at display size 1.
+    pub selectedness: bool,
+    /// The **dirtiness** flag of an `<option>` (HTML §4.10.10). Raised by a
+    /// user picking or toggling the option, and by the `selected` IDL setter;
+    /// while it is false the content attribute still drives selectedness.
+    pub dirty_selectedness: bool,
+    /// The form control's **value** (HTML §4.10.18.1) when it has diverged from
+    /// the `value` content attribute — `None` while they still agree.
+    ///
+    /// Third instance of the same shape. The `value` attribute is
+    /// `defaultValue`; this is the value the control holds. Everything used to
+    /// write the attribute, so typing into a field edited the document and a
+    /// reset had nowhere to restore FROM — which is why a fictional
+    /// `defaultValue` "content attribute" had been invented to hold the
+    /// original. There is no such attribute in HTML.
+    pub value_state: Option<String>,
+    /// The **dirty value flag** (HTML §4.10.18.1). Once raised, the `value`
+    /// content attribute no longer drives the value.
+    pub dirty_value: bool,
     /// Cursor position (char index) within the input's value string.
     pub input_cursor: usize,
     /// Selection anchor (char index). When equal to input_cursor, no selection.
@@ -2112,6 +2157,7 @@ impl WebCore {
             component_width:  0.0,
             component_height: 0.0,
 
+            resolved_src: String::new(),
             image_data:   None,
             image_width:  0,
             image_height: 0,
@@ -2129,6 +2175,10 @@ impl WebCore {
 
             checkedness: false,
             dirty_checked: false,
+            selectedness: false,
+            dirty_selectedness: false,
+            value_state: None,
+            dirty_value: false,
             input_cursor: 0,
             input_sel_anchor: 0,
 
@@ -2172,7 +2222,9 @@ impl WebCore {
             }
         });
         if !styles_css.is_empty() {
-            stylesheet.parse_and_add(&styles_css);
+            // Author origin — the shadow root's `<style>` outranks the UA sheet
+            // it was seeded with (see `css::AUTHOR_ORIGIN_BOOST`).
+            stylesheet.parse_and_add_author(&styles_css);
         }
         self.shadow_root = Some(Box::new(ShadowRoot { children, stylesheet, mode }));
     }
@@ -2183,6 +2235,33 @@ impl WebCore {
 
     pub fn is_text_node(&self) -> bool {
         self.tag == "#text"
+    }
+
+    /// Whether this node is an ELEMENT.
+    ///
+    /// Everything that counts elements — `:nth-child`, `firstElementChild`,
+    /// `children`, "does this box have any content" — used to spell the test
+    /// `tag != "#text"`, which was exact only while text was the one non-element
+    /// node that could appear. It is not: the DOM's non-element nodes all carry
+    /// a `#`-prefixed name (`#text`, `#comment`, `#cdata-section`,
+    /// `#document-fragment`), and a comment counted as an element would shift
+    /// every `:nth-child` index after it and make an empty box non-empty.
+    ///
+    /// Asking the question once, by the naming rule the DOM already uses, is
+    /// what keeps the next node kind from having to be added in fifty places.
+    pub fn is_element(&self) -> bool {
+        !self.tag.starts_with('#') && !self.is_pseudo_element()
+    }
+
+    /// Is this a generated `::before` / `::after` box rather than a DOM node?
+    ///
+    /// The cascade materialises `content` as a real child box so layout and
+    /// paint can treat it like anything else. It is NOT a node: a
+    /// pseudo-element has no place in `childNodes`, is not counted by
+    /// `:nth-child`, and cannot be serialized — `<::after>!</::after>` is not
+    /// markup, and it was reaching the output of `serialize_html`.
+    pub fn is_pseudo_element(&self) -> bool {
+        self.tag.starts_with("::")
     }
 
     /// Number of direct children.
@@ -2688,6 +2767,25 @@ pub struct Document {
     /// the dropdown already is; there is one popup surface here and this is a
     /// second thing on it, not a new mechanism.
     pub open_picker: u32,
+    /// The `<input type=range>` whose knob the pointer is holding (0 = none).
+    ///
+    /// A slider is the one control whose interaction is the pointer's whole
+    /// PATH rather than where it landed. HTML says so in the words that
+    /// distinguish its two events: "while the user is dragging the control's
+    /// knob, input events would fire whenever the position changed, whereas
+    /// the change event would only fire when the user let go of the knob,
+    /// committing to a specific value."
+    ///
+    /// Held as the ELEMENT, not a flag, because a drag that has wandered off
+    /// the control still belongs to it — a pointer released over the page must
+    /// commit the slider it grabbed, not abandon it.
+    pub dragging_range: u32,
+    /// What the range held when the drag began.
+    ///
+    /// `change` fires on release "if the value is committed" — a press and
+    /// release that moved nothing committed nothing, so this is what release
+    /// compares against instead of firing unconditionally.
+    pub range_drag_origin: String,
     /// Hovered option index in open dropdown (-1 = none).
     pub dropdown_hover_idx: i32,
     /// Form event callback — set by the host to handle form interactions.
@@ -2793,6 +2891,9 @@ impl Document {
             viewport_h:        0.0,
             keyboard_focus:    false,
             caret_blink_epoch: std::time::Instant::now(), open_select: 0, open_picker: 0, dropdown_hover_idx: -1,
+            // Transient interaction state, like the two popups beside it: a
+            // fresh document is holding nothing.
+            dragging_range: 0, range_drag_origin: String::new(),
             on_form_event:     None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None,
             active_animations:     Vec::new(),
             transition_states:     HashMap::new(),
@@ -3014,15 +3115,278 @@ impl Document {
         }
     }
 
+    /// A click on a LIST BOX row, at document y `click_y`. Returns whether the
+    /// selection moved.
+    ///
+    /// A list box draws its own rows and has no popup, so this is the whole
+    /// interaction — the drop-down's `open_select` state machine is never
+    /// involved. Which algorithm runs depends on the control:
+    ///
+    /// * `multiple` — **toggle** the row (HTML §4.10.7: "the user agent should
+    ///   allow the user to toggle the selectedness of the option elements").
+    ///   Toggling on a plain click is the only way to reach a multi-selection
+    ///   at a seam with no modifier keys, and it is what the
+    ///   `CheckedListBox` this renders for does anyway.
+    /// * single-select — **pick an option**, the algorithm a drop-down runs.
+    ///
+    /// `unselect_request` is the third case, and it is the one HTML words as a
+    /// request rather than a click: "if the multiple attribute is absent and
+    /// the element's display size is greater than 1, then the user agent should
+    /// also allow the user to request that the option whose selectedness is
+    /// true, if any, be unselected."
+    ///
+    /// A SINGLE-SELECT list box only. A drop-down has no such affordance (its
+    /// display size is 1) and a `multiple` list box already reaches an empty
+    /// selection by toggling, so binding it there would be a second way to do
+    /// one thing. The gesture is the platform's — ctrl/⌘-click on the row that
+    /// is already selected — which is why it arrives as an answered question
+    /// rather than being decided here.
+    pub(crate) fn click_list_box_row(
+        &mut self,
+        select_id: u32,
+        click_y: f32,
+        unselect_request: bool,
+    ) -> bool {
+        let Some(select) = self.find_webcore(select_id) else { return false };
+        if select.attributes.contains_key("disabled") {
+            return false;
+        }
+        let content = select.layout.content_rect;
+        let font_px = select.style.font_size_px(16.0, 16.0).max(1.0);
+        let options = crate::html::forms::option_ids(select);
+        let Some(row) = crate::html::forms::list_box_row_at(
+            content.y,
+            content.h,
+            font_px,
+            options.len(),
+            click_y,
+        ) else {
+            return false;
+        };
+        let option_id = options[row];
+
+        let Some(select_mut) = self.find_webcore_mut(select_id) else { return false };
+        let multiple = crate::html::forms::is_multiple(&*select_mut);
+        // "Upon this request being conveyed to the user agent, and before the
+        // relevant user interaction event is queued (e.g. before the click
+        // event), the user agent must set the selectedness of that option
+        // element to false, set its dirtiness to true, and then send select
+        // update notifications." Only the option that IS selected can be
+        // unselected, so a request on any other row is an ordinary pick.
+        let already_selected = crate::html::forms::list_of_options(&*select_mut)
+            .into_iter()
+            .any(|o| o.node_id == option_id && o.selectedness);
+        let changed = if unselect_request && !multiple && already_selected {
+            crate::html::forms::unselect_option(select_mut, option_id)
+        } else if multiple {
+            crate::html::forms::toggle_option(select_mut, option_id)
+        } else {
+            crate::html::forms::pick_option(select_mut, option_id)
+        };
+        if changed {
+            select_mut.layout.layout_dirty = true;
+            self.send_select_update_notifications(select_id);
+        }
+        changed
+    }
+
+    /// A click along a RANGE control's track, at document point `doc_pt`.
+    /// Returns whether the value moved.
+    ///
+    /// `widgets::Slider` already owned the inverse of its own paint geometry —
+    /// the thumb-radius inset at each end, and the axis a vertical writing mode
+    /// turns — in `set_from_pointer`. Nothing had ever called it, so every
+    /// trackbar and scrollbar was decorative. Driving the widget rather than
+    /// re-deriving the mapping is what keeps the thumb under the pointer.
+    ///
+    /// The number that comes back is then put through the control's own step
+    /// and bounds, because HTML enforces them "even during user input" — a
+    /// click three-fifths along a `step=20` control lands on a multiple of 20,
+    /// not on 60.4.
+    ///
+    /// ⛔ A CLICK, not a drag: the track jumps to the point rather than paging
+    /// toward it. Both are user-agent choices; this is the one browsers make.
+    /// Dragging needs `mouse_move` wired to the same path.
+    pub(crate) fn drag_range_to(&mut self, input_id: u32, doc_pt: (f32, f32)) -> bool {
+        let Some(input) = self.find_webcore(input_id) else { return false };
+        // Mutability (HTML §4.10.18.2). `readonly` does NOT apply to a range,
+        // so `disabled` is the whole test.
+        if input.attributes.contains_key("disabled") {
+            return false;
+        }
+        let rect = input.layout.content_rect;
+        if rect.w <= 0.0 || rect.h <= 0.0 {
+            return false;
+        }
+        let min = crate::html::forms::range_minimum(input);
+        let max = crate::html::forms::range_maximum(input);
+        let current = input_value(input);
+        let current_num = crate::html::forms::parse_floating_point(&current).unwrap_or(min);
+
+        let mut slider = crate::widgets::Slider::new(min as f32, max as f32, current_num as f32);
+        slider.width = rect.w;
+        slider.height = rect.h;
+        slider.vertical = !matches!(input.style.writing_mode, WritingMode::HorizontalTB);
+        slider.mouse_down(doc_pt.0 - rect.x, doc_pt.1 - rect.y);
+        let picked = slider.actual_value() as f64;
+
+        // "User agents must not allow the user to set the value to a string
+        // that is not a valid floating-point number", and the range and step
+        // constraints hold throughout — so the pointer's answer goes through
+        // the same sanitization the markup's did.
+        let mut value = picked;
+        if value < min {
+            value = min;
+        }
+        if value > max && max >= min {
+            value = max;
+        }
+        let snapped = crate::html::forms::snap_to_step(input, value);
+        let text = crate::html::forms::best_representation(snapped);
+        if text == current {
+            return false;
+        }
+
+        let id = input.attributes.get("id").cloned().unwrap_or_default();
+        let name = input.attributes.get("name").cloned().unwrap_or_default();
+        if let Some(input_mut) = self.find_webcore_mut(input_id) {
+            input_mut.value_state = Some(text.clone());
+            input_mut.dirty_value = true;
+            input_mut.layout.layout_dirty = true;
+        }
+        // `input` ALONE. Moving the knob is not committing to a value — that
+        // is what release means, and `commit_range_drag` is where `change`
+        // fires. Firing both here made every pixel of a drag look like a
+        // finished decision.
+        if let Some(ref mut cb) = self.on_form_event {
+            cb(&FormEvent {
+                tag: "input".into(),
+                id,
+                name,
+                kind: FormEventKind::Input(text),
+                element: input_id,
+            });
+        }
+        true
+    }
+
+    /// Let go of the knob: fire `change` if the drag actually moved the value,
+    /// and stop holding the control.
+    ///
+    /// Guarded on the value rather than on the drag having happened, because
+    /// "the change event fires when the value is committed" — a press and
+    /// release that moved nothing committed nothing, and a slider that
+    /// announced a change every time it was merely touched would be lying to
+    /// every handler counting them.
+    pub(crate) fn commit_range_drag(&mut self) -> bool {
+        let input_id = std::mem::replace(&mut self.dragging_range, 0);
+        let origin = std::mem::take(&mut self.range_drag_origin);
+        if input_id == 0 {
+            return false;
+        }
+        let Some(input) = self.find_webcore(input_id) else { return false };
+        let text = input_value(input);
+        if text == origin {
+            return false;
+        }
+        let id = input.attributes.get("id").cloned().unwrap_or_default();
+        let name = input.attributes.get("name").cloned().unwrap_or_default();
+        if let Some(ref mut cb) = self.on_form_event {
+            cb(&FormEvent {
+                tag: "input".into(),
+                id,
+                name,
+                kind: FormEventKind::Change(text),
+                element: input_id,
+            });
+        }
+        true
+    }
+
+    /// Whether a node is an `<input type=range>`.
+    pub(crate) fn is_range_input(&self, id: u32) -> bool {
+        self.find_webcore(id)
+            .map(|n| {
+                n.tag == "input"
+                    && n.attributes
+                        .get("type")
+                        .map(|t| t.trim().eq_ignore_ascii_case("range"))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
+    /// **Send select update notifications** (HTML §4.10.7): fire `input`, then
+    /// `change`.
+    ///
+    /// ⛔ Both, in that order. The drop-down path fired `change` alone, so a
+    /// program listening for `input` — which is what a live-updating handler
+    /// listens for — never heard a `<select>` at all.
+    pub(crate) fn send_select_update_notifications(&mut self, select_id: u32) {
+        let Some(select) = self.find_webcore(select_id) else { return };
+        let value = crate::html::forms::select_value(select);
+        let id = select.attributes.get("id").cloned().unwrap_or_default();
+        let name = select.attributes.get("name").cloned().unwrap_or_default();
+        if let Some(ref mut cb) = self.on_form_event {
+            for kind in [FormEventKind::Input(value.clone()), FormEventKind::Change(value)] {
+                cb(&FormEvent {
+                    tag: "select".into(),
+                    id: id.clone(),
+                    name: name.clone(),
+                    kind,
+                    element: select_id,
+                });
+            }
+        }
+    }
+
+    /// A click on an element that is not a form control.
+    ///
+    /// UI Events puts `click` on whatever the pointer pressed and released
+    /// over. `handle_form_click` only knows the controls, so everything else —
+    /// a `<td>`, a `<div>`, an `<li>` — had a listener that could be registered
+    /// and never fired. A control composed out of ordinary elements, which is
+    /// what a calendar's day grid is, could be built and could not be used.
+    ///
+    /// The event carries the element's `id` and `name` like any other, and its
+    /// text as the value, so a handler reads the same shape whatever it is on.
+    pub(crate) fn fire_element_click(&mut self, node_id: u32) {
+        // A text box is not an event target. The click belongs to the ELEMENT
+        // that owns the text — which is what hitting a word means, and what a
+        // browser reports. Returning early instead made a click that landed on
+        // a cell's digits fire nothing, so the control worked in the middle of
+        // a cell and not on its text.
+        let mut node_id = node_id;
+        for _ in 0..4 {
+            match self.find_webcore(node_id) {
+                Some(n) if n.tag.starts_with('#') => node_id = self.parent_node(node_id),
+                _ => break,
+            }
+        }
+        let Some(node) = self.find_webcore(node_id) else { return };
+        if node.tag.starts_with('#') {
+            return;
+        }
+        let tag = node.tag.clone();
+        let id = node.attributes.get("id").cloned().unwrap_or_default();
+        let name = node.attributes.get("name").cloned().unwrap_or_default();
+        let text = node.text.clone();
+        if let Some(ref mut cb) = self.on_form_event {
+            cb(&FormEvent {
+                tag,
+                id,
+                name,
+                kind: FormEventKind::Click(text),
+                element: node_id,
+            });
+        }
+    }
+
     /// The month a date picker is showing: the element's own value, or the
     /// current month when it has none — which is what a browser opens on.
     pub(crate) fn picker_month(&self, id: u32) -> (i32, u32, Option<u32>) {
-        let value = self
-            .find_webcore(id)
-            .and_then(|n| n.attributes.get("value"))
-            .map(String::as_str)
-            .unwrap_or("");
-        match crate::widgets::parse_date(value) {
+        let value = self.find_webcore(id).map(input_value).unwrap_or_default();
+        match crate::widgets::parse_date(&value) {
             Some((y, m, d)) => (y, m, Some(d)),
             // No date library here, and none needed: an empty control opens on
             // a fixed, obviously-neutral month rather than pretending to know
@@ -3060,7 +3424,63 @@ impl Document {
             .copied()
     }
 
+    /// **Flush pending style and layout**, so a geometry question is answered
+    /// about the tree as it is now.
+    ///
+    /// CSSOM View defines its geometry on BOXES, and a node inserted or
+    /// restyled since the last layout does not have one yet. A browser hides
+    /// that by flushing on demand — every geometry attribute is specified to
+    /// return a box, and returning one means having laid it out. Here layout
+    /// ran only in the paint path, so a program that appended a control and
+    /// asked for its rect in the same turn was told 0×0, and the real answer
+    /// arrived a frame later with nobody left to receive it.
+    ///
+    /// The width is the one the document was last laid out against — the
+    /// viewport its shell gave it. A document that has never been laid out has
+    /// no containing block to measure against, and no box to flush to, so it is
+    /// left exactly as it is rather than measured against a guess.
+    pub fn flush_layout(&mut self) {
+        let width = self.root.layout.last_containing_width;
+        if width <= 0.0 {
+            return;
+        }
+        self.recascade();
+        LayoutEngine::new().layout(self, width);
+    }
+
+    /// A pointer event with no modifier keys held.
+    ///
+    /// The plain spelling, kept because almost every caller has no modifiers to
+    /// report and a `false, false, false, false` tail at each of them says
+    /// nothing. `process_mouse_event_with_modifiers` is the full event.
     pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+        self.process_mouse_event_with_modifiers(etype, doc_pt, button, false, false, false, false)
+    }
+
+    /// A pointer event, with the modifier keys that were held.
+    ///
+    /// Modifiers are part of a pointer event, not decoration: HTML's list box
+    /// asks the user agent to "allow the user to request that the option whose
+    /// selectedness is true, if any, be unselected", and every platform spells
+    /// that request as a modified click. Without them the control had a correct
+    /// algorithm and no way to reach it.
+    ///
+    /// Four bools rather than a struct, matching `process_key_event`, which
+    /// already carries its modifiers this way — one convention for both halves
+    /// of the input surface.
+    pub fn process_mouse_event_with_modifiers(
+        &mut self,
+        etype: crate::dom::HtmlEventType,
+        doc_pt: (f32, f32),
+        button: u8,
+        ctrl: bool,
+        _shift: bool,
+        _alt: bool,
+        meta: bool,
+    ) -> bool {
+        // Ctrl on the platforms that use it, ⌘ on the one that does not — the
+        // same pair every other modified gesture answers to.
+        let unselect_request = ctrl || meta;
         use crate::dom::{HtmlEventType, HtmlEvent};
         // client_pos = screen-space logical coordinates (doc coords minus scroll).
         let client_pos = (doc_pt.0, doc_pt.1 - self.scroll_y);
@@ -3093,6 +3513,15 @@ impl Document {
         let mut redraw = false;
         match etype {
             HtmlEventType::MouseMove => {
+                // A held knob follows the pointer, wherever it has got to —
+                // including outside the control, which is why this is keyed on
+                // the element being HELD and not on what the move hit.
+                if self.dragging_range != 0 {
+                    let range_id = self.dragging_range;
+                    if self.drag_range_to(range_id, doc_pt) {
+                        redraw = true;
+                    }
+                }
                 // After a hover-triggered relayout (e.g. dropdown opens), the
                 // layout changes and re-hit-testing at the same mouse position may
                 // find a different element, causing a feedback loop
@@ -3220,8 +3649,41 @@ impl Document {
                         redraw = true;
                     }
                 }
+                // **Grabbing a slider's knob.** A range is driven from the
+                // PRESS, unlike every other control here, because its
+                // interaction continues while the pointer moves — see
+                // `Document::dragging_range`. The press itself already moves
+                // the value: pressing anywhere on the track jumps the knob
+                // there, which is what makes the first `input` fire before any
+                // movement at all.
+                let range_id = find_form_parent_id(&self.root, hit_node_id);
+                if self.is_range_input(range_id)
+                    && !self.get_node(range_id)
+                        .map(|n| n.attributes.contains_key("disabled"))
+                        .unwrap_or(true)
+                {
+                    self.range_drag_origin = self
+                        .find_webcore(range_id)
+                        .map(input_value)
+                        .unwrap_or_default();
+                    self.dragging_range = range_id;
+                    if self.drag_range_to(range_id, doc_pt) {
+                        redraw = true;
+                    }
+                }
             }
             HtmlEventType::MouseUp | HtmlEventType::PointerUp => {
+                // Letting go of a knob. FIRST, so the last position the
+                // pointer reached is the value that gets committed — and
+                // before any of the click routing below, which must not see a
+                // range at all.
+                if self.dragging_range != 0 {
+                    let range_id = self.dragging_range;
+                    if self.drag_range_to(range_id, doc_pt) {
+                        redraw = true;
+                    }
+                    self.commit_range_drag();
+                }
                 if self.active_box != 0 {
                     self.active_box = 0;
                     redraw = true;
@@ -3312,10 +3774,22 @@ impl Document {
                         // beneath it has `hit_node_id == 0`. The form-click call
                         // still needs a real node and keeps its own check.
                         if (hit_node_id != 0 || self.open_select != 0) && button == 0 {
-                            if let Some(form_redraw) = (hit_node_id != 0)
+                            let form_click = (hit_node_id != 0)
                                 .then(|| handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event))
-                                .flatten()
-                            {
+                                .flatten();
+                            // **EVERY element gets a `click`, not just the form
+                            // controls.** `handle_form_click` answers `None` for
+                            // anything it does not recognise, and that was the
+                            // end of the road: a listener on a `<td>`, a `<div>`
+                            // or an `<li>` was registered, was reachable, and
+                            // never fired — so a composed control could be built
+                            // out of ordinary elements and could not be clicked.
+                            // UI Events puts `click` on the element the pointer
+                            // pressed and released over, whatever it is.
+                            if form_click.is_none() && hit_node_id != 0 {
+                                self.fire_element_click(hit_node_id);
+                            }
+                            if let Some(form_redraw) = form_click {
                                 if form_redraw { redraw = true; }
                                 // `handle_form_click` takes `&mut WebCore`, so it
                                 // wrote `checked` to the render tree only. Push it
@@ -3429,28 +3903,32 @@ impl Document {
 
                                     if let Some(opt_idx) = clicked_opt {
                                         let sel_id = self.open_select;
-                                        fn find_m<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-                                            if n.node_id == t { return Some(n); }
-                                            for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
-                                            None
-                                        }
                                         let new_text = opt_texts.get(opt_idx).cloned().unwrap_or_default();
-                                        let new_value = opt_values.get(opt_idx).cloned().unwrap_or_default();
-                                        if let Some(sel_mut) = find_m(&mut self.root, sel_id) {
-                                            sel_mut.data.insert("_selected_idx".into(), opt_idx.to_string());
-                                            // Update display text node
+                                        // The option's node_id, so the pick runs
+                                        // over the spec's own list of options
+                                        // rather than this popup's parallel
+                                        // walk — the two counted optgroups the
+                                        // same way, but only one of them is the
+                                        // definition.
+                                        let option_id = self
+                                            .find_webcore(sel_id)
+                                            .map(crate::html::forms::option_ids)
+                                            .and_then(|ids| ids.get(opt_idx).copied());
+                                        if let (Some(option_id), Some(sel_mut)) =
+                                            (option_id, self.find_webcore_mut(sel_id))
+                                        {
+                                            let changed = crate::html::forms::pick_option(sel_mut, option_id);
+                                            // The drop-down's shown text is a
+                                            // child text node rather than a
+                                            // repaint of the options.
                                             if let Some(tn) = sel_mut.children.iter_mut().rev().find(|c| c.tag == "#text") {
                                                 tn.text = new_text;
                                             }
                                             sel_mut.layout.layout_dirty = true;
-                                            if let Some(ref mut cb) = self.on_form_event {
-                                                cb(&FormEvent {
-                                                    tag: "select".into(),
-                                                    id: sel_mut.attributes.get("id").cloned().unwrap_or_default(),
-                                                    name: sel_mut.attributes.get("name").cloned().unwrap_or_default(),
-                                                    kind: FormEventKind::Change(new_value),
-                                                    element: sel_id,
-                                                });
+                                            if changed {
+                                                // `option:checked` is a selector.
+                                                self.style_dirty = true;
+                                                self.send_select_update_notifications(sel_id);
                                             }
                                         }
                                     }
@@ -3463,9 +3941,41 @@ impl Document {
                             } else {
                                 // Check if clicking a select to open it
                                 let effective_id = find_form_parent_id(&self.root, hit_node_id);
-                                if self.get_node(effective_id).map(|n| n.tag == "select").unwrap_or(false) {
+                                let is_select = self.get_node(effective_id).map(|n| n.tag == "select").unwrap_or(false);
+                                // ⛔ A LIST BOX HAS NO POPUP. Its rows are drawn
+                                // inside the control, so a click picks one
+                                // directly — routing it through `open_select`
+                                // opened a phantom list over the page and
+                                // selected nothing, ever.
+                                let list_box = is_select
+                                    && self.get_node(effective_id)
+                                        .map(crate::html::forms::is_list_box)
+                                        .unwrap_or(false);
+                                if list_box {
+                                    // ⛔ NO click event here. Every element gets
+                                    // one from `fire_element_click` above —
+                                    // `handle_form_click` returns `None` for a
+                                    // `<select>`, so the generic path already
+                                    // covered it. Firing a second would report
+                                    // two clicks for one press.
+                                    if self.click_list_box_row(effective_id, doc_pt.1, unselect_request) {
+                                        // Selectedness is a SELECTOR
+                                        // (`option:checked`), so the cascade has
+                                        // to be told, exactly as ticking a
+                                        // checkbox does.
+                                        self.style_dirty = true;
+                                        redraw = true;
+                                    }
+                                } else if is_select {
                                     self.open_select = effective_id;
                                     redraw = true;
+                                } else if self.is_range_input(effective_id) {
+                                    // ⛔ NOTHING on release. A range is the one
+                                    // control driven from the press, because a
+                                    // drag is a press, a path and a release —
+                                    // handling it here as well would move the
+                                    // knob a second time to wherever the
+                                    // pointer happened to end.
                                 } else if self.picker_kind(effective_id).is_some() {
                                     // Activating the control opens its picker —
                                     // HTML leaves each picker's FORM to the
@@ -3644,49 +4154,40 @@ impl Document {
                 // Select: arrow up/down changes selected option
                 if focused.tag == "select" && (key_code == 38 || key_code == 40) {
                     let fid = self.focused_box;
-                    fn find_m<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-                        if n.node_id == t { return Some(n); }
-                        for c in &mut n.children { if let Some(r) = find_m(c, t) { return Some(r); } }
-                        None
-                    }
-                    if let Some(sel) = find_m(&mut self.root, fid) {
-                        let cur: usize = sel.data.get("_selected_idx").and_then(|s| s.parse().ok()).unwrap_or(0);
-                        let opt_count = sel.children.iter().filter(|c| c.tag == "option").count()
-                            + sel.children.iter().filter(|c| c.tag == "optgroup")
-                                .flat_map(|g| g.children.iter()).filter(|c| c.tag == "option").count();
-                        let new_idx = if key_code == 40 { // down
-                            (cur + 1).min(opt_count.saturating_sub(1))
-                        } else { // up
-                            cur.saturating_sub(1)
+                    // Arrow keys move to the next or previous option and PICK
+                    // it, which is the same algorithm a click runs — HTML lists
+                    // "through a menu command, or through any other mechanism"
+                    // alongside the click for exactly this reason.
+                    let options = self
+                        .find_webcore(fid)
+                        .map(crate::html::forms::option_ids)
+                        .unwrap_or_default();
+                    if !options.is_empty() {
+                        // With nothing selected — a list box's resting state —
+                        // Down starts at the first option and Up at the last.
+                        let cur = self.find_webcore(fid).map(crate::html::forms::selected_index).unwrap_or(-1);
+                        let new_idx = if cur < 0 {
+                            if key_code == 40 { 0 } else { options.len() - 1 }
+                        } else if key_code == 40 {
+                            ((cur as usize) + 1).min(options.len() - 1)
+                        } else {
+                            (cur as usize).saturating_sub(1)
                         };
-                        if new_idx != cur {
-                            sel.data.insert("_selected_idx".into(), new_idx.to_string());
-                            // Update display text
-                            let mut idx = 0usize;
-                            let mut new_text = String::new();
-                            for child in &sel.children {
-                                if child.tag == "option" {
-                                    if idx == new_idx {
-                                        new_text = child.children.iter().filter(|c| c.tag == "#text")
-                                            .map(|c| c.text.as_str()).collect::<String>().trim().to_string();
-                                    }
-                                    idx += 1;
-                                } else if child.tag == "optgroup" {
-                                    for gc in &child.children {
-                                        if gc.tag == "option" {
-                                            if idx == new_idx {
-                                                new_text = gc.children.iter().filter(|c| c.tag == "#text")
-                                                    .map(|c| c.text.as_str()).collect::<String>().trim().to_string();
-                                            }
-                                            idx += 1;
-                                        }
-                                    }
-                                }
-                            }
+                        let option_id = options[new_idx];
+                        let new_text = self
+                            .find_webcore(option_id)
+                            .map(crate::html::forms::option_label)
+                            .unwrap_or_default();
+                        if let Some(sel) = self.find_webcore_mut(fid) {
+                            let changed = crate::html::forms::pick_option(sel, option_id);
                             if let Some(tn) = sel.children.iter_mut().rev().find(|c| c.tag == "#text") {
                                 tn.text = new_text;
                             }
                             sel.layout.layout_dirty = true;
+                            if changed {
+                                self.style_dirty = true;
+                                self.send_select_update_notifications(fid);
+                            }
                         }
                     }
                     true
@@ -3703,7 +4204,10 @@ impl Document {
                         None
                     }
                     if let Some(input) = find_n(&mut self.root, fid) {
-                        let val: f64 = input.attributes.get("value").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                        // Read the VALUE, not the default value — an arrow key
+                        // after typing used to step from whatever the markup
+                        // said rather than from what the field shows.
+                        let val: f64 = crate::html::forms::parse_floating_point(&input_value(input)).unwrap_or(0.0);
                         let step: f64 = input.attributes.get("step").and_then(|s| s.parse().ok()).unwrap_or(1.0);
                         let min: Option<f64> = input.attributes.get("min").and_then(|s| s.parse().ok());
                         let max: Option<f64> = input.attributes.get("max").and_then(|s| s.parse().ok());
@@ -3711,12 +4215,8 @@ impl Document {
                         let new_val = if let Some(mx) = max { new_val.min(mx) } else { new_val };
                         let new_val = if let Some(mn) = min { new_val.max(mn) } else { new_val };
                         if new_val != val {
-                            let s = if new_val == new_val.floor() {
-                                format!("{}", new_val as i64)
-                            } else {
-                                format!("{}", new_val)
-                            };
-                            input.attributes.insert("value".into(), s);
+                            input.value_state = Some(crate::html::forms::best_representation(new_val));
+                            input.dirty_value = true;
                             input.layout.layout_dirty = true;
                         }
                     }
@@ -4559,10 +5059,12 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
             }
             Some(btn_type == "reset") // redraw if reset
         }
-        "select" => {
-            // Dropdown is handled in process_mouse_event with open_select state
-            None
-        }
+        // ⛔ `<select>` and `<input type=range>` are both absent on purpose:
+        // where the click LANDED decides what they do, and this function is
+        // handed a target without a point. Both live in `process_mouse_event`,
+        // which has `doc_pt` — a list box picks a row, a range picks a value
+        // along its track, and a drop-down opens its popup.
+        "select" => None,
         _ => None,
     }
 }
@@ -4623,22 +5125,30 @@ pub fn find_parent_form_action(root: &WebCore, target_id: u32) -> String {
     walk(root, target_id).unwrap_or_default()
 }
 
-/// Collect form data from all named, enabled fields inside a <form> element.
-/// Returns a map of name → value pairs, matching HTML form submission rules:
-/// - Text/password/hidden/email/etc: name → value attribute
-/// - Checkbox: included only if checked, value is "on" or the value attribute
-/// - Radio: included only if checked, value is the value attribute
-/// - Select: value of the selected option
-/// - Textarea: text content
-/// - Disabled elements are excluded
-/// - Elements without a name are excluded
-pub fn collect_form_data(form: &WebCore) -> std::collections::HashMap<String, String> {
-    let mut data = std::collections::HashMap::new();
+/// **Constructing the entry list** (HTML §4.10.21.4) for a `<form>`.
+///
+/// A LIST of name/value entries in tree order, not a map. HTML appends one
+/// entry per contributing control and never says two entries may not share a
+/// name — which is the whole shape of a `multiple` select and of a checkbox
+/// group, both of which submit several values under one name. Returned as a
+/// map, the last write silently won and every value but one vanished at the
+/// point of submission, where nothing downstream could tell it had happened.
+///
+/// The rules each control follows, and where each one is written, stay exactly
+/// where they were; this is only the container being able to hold the answer.
+/// - Text/password/hidden/email/…: the control's VALUE, not its attribute
+/// - Checkbox / radio: only when checked; `"on"` when no value is given
+/// - Select: one entry per selected, non-disabled option
+/// - Textarea: its value
+/// - Disabled elements, and everything inside them, contribute nothing
+/// - Elements without a name contribute nothing
+pub fn collect_form_data(form: &WebCore) -> Vec<(String, String)> {
+    let mut data = Vec::new();
     collect_form_data_inner(form, &mut data);
     data
 }
 
-fn collect_form_data_inner(node: &WebCore, data: &mut std::collections::HashMap<String, String>) {
+fn collect_form_data_inner(node: &WebCore, data: &mut Vec<(String, String)>) {
     if node.attributes.contains_key("disabled") { return; }
     let name = match node.attributes.get("name") {
         Some(n) if !n.is_empty() => n.clone(),
@@ -4658,13 +5168,13 @@ fn collect_form_data_inner(node: &WebCore, data: &mut std::collections::HashMap<
                     // in the form data because the markup still says `checked`.
                     if node.checkedness {
                         let val = node.attributes.get("value").cloned().unwrap_or_else(|| "on".to_string());
-                        data.insert(name, val);
+                        data.push((name, val));
                     }
                 }
                 "radio" => {
                     if node.checkedness {
                         let val = node.attributes.get("value").cloned().unwrap_or_default();
-                        data.insert(name, val);
+                        data.push((name, val));
                     }
                 }
                 "submit" | "button" | "reset" | "image" => {
@@ -4674,46 +5184,32 @@ fn collect_form_data_inner(node: &WebCore, data: &mut std::collections::HashMap<
                     // File inputs would need special handling — skip for now
                 }
                 _ => {
-                    let val = node.attributes.get("value").cloned().unwrap_or_default();
-                    data.insert(name, val);
+                    // ⛔ The VALUE. Reading the `value` ATTRIBUTE here meant a
+                    // form submitted the author's default instead of what the
+                    // user typed — and every existing test passed, because none
+                    // of them types before collecting.
+                    data.push((name, input_value(node)));
                 }
             }
         }
         "select" => {
-            let sel_idx: usize = node.data.get("_selected_idx")
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
-            let mut opt_idx = 0usize;
-            for child in &node.children {
-                if child.tag == "option" {
-                    if opt_idx == sel_idx {
-                        let val = child.attributes.get("value").cloned()
-                            .unwrap_or_else(|| {
-                                child.children.iter().filter(|c| c.tag == "#text")
-                                    .map(|c| c.text.as_str()).collect::<String>().trim().to_string()
-                            });
-                        data.insert(name.clone(), val);
-                    }
-                    opt_idx += 1;
-                } else if child.tag == "optgroup" {
-                    for gc in &child.children {
-                        if gc.tag == "option" {
-                            if opt_idx == sel_idx {
-                                let val = gc.attributes.get("value").cloned()
-                                    .unwrap_or_else(|| {
-                                        gc.children.iter().filter(|c| c.tag == "#text")
-                                            .map(|c| c.text.as_str()).collect::<String>().trim().to_string()
-                                    });
-                                data.insert(name.clone(), val);
-                            }
-                            opt_idx += 1;
-                        }
-                    }
+            // "For each option element ... whose selectedness is true and that
+            // is not disabled, append an entry" — SELECTEDNESS, so what is
+            // submitted is what the user picked rather than what the markup
+            // defaulted to, and a control with nothing selected contributes
+            // nothing at all.
+            //
+            // One entry PER selected option, which is how a `multiple` select
+            // submits several values under one name.
+            for option in crate::html::forms::list_of_options(node) {
+                if option.selectedness && !option.attributes.contains_key("disabled") {
+                    data.push((name.clone(), crate::html::forms::option_value(option)));
                 }
             }
         }
         "textarea" => {
             let val = input_value(node);
-            data.insert(name, val);
+            data.push((name, val));
         }
         _ => {
             for child in &node.children { collect_form_data_inner(child, data); }
@@ -4736,46 +5232,63 @@ pub fn reset_form(root: &mut WebCore, form_id: u32) {
     }
 }
 
+/// The **reset algorithm** for one control (HTML §4.10.23).
+///
+/// Every arm is now the same sentence: drop the STATE, clear its dirty flag,
+/// and let the content attribute speak again. Nothing is copied anywhere,
+/// because the default was never overwritten in the first place.
 fn reset_form_inner(node: &mut WebCore) {
     match node.tag.as_str() {
         "input" => {
             let input_type = node.attributes.get("type").cloned().unwrap_or_else(|| "text".to_string());
             match input_type.as_str() {
-                "text" | "password" | "email" | "search" | "url" | "tel" | "number" => {
-                    // Reset to defaultValue (original value from HTML)
-                    let default = node.attributes.get("defaultValue").cloned()
-                        .or_else(|| node.attributes.get("value").cloned())
-                        .unwrap_or_default();
-                    node.attributes.insert("value".into(), default);
-                    node.input_cursor = 0;
-                }
                 "checkbox" | "radio" => {
-                    // HTML §4.10.5, the reset algorithm, verbatim: "set its
-                    // ... dirty checkedness flag back to false, ... set the
-                    // checkedness of the element to true if the element has a
-                    // `checked` content attribute and false if it does not".
-                    //
-                    // This used to look for a `defaultChecked` ATTRIBUTE, which
-                    // is not a content attribute at all — `defaultChecked` is
-                    // the IDL name FOR the `checked` attribute. Nothing ever
-                    // wrote it, so reset unticked every box unconditionally.
-                    // With checkedness and the attribute finally being two
-                    // different things, the real algorithm is expressible.
+                    // Verbatim: "set its ... dirty checkedness flag back to
+                    // false, ... set the checkedness of the element to true if
+                    // the element has a `checked` content attribute and false
+                    // if it does not".
                     node.checkedness = node.attributes.contains_key("checked");
                     node.dirty_checked = false;
                 }
-                _ => {}
+                // Buttons and file inputs have no resettable value here; every
+                // other state carries one.
+                "submit" | "reset" | "button" | "image" | "hidden" | "file" => {}
+                _ => {
+                    // "Set the dirty value flag to false", after which the
+                    // value falls back to the `value` content attribute on its
+                    // own — dropping the state IS the reset.
+                    //
+                    // ⛔ This used to read a `defaultValue` ATTRIBUTE, which is
+                    // not a content attribute at all but the IDL name FOR
+                    // `value`. Nothing ever wrote it, so the fallback did the
+                    // work and reset restored the field to whatever the user
+                    // had last typed — the identical bug `defaultChecked` had.
+                    node.value_state = None;
+                    node.dirty_value = false;
+                    node.input_cursor = 0;
+                    node.input_sel_anchor = 0;
+                    // "Invoke the value sanitization algorithm, if the type
+                    // attribute's current state defines one" — the reset
+                    // algorithm's own last step, and the reason a range does
+                    // not come back holding a step-mismatched default.
+                    crate::html::forms::seed_input_value(node);
+                }
             }
         }
         "textarea" => {
-            // Reset text content to original
-            if let Some(default) = node.attributes.get("defaultValue").cloned() {
-                for child in &mut node.children {
-                    if child.tag == "#text" { child.text = default.clone(); break; }
-                }
-                node.attributes.insert("value".into(), default);
-            }
+            // A `<textarea>`'s default value is its CHILD TEXT, so the same
+            // move restores it: typing no longer edits those children.
+            node.value_state = None;
+            node.dirty_value = false;
             node.input_cursor = 0;
+            node.input_sel_anchor = 0;
+        }
+        "select" => {
+            // "Set the selectedness of all the option elements ... to true if
+            // the option element has a `selected` attribute, and false
+            // otherwise; set the dirtiness of all ... to false; and then have
+            // the select element run the selectedness setting algorithm."
+            crate::html::forms::reset_select(node);
         }
         _ => {
             for child in &mut node.children { reset_form_inner(child); }
@@ -4784,12 +5297,17 @@ fn reset_form_inner(node: &mut WebCore) {
 }
 
 /// Encode form data as application/x-www-form-urlencoded string.
-pub fn encode_form_urlencoded(data: &std::collections::HashMap<String, String>) -> String {
-    let mut pairs: Vec<String> = data.iter().map(|(k, v)| {
-        format!("{}={}", url_encode(k), url_encode(v))
-    }).collect();
-    pairs.sort(); // deterministic order for testing
-    pairs.join("&")
+pub fn encode_form_urlencoded(data: &[(String, String)]) -> String {
+    // ⛔ IN ENTRY ORDER, not sorted. HTML runs the serializer over "a list of
+    // name-value pairs", and a list's order is part of the answer: a server
+    // reading repeated names sees them in the order the controls appear.
+    // Sorting was here to make a `HashMap`'s arbitrary iteration order
+    // repeatable for tests — the wrong fix for a container that could not hold
+    // the data in the first place.
+    data.iter()
+        .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn url_encode(s: &str) -> String {
@@ -4812,7 +5330,7 @@ fn url_encode(s: &str) -> String {
 /// Build the submission URL for a form.
 /// GET: appends encoded data as query string.
 /// POST: returns action URL unchanged (data goes in body).
-pub fn build_form_submit_url(action: &str, method: &str, data: &std::collections::HashMap<String, String>) -> String {
+pub fn build_form_submit_url(action: &str, method: &str, data: &[(String, String)]) -> String {
     if method.eq_ignore_ascii_case("post") {
         action.to_string()
     } else {
@@ -4849,9 +5367,11 @@ fn resolve_slots_inner(shadow_children: &mut Vec<WebCore>, light_children: &[Web
             let slot_name = child.attributes.get("name").cloned().unwrap_or_default();
             let projected: Vec<WebCore> = if slot_name.is_empty() {
                 // Default slot: all light children without a `slot` attribute
+                // Slottables are elements and non-blank text. A comment is
+                // neither, so it is not projected.
                 light_children.iter()
-                    .filter(|lc| !lc.attributes.contains_key("slot") && lc.tag != "#text"
-                        || (lc.tag == "#text" && !lc.text.trim().is_empty() && !lc.attributes.contains_key("slot")))
+                    .filter(|lc| !lc.attributes.contains_key("slot") && lc.is_element()
+                        || (lc.is_text_node() && !lc.text.trim().is_empty() && !lc.attributes.contains_key("slot")))
                     .cloned()
                     .collect()
             } else {
@@ -4888,8 +5408,20 @@ pub fn is_text_input(node: &WebCore) -> bool {
     }
 }
 
-/// Get the current value of a form input.
+/// A form control's **value** (HTML §4.10.18.1).
+///
+/// The single read point for every consumer — the paint path, form submission,
+/// the key handler. It answers the VALUE, which is `value_state` once anything
+/// has set it and the `value` content attribute (the default value) until then.
 pub fn input_value(node: &WebCore) -> String {
+    // The PRESENCE of a state string decides, not `dirty_value`. The two are
+    // not the same question: sanitization seeds a value with the dirty flag
+    // still down, and a control set to the empty string holds the empty string
+    // — `Some("")` must not fall back to the default the way `None` does.
+    // `dirty_value` answers a different question, for the reset algorithm.
+    if let Some(v) = &node.value_state {
+        return v.clone();
+    }
     if node.tag == "textarea" {
         // Textarea value is in child text nodes
         node.children.iter()
@@ -5011,13 +5543,12 @@ pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char
     node.input_sel_anchor = new_cursor;
 
     if changed {
-        if node.tag == "textarea" {
-            // Update text content in child nodes
-            if let Some(text_node) = node.children.iter_mut().find(|c| c.tag == "#text") {
-                text_node.text = value.clone();
-            }
-        }
-        node.attributes.insert("value".into(), value);
+        // Typing sets the VALUE and raises the dirty value flag (HTML
+        // §4.10.18.1). It does not touch the `value` attribute, nor a
+        // `<textarea>`'s child text — those ARE the default value, which is
+        // what a form reset restores and what the serializer round-trips.
+        node.value_state = Some(value);
+        node.dirty_value = true;
         node.layout.layout_dirty = true;
     }
 
@@ -5120,6 +5651,9 @@ impl Clone for Document {
             viewport_h:      self.viewport_h,
             keyboard_focus:  self.keyboard_focus,
             caret_blink_epoch: std::time::Instant::now(), open_select: 0, open_picker: 0, dropdown_hover_idx: -1,
+            // Transient interaction state, like the two popups beside it: a
+            // fresh document is holding nothing.
+            dragging_range: 0, range_drag_origin: String::new(),
             active_animations:     self.active_animations.clone(),
             transition_states:     self.transition_states.clone(),
             prev_styles:           self.prev_styles.clone(),

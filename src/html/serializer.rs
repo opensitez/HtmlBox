@@ -54,7 +54,8 @@ pub fn serialize_length(len: &CssLength) -> String {
             let inner: Vec<String> = vals.iter().map(|v| serialize_length(v)).collect();
             format!("max({})", inner.join(", "))
         }
-        CssLength::Clamp(min, val, max) => {
+        CssLength::Clamp(parts) => {
+            let (min, val, max) = (&parts[0], &parts[1], &parts[2]);
             format!("clamp({}, {}, {})", serialize_length(min), serialize_length(val), serialize_length(max))
         }
         CssLength::CalcExpr(_) => "calc(...)".to_string(),
@@ -376,7 +377,8 @@ pub fn serialize_style(style: &ComputedStyle) -> String {
 
 // ─── Selector serialization ───────────────────────────────────────────────────
 
-fn serialize_selector(sel: &CssSelector) -> String {
+/// CSSOM serialization of a selector — `CSSStyleRule.selectorText`.
+pub fn serialize_selector(sel: &CssSelector) -> String {
     let mut out = String::new();
     for part in &sel.parts {
         match part {
@@ -392,7 +394,7 @@ fn serialize_selector(sel: &CssSelector) -> String {
                 out.push_str("::");
                 out.push_str(pe);
             }
-            SelectorPart::Attribute { name, op, value } => {
+            SelectorPart::Attribute { name, op, value, case_sensitive } => {
                 use crate::css::AttrOp;
                 out.push('[');
                 out.push_str(name);
@@ -404,6 +406,14 @@ fn serialize_selector(sel: &CssSelector) -> String {
                     AttrOp::EndsWith   => { out.push_str("$=\""); out.push_str(value); out.push('"'); }
                     AttrOp::Contains   => { out.push_str("*=\""); out.push_str(value); out.push('"'); }
                     AttrOp::DashMatch  => { out.push_str("|=\""); out.push_str(value); out.push('"'); }
+                }
+                // Selectors §6.3 — a selector that was written with a flag has
+                // to come back out with it, or a reserialized stylesheet quietly
+                // means something narrower than the one that went in.
+                match case_sensitive {
+                    Some(false) => out.push_str(" i"),
+                    Some(true)  => out.push_str(" s"),
+                    None        => {}
                 }
                 out.push(']');
             }
@@ -446,7 +456,13 @@ fn serialize_selector(sel: &CssSelector) -> String {
     out
 }
 
-fn serialize_rule(rule: &CssRule) -> String {
+/// CSSOM serialization of one rule — `CSSRule.cssText`.
+///
+/// Not used by document serialization any more: a document's `<style>`
+/// elements carry their author's source and are emitted as elements, so there
+/// is nothing to rebuild. This stays because it IS the CSSOM text form, which
+/// `document.styleSheets` will need.
+pub fn serialize_rule(rule: &CssRule) -> String {
     // Prefer the verbatim original selector for a faithful roundtrip (preserves
     // vendor pseudo-elements, whitespace, unknown syntax, etc.).  Fall back to
     // reconstructing from parsed parts only for programmatically-added rules.
@@ -465,22 +481,25 @@ fn serialize_rule(rule: &CssRule) -> String {
     }
 
     let mut decls = String::new();
-    // Use a sorted iteration for deterministic output.
-    let mut props: Vec<(&String, &String)> = rule.declarations.iter().collect();
-    props.sort_by_key(|(k, _)| k.as_str());
-    for (prop, val) in props {
+    // SOURCE ORDER, not alphabetical. The sort here used to be the only thing
+    // making the output deterministic, because the block was a HashMap — but
+    // alphabetical order is a different stylesheet: it puts `border-top` before
+    // `border`, and the shorthand then wipes the longhand that was written to
+    // override it. Now that a block keeps the order it was parsed in, emitting
+    // it in that order is both stable AND meaning-preserving.
+    for (prop, val) in rule.declarations.iter() {
         decls.push_str(&format!("  {}: {};\n", prop, val));
     }
-    let mut imp_props: Vec<(&String, &String)> = rule.important_declarations.iter().collect();
-    imp_props.sort_by_key(|(k, _)| k.as_str());
-    for (prop, val) in imp_props {
+    for (prop, val) in rule.important_declarations.iter() {
         decls.push_str(&format!("  {}: {} !important;\n", prop, val));
     }
 
     format!("{} {{\n{}}}\n", sel_text, decls)
 }
 
-fn serialize_stylesheet(doc: &Document) -> String {
+/// CSSOM serialization of a document's AUTHOR rules — the text form of
+/// `document.styleSheets`, rebuilt from the cascade rather than from source.
+pub fn serialize_stylesheet(doc: &Document) -> String {
     // Skip UA rules — only emit author rules (appended after UA rules in combined stylesheet).
     let ua_count = ua_stylesheet().rules.len();
     let author_rules: Vec<_> = doc.stylesheet.rules.iter().skip(ua_count).collect();
@@ -503,10 +522,33 @@ fn serialize_stylesheet(doc: &Document) -> String {
 // ─── Box serialization ────────────────────────────────────────────────────────
 
 /// Serialize a single `WebCore` (and all its descendants) into `out`.
+///
+/// `<style>` is serialized like any other element, with its own text. There was
+/// briefly a `skip_style` variant for the document walk, back when whole-document
+/// serialization wrote a stylesheet rebuilt from the cascade into the head it
+/// synthesises — skipping the elements was how the rules avoided appearing
+/// twice. Emitting the elements where they actually are is both simpler and
+/// what a browser does, so the reconstruction and the variant are gone.
 pub fn serialize_box(node: &WebCore, out: &mut String) {
+    serialize_box_inner(node, out)
+}
+
+fn serialize_box_inner(node: &WebCore, out: &mut String) {
+    // Generated content is not markup. `::before`/`::after` are boxes the
+    // cascade adds so layout can measure them; writing them out produced
+    // `<::after>!</::after>`, which is not a tag and does not parse back.
+    if node.is_pseudo_element() { return; }
     // Text nodes
     if node.tag == "#text" {
         out.push_str(&escape_html(&node.text));
+        return;
+    }
+    // Comment nodes. Data is written VERBATIM — the fragment-serialising steps
+    // escape text and attribute values, never comment data.
+    if node.tag == "#comment" {
+        out.push_str("<!--");
+        out.push_str(&node.text);
+        out.push_str("-->");
         return;
     }
 
@@ -579,9 +621,29 @@ pub fn serialize_box(node: &WebCore, out: &mut String) {
 
     out.push('>');
 
+    // HTML §13.3 — a `<pre>`, `<textarea>` or `<listing>` whose text starts
+    // with a newline gets an EXTRA one here, because the parser drops a newline
+    // immediately after the open tag. Without it the first line of a code block
+    // is eaten a little more on every serialize → reparse cycle.
+    if matches!(tag, "pre" | "textarea" | "listing") {
+        let starts_with_newline = node.text.starts_with('\n')
+            || node.children.first()
+                .map(|c| c.is_text_node() && c.text.starts_with('\n'))
+                .unwrap_or(false);
+        if starts_with_newline { out.push('\n'); }
+    }
+
     // Own text (block-level text content stored directly on the node).
     if !node.text.is_empty() {
-        out.push_str(&escape_html(&node.text));
+        // `<style>` and `<script>` hold RAW TEXT: their content is not escaped
+        // on the way out, because it was never entity-decoded on the way in.
+        // Escaping it turns `a > b` in a selector into `a &gt; b`, which does
+        // not parse back as the same stylesheet.
+        if matches!(tag, "style" | "script") {
+            out.push_str(&node.text);
+        } else {
+            out.push_str(&escape_html(&node.text));
+        }
     }
 
     // Inline runs — emit styled text segments.
@@ -628,7 +690,7 @@ pub fn serialize_box(node: &WebCore, out: &mut String) {
 
     // Children (depth-first).
     for child in &node.children {
-        serialize_box(child, out);
+        serialize_box_inner(child, out);
     }
 
     // Close tag.
@@ -645,48 +707,70 @@ pub fn serialize_box(node: &WebCore, out: &mut String) {
 ///   `<html><head><style>…</style></head><body>…</body></html>` document.
 /// * Otherwise only the children of the root "html" box are serialized.
 pub fn serialize_html(doc: &Document) -> String {
-    let style_block = serialize_stylesheet(doc);
-
     let mut html = String::new();
 
-    // Serialize the root box.  When the root is the synthetic "html" wrapper
-    // (tag == "html" with no attributes of its own) we emit only its children,
-    // matching the C++ behaviour of skipping the root tag.
+    // Serialize the root box. The root IS the document element, so its head
+    // and body children are hoisted into the head and body written below
+    // rather than emitted as ordinary elements.
+    //
+    // The test used to be "html AND no attributes of its own", which meant a
+    // document that wrote `<html lang="en">` took the `else` branch and was
+    // serialised WHOLE inside the synthetic `<body>` — `<body><html lang="en">
+    // <head>…`, a second document element nested in the first. The attribute
+    // is the one thing that should not decide the shape of the output, so it
+    // is carried onto the tag instead.
     let root = &doc.root;
-    let root_is_synthetic = root.tag == "html"
-        && root.attributes.is_empty()
-        && root.text.is_empty();
+    let root_is_document_element = root.tag == "html" && root.text.is_empty();
 
-    if !style_block.is_empty() {
-        html.push_str("<html>\n<head>\n");
-        html.push_str(&style_block);
+    if root_is_document_element {
+        html.push_str("<html");
+        let mut root_attrs: Vec<(&String, &String)> = root.attributes.iter().collect();
+        root_attrs.sort_by_key(|(k, _)| k.as_str());
+        for (name, value) in root_attrs {
+            html.push(' ');
+            html.push_str(name);
+            if !value.is_empty() {
+                html.push_str("=\"");
+                html.push_str(&escape_html(value));
+                html.push('"');
+            }
+        }
+        html.push_str(">\n<head>\n");
+        // The document's OWN head elements — title, meta, link. They belong in
+        // the head being written here; walking them again with the rest of
+        // `root.children` below emitted a second `<head>` inside the `<body>`.
+        // That was invisible while the head element was always empty, and
+        // became a duplicated title and stylesheet the moment it wasn't.
+        //
+        // `<style>` is emitted here like any other element, WHERE IT SITS. The
+        // serializer used to skip every style node and inject a stylesheet
+        // rebuilt from the cascade into the head instead — so a `<style>` an
+        // author wrote in the body moved to the head, its text came back
+        // reformatted rather than as written, and rules from `<link>`ed sheets
+        // were inlined into a document that never had them.
+        if let Some(head) = root.children.iter().find(|c| c.tag == "head") {
+            for child in &head.children {
+                serialize_box(child, &mut html);
+                html.push('\n');
+            }
+        }
         html.push_str("</head>\n<body>");
 
         // When emitting an html/head/body wrapper, skip the body tag in the DOM
         // tree to avoid double-nesting (<body><body>…</body></body>).
-        if root_is_synthetic {
-            for child in &root.children {
-                if child.tag == "body" {
-                    for grandchild in &child.children {
-                        serialize_box(grandchild, &mut html);
-                    }
-                } else {
-                    serialize_box(child, &mut html);
+        for child in &root.children {
+            if child.tag == "head" {
+                continue; // written into the head above
+            } else if child.tag == "body" {
+                for grandchild in &child.children {
+                    serialize_box(grandchild, &mut html);
                 }
-            }
-        } else if root.tag == "body" {
-            for child in &root.children {
+            } else {
                 serialize_box(child, &mut html);
             }
-        } else {
-            serialize_box(root, &mut html);
         }
 
         html.push_str("</body>\n</html>");
-    } else if root_is_synthetic {
-        for child in &root.children {
-            serialize_box(child, &mut html);
-        }
     } else {
         serialize_box(root, &mut html);
     }

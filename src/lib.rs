@@ -191,7 +191,7 @@ pub fn load_html_with_registry(
     doc
 }
 
-/// Walk the DOM tree, find all <img> nodes with remote `_resolved_src`,
+/// Walk the DOM tree, find all <img> nodes with a remote `resolved_src`,
 /// fire off parallel fetch threads, store channel on Document for async polling.
 fn start_async_image_fetches(doc: &mut types::Document) {
     let mut pending: Vec<(Vec<usize>, String)> = Vec::new();
@@ -227,10 +227,9 @@ fn collect_remote_images(
     pending: &mut Vec<(Vec<usize>, String)>,
 ) {
     if node.is_image_element() && node.image_data.is_none() {
-        if let Some(url) = node.attributes.get("_resolved_src") {
-            if url.starts_with("http://") || url.starts_with("https://") {
-                pending.push((path.clone(), url.clone()));
-            }
+        let url = &node.resolved_src;
+        if url.starts_with("http://") || url.starts_with("https://") {
+            pending.push((path.clone(), url.clone()));
         }
     }
     for (i, child) in node.children.iter().enumerate() {

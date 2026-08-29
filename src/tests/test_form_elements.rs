@@ -382,28 +382,39 @@ fn select_options_are_hidden() {
 }
 
 #[test]
-fn select_has_display_text_node() {
+fn select_shows_the_selected_option() {
     let doc = layout_html(r#"<select><option>First</option><option selected>Second</option></select>"#, 400.0);
     let select = find_by_tag(&doc.root, "select").unwrap();
-    let text_node = select.children.iter().find(|c| c.tag == "#text");
-    assert!(text_node.is_some(), "select should have a #text child for display");
-    assert_eq!(text_node.unwrap().text.trim(), "Second");
+    // A `<select>` has NO text child of its own. The parser used to inject one
+    // holding the display label, which no browser has: it doubled
+    // `textContent`, and a serialize → reparse turned `Second` into
+    // `SecondSecond`. The label is derived from the selected option instead.
+    assert!(select.children.iter().all(|c| c.tag != "#text"),
+        "a <select> has no #text child; its label comes from the selected option");
+    let selected = select.children.iter()
+        .find(|c| c.tag == "option" && c.selectedness)
+        .expect("one option is selected");
+    assert_eq!(selected.text_content().trim(), "Second");
 }
 
 #[test]
 fn select_first_option_selected_by_default() {
     let doc = layout_html(r#"<select><option>Alpha</option><option>Beta</option></select>"#, 400.0);
     let select = find_by_tag(&doc.root, "select").unwrap();
-    let text_node = select.children.iter().find(|c| c.tag == "#text");
-    assert!(text_node.is_some());
-    assert_eq!(text_node.unwrap().text.trim(), "Alpha");
+    // A drop-down with nothing marked `selected` lands on its first option
+    // (HTML §4.10.7's selectedness setting algorithm).
+    assert_eq!(crate::html::forms::selected_index(select), 0);
+    let selected = select.children.iter()
+        .find(|c| c.tag == "option" && c.selectedness)
+        .expect("a drop-down always has a selected option");
+    assert_eq!(selected.text_content().trim(), "Alpha");
 }
 
 #[test]
 fn select_tracks_selected_index() {
     let doc = layout_html(r#"<select><option>A</option><option selected>B</option><option>C</option></select>"#, 400.0);
     let select = find_by_tag(&doc.root, "select").unwrap();
-    assert_eq!(select.data.get("_selected_idx").map(|s| s.as_str()), Some("1"));
+    assert_eq!(crate::html::forms::selected_index(select), 1);
 }
 
 #[test]
@@ -1124,8 +1135,12 @@ fn click_and_type_integration() {
 
     // Check value updated
     let input = find_by_id(&doc.root, "t").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("abc"),
-        "typing 'abc' should update value to 'abc', got {:?}", input.attributes.get("value"));
+    // The VALUE, not the `value` attribute. Typing must not edit the document:
+    // the attribute is `defaultValue`, and it still reads as the author wrote it.
+    assert_eq!(crate::types::input_value(input), "abc",
+        "typing 'abc' should update the value, got {:?}", crate::types::input_value(input));
+    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some(""),
+        "typing must leave the `value` content attribute alone");
 }
 
 #[test]
@@ -1138,7 +1153,7 @@ fn click_and_type_password() {
     assert!(doc.focused_box != 0, "password input should focus");
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
     let input = find_by_id(&doc.root, "p").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("x"));
+    assert_eq!(crate::types::input_value(input), "x");
 }
 
 #[test]
@@ -1402,6 +1417,91 @@ fn disabled_input_no_focus_on_click() {
 
 // ── Form submission tests ────────────────────────────────────────────────────
 
+/// Every value the entry list carries under one name, in entry order.
+///
+/// A LIST, because HTML's entry list is one: a `multiple` select and a
+/// checkbox group each append several entries under a single name, and a
+/// lookup that could only ever answer one is how those values used to vanish
+/// at the point of submission.
+fn submitted<'a>(data: &'a [(String, String)], name: &str) -> Vec<&'a str> {
+    data.iter()
+        .filter(|(n, _)| n == name)
+        .map(|(_, v)| v.as_str())
+        .collect()
+}
+
+/// The one value under a name, or `None` when the control contributed nothing.
+///
+/// Panics on several rather than picking one — a test that asked for a single
+/// value and silently got the first of many is the failure this whole change
+/// is about.
+fn submitted_one<'a>(data: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    let all = submitted(data, name);
+    assert!(
+        all.len() <= 1,
+        "{name} contributed {} entries, not one: {all:?}",
+        all.len()
+    );
+    all.first().copied()
+}
+
+#[test]
+fn a_multiple_select_submits_every_option_the_user_picked() {
+    // "For each option element ... whose selectedness is true ... append an
+    // entry" — several entries, one name. Held in a map, all but the last were
+    // dropped between the control and the wire.
+    let doc = layout_html(
+        r#"<form id="f">
+            <select name="tags" multiple>
+                <option value="a" selected>A</option>
+                <option value="b">B</option>
+                <option value="c" selected>C</option>
+            </select>
+        </form>"#,
+        400.0,
+    );
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(submitted(&data, "tags"), vec!["a", "c"]);
+    // The serializer runs over the LIST, so both survive and stay in order.
+    assert_eq!(
+        crate::types::encode_form_urlencoded(&data),
+        "tags=a&tags=c"
+    );
+}
+
+#[test]
+fn a_checkbox_group_submits_every_box_that_is_ticked() {
+    // The same defect wearing different markup: one name, several controls.
+    let doc = layout_html(
+        r#"<form id="f">
+            <input type="checkbox" name="day" value="mon" checked>
+            <input type="checkbox" name="day" value="tue">
+            <input type="checkbox" name="day" value="wed" checked>
+        </form>"#,
+        400.0,
+    );
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(submitted(&data, "day"), vec!["mon", "wed"]);
+}
+
+#[test]
+fn the_entry_list_is_in_tree_order() {
+    // Order is part of the answer, and it is the DOCUMENT's order — not
+    // alphabetical, which is what sorting for a map's sake used to make it.
+    let doc = layout_html(
+        r#"<form id="f">
+            <input name="z" value="1">
+            <input name="a" value="2">
+        </form>"#,
+        400.0,
+    );
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(crate::types::encode_form_urlencoded(&data), "z=1&a=2");
+}
+
 #[test]
 fn collect_form_data_basic() {
     let doc = layout_html(r#"<form id="f">
@@ -1411,9 +1511,9 @@ fn collect_form_data_basic() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert_eq!(data.get("user").map(|s| s.as_str()), Some("alice"));
-    assert_eq!(data.get("pass").map(|s| s.as_str()), Some("secret"));
-    assert_eq!(data.get("token").map(|s| s.as_str()), Some("xyz"));
+    assert_eq!(submitted_one(&data, "user"), Some("alice"));
+    assert_eq!(submitted_one(&data, "pass"), Some("secret"));
+    assert_eq!(submitted_one(&data, "token"), Some("xyz"));
 }
 
 #[test]
@@ -1424,8 +1524,8 @@ fn collect_form_data_checkbox() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert_eq!(data.get("agree").map(|s| s.as_str()), Some("on"));
-    assert!(data.get("news").is_none(), "unchecked checkbox should not be in form data");
+    assert_eq!(submitted_one(&data, "agree"), Some("on"));
+    assert!(submitted_one(&data, "news").is_none(), "unchecked checkbox should not be in form data");
 }
 
 #[test]
@@ -1437,7 +1537,7 @@ fn collect_form_data_radio() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert_eq!(data.get("color").map(|s| s.as_str()), Some("blue"));
+    assert_eq!(submitted_one(&data, "color"), Some("blue"));
 }
 
 #[test]
@@ -1450,7 +1550,7 @@ fn collect_form_data_select() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert_eq!(data.get("country").map(|s| s.as_str()), Some("fr"));
+    assert_eq!(submitted_one(&data, "country"), Some("fr"));
 }
 
 #[test]
@@ -1460,7 +1560,7 @@ fn collect_form_data_textarea() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert!(data.get("bio").map(|s| s.contains("Hello")).unwrap_or(false));
+    assert!(submitted_one(&data, "bio").map(|s| s.contains("Hello")).unwrap_or(false));
 }
 
 #[test]
@@ -1471,8 +1571,8 @@ fn collect_form_data_disabled_excluded() {
     </form>"#, 400.0);
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert_eq!(data.get("a").map(|s| s.as_str()), Some("yes"));
-    assert!(data.get("b").is_none(), "disabled input should be excluded from form data");
+    assert_eq!(submitted_one(&data, "a"), Some("yes"));
+    assert!(submitted_one(&data, "b").is_none(), "disabled input should be excluded from form data");
 }
 
 #[test]
@@ -1484,7 +1584,7 @@ fn collect_form_data_no_name_excluded() {
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(data.len(), 1);
-    assert_eq!(data.get("named").map(|s| s.as_str()), Some("ok"));
+    assert_eq!(submitted_one(&data, "named"), Some("ok"));
 }
 
 #[test]
@@ -1602,7 +1702,7 @@ fn select_arrow_down_changes_option() {
     // Arrow down should select next option
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert_eq!(sel.data.get("_selected_idx").map(|s| s.as_str()), Some("2"),
+    assert_eq!(crate::html::forms::selected_index(sel), 2,
         "arrow down should move to index 2");
 }
 
@@ -1619,7 +1719,7 @@ fn select_arrow_up_changes_option() {
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert_eq!(sel.data.get("_selected_idx").map(|s| s.as_str()), Some("0"),
+    assert_eq!(crate::html::forms::selected_index(sel), 0,
         "arrow up should move to index 0");
 }
 
@@ -2074,4 +2174,575 @@ fn a_date_input_opens_a_calendar_and_a_day_sets_the_value() {
         "2026-08-10",
         "the pick writes the date in the format the control's value takes"
     );
+}
+
+// ── List box and range: the click paths (HTML §4.10.7, §4.10.5.1.13) ────────
+//
+// Both controls PAINTED long before either could be clicked, which is the one
+// failure a screenshot cannot show. These drive `process_mouse_event` on a
+// laid-out document — the state a real click arrives in.
+
+/// Click the centre of a control's row `row`, both edges, as the shell does.
+fn click_at(doc: &mut Document, x: f32, y: f32) {
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, (x, y), 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, (x, y), 0);
+}
+
+/// A click with Ctrl held — the gesture a platform binds the list box's
+/// "request that the option ... be unselected" to.
+fn ctrl_click_at(doc: &mut Document, x: f32, y: f32) {
+    for etype in [
+        crate::dom::HtmlEventType::MouseDown,
+        crate::dom::HtmlEventType::MouseUp,
+    ] {
+        doc.process_mouse_event_with_modifiers(etype, (x, y), 0, true, false, false, false);
+    }
+}
+
+/// The document y of a list box row's centre, off the SHARED metrics — so this
+/// asks about the control rather than about the test's own arithmetic.
+fn list_box_row_y(doc: &Document, id: &str, row: usize) -> (f32, f32) {
+    let n = find_by_id(&doc.root, id).expect("no such control");
+    let content = n.layout.content_rect;
+    let font_px = n.style.font_size_px(16.0, 16.0).max(1.0);
+    let row_h = crate::html::forms::list_box_row_height(font_px);
+    (
+        content.x + content.w / 2.0,
+        content.y + crate::html::forms::LIST_BOX_PADDING + row as f32 * row_h + row_h / 2.0,
+    )
+}
+
+#[test]
+fn a_fresh_list_box_has_nothing_selected() {
+    // The selectedness setting algorithm auto-selects the first option only at
+    // a DISPLAY SIZE OF 1. A list box is not that, so it starts empty and
+    // `selectedIndex` is −1 — not 0.
+    let doc = layout_html(
+        r#"<select id="lb" size="4"><option>one</option><option>two</option></select>"#,
+        400.0,
+    );
+    let lb = find_by_id(&doc.root, "lb").unwrap();
+    assert_eq!(crate::html::forms::selected_index(lb), -1);
+
+    // A DROP-DOWN of the same options does auto-select, which is the guard.
+    let doc = layout_html(
+        r#"<select id="dd"><option>one</option><option>two</option></select>"#,
+        400.0,
+    );
+    let dd = find_by_id(&doc.root, "dd").unwrap();
+    assert_eq!(crate::html::forms::selected_index(dd), 0);
+}
+
+#[test]
+fn the_auto_selected_option_skips_a_disabled_one() {
+    // "set the selectedness of the first option element ... that is not
+    // disabled". An `<optgroup disabled>` disables its children too.
+    let doc = layout_html(
+        r#"<select id="dd"><option disabled>skip</option><option>take</option></select>"#,
+        400.0,
+    );
+    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "dd").unwrap()), 1);
+
+    let doc = layout_html(
+        r#"<select id="g"><optgroup disabled><option>skip</option></optgroup><option>take</option></select>"#,
+        400.0,
+    );
+    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "g").unwrap()), 1);
+}
+
+#[test]
+fn clicking_a_list_box_row_selects_that_row() {
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" style="width:150px;height:100px">
+             <option>one</option><option>two</option><option>three</option><option>four</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y) = list_box_row_y(&doc, "lb", 2);
+    click_at(&mut doc, x, y);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        2,
+        "clicking the third row must select the third option"
+    );
+    // ⛔ And no phantom popup: a list box has none, so routing its click
+    // through the dropdown state machine is the bug this guards.
+    assert_eq!(doc.open_select, 0, "a list box must never open a popup");
+}
+
+#[test]
+fn a_single_select_list_box_can_be_asked_to_unselect() {
+    // "If the multiple attribute is absent and the element's display size is
+    // greater than 1, then the user agent should also allow the user to request
+    // that the option whose selectedness is true, if any, be unselected."
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" style="width:150px;height:100px">
+             <option>one</option><option>two</option><option>three</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y1) = list_box_row_y(&doc, "lb", 1);
+    click_at(&mut doc, x, y1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        1
+    );
+
+    ctrl_click_at(&mut doc, x, y1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        -1,
+        "the request must leave the control with nothing selected"
+    );
+
+    // The request applies to the option that IS selected. On any other row it
+    // is an ordinary pick, not a way to select nothing by aiming badly.
+    let (_, y2) = list_box_row_y(&doc, "lb", 2);
+    ctrl_click_at(&mut doc, x, y2);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        2
+    );
+}
+
+#[test]
+fn a_drop_down_has_no_unselect_affordance() {
+    // The affordance is a LIST BOX's — display size greater than one. A
+    // drop-down has no way to show "nothing", and HTML never offers it one, so
+    // the same gesture must simply pick.
+    let mut doc = layout_html(
+        r#"<select id="dd"><option>one</option><option>two</option></select>"#,
+        400.0,
+    );
+    let sel = find_by_id(&doc.root, "dd").unwrap();
+    let r = sel.layout.content_rect;
+    ctrl_click_at(&mut doc, r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "dd").unwrap()),
+        0,
+        "a drop-down's first option stays selected"
+    );
+}
+
+#[test]
+fn a_list_box_click_replaces_the_selection_but_multiple_toggles() {
+    // Single-select: picking an option deselects every other one.
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" style="width:150px;height:100px">
+             <option>one</option><option>two</option><option>three</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y0) = list_box_row_y(&doc, "lb", 0);
+    click_at(&mut doc, x, y0);
+    let (_, y2) = list_box_row_y(&doc, "lb", 2);
+    click_at(&mut doc, x, y2);
+    let lb = find_by_id(&doc.root, "lb").unwrap();
+    let selected: Vec<bool> = crate::html::forms::list_of_options(lb).iter().map(|o| o.selectedness).collect();
+    assert_eq!(selected, [false, false, true], "a single-select list box holds one row");
+
+    // `multiple`: each click TOGGLES, so two rows can be held at once — the
+    // state a single index could never express.
+    let mut doc = layout_html(
+        r#"<select id="ml" multiple style="width:150px;height:100px">
+             <option>one</option><option>two</option><option>three</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y0) = list_box_row_y(&doc, "ml", 0);
+    click_at(&mut doc, x, y0);
+    let (_, y2) = list_box_row_y(&doc, "ml", 2);
+    click_at(&mut doc, x, y2);
+    let ml = find_by_id(&doc.root, "ml").unwrap();
+    let selected: Vec<bool> = crate::html::forms::list_of_options(ml).iter().map(|o| o.selectedness).collect();
+    assert_eq!(selected, [true, false, true], "a multiple list box holds both rows");
+
+    // Clicking a held row again releases it.
+    click_at(&mut doc, x, y0);
+    let ml = find_by_id(&doc.root, "ml").unwrap();
+    assert!(!crate::html::forms::list_of_options(ml)[0].selectedness);
+}
+
+#[test]
+fn a_click_does_not_edit_the_selected_attribute() {
+    // `selected` is `defaultSelected` — the reset target. A user's click writes
+    // SELECTEDNESS and leaves the markup as the author wrote it.
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" style="width:150px;height:100px">
+             <option selected>one</option><option>two</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y) = list_box_row_y(&doc, "lb", 1);
+    click_at(&mut doc, x, y);
+    let lb = find_by_id(&doc.root, "lb").unwrap();
+    let options = crate::html::forms::list_of_options(lb);
+    assert_eq!(crate::html::forms::selected_index(lb), 1, "the click moved the selection");
+    assert!(options[0].attributes.contains_key("selected"), "the author's default survives");
+    assert!(!options[1].attributes.contains_key("selected"), "the click added no attribute");
+}
+
+#[test]
+fn a_range_starts_at_the_sanitized_value_not_the_attribute() {
+    // The spec's own worked example, end to end through the parser.
+    let doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="20" value="50">"#,
+        400.0,
+    );
+    let r = find_by_id(&doc.root, "r").unwrap();
+    assert_eq!(crate::types::input_value(r), "60", "step mismatch rounds up on a tie");
+    assert_eq!(
+        r.attributes.get("value").map(|s| s.as_str()),
+        Some("50"),
+        "sanitization sets the VALUE and leaves the default alone"
+    );
+}
+
+#[test]
+fn clicking_a_range_track_moves_its_value() {
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="any" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let r = find_by_id(&doc.root, "r").unwrap();
+    let rect = r.layout.content_rect;
+    // Three quarters along. Not the end — a thumb has width, so its centre
+    // never reaches the last pixel of the track.
+    click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
+
+    let after: f64 = crate::html::forms::parse_floating_point(
+        &crate::types::input_value(find_by_id(&doc.root, "r").unwrap()),
+    )
+    .unwrap();
+    assert!(after > 50.0 && after <= 100.0, "clicking three quarters along left the value at {after}");
+}
+
+#[test]
+fn dragging_a_range_fires_input_all_the_way_and_change_once() {
+    // "While the user is dragging the control's knob, input events would fire
+    // whenever the position changed, whereas the change event would only fire
+    // when the user let go of the knob, committing to a specific value."
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="any" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FormEventKind>::new()));
+    let sink = events.clone();
+    doc.on_form_event = Some(Box::new(move |e: &FormEvent| {
+        sink.lock().unwrap().push(e.kind.clone());
+    }));
+
+    let y = rect.y + rect.h / 2.0;
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, (rect.x + rect.w * 0.2, y), 0);
+    for frac in [0.4, 0.6, 0.8] {
+        doc.process_mouse_event(
+            crate::dom::HtmlEventType::MouseMove,
+            (rect.x + rect.w * frac, y),
+            0,
+        );
+    }
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, (rect.x + rect.w * 0.8, y), 0);
+
+    let seen = events.lock().unwrap().clone();
+    doc.on_form_event = None; // drop the closure before doc
+    let inputs = seen.iter().filter(|e| matches!(e, FormEventKind::Input(_))).count();
+    let changes = seen.iter().filter(|e| matches!(e, FormEventKind::Change(_))).count();
+    assert!(
+        inputs >= 4,
+        "the press and each move that moved the knob fire `input` — saw {inputs}: {seen:?}"
+    );
+    assert_eq!(
+        changes, 1,
+        "`change` fires once, on release — saw {changes}: {seen:?}"
+    );
+    // And the last thing in the list is the commit, not a stray move.
+    assert!(
+        matches!(seen.last(), Some(FormEventKind::Change(_))),
+        "`change` comes last: {seen:?}"
+    );
+
+    let after: f64 = crate::html::forms::parse_floating_point(&crate::types::input_value(
+        find_by_id(&doc.root, "r").unwrap(),
+    ))
+    .unwrap();
+    assert!(after > 50.0, "the drag ended near the far end, at {after}");
+}
+
+#[test]
+fn a_range_that_was_touched_but_not_moved_commits_nothing() {
+    // "The change event fires when the value is committed." Pressing and
+    // releasing on the knob's own position commits nothing, so a handler
+    // counting changes must not hear one.
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="any" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FormEventKind>::new()));
+    let sink = events.clone();
+    doc.on_form_event = Some(Box::new(move |e: &FormEvent| {
+        sink.lock().unwrap().push(e.kind.clone());
+    }));
+    // The far left IS the current value, so nothing moves.
+    let pt = (rect.x, rect.y + rect.h / 2.0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, pt, 0);
+    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, pt, 0);
+    let seen = events.lock().unwrap().clone();
+    doc.on_form_event = None;
+    assert!(
+        !seen.iter().any(|e| matches!(e, FormEventKind::Change(_))),
+        "nothing moved, so nothing was committed: {seen:?}"
+    );
+}
+
+#[test]
+fn a_range_click_lands_on_a_step() {
+    // "The range and step constraints are enforced even during user input", so
+    // a click cannot leave the control between steps.
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="25" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let r = find_by_id(&doc.root, "r").unwrap();
+    let rect = r.layout.content_rect;
+    click_at(&mut doc, rect.x + rect.w * 0.62, rect.y + rect.h / 2.0);
+
+    let after = crate::types::input_value(find_by_id(&doc.root, "r").unwrap());
+    assert!(
+        ["0", "25", "50", "75", "100"].contains(&after.as_str()),
+        "a click left the range off its steps, at {after}"
+    );
+}
+
+#[test]
+fn a_vertical_range_reads_the_pointers_y() {
+    // A vertical writing mode turns the control's inline axis. Measuring x
+    // would answer with wherever the pointer happened to be horizontally.
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="any" value="0"
+             style="writing-mode:vertical-lr;width:20px;height:200px">"#,
+        400.0,
+    );
+    let r = find_by_id(&doc.root, "r").unwrap();
+    let rect = r.layout.content_rect;
+    click_at(&mut doc, rect.x + rect.w / 2.0, rect.y + rect.h * 0.75);
+
+    let after: f64 = crate::html::forms::parse_floating_point(
+        &crate::types::input_value(find_by_id(&doc.root, "r").unwrap()),
+    )
+    .unwrap();
+    assert!(after > 50.0, "a vertical range ignored its own axis, landing at {after}");
+}
+
+#[test]
+fn a_disabled_control_ignores_a_click() {
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" disabled style="width:150px;height:100px">
+             <option>one</option><option>two</option>
+           </select>"#,
+        400.0,
+    );
+    let (x, y) = list_box_row_y(&doc, "lb", 1);
+    click_at(&mut doc, x, y);
+    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()), -1);
+
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" value="0" disabled
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
+    assert_eq!(crate::types::input_value(find_by_id(&doc.root, "r").unwrap()), "0");
+}
+
+#[test]
+fn a_reset_restores_the_authors_defaults_not_the_users_edits() {
+    // The reset algorithm over all three states at once: value, checkedness
+    // and selectedness each fall back to their content attribute.
+    let mut doc = layout_html(
+        r#"<form id="f">
+             <input id="t" type="text" value="original">
+             <select id="lb" size="4" style="width:150px;height:100px">
+               <option selected>one</option><option>two</option>
+             </select>
+           </form>"#,
+        400.0,
+    );
+    let (x, y) = list_box_row_y(&doc, "lb", 1);
+    click_at(&mut doc, x, y);
+    fn by_id_mut<'a>(node: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
+        if node.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(node);
+        }
+        node.children.iter_mut().find_map(|c| by_id_mut(c, id))
+    }
+    if let Some(t) = by_id_mut(&mut doc.root, "t") {
+        t.value_state = Some("typed".into());
+        t.dirty_value = true;
+    }
+    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()), 1);
+
+    let form_id = find_by_id(&doc.root, "f").unwrap().node_id;
+    crate::types::reset_form(&mut doc.root, form_id);
+
+    let lb = find_by_id(&doc.root, "lb").unwrap();
+    assert_eq!(crate::html::forms::selected_index(lb), 0, "reset restores the marked option");
+    let t = find_by_id(&doc.root, "t").unwrap();
+    assert_eq!(crate::types::input_value(t), "original", "reset restores the value attribute");
+}
+
+#[test]
+fn an_unstyled_list_box_still_occupies_space() {
+    // §15.5.16: a list box's block size is "the height necessary to contain as
+    // many rows for items as given by the element's display size". Every other
+    // list-box test pins width and height in CSS, so a collapsed intrinsic size
+    // would fail none of them — and an unclickable 0-height control looks
+    // exactly like a broken click path.
+    let doc = layout_html(
+        r#"<select id="lb" size="4"><option>one</option><option>two</option></select>"#,
+        400.0,
+    );
+    let lb = find_by_id(&doc.root, "lb").unwrap();
+    let r = lb.layout.content_rect;
+    assert!(r.w > 0.0 && r.h > 0.0, "an unstyled list box laid out to {}x{}", r.w, r.h);
+    // Taller than a drop-down of the same options, which is the whole point of
+    // a display size above one.
+    let dd = layout_html(
+        r#"<select id="dd"><option>one</option><option>two</option></select>"#,
+        400.0,
+    );
+    let dd_h = find_by_id(&dd.root, "dd").unwrap().layout.content_rect.h;
+    assert!(r.h > dd_h, "a 4-row list box ({}) is not taller than a drop-down ({dd_h})", r.h);
+}
+
+#[test]
+fn the_dom_accessors_see_what_a_click_did() {
+    // ⛔ There are TWO stores — the render tree and the arena — and interaction
+    // writes only the first. A click that moves state the accessors cannot see
+    // is a click the program is told never happened, which is the failure this
+    // pins: assert through `doc.value()`/`doc.selected_index()`, the WHATWG
+    // accessors, not through the node the click wrote.
+    let mut doc = layout_html(
+        r#"<select id="lb" size="4" style="width:150px;height:100px">
+             <option value="a">one</option><option value="b">two</option>
+           </select>"#,
+        400.0,
+    );
+    let lb_id = find_by_id(&doc.root, "lb").unwrap().node_id;
+    let (x, y) = list_box_row_y(&doc, "lb", 1);
+    click_at(&mut doc, x, y);
+    assert_eq!(doc.selected_index(lb_id), 1, "selectedIndex did not see the click");
+    assert_eq!(doc.value(lb_id), "b", "select.value did not see the click");
+
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="any" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let r_id = find_by_id(&doc.root, "r").unwrap().node_id;
+    let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
+    let seen: f64 = crate::html::forms::parse_floating_point(&doc.value(r_id)).unwrap();
+    assert!(seen > 50.0, "input.value did not see the click, reporting {seen}");
+}
+
+#[test]
+fn a_dropdown_built_through_the_dom_selects_its_first_option() {
+    // A `ComboBox` filled by `AddItem` must come up the same way the equivalent
+    // markup does. Only the PARSER used to run the selectedness setting
+    // algorithm, so this route left the control with no selection at all.
+    let mut doc = layout_html(r#"<select id="dd"></select>"#, 400.0);
+    let dd = find_by_id(&doc.root, "dd").unwrap().node_id;
+    assert_eq!(doc.selected_index(dd), -1, "an empty select has no selection");
+    doc.add_item(dd, "alpha");
+    doc.add_item(dd, "beta");
+    assert_eq!(doc.selected_index(dd), 0, "a drop-down auto-selects its first option");
+    assert_eq!(doc.value(dd), "alpha");
+
+    // A list box built the same way stays empty — the guard is display size.
+    let mut doc = layout_html(r#"<select id="lb" size="4"></select>"#, 400.0);
+    let lb = find_by_id(&doc.root, "lb").unwrap().node_id;
+    doc.add_item(lb, "alpha");
+    assert_eq!(doc.selected_index(lb), -1, "a list box does not auto-select");
+}
+
+#[test]
+fn a_value_attribute_write_reaches_a_range_until_it_is_dirty() {
+    // The `value` content attribute drives the value while the dirty flag is
+    // down, and stops the moment anything sets the value — the same rule
+    // `checked` follows.
+    let mut doc = layout_html(
+        r#"<input id="r" type="range" min="0" max="100" step="20" value="0"
+             style="width:200px;height:20px">"#,
+        400.0,
+    );
+    let r = find_by_id(&doc.root, "r").unwrap().node_id;
+    doc.set_attribute(r, "value", "50");
+    assert_eq!(doc.value(r), "60", "an attribute write is sanitized like the markup's");
+
+    // A click raises the dirty flag; the attribute no longer speaks.
+    let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    click_at(&mut doc, rect.x + rect.w * 0.1, rect.y + rect.h / 2.0);
+    let after_click = doc.value(r);
+    doc.set_attribute(r, "value", "100");
+    assert_eq!(doc.value(r), after_click, "a dirty value ignores the attribute");
+}
+
+#[test]
+fn a_form_submits_what_the_user_did_not_what_the_markup_said() {
+    // ⛔ THE GAP EVERY EXISTING SUBMISSION TEST MISSED: none of them changed a
+    // control before collecting, so reading the `value` ATTRIBUTE — the
+    // author's default — passed all of them while silently submitting the
+    // wrong data for every user who touched a field.
+    let mut doc = layout_html(
+        r#"<form id="f">
+             <input id="t" type="text" name="who" value="default">
+             <input id="r" type="range" name="level" min="0" max="100" step="any"
+                    value="0" style="width:200px;height:20px">
+             <select id="s" name="pick" size="4" style="width:150px;height:100px">
+               <option value="a">one</option><option value="b">two</option>
+             </select>
+           </form>"#,
+        400.0,
+    );
+
+    // Type into the field, drag the range, pick a row — all through the real
+    // interaction paths.
+    let t_center = {
+        let t = find_by_id(&doc.root, "t").unwrap();
+        (
+            t.layout.border_rect.x + t.layout.border_rect.w / 2.0,
+            t.layout.border_rect.y + t.layout.border_rect.h / 2.0,
+        )
+    };
+    click_at(&mut doc, t_center.0, t_center.1);
+    for ch in ['h', 'i'] {
+        doc.process_key_event(
+            crate::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false,
+        );
+    }
+    let r_rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
+    click_at(&mut doc, r_rect.x + r_rect.w * 0.75, r_rect.y + r_rect.h / 2.0);
+    let (sx, sy) = list_box_row_y(&doc, "s", 1);
+    click_at(&mut doc, sx, sy);
+
+    let form = find_by_id(&doc.root, "f").unwrap();
+    let data = crate::types::collect_form_data(form);
+    assert_eq!(
+        submitted_one(&data, "who"),
+        Some("defaulthi"),
+        "the form submitted the default instead of the typed value"
+    );
+    assert_eq!(submitted_one(&data, "pick"), Some("b"));
+    let level: f64 = crate::html::forms::parse_floating_point(
+        submitted_one(&data, "level").unwrap_or(""),
+    )
+    .unwrap_or(-1.0);
+    assert!(level > 50.0, "the form submitted the range's default, {level}");
 }

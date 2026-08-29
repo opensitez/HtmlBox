@@ -429,6 +429,14 @@ fn walk(
     // aria-valuetext overrides numeric value for screen-reader announcements.
     if let Some(vt) = node.attributes.get("aria-valuetext") {
         if !vt.is_empty() { ak.set_value(vt.as_str()); }
+    } else if matches!(node.tag.as_str(), "input" | "textarea") {
+        // The VALUE a screen reader announces is what the control HOLDS. The
+        // `value` attribute is its default, so this used to read out the
+        // author's placeholder number after the user had moved the control.
+        let val = crate::types::input_value(node);
+        if !val.is_empty() {
+            ak.set_value(val.as_str());
+        }
     } else if let Some(val) = node.attributes.get("value") {
         ak.set_value(val.as_str());
     }

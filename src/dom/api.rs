@@ -36,17 +36,63 @@ impl Document {
 
     /// Query for the first element matching a CSS selector.
     pub fn query_selector(&self, selector: &str) -> Option<u32> {
-        let selectors = parse_comma_selectors(selector);
-        let empty_hover = std::collections::HashSet::new();
-        query_walk_first(&self.root, &[], &selectors, &empty_hover)
+        self.run_query(selector, true).first().copied()
     }
 
     /// Query for all elements matching a CSS selector.
     pub fn query_selector_all(&self, selector: &str) -> Vec<u32> {
+        self.run_query(selector, false)
+    }
+
+    /// Shared body of `querySelector` / `querySelectorAll`.
+    ///
+    /// The document element is both a CANDIDATE and an ANCESTOR, and the walk
+    /// used to treat it as neither — it started at the root's children with an
+    /// empty ancestor chain, so `querySelector("html")` found nothing and
+    /// `querySelector("html body")` had no `html` to match against.
+    fn run_query(&self, selector: &str, first_only: bool) -> Vec<u32> {
+        matching_ids_from(&self.root, selector, first_only)
+    }
+}
+
+/// Ids of the elements in `root`'s tree (including `root`) that match
+/// `selector`, in document order.
+///
+/// This is THE selector query for the DOM surface. `dom::query_selector` and
+/// friends used to run a ten-line matcher that understood `#id`, `.class`,
+/// `tag` and `*` and nothing else, silently answering "no match" for every
+/// combinator, pseudo-class and attribute selector — so
+/// `element.matches("div p")` was false on a `<p>` inside a `<div>`, and the
+/// headless browser's `find` reported an empty result for `table tbody`.
+/// One question, one answer.
+pub fn matching_ids_from(root: &WebCore, selector: &str, first_only: bool) -> Vec<u32> {
+    {
         let selectors = parse_comma_selectors(selector);
         let empty_hover = std::collections::HashSet::new();
         let mut results = Vec::new();
-        query_walk_all(&self.root, &[], &selectors, &empty_hover, &mut results);
+        if root.is_element() && root.node_id != 0 {
+            let ctx = crate::css::MatchContext {
+                focused_box: 0,
+                keyboard_focus: false,
+                type_child_index: 0,
+                type_sibling_count: 1,
+                html_box: Some(root),
+                hover_chain: &empty_hover,
+                element_id: root.node_id,
+                prev_siblings: &[],
+            };
+            for sel in &selectors {
+                if crate::css::matches_selector_with_ancestors(
+                    &sel.parts, &root.tag, &root.attributes, 0, 1, &[], &ctx,
+                ) {
+                    results.push(root.node_id);
+                    if first_only { return results; }
+                    break;
+                }
+            }
+        }
+        let root_chain = [build_ancestor_entry(root, 0, 1, 0, 1)];
+        query_walk(root, &root_chain, &selectors, &empty_hover, first_only, &mut results);
         results
     }
 }
@@ -58,99 +104,115 @@ fn parse_comma_selectors(selector: &str) -> Vec<crate::css::CssSelector> {
         .collect()
 }
 
-/// Build ancestor info for the current node's children.
-fn build_ancestor_entry(node: &WebCore, child_index: usize, sibling_count: usize) -> crate::css::AncestorInfo {
+/// Per-child positional facts a selector can ask about.
+///
+/// The cascade computes all four for every element it styles; the query walk
+/// used to hardcode `type_child_index: 0, type_sibling_count: 1` and pass an
+/// empty `prev_siblings`, which silently broke `:nth-of-type`, `:first-of-type`
+/// and BOTH sibling combinators — `querySelectorAll("p + p")` answered 0 on a
+/// document with two adjacent paragraphs.
+struct ChildPositions {
+    /// Index among ELEMENT siblings (what `:nth-child` counts).
+    elem_index: Vec<usize>,
+    elem_count: usize,
+    type_index: Vec<usize>,
+    type_count: Vec<usize>,
+}
+
+fn child_positions(children: &[WebCore]) -> ChildPositions {
+    let mut running: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let tags: Vec<String> = children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+    let type_index: Vec<usize> = tags.iter().map(|t| {
+        let slot = running.entry(t.clone()).or_insert(0);
+        let i = *slot; *slot += 1; i
+    }).collect();
+    let type_count: Vec<usize> = tags.iter().map(|t| *running.get(t).unwrap_or(&0)).collect();
+    let mut pos = 0usize;
+    let elem_index: Vec<usize> = children.iter()
+        .map(|c| if c.is_element() { let p = pos; pos += 1; p } else { 0 })
+        .collect();
+    ChildPositions { elem_index, elem_count: pos, type_index, type_count }
+}
+
+/// Build ancestor info for the current node.
+fn build_ancestor_entry(
+    node: &WebCore,
+    child_index: usize,
+    sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+) -> crate::css::AncestorInfo {
     crate::css::AncestorInfo {
         tag: node.tag.clone(),
         attributes: node.attributes.clone(),
         child_index,
         sibling_count,
-        type_child_index: 0,
-        type_sibling_count: 1,
+        type_child_index,
+        type_sibling_count,
         node_id: node.node_id,
     }
 }
 
-fn query_walk_first(
+/// Walk `node`'s subtree testing every ELEMENT against `selectors`.
+///
+/// `parent_ancestors` must already contain `node` itself — `run_query` seeds it
+/// with the document element so `html body` has an `html` to match against.
+///
+/// Document order, depth-first — `first_only` stops at the first hit, which is
+/// what `querySelector` returns.
+fn query_walk(
     node: &WebCore,
     parent_ancestors: &[crate::css::AncestorInfo],
     selectors: &[crate::css::CssSelector],
     hover_chain: &std::collections::HashSet<u32>,
-) -> Option<u32> {
-    let sibling_count = node.children.len();
-
-    for (child_idx, child) in node.children.iter().enumerate() {
-        if child.tag == "#text" || child.node_id == 0 { continue; }
-
-        // Test this child against all selector alternatives
-        let ctx = crate::css::MatchContext {
-            focused_box: 0,
-            keyboard_focus: false,
-            type_child_index: 0,
-            type_sibling_count: 1,
-            html_box: Some(child),
-            hover_chain,
-            element_id: child.node_id,
-            prev_siblings: &[],
-        };
-
-        for sel in selectors {
-            if crate::css::matches_selector_with_ancestors(
-                &sel.parts, &child.tag, &child.attributes,
-                child_idx, sibling_count, parent_ancestors, &ctx,
-            ) {
-                return Some(child.node_id);
-            }
-        }
-
-        // Recurse into this child's subtree
-        let mut child_ancestors = parent_ancestors.to_vec();
-        child_ancestors.push(build_ancestor_entry(child, child_idx, sibling_count));
-        if let Some(found) = query_walk_first(child, &child_ancestors, selectors, hover_chain) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn query_walk_all(
-    node: &WebCore,
-    parent_ancestors: &[crate::css::AncestorInfo],
-    selectors: &[crate::css::CssSelector],
-    hover_chain: &std::collections::HashSet<u32>,
+    first_only: bool,
     results: &mut Vec<u32>,
-) {
-    let sibling_count = node.children.len();
+) -> bool {
+    let pos = child_positions(&node.children);
+    // `+` and `~` look BACKWARDS, so this accumulates as the walk moves right.
+    let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
 
-    for (child_idx, child) in node.children.iter().enumerate() {
-        if child.tag == "#text" || child.node_id == 0 { continue; }
+    for (i, child) in node.children.iter().enumerate() {
+        if !child.is_element() || child.node_id == 0 { continue; }
 
         let ctx = crate::css::MatchContext {
             focused_box: 0,
             keyboard_focus: false,
-            type_child_index: 0,
-            type_sibling_count: 1,
+            type_child_index: pos.type_index[i],
+            type_sibling_count: pos.type_count[i],
             html_box: Some(child),
             hover_chain,
             element_id: child.node_id,
-            prev_siblings: &[],
+            prev_siblings: &prev_siblings,
         };
 
         for sel in selectors {
             if crate::css::matches_selector_with_ancestors(
                 &sel.parts, &child.tag, &child.attributes,
-                child_idx, sibling_count, parent_ancestors, &ctx,
+                pos.elem_index[i], pos.elem_count, parent_ancestors, &ctx,
             ) {
                 results.push(child.node_id);
-                break; // don't double-count from multiple selector alternatives
+                if first_only { return true; }
+                break; // one hit per element, however many alternatives matched
             }
         }
 
-        // Recurse
         let mut child_ancestors = parent_ancestors.to_vec();
-        child_ancestors.push(build_ancestor_entry(child, child_idx, sibling_count));
-        query_walk_all(child, &child_ancestors, selectors, hover_chain, results);
+        child_ancestors.push(build_ancestor_entry(
+            child, pos.elem_index[i], pos.elem_count,
+            pos.type_index[i], pos.type_count[i],
+        ));
+        if query_walk(child, &child_ancestors, selectors, hover_chain, first_only, results) {
+            return true;
+        }
+
+        prev_siblings.push((
+            child.tag.to_ascii_lowercase(),
+            child.attributes.get("id").cloned().unwrap_or_default(),
+            child.attributes.get("class").cloned().unwrap_or_default(),
+        ));
     }
+    false
 }
 
 // ─── Read ───────────────────────────────────────────────────────────────────
@@ -460,6 +522,142 @@ impl Document {
         }
     }
 
+    /// `CharacterData.length` — in UTF-16 code units, which is what every
+    /// offset in this interface is counted in.
+    ///
+    /// Not `str::len` and not `chars().count()`: DOM offsets are UTF-16, so an
+    /// emoji is TWO and `é` is one. A Rust byte offset would disagree with a
+    /// script on any non-ASCII text.
+    pub fn character_data_length(&self, id: u32) -> usize {
+        self.text_data(id).encode_utf16().count()
+    }
+
+    /// `CharacterData.substringData(offset, count)`.
+    ///
+    /// `None` when `offset` is past the end — the spec throws `IndexSizeError`
+    /// there, and this is the shape a caller can turn into one. A `count` that
+    /// runs past the end is clamped, exactly as the spec says.
+    pub fn substring_data(&self, id: u32, offset: usize, count: usize) -> Option<String> {
+        let units: Vec<u16> = self.text_data(id).encode_utf16().collect();
+        if offset > units.len() { return None; }
+        let end = offset.saturating_add(count).min(units.len());
+        Some(String::from_utf16_lossy(&units[offset..end]))
+    }
+
+    /// `CharacterData.replaceData(offset, count, data)` — the primitive the
+    /// other four mutators are defined in terms of (DOM §4.10).
+    pub fn replace_data(&mut self, id: u32, offset: usize, count: usize, data: &str) -> bool {
+        let units: Vec<u16> = self.text_data(id).encode_utf16().collect();
+        if offset > units.len() { return false; }
+        let end = offset.saturating_add(count).min(units.len());
+        let mut out: Vec<u16> = units[..offset].to_vec();
+        out.extend(data.encode_utf16());
+        out.extend_from_slice(&units[end..]);
+        self.set_text_data(id, &String::from_utf16_lossy(&out));
+        true
+    }
+
+    /// `CharacterData.appendData(data)`.
+    pub fn append_data(&mut self, id: u32, data: &str) -> bool {
+        let len = self.character_data_length(id);
+        self.replace_data(id, len, 0, data)
+    }
+
+    /// `CharacterData.insertData(offset, data)`.
+    pub fn insert_data(&mut self, id: u32, offset: usize, data: &str) -> bool {
+        self.replace_data(id, offset, 0, data)
+    }
+
+    /// `CharacterData.deleteData(offset, count)`.
+    pub fn delete_data(&mut self, id: u32, offset: usize, count: usize) -> bool {
+        self.replace_data(id, offset, count, "")
+    }
+
+    /// `Text.splitText(offset)` — cut this node in two and return the NEW node,
+    /// which holds everything from `offset` on and becomes the next sibling.
+    ///
+    /// Returns `None` for a bad offset or a non-text node; the spec throws
+    /// `IndexSizeError` for the former.
+    pub fn split_text(&mut self, id: u32, offset: usize) -> Option<u32> {
+        if self.node_type(id) != 3 { return None; }
+        let tail = self.substring_data(id, offset, usize::MAX)?;
+        let new_id = self.create_text_node(&tail);
+        self.delete_data(id, offset, usize::MAX);
+        let parent = self.parent_node(id);
+        if parent != 0 {
+            // Insert directly after this node. A detached text node has no
+            // parent and the new node simply stays detached, per the spec.
+            let next = self.next_sibling(id);
+            if next != 0 {
+                self.insert_before(parent, new_id, next);
+            } else {
+                self.append_child(parent, new_id);
+            }
+        }
+        Some(new_id)
+    }
+
+    /// `Text.wholeText` — the concatenated data of this node and the run of
+    /// text-node siblings it sits in, with no element between them.
+    pub fn whole_text(&self, id: u32) -> String {
+        if self.node_type(id) != 3 { return String::new(); }
+        let parent = self.parent_node(id);
+        if parent == 0 { return self.text_data(id); }
+        let sibs = self.child_nodes(parent);
+        let Some(at) = sibs.iter().position(|n| *n == id) else { return self.text_data(id) };
+        let mut start = at;
+        while start > 0 && self.node_type(sibs[start - 1]) == 3 { start -= 1; }
+        let mut end = at + 1;
+        while end < sibs.len() && self.node_type(sibs[end]) == 3 { end += 1; }
+        sibs[start..end].iter().map(|n| self.text_data(*n)).collect()
+    }
+
+    /// `node.getRootNode()` — the topmost ancestor.
+    ///
+    /// ⚠ DEVIATION: the spec's answer for a connected node is the DOCUMENT, and
+    /// this returns the document ELEMENT (`<html>`), because webcore's tree has
+    /// no document node — the only `NodeType::Document` in the arena is the
+    /// dead sentinel in slot 0. Everything else about this is spec-correct;
+    /// the missing node is tracked as its own item, and it is the same gap that
+    /// keeps `ownerDocument` from ever answering null.
+    ///
+    /// `composed` follows a shadow root out to its host; without it the walk
+    /// stops at the shadow boundary, which is the point of a shadow root.
+    pub fn get_root_node(&self, id: u32, composed: bool) -> u32 {
+        let _ = composed; // shadow roots are not yet reachable as NODES
+        if id == 0 || !self.arena.is_alive(NodeId(id)) { return 0; }
+        let mut cur = id;
+        loop {
+            let parent = self.parent_node(cur);
+            if parent == 0 { return cur; }
+            cur = parent;
+        }
+    }
+
+    /// `node.ownerDocument` — null for the document itself (DOM §4.4), which
+    /// is why this is an `Option` rather than the document's own id.
+    ///
+    /// ⚠ DEVIATION, same cause as `get_root_node`: with no document node in the
+    /// tree this hands back the document ELEMENT, and the `None` arm is
+    /// unreachable — `node_type` never answers 9 for a live node. Chrome
+    /// answers `null` for `document.ownerDocument`; we answer the `<html>`
+    /// element for it.
+    pub fn owner_document(&self, id: u32) -> Option<u32> {
+        if id == 0 || !self.arena.is_alive(NodeId(id)) { return None; }
+        if self.node_type(id) == 9 { return None; }
+        Some(self.root.node_id)
+    }
+
+    /// `node.isSameNode(other)` — identity, not equality.
+    pub fn is_same_node(&self, id: u32, other: u32) -> bool {
+        id != 0 && id == other
+    }
+
+    /// `node.baseURI` — the document base URL.
+    pub fn base_uri(&self, _id: u32) -> String {
+        self.base_url.clone()
+    }
+
     /// `element.hasAttribute(name)`.
     ///
     /// Not `getAttribute(..).is_some()` at the call site: an attribute present
@@ -716,21 +914,27 @@ impl Document {
     }
 
     /// `element.matches(selectors)`.
+    ///
+    /// Answered against the whole document, because a selector can name
+    /// ancestors and siblings: `matches("div p")` is a question about where the
+    /// element SITS, not about the element alone. It used to run the
+    /// simple-selector matcher, which returned false for any selector with a
+    /// combinator — and `closest()`, which is built on this, inherited that.
     pub fn matches(&self, id: u32, selectors: &str) -> bool {
-        match self.find_webcore(id) {
-            Some(node) => selectors
-                .split(',')
-                .any(|s| crate::dom::matches_simple_selector(node, s.trim())),
-            None => false,
-        }
+        id != 0 && self.query_selector_all(selectors).contains(&id)
     }
 
     /// `element.closest(selectors)` — the nearest ancestor-or-self that
     /// matches. Starts at the element ITSELF, per DOM §4.9.
     pub fn closest(&self, id: u32, selectors: &str) -> Option<u32> {
+        // The match set is resolved ONCE and then walked up, rather than
+        // re-querying the document at every ancestor — `matches` is a whole-tree
+        // query now, so the naive loop was O(depth × tree).
+        let hits: std::collections::HashSet<u32> =
+            self.query_selector_all(selectors).into_iter().collect();
         let mut current = id;
         while current != 0 {
-            if self.matches(current, selectors) {
+            if hits.contains(&current) {
                 return Some(current);
             }
             current = self.parent_node(current);
@@ -1003,29 +1207,22 @@ impl Document {
 // ordinary tree operations, and an item added here is one the renderer draws
 // and the serializer round-trips, with nothing to keep in sync.
 //
-// Selection is the exception: webcore keeps it in `node.data["_selected_idx"]`,
-// which is where its mouse and keyboard paths already write. Reading and
-// writing THAT is what makes a programmatic selection and a user's click mean
-// the same thing.
+// Selection lives on the OPTIONS, as `selectedness` — the state HTML defines
+// and the state webcore's mouse and keyboard paths write. Reading and writing
+// THAT is what makes a programmatic selection and a user's click mean the same
+// thing. `html::forms` holds the algorithms over it.
 
 impl Document {
     /// Option node_ids in tree order, flattening `<optgroup>` — HTML counts
     /// options through a group, not around it, so `selectedIndex` does too.
     fn option_ids(&self, select: u32) -> Vec<u32> {
-        fn walk(node: &WebCore, out: &mut Vec<u32>) {
-            for child in &node.children {
-                match child.tag.as_str() {
-                    "option" => out.push(child.node_id),
-                    "optgroup" => walk(child, out),
-                    _ => {}
-                }
-            }
-        }
-        let mut out = Vec::new();
-        if let Some(sel) = self.find_webcore(select) {
-            walk(sel, &mut out);
-        }
-        out
+        // Delegates rather than walking again: two copies of "which options
+        // does this select have" drift, and this one already differed from the
+        // spec's — it descended into a NESTED `<optgroup>`, which the list of
+        // options excludes.
+        self.find_webcore(select)
+            .map(crate::html::forms::option_ids)
+            .unwrap_or_default()
     }
 
     /// `select.options.length`.
@@ -1040,12 +1237,16 @@ impl Document {
         let label = self.create_text_node(text);
         self.append_child(option, label);
         self.append_child(select, option);
+        self.notify_select_changed(select);
     }
 
     /// `select.remove(index)`. Out of range removes nothing, as the IDL says.
     pub fn remove_item(&mut self, select: u32, index: usize) {
         if let Some(&id) = self.option_ids(select).get(index) {
             self.remove_child(id);
+            // Removing the selected option leaves a drop-down with none, and
+            // the algorithm is what picks its replacement.
+            self.notify_select_changed(select);
         }
     }
 
@@ -1054,6 +1255,7 @@ impl Document {
         for id in self.option_ids(select) {
             self.remove_child(id);
         }
+        self.notify_select_changed(select);
     }
 
     /// The label of the option at `index` — its text content.
@@ -1067,52 +1269,64 @@ impl Document {
     pub fn set_item_text(&mut self, select: u32, index: usize, text: &str) {
         if let Some(&id) = self.option_ids(select).get(index) {
             self.set_text_content(id, text);
+            // A closed drop-down shows the LABEL, so renaming the selected
+            // option has to move the shown text with it.
+            self.notify_select_changed(select);
         }
     }
 
-    /// `select.selectedIndex`. `-1` when there is nothing to select, which is
-    /// the IDL's answer for an empty select; otherwise a dropdown always has a
-    /// selection, defaulting to the first option.
+    /// `select.selectedIndex` — "the index of the first option element in the
+    /// list of options that has its selectedness set to true. If there isn't
+    /// one, then it is −1."
+    ///
+    /// ⛔ −1 is not only the empty-select answer. A LIST BOX rests with nothing
+    /// selected, because the selectedness setting algorithm auto-selects only
+    /// at a display size of 1. This used to fall back to 0 whenever any option
+    /// existed, so a fresh list box claimed a selection it did not have.
     pub fn selected_index(&self, select: u32) -> i32 {
-        let count = self.option_ids(select).len();
-        if count == 0 {
-            return -1;
-        }
-        let idx = self
-            .find_webcore(select)
-            .and_then(|n| n.data.get("_selected_idx"))
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(0);
-        if idx < count { idx as i32 } else { 0 }
+        self.find_webcore(select)
+            .map(crate::html::forms::selected_index)
+            .unwrap_or(-1)
     }
 
     /// `select.selectedIndex = i`.
     ///
-    /// Writes webcore's own `_selected_idx` — the same slot its click and
-    /// arrow-key handling use, so a programmatic selection and a user's are
-    /// indistinguishable afterwards — AND reflects `selected` onto the options
-    /// so the DOM tells the same story as the widget.
+    /// Writes SELECTEDNESS — the same state a click and an arrow key write, so
+    /// a programmatic selection and a user's are indistinguishable afterwards.
+    ///
+    /// "Set the selectedness of all the option elements ... to false, and then
+    /// set the selectedness of the option element ... with index `index` to
+    /// true", and the IDL setter raises DIRTINESS, which is what stops a
+    /// subsequent form reset from being a no-op.
+    ///
+    /// ⛔ It does NOT touch the `selected` content attribute. That attribute is
+    /// `defaultSelected` — the author's default and the reset target — and
+    /// writing it here is why a reset used to restore the last programmatic
+    /// selection instead of the markup's.
     pub fn set_selected_index(&mut self, select: u32, index: i32) {
-        let options = self.option_ids(select);
-        if options.is_empty() {
-            return;
+        let options = crate::html::forms::option_ids(
+            match self.find_webcore(select) {
+                Some(n) => n,
+                None => return,
+            },
+        );
+        // A negative index — or any out-of-range one — means "nothing
+        // selected", which selectedness can now actually express.
+        let chosen = usize::try_from(index).ok().filter(|i| *i < options.len()).map(|i| options[i]);
+        if let Some(sel) = self.find_webcore_mut(select) {
+            crate::html::forms::for_each_option_mut(sel, &mut |option, _| {
+                option.selectedness = Some(option.node_id) == chosen;
+                option.dirty_selectedness = true;
+            });
+            sel.layout.layout_dirty = true;
         }
-        // A negative assignment means "nothing selected" in the IDL. There is
-        // no such state in `_selected_idx`, so it only clears `selected`.
-        let chosen = usize::try_from(index).ok().filter(|i| *i < options.len());
-        for (i, id) in options.iter().enumerate() {
-            if Some(i) == chosen {
-                self.set_attribute(*id, "selected", "");
-            } else {
-                self.remove_attribute(*id, "selected");
-            }
+        // A closed drop-down shows a child text node rather than its options,
+        // so the shown label has to follow the selection. `option:checked` is a
+        // selector, so this is a style change too.
+        if let Some(sel) = self.find_webcore_mut(select) {
+            crate::html::forms::refresh_select_display_text(sel);
         }
-        // Nested rather than a let-chain: this crate is not on edition 2024.
-        if let Some(i) = chosen {
-            if let Some(sel) = self.find_webcore_mut(select) {
-                sel.data.insert("_selected_idx".into(), i.to_string());
-            }
-        }
+        self.style_dirty = true;
     }
 
     /// `element.value` — which means three different things, exactly as HTML
@@ -1125,35 +1339,41 @@ impl Document {
     /// `value` attribute a select does not have.
     pub fn value(&self, id: u32) -> String {
         if id == 0 { return String::new(); }
-        let tag = self.find_webcore(id).map(|n| n.tag.clone()).unwrap_or_default();
+        let Some(node) = self.find_webcore(id) else { return String::new() };
+        let tag = node.tag.clone();
+        let input_mode = crate::html::forms::value_mode(node);
         match tag.as_str() {
-            "textarea" => self.text_content(id),
-            "select" => {
-                let idx = self.selected_index(id);
-                match usize::try_from(idx).ok().and_then(|i| self.option_ids(id).get(i).copied()) {
-                    Some(option) => self
-                        .get_attribute(option, "value")
-                        .unwrap_or_else(|| self.text_content(option).trim().to_string()),
+            // The VALUE, which is the raw value once anything has set it and
+            // the child text (the default value) until then.
+            "textarea" => self
+                .find_webcore(id)
+                .map(crate::types::input_value)
+                .unwrap_or_default(),
+            "select" => self
+                .find_webcore(id)
+                .map(crate::html::forms::select_value)
+                .unwrap_or_default(),
+            // ⛔ WHICH MODE the `value` IDL attribute is in decides where to
+            // read from (HTML §4.10.5.4). A checkbox's value is its `value`
+            // ATTRIBUTE, defaulting to `"on"` — its STATE is checkedness. Only
+            // a mode-`Value` control holds a value of its own.
+            "input" if input_mode != crate::html::forms::ValueMode::Value => {
+                match self.get_attribute(id, "value") {
+                    Some(v) => v,
+                    None if input_mode == crate::html::forms::ValueMode::DefaultOn => {
+                        "on".to_string()
+                    }
                     None => String::new(),
                 }
             }
-            // A checkbox or radio with no `value` attribute submits `"on"`,
-            // not the empty string — HTML §4.10.5.1.15 spells that default out
-            // because a form needs SOMETHING to send for a ticked box. Every
-            // other control's `value` does default to empty.
-            "input"
-                if matches!(
-                    self.get_attribute(id, "type")
-                        .unwrap_or_default()
-                        .to_ascii_lowercase()
-                        .as_str(),
-                    "checkbox" | "radio"
-                ) =>
-            {
-                self.get_attribute(id, "value")
-                    .unwrap_or_else(|| "on".to_string())
-            }
-            _ => self.get_attribute(id, "value").unwrap_or_default(),
+            // Everything else answers with its VALUE. Reading the `value`
+            // ATTRIBUTE here made `input.value` report the author's default
+            // rather than what the control holds — so a field the user had
+            // typed into read back empty.
+            _ => self
+                .find_webcore(id)
+                .map(crate::types::input_value)
+                .unwrap_or_default(),
         }
     }
 
@@ -1162,7 +1382,11 @@ impl Document {
         if id == 0 { return; }
         let tag = self.find_webcore(id).map(|n| n.tag.clone()).unwrap_or_default();
         match tag.as_str() {
-            "textarea" => self.set_text_content(id, value),
+            // The IDL setter sets the VALUE and raises the dirty value flag
+            // (HTML §4.10.5.4) — it does not rewrite the markup, which is what
+            // `set_text_content` and `set_attribute` were doing here. A reset
+            // after a programmatic write used to restore the written value.
+            "textarea" => self.set_control_value(id, value),
             // Assigning to `select.value` selects the option WITH that value —
             // it does not store a string. An unmatched value selects nothing.
             "select" => {
@@ -1175,7 +1399,49 @@ impl Document {
                 });
                 self.set_selected_index(id, found.map_or(-1, |i| i as i32));
             }
-            _ => self.set_attribute(id, "value", value),
+            _ => self.set_control_value(id, value),
+        }
+    }
+
+    /// The `value` IDL setter, per the control's MODE (HTML §4.10.5.4).
+    ///
+    /// ⛔ Only mode `Value` writes the value state. A checkbox, a radio and a
+    /// button write the `value` CONTENT ATTRIBUTE — that attribute IS their
+    /// value, so routing them through the state made `checkbox.value = "true"`
+    /// read back as `"on"`.
+    fn set_control_value(&mut self, id: u32, value: &str) {
+        let mode = match self.find_webcore(id) {
+            Some(n) => crate::html::forms::value_mode(n),
+            None => return,
+        };
+        if mode != crate::html::forms::ValueMode::Value {
+            self.set_attribute(id, "value", value);
+            return;
+        }
+        if let Some(node) = self.find_webcore_mut(id) {
+            node.value_state = Some(value.to_string());
+            node.dirty_value = true;
+            node.layout.layout_dirty = true;
+            // "Invoke the value sanitization algorithm, if the element's type
+            // attribute's current state defines one" — a range assigned an
+            // off-step number snaps, exactly as it does from the markup.
+            let sanitized = {
+                let is_range = node
+                    .attributes
+                    .get("type")
+                    .map(|t| t.trim().eq_ignore_ascii_case("range"))
+                    .unwrap_or(false);
+                if is_range {
+                    Some(crate::html::forms::best_representation(
+                        crate::html::forms::sanitize_range_value(node, value),
+                    ))
+                } else {
+                    None
+                }
+            };
+            if let Some(v) = sanitized {
+                node.value_state = Some(v);
+            }
         }
     }
 }
@@ -1187,33 +1453,38 @@ impl Document {
 // step, and markup that arrives with `<dialog open>` is already open without
 // anyone calling `show()`.
 //
-// The user-agent stylesheet rules this file has to stand in for, since
-// webcore's UA sheet has no `dialog` entry at all:
+// `display` and the non-modal `position` now come from the UA stylesheet
+// (`dialog:not([open]) { display: none }` and the `dialog` block in
+// `css::UA_CSS`), which is where the spec puts them. This file used to write
+// both as INLINE styles because the sheet had no `dialog` entry — that made a
+// dialog that had never been opened render in flow, and made an opened one
+// immune to the author's own `display`, since an inline style beats every
+// rule. Setting the attribute is the whole of `show()`; the cascade does the
+// rest.
 //
-//     dialog:not([open]) { display: none }
-//     dialog             { position: absolute }
-//     dialog:modal       { position: fixed }
-//
-// `position` is what separates the two show methods: a modal is laid out
-// against the VIEWPORT, a non-modal stays with its containing block. If both
-// looked alike, `showModal()` would be `show()` under another name.
+// `position` on a MODAL is the one thing still written here: a modal is laid
+// out against the VIEWPORT and a non-modal stays with its containing block,
+// and the difference is `dialog:modal`, a pseudo-class keyed on "is in the top
+// layer" that the matcher has no state for yet. If both looked alike,
+// `showModal()` would be `show()` under another name.
 
 impl Document {
     /// `dialog.show()` / `dialog.showModal()`.
     pub fn show_dialog(&mut self, id: u32, modal: bool) {
         if id == 0 { return; }
         self.set_attribute(id, "open", "");
-        self.set_style_property(id, "display", "block");
-        self.set_style_property(id, "position", if modal { "fixed" } else { "absolute" });
+        if modal {
+            self.set_style_property(id, "position", "fixed");
+        }
     }
 
     /// `dialog.close()`.
     pub fn close_dialog(&mut self, id: u32) {
         if id == 0 { return; }
         self.remove_attribute(id, "open");
-        // `dialog:not([open]) { display: none }` — a closed dialog is not
-        // merely invisible, it is out of flow and takes up no space.
-        self.set_style_property(id, "display", "none");
+        // Drop the modal's `position` override with it, so a later `show()`
+        // does not inherit `showModal()`'s layout.
+        self.set_style_property(id, "position", "");
     }
 
     /// `dialog.open` — reflects the content attribute, per the IDL.
@@ -1558,6 +1829,16 @@ impl Document {
             if key == "checked" && !node.dirty_checked {
                 node.checkedness = true;
             }
+            // The same rule for the other two states the markup seeds. A
+            // content attribute reaches the live state only while nothing has
+            // claimed that state — which is what makes it the DEFAULT.
+            if key == "value" && !node.dirty_value {
+                node.value_state = None;
+                crate::html::forms::seed_input_value(node);
+            }
+            if key == "selected" && node.tag == "option" && !node.dirty_selectedness {
+                node.selectedness = true;
+            }
             // §4.12.5: `<canvas>`'s `width`/`height` IDL attributes REFLECT
             // these content attributes, and setting either one reinitialises
             // the bitmap and the drawing state. Reached this way — rather than
@@ -1577,6 +1858,44 @@ impl Document {
         if let Some((w, h)) = canvas_resized {
             self.set_canvas_size(id, w, h);
         }
+        // "If an option element in the list of options asks for a reset, then
+        // run that select element's selectedness setting algorithm" — the
+        // second half of the `selected` rule above, which only the PARENT can
+        // do: it is what enforces one-selection-at-a-time and what refreshes
+        // the label a closed drop-down shows.
+        if key == "selected" {
+            if let Some(select) = self.parent_select_of(id) {
+                self.notify_select_changed(select);
+            }
+        }
+    }
+
+    /// The `<select>` an option belongs to, if any.
+    pub(crate) fn parent_select_of(&self, option: u32) -> Option<u32> {
+        fn walk(node: &WebCore, target: u32) -> Option<u32> {
+            if node.tag == "select" && crate::html::forms::option_ids(node).contains(&target) {
+                return Some(node.node_id);
+            }
+            node.children.iter().find_map(|c| walk(c, target))
+        }
+        walk(&self.root, option)
+    }
+
+    /// Re-settle a `<select>` after its options changed: run the selectedness
+    /// setting algorithm, then move the shown label to match.
+    ///
+    /// ⛔ Needed on every route that adds or removes an option, not just the
+    /// parser's. A drop-down built through the DOM had no selection at all,
+    /// because only the parse path ever ran the algorithm — so a `ComboBox`
+    /// filled by `AddItem` came up blank where the same markup came up on its
+    /// first option.
+    pub(crate) fn notify_select_changed(&mut self, select: u32) {
+        if let Some(sel) = self.find_webcore_mut(select) {
+            crate::html::forms::run_selectedness_setting_algorithm(sel);
+            crate::html::forms::refresh_select_display_text(sel);
+            sel.layout.layout_dirty = true;
+        }
+        self.style_dirty = true;
     }
 
     /// Remove an attribute from an element. Sets STYLE dirty flag.
@@ -1600,18 +1919,18 @@ impl Document {
     pub fn set_text_content(&mut self, id: u32, text: &str) {
         if id == 0 { return; }
 
-        // Remove arena children
-        let nid = NodeId(id);
-        let mut child = self.arena.get(nid).first_child;
-        while child.is_some() {
-            let next = self.arena.get(child).next_sibling;
-            self.arena.remove_child(child);
-            self.arena.free(child);
-            child = next;
+        // **A replaced child is DETACHED, not destroyed** — the rule
+        // `remove_child` already states for DOM §4.2.3, and this is the same
+        // removal. Freeing the slot here did more than lose a node a script
+        // might re-insert: it RECYCLED the id, and everything keyed by node id
+        // is then aliased. The listener map is: the next element created took a
+        // dead node's id and inherited its handlers, so a control that cleared
+        // and rebuilt itself ended up with two listeners on one button, one of
+        // them belonging to an element that no longer existed.
+        for child in self.child_nodes(id) {
+            self.remove_child(child);
         }
-        // Update WebCore tree
         if let Some(node) = self.find_webcore_mut(id) {
-            node.children.clear();
             node.text.clear();
         }
 
@@ -1667,14 +1986,11 @@ impl Document {
             None => fragment.root.children,
         };
 
-        // Clear existing arena children
-        let nid = NodeId(id);
-        let mut child = self.arena.get(nid).first_child;
-        while child.is_some() {
-            let next = self.arena.get(child).next_sibling;
-            self.arena.remove_child(child);
-            self.arena.free(child);
-            child = next;
+        // Detached, not destroyed — see `set_text_content`, which this is the
+        // markup-shaped twin of. A freed id gets RECYCLED, and every map keyed
+        // by node id then aliases a dead node onto a live one.
+        for child in self.child_nodes(id) {
+            self.remove_child(child);
         }
 
         // Set new children on WebCore
@@ -1747,7 +2063,14 @@ impl Document {
         let current = self.get_attribute(id, "style").unwrap_or_default();
         let mut props = parse_inline_style(&current);
         let prop_lower = prop.to_ascii_lowercase();
-        if let Some(entry) = props.iter_mut().find(|(k, _)| k == &prop_lower) {
+        // CSSOM §6.7.2: `setProperty(prop, "")` REMOVES the declaration. It
+        // used to store the empty string, which serialized as a malformed
+        // `position: ` — a declaration the parser then dropped, so the property
+        // looked removed while `style` carried a syntax error that any
+        // round-trip through `cssText` would preserve.
+        if value.trim().is_empty() {
+            props.retain(|(k, _)| k != &prop_lower);
+        } else if let Some(entry) = props.iter_mut().find(|(k, _)| k == &prop_lower) {
             entry.1 = value.to_string();
         } else {
             props.push((prop_lower, value.to_string()));
@@ -1872,7 +2195,7 @@ impl Document {
     /// Checks `pending_nodes` first, for the reason spelled out on
     /// `find_webcore` — a detached node is still a legal target for
     /// `setAttribute`, `setTextContent` and a style write.
-    fn find_webcore_mut(&mut self, id: u32) -> Option<&mut WebCore> {
+    pub(crate) fn find_webcore_mut(&mut self, id: u32) -> Option<&mut WebCore> {
         if self.pending_nodes.contains_key(&id) {
             return self.pending_nodes.get_mut(&id);
         }

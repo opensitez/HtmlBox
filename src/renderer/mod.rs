@@ -654,7 +654,17 @@ impl Renderer {
     fn draw_select_dropdown(&mut self, node: &WebCore, pixmap: &mut Pixmap, sx: f32, sy: f32) {
         let br = node.layout.border_rect;
         let popup_x = br.x - sx; let popup_y = br.y + br.h - sy; let popup_w = br.w.max(150.0);
-        let selected_idx: usize = node.data.get("_selected_idx").and_then(|s| s.parse().ok()).unwrap_or(0);
+        // Which row the open popup highlights: SELECTEDNESS, the same state the
+        // pick writes.
+        //
+        // ⛔ `Option`, not a sentinel. `usize::MAX` is already taken — it is
+        // what an OPTGROUP HEADER carries as its index below — so spelling
+        // "nothing selected" that way would make every group header compare
+        // equal to the selection.
+        let selected_idx: Option<usize> = match crate::html::forms::selected_index(node) {
+            i if i >= 0 => Some(i as usize),
+            _ => None,
+        };
         struct DropdownItem<'a> { node: &'a WebCore, is_group: bool, text: String, index: usize }
         let mut items: Vec<DropdownItem> = Vec::new();
         let mut opt_idx = 0usize;
@@ -695,7 +705,7 @@ impl Renderer {
                 self.draw_text_run(&item.text, popup_x + 8.0, label_y, font_px * 0.85, font_px, crate::types::FontWeight::Bold, node.style.font_style, &node.style.font_family, CTextColor::rgba(100, 100, 100, 255), pixmap, None);
                 y += group_h;
             } else {
-                let is_selected = item.index == selected_idx;
+                let is_selected = selected_idx == Some(item.index);
                 let is_hovered = item.index as i32 == self.dropdown_hover_idx;
                 let opt_bg = item.node.style.background_color;
                 let opt_color = item.node.style.color;

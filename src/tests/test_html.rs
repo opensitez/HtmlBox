@@ -852,16 +852,24 @@ fn html_head_content_not_rendered() {
         r#"<html><head><title>My Page</title></head><body><p>Visible</p></body></html>"#,
     );
     assert!(doc_text(&doc).contains("Visible"));
-    assert!(!doc_text(&doc).contains("My Page"));
+    // The title IS a node and IS part of `textContent` — Chrome answers
+    // "My PageVisible" for `documentElement.textContent`. What "not rendered"
+    // means is that it generates no BOX, which is `display: none`.
+    let title = find_box(&doc.root, &|b: &WebCore| b.tag == "title")
+        .expect("<title> is an element in the head");
+    assert!(matches!(title.style.display, crate::types::Display::None));
+    assert!(doc_text(&doc).contains("My Page"));
 }
 
 #[test]
 fn html_title_content_suppressed() {
     let doc = parse("<title>Secret Title</title><p>Hello</p>");
-    assert!(!doc_text(&doc).contains("Secret Title"));
     assert!(doc_text(&doc).contains("Hello"));
-    let found = find_box(&doc.root, &|b: &WebCore| b.text.contains("Secret Title"));
-    assert!(found.is_none());
+    // The title element exists and holds its text; it just draws nothing.
+    let title = find_box(&doc.root, &|b: &WebCore| b.tag == "title")
+        .expect("<title> is an element even with no explicit <head>");
+    assert!(matches!(title.style.display, crate::types::Display::None));
+    assert_eq!(title.text, "Secret Title");
 }
 
 #[test]
@@ -886,8 +894,11 @@ fn html_meta_charset_does_not_create_box() {
     let doc = parse(
         r#"<html><head><meta charset="utf-8"></head><body><p>Text</p></body></html>"#,
     );
-    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta");
-    assert!(meta.is_none());
+    // `<meta>` is an ELEMENT in the head (HTML §13.2.6.4.4) with no box.
+    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta")
+        .expect("<meta> is an element in the head");
+    assert!(matches!(meta.style.display, crate::types::Display::None));
+    assert_eq!(meta.attributes.get("charset").map(|s| s.as_str()), Some("utf-8"));
 }
 
 #[test]
@@ -895,8 +906,9 @@ fn html_meta_viewport_ignored() {
     let doc = parse(
         r#"<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Text</p></body></html>"#,
     );
-    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta");
-    assert!(meta.is_none());
+    let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta")
+        .expect("<meta> is an element in the head");
+    assert!(matches!(meta.style.display, crate::types::Display::None));
     assert!(doc_text(&doc).contains("Text"));
 }
 
@@ -905,8 +917,10 @@ fn html_link_tag_does_not_create_box() {
     let doc = parse(
         r#"<html><head><link rel="stylesheet" href="style.css"></head><body><p>Text</p></body></html>"#,
     );
-    let link = find_box(&doc.root, &|b: &WebCore| b.tag == "link");
-    assert!(link.is_none());
+    let link = find_box(&doc.root, &|b: &WebCore| b.tag == "link")
+        .expect("<link> is an element in the head");
+    assert!(matches!(link.style.display, crate::types::Display::None));
+    assert_eq!(link.attributes.get("href").map(|s| s.as_str()), Some("style.css"));
 }
 
 #[test]
@@ -990,8 +1004,10 @@ fn html_title_not_in_text() {
         r#"<html><head><title>Secret</title></head><body><p>Visible</p></body></html>"#,
     );
     assert_eq!(doc.title, "Secret");
-    assert!(!doc_text(&doc).contains("Secret"));
     assert!(doc_text(&doc).contains("Visible"));
+    // `Document.title` is a convenience mirror; the ELEMENT is still in the
+    // tree, so its text is part of `textContent` exactly as in a browser.
+    assert!(doc_text(&doc).contains("Secret"));
 }
 
 // ============================================================

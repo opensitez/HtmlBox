@@ -454,12 +454,12 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, vertical, options, selected } => {
+            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, vertical, options, selected, selected_all } => {
                 // CSS background/border/padding are drawn by the normal pipeline.
                 // FormElement only draws the CONTENT: value text, check marks, radio dots, etc.
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                let _ = (node_id, attributes, input_cursor, &options, selected); // suppress warnings
+                let _ = (node_id, attributes, input_cursor, &options, selected, &selected_all); // suppress warnings
 
                 match (tag.as_str(), input_type.as_str()) {
                     ("input", "checkbox") => {
@@ -537,12 +537,20 @@ fn replay_inner(
                         }
                         gauge.paint(target, rect.x, rect.y, scale);
                     }
+                    // A list box is decided by DISPLAY SIZE (HTML §15.5.16),
+                    // which defaults to 4 under `multiple` and 1 otherwise.
+                    // The predicate here used to be `multiple || size > 1`,
+                    // read off the raw attribute with Rust's own parser — close
+                    // enough to agree most of the time, and wrong for
+                    // `multiple size=1` (a multi-select DROP-DOWN) and for the
+                    // lenient integer parsing HTML actually specifies.
                     ("select", _)
-                        if attributes.iter().any(|(k, v)| {
-                            k == "multiple"
-                                || (k == "size"
-                                    && v.trim().parse::<u32>().map(|n| n > 1).unwrap_or(false))
-                        }) =>
+                        if attributes
+                            .iter()
+                            .find(|(k, _)| k == "size")
+                            .and_then(|(_, v)| crate::html::forms::parse_non_negative_integer(v))
+                            .unwrap_or(if attributes.iter().any(|(k, _)| k == "multiple") { 4 } else { 1 })
+                            > 1 =>
                     {
                         // The box itself: the UA sheet gives a `<select>` a
                         // white field and a grey border, and a list box is the
@@ -555,8 +563,10 @@ fn replay_inner(
                             target.fill_rect(r, &fill, ts, None);
                         }
 
-                        let line_h = *font_size * 1.2;
-                        let pad = 2.0;
+                        // Shared with the hit test, so a click cannot land on a
+                        // row other than the one drawn here.
+                        let line_h = crate::html::forms::list_box_row_height(*font_size);
+                        let pad = crate::html::forms::LIST_BOX_PADDING;
                         for (i, label) in options.iter().enumerate() {
                             let row_y = rect.y + pad + i as f32 * line_h;
                             // Clip to the box: a list shows the rows that FIT
@@ -566,7 +576,10 @@ fn replay_inner(
                                 break;
                             }
                             let mut text_color = apply_opacity(color, a2);
-                            if i as i32 == *selected {
+                            // EVERY selected row, not one index — a `multiple`
+                            // list box can have several, and a fresh one has
+                            // none at all.
+                            if selected_all.get(i).copied().unwrap_or(false) {
                                 // The selected row is a filled bar with
                                 // reversed text, which is what every browser
                                 // and every toolkit draws.
@@ -625,8 +638,9 @@ fn replay_inner(
                     // VALUE, which for a submit button is the submission name,
                     // not anything a person should see.
                     ("input", "image") => {
-                        let has_image = attributes.iter().any(|(k, _)| k == "_resolved_src")
-                            || attributes.iter().any(|(k, _)| k == "src");
+                        // `src` alone: the resolved URL is a node FIELD now and
+                        // the display list only carries content attributes.
+                        let has_image = attributes.iter().any(|(k, _)| k == "src");
                         let alt = attributes
                             .iter()
                             .find(|(k, _)| k == "alt")
@@ -804,9 +818,26 @@ fn replay_inner(
                     }
                     ("input", "range") => {
                         // Use Slider widget
-                        let val: f32 = value.parse().unwrap_or(50.0);
-                        let min: f32 = attributes.iter().find(|(k,_)| k == "min").map(|(_,v)| v.parse().unwrap_or(0.0)).unwrap_or(0.0);
-                        let max: f32 = attributes.iter().find(|(k,_)| k == "max").map(|(_,v)| v.parse().unwrap_or(100.0)).unwrap_or(100.0);
+                        // ⛔ The SPEC's number parser, the same one the click
+                        // path uses. Rust's `parse` rejects the trailing junk
+                        // HTML's rules ignore, so `min="10 "` read as 0 here
+                        // and as 10 in the hit test: the thumb drew in one
+                        // place and landed in another.
+                        let attr = |name: &str| {
+                            attributes
+                                .iter()
+                                .find(|(k, _)| k == name)
+                                .and_then(|(_, v)| crate::html::forms::parse_floating_point(v))
+                                .map(|n| n as f32)
+                        };
+                        let min: f32 = attr("min").unwrap_or(0.0);
+                        let max: f32 = attr("max").unwrap_or(100.0);
+                        // The value has already been sanitized into range by
+                        // the time it reaches paint, so its own fallback is the
+                        // state's default rather than a bare 50.
+                        let val: f32 = crate::html::forms::parse_floating_point(value)
+                            .map(|n| n as f32)
+                            .unwrap_or_else(|| if max < min { min } else { min + (max - min) / 2.0 });
                         let mut slider = crate::widgets::Slider::new(min, max, val);
                         slider.width = rect.w;
                         slider.height = rect.h;

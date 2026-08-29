@@ -170,8 +170,13 @@ pub enum PaintCmd {
         /// The closed dropdown needs only `value`, which is why this was not
         /// here before.
         options: Vec<String>,
-        /// The index of the selected option, or `-1` for none.
+        /// The index of the FIRST selected option, or `-1` for none — which is
+        /// the normal resting state of a list box, whose options HTML does not
+        /// auto-select.
         selected: i32,
+        /// The selectedness of every option, parallel to `options`. A
+        /// `multiple` list box paints all of them, so one index is not enough.
+        selected_all: Vec<bool>,
     },
 
     /// Draw a text shadow (separate from main text for layering).
