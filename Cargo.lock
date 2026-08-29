@@ -412,6 +412,12 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -1393,7 +1399,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -2540,7 +2546,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "encoding_rs",
  "futures-channel",
@@ -2600,28 +2606,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "webcore"
-version = "0.1.0"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_winit",
- "bytemuck",
- "cosmic-text",
- "encoding_rs",
- "flate2",
- "image",
- "rand",
- "raw-window-handle",
- "rayon",
- "reqwest",
- "resvg",
- "softbuffer",
- "tiny-skia 0.12.0",
- "unicode-bidi",
- "winit",
 ]
 
 [[package]]
@@ -3551,7 +3535,7 @@ version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7447e703d7223b067607655e625e0dbca80822880248937da65966194c4864e6"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "data-url",
  "flate2",
  "fontdb 0.22.0",
@@ -3810,6 +3794,30 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webcore"
+version = "0.2.0"
+dependencies = [
+ "accesskit 0.17.1",
+ "accesskit_winit",
+ "base64 0.21.7",
+ "bytemuck",
+ "cosmic-text",
+ "encoding_rs",
+ "flate2",
+ "image",
+ "rand",
+ "raw-window-handle",
+ "rayon",
+ "reqwest",
+ "resvg",
+ "softbuffer",
+ "swash",
+ "tiny-skia 0.12.0",
+ "unicode-bidi",
+ "winit",
 ]
 
 [[package]]
@@ -4515,3 +4523,7 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "widgets"
+version = "0.2.0"
