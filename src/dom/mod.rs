@@ -10,6 +10,25 @@
 /// elements, and `createElementNS` with this URI is an ordinary HTML element.
 pub const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 
+pub mod attr_nodes;
+pub mod canvas_api;
+pub mod computed_style;
+pub mod dialog;
+pub mod query;
+pub mod select;
+pub mod xml;
+pub mod document_meta;
+pub mod form_association;
+pub mod html_element;
+pub mod selection;
+pub mod tables;
+pub mod token_list_api;
+pub mod top_layer;
+pub mod validation_api;
+pub mod range;
+pub mod reflect;
+pub mod url;
+pub mod traversal;
 pub mod attrs;
 pub mod token_list;
 pub mod arena;
@@ -374,7 +393,7 @@ pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
 
 /// Returns the first box matching the selector, searching depth-first.
 pub fn query_selector<'a>(root: &'a WebCore, selector: &str) -> Option<&'a WebCore> {
-    let id = *crate::dom::api::matching_ids_from(root, selector, true).first()?;
+    let id = *crate::dom::query::matching_ids_from(root, selector, true).first()?;
     fn find<'a>(node: &'a WebCore, id: u32) -> Option<&'a WebCore> {
         if node.node_id == id { return Some(node); }
         node.children.iter().find_map(|c| find(c, id))
@@ -384,14 +403,14 @@ pub fn query_selector<'a>(root: &'a WebCore, selector: &str) -> Option<&'a WebCo
 
 /// Mutable version of `query_selector`.
 pub fn query_selector_mut<'a>(root: &'a mut WebCore, selector: &str) -> Option<&'a mut WebCore> {
-    let id = *crate::dom::api::matching_ids_from(root, selector, true).first()?;
+    let id = *crate::dom::query::matching_ids_from(root, selector, true).first()?;
     find_box_mut(root, id)
 }
 
 /// Returns all boxes matching the selector, in document order.
 pub fn query_selector_all<'a>(root: &'a WebCore, selector: &str) -> Vec<&'a WebCore> {
     let ids: std::collections::HashSet<u32> =
-        crate::dom::api::matching_ids_from(root, selector, false).into_iter().collect();
+        crate::dom::query::matching_ids_from(root, selector, false).into_iter().collect();
     let mut out = Vec::new();
     fn collect<'a>(node: &'a WebCore, ids: &std::collections::HashSet<u32>, out: &mut Vec<&'a WebCore>) {
         if node.node_id != 0 && ids.contains(&node.node_id) { out.push(node); }
@@ -404,7 +423,7 @@ pub fn query_selector_all<'a>(root: &'a WebCore, selector: &str) -> Vec<&'a WebC
 /// Returns node_ids of all boxes matching the selector.
 /// Callers use `find_box_mut(root, id)` to get `&mut` references one at a time.
 pub fn query_selector_all_ids(root: &WebCore, selector: &str) -> Vec<u32> {
-    crate::dom::api::matching_ids_from(root, selector, false)
+    crate::dom::query::matching_ids_from(root, selector, false)
 }
 
 // ─── Tree traversal ───────────────────────────────────────────────────────────

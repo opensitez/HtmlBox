@@ -574,7 +574,10 @@ fn select_value_is_the_selected_options_value_not_its_index() {
 
 #[test]
 fn a_dialog_is_closed_until_shown_and_only_a_modal_is_fixed() {
-    let mut doc = parse_html("<dialog id='d'></dialog><dialog id='m'></dialog>");
+    // Through the RENDERER, because the assertion below is about the UA
+    // stylesheet applying — `parse_html` alone never runs the cascade.
+    let mut renderer = crate::Renderer::new();
+    let mut doc = renderer.load_html("<dialog id='d'></dialog><dialog id='m'></dialog>", 400.0);
     let plain = doc.get_element_by_id("d").unwrap();
     let modal = doc.get_element_by_id("m").unwrap();
     assert!(!doc.dialog_open(plain), "a fresh dialog is not open");
@@ -586,8 +589,25 @@ fn a_dialog_is_closed_until_shown_and_only_a_modal_is_fixed() {
     // The UA stylesheet's own distinction: `dialog:modal` is position:fixed,
     // a non-modal stays in flow. If both looked alike, showModal() would be
     // show() under another name.
-    assert_eq!(doc.get_style_property(modal, "position").as_deref(), Some("fixed"));
-    assert_ne!(doc.get_style_property(plain, "position").as_deref(), Some("fixed"));
+    //
+    // ⛔ This asserted the INLINE style, which is what `show_dialog` used to
+    // write — so it passed while the `dialog:modal` rule the comment describes
+    // did not exist and `:modal` matched nothing. Modality is top-layer
+    // membership now, and the COMPUTED value is what shows the rule applying.
+    assert_eq!(doc.top_layer_nodes(), &[modal], "only the modal is in the top layer");
+    // The rule applies through the CASCADE, so it has to run.
+    doc.recascade();
+    // ⛔ Read from the CASCADED style, not `computed_style_property` — that
+    // one answers a handful of properties and otherwise falls back to the
+    // INLINE style, so it reports `""` for a `position` that came from a
+    // stylesheet. Noted in `architecture.md`; asserting through it here would
+    // have tested the fallback rather than the rule.
+    let pos = |d: &crate::types::Document, id: u32| {
+        d.get_computed_style(id).map(|s| s.position)
+    };
+    assert_eq!(pos(&doc, modal), Some(crate::types::Position::Fixed),
+        "through the UA sheet's `dialog:modal` rule");
+    assert_ne!(pos(&doc, plain), Some(crate::types::Position::Fixed));
 
     doc.close_dialog(plain);
     assert!(!doc.dialog_open(plain), "close() clears the open attribute");

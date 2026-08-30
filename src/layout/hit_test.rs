@@ -281,6 +281,11 @@ pub struct HitResult {
 
 fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitResult> {
     if matches!(node.style.display, Display::None) { return None; }
+    // `inert` blocks pointer interaction for the whole subtree (HTML §6.7).
+    // Returning here rather than checking ancestors IS the inherited rule:
+    // the walk is top-down, so a subtree it never enters is one no descendant
+    // of can be hit.
+    if node.attributes.contains_key("inert") { return None; }
 
     // Adjust for this node's own scroll offset (rare — only scrollable boxes)
     let px = doc_pt.0 + node.layout.scroll_left;
@@ -296,6 +301,7 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
     {
         let mut zi_children: Vec<(i32, usize)> = Vec::new();
         for (i, child) in node.children.iter().enumerate() {
+            if child.attributes.contains_key("inert") { continue; }
             if child.style.is_positioned() && child.style.z_index > 0 {
                 zi_children.push((child.style.z_index, i));
             }
@@ -319,6 +325,10 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 1: deepest child whose borderRect (absolute) contains the point
     for child in node.children.iter().rev() {
+        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+        // back to `return Some(child.node_id)` when the recursion finds nothing
+        // deeper, so a child that refused the hit would be returned anyway.
+        if child.attributes.contains_key("inert") { continue; }
         // display:contents elements are transparent — recurse into their children directly
         if matches!(child.style.display, crate::types::Display::Contents) {
             if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
@@ -338,6 +348,10 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 2: children whose marginRect contains the point (gap / margin areas)
     for child in node.children.iter().rev() {
+        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+        // back to `return Some(child.node_id)` when the recursion finds nothing
+        // deeper, so a child that refused the hit would be returned anyway.
+        if child.attributes.contains_key("inert") { continue; }
         let b = &child.layout.border_rect;
         let in_border = px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h;
         if in_border { continue; }
@@ -349,6 +363,10 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
 
     // Pass 3: X-range only — handles margin-collapse overflow
     for child in node.children.iter().rev() {
+        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+        // back to `return Some(child.node_id)` when the recursion finds nothing
+        // deeper, so a child that refused the hit would be returned anyway.
+        if child.attributes.contains_key("inert") { continue; }
         let m = &child.layout.margin_rect;
         let in_margin = px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h;
         if in_margin { continue; }
@@ -521,8 +539,17 @@ pub fn hit_test_box_at(root: &WebCore, doc_pt: (f32, f32), button: u8) -> u32 {
 
 fn deepest_box_at(node: &WebCore, pt: (f32, f32), _button: u8) -> Option<u32> {
     if matches!(node.style.display, Display::None) { return None; }
+    // ⛔ The SECOND tree walker — `hit_test_impl` above is not the only road
+    // in, and a guard on one of them is invisible to every test that drives
+    // the other. The check is per-CHILD in the loop below rather than here:
+    // this function's only caller answers `unwrap_or(root.node_id)`, so a
+    // guard at this point cannot change what an inert root returns.
     let (px, py) = (pt.0 + node.layout.scroll_left, pt.1 + node.layout.scroll_top);
     for child in node.children.iter().rev() {
+        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+        // back to `return Some(child.node_id)` when the recursion finds nothing
+        // deeper, so a child that refused the hit would be returned anyway.
+        if child.attributes.contains_key("inert") { continue; }
         let m = &child.layout.margin_rect;
         if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
             if let Some(r) = deepest_box_at(child, (px, py), _button) { return Some(r); }

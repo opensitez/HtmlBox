@@ -67,6 +67,13 @@ pub struct DomEvent {
     /// `Event.composedPath()` — the propagation path, target-first. Filled by
     /// dispatch; empty before and after.
     pub composed_path: Vec<u32>,
+
+    /// `ToggleEvent.oldState` / `.newState` (HTML §6.12) — `"open"` or
+    /// `"closed"`. Empty for every other event type, like the mouse and
+    /// keyboard fields above, which this struct already carries for all of
+    /// them rather than splitting into one type per interface.
+    pub old_state: String,
+    pub new_state: String,
     /// `CustomEvent.detail`.
     detail: String,
     /// `UIEvent.detail` — click count.
@@ -190,6 +197,8 @@ impl DomEvent {
             is_trusted: true,
             time_stamp: time_origin_elapsed_ms(),
             composed_path: Vec::new(),
+            old_state: String::new(),
+            new_state: String::new(),
             detail: String::new(),
             ui_detail: 0,
             buttons: 0,

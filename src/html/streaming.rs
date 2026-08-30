@@ -77,11 +77,11 @@ pub struct StreamingParser {
     /// Accumulated buffer of unparsed HTML (incomplete tags carry over).
     buffer: String,
     /// Base URL for resolving relative links.
-    base_url: String,
+    pub(crate) base_url: String,
     /// Current element stack (for tracking insertion point).
     stack: Vec<String>,
     /// Whether we've seen </head> (render-blocking CSS should be loaded by then).
-    head_closed: bool,
+    pub(crate) head_closed: bool,
     /// Render-blocking resources that must load before first paint.
     render_blocking: Vec<String>,
     /// Resources that have been loaded.
@@ -91,7 +91,7 @@ pub struct StreamingParser {
     /// Discovered resource URLs (for preload scanner).
     discovered_resources: Vec<(ResourceKind, String)>,
     /// Current <title> content.
-    title: String,
+    pub(crate) title: String,
     /// Whether we're inside a <title> tag.
     in_title: bool,
     /// Whether we're inside a <style> tag.
