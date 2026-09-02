@@ -153,16 +153,28 @@ impl ApplicationHandler for App {
             let state = self.state.clone();
             // New game
             let state2 = state.clone();
-            doc.events.add("#new-game", HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, "#new-game") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 
                 if evt.button != 0 { return; }
                 let mut st = state2.lock().unwrap();
                 new_game(&mut st, root);
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
 
             // Flag mode toggle
             let state3 = state.clone();
-            doc.events.add("#flag-mode", HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, "#flag-mode") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 
                 if evt.button != 0 { return; }
                 let mut st = state3.lock().unwrap();
@@ -170,16 +182,22 @@ impl ApplicationHandler for App {
                 if let Some(btn) = dom::query_selector_mut(root, "#flag-mode") {
                     if st.flag_mode { dom::add_class(btn, "btn-flag-active"); } else { dom::remove_class(btn, "btn-flag-active"); }
                 }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
 
             
 
             // Cell click
             let state4 = state.clone();
-            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, ".cell") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
 
                 if evt.button != 0 { return; }
-                let cur_id = evt.current_target;
+                let cur_id = __cur;
                 let id = dom::find_box_mut(root, cur_id)
                     .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
                     .unwrap_or_default();
@@ -209,13 +227,19 @@ impl ApplicationHandler for App {
                         if let Some(s) = dom::query_selector_mut(root, "#status") { dom::set_text_content(s, "You Win!"); }
                     }
                 }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
 
             // Right-click/context menu toggles flag as well
             let state5 = state.clone();
-            doc.events.add(".cell", HtmlEventType::ContextMenu, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "contextmenu", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, ".cell") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
 
-                let cur_id = evt.current_target;
+                let cur_id = __cur;
                 let id = dom::find_box_mut(root, cur_id)
                     .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
                     .unwrap_or_default();
@@ -227,7 +251,7 @@ impl ApplicationHandler for App {
                         else { dom::remove_class(c, "cell-flag"); dom::set_text_content(c, ""); }
                     }
                 }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
         }
         // perform initial layout and start a new game so hit-testing works
         if let Some(doc) = self.doc.as_mut() {

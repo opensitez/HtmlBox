@@ -319,13 +319,19 @@ impl ApplicationHandler for App {
         self.width = platform.logical_width();
 
         self.renderer.register_trait_component("graph", GraphComponent);
-        let doc = self.renderer.load_html_vp(HTML, self.width, 860.0);
+        let mut doc = self.renderer.load_html_vp(HTML, self.width, 860.0);
         
         let state = self.state.clone();
         
         // Interactivity: Cycle chart type on click using library event system
-        doc.events.add("graph", HtmlEventType::Click, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "graph") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let types = ["bar", "line", "area", "pie", "donut", "hbar", "scatter", "gauge"];
             let (cur_type, elem_id) = dom::find_box_mut(root, cur_id)
                 .map(|t| (
@@ -345,13 +351,19 @@ impl ApplicationHandler for App {
             bump_interaction(root, &mut st);
             update_status(root, &format!("Cycled {} to {}", elem_id, next));
             log_event(root, &mut st, "CLICK", &format!("graph#{} -> {}", elem_id, next));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // All Bar/Line/etc buttons
         let types = [("bar", "#btn-bar"), ("line", "#btn-line"), ("pie", "#btn-pie"), ("area", "#btn-area"), ("scatter", "#btn-scatter")];
         for (t, id) in types {
             let state = self.state.clone();
-            doc.events.add(id, HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, id) else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 let graph_ids = dom::query_selector_all_ids(root, "graph");
                 for gid in graph_ids { let g = dom::find_box_mut(root, gid).unwrap();
                     dom::set_attribute(g, "data-type", t);
@@ -360,44 +372,68 @@ impl ApplicationHandler for App {
                 bump_interaction(root, &mut st);
                 update_status(root, &format!("All charts set to {}", t));
                 log_event(root, &mut st, "CLICK", &format!("btn -> all = {}", t));
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
         }
 
         // Randomize
         let state = self.state.clone();
-        doc.events.add("#btn-rand", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-rand") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             randomize_all_charts(root);
             let mut st = state.lock().unwrap();
             st.refresh_count += 1;
             bump_interaction(root, &mut st);
             update_status(root, "All chart data randomized!");
             log_event(root, &mut st, "CLICK", "btn-rand -> randomized all data");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // Grow
         let state = self.state.clone();
-        doc.events.add("#btn-grow", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-grow") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             scale_all_charts(root, 1.1);
             let mut st = state.lock().unwrap();
             bump_interaction(root, &mut st);
             update_status(root, "All values grew +10%");
             log_event(root, &mut st, "CLICK", "btn-grow -> +10%");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // Shrink
         let state = self.state.clone();
-        doc.events.add("#btn-shrink", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-shrink") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             scale_all_charts(root, 0.9);
             let mut st = state.lock().unwrap();
             bump_interaction(root, &mut st);
             update_status(root, "All values shrank -10%");
             log_event(root, &mut st, "CLICK", "btn-shrink -> -10%");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // Sidebar selection
         let state = self.state.clone();
-        doc.events.add(".sb-item", HtmlEventType::Click, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".sb-item") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let all_ids = dom::query_selector_all_ids(root, ".sb-item");
             for bid in all_ids {
                 if let Some(b) = dom::find_box_mut(root, bid) {
@@ -434,15 +470,21 @@ impl ApplicationHandler for App {
             bump_interaction(root, &mut st);
             update_status(root, &format!("Showing data for {}", id));
             log_event(root, &mut st, "NAV", &format!("{} (scale={:.0}%)", id, mult * 100.0));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // KPI selection
-        doc.events.add(".kpi", HtmlEventType::Click, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".kpi") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             if let Some(target_mut) = dom::find_box_mut(root, cur_id) {
                 dom::toggle_class(target_mut, "kpi-selected");
             }
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         self.doc = Some(doc);
         self.window   = Some(window);

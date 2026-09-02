@@ -106,15 +106,21 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("calculator — webcore").with_inner_size(winit::dpi::LogicalSize::new(360u32, 420u32))).unwrap());
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
-        let doc = load_html_with_registry(HTML, "", self.width, 420.0, self.registry.clone());
+        let mut doc = load_html_with_registry(HTML, "", self.width, 420.0, self.registry.clone());
 
         // buttons
-        doc.events.add(".btn", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".btn") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             // left click only
             if evt.button != 0 { return; }
             // Prevent default editor behavior (caret/selection) for buttons
             evt.prevent_default();
-            let cur_id = evt.current_target;
+            let cur_id = __cur;
             // Read button value first
             let val_opt = dom::find_box_mut(root, cur_id)
                 .and_then(|t| dom::get_attribute(t, "data-value").map(|s| s.to_string()));
@@ -149,7 +155,7 @@ impl ApplicationHandler for App {
                         eprintln!("[CALC_DBG] after set display='{}'", after);
                     }
             }
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         self.doc = Some(doc);
         self.window = Some(window);

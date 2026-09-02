@@ -132,7 +132,7 @@ impl ApplicationHandler for App {
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
 
-        let doc = load_html(HTML, self.width);
+        let mut doc = load_html(HTML, self.width);
 
         // ── Register all event listeners ──────────────────────────────────────
 
@@ -140,21 +140,33 @@ impl ApplicationHandler for App {
 
         // --- MouseOver ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseOver, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "mouseover", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".hover-box") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::add_class(t, "hover-box-active"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
             if let Some(el) = dom::query_selector_mut(root, "#hover-status") {
                 dom::set_text_content(el, &format!("MouseOver: #{}", id));
             }
-            s.lock().unwrap().push(EvCat::Mouse, "MouseOver", &format!("#{} at ({:.0},{:.0})", id, evt.client_pos.0, evt.client_pos.1));
-        }));
+            s.lock().unwrap().push(EvCat::Mouse, "MouseOver", &format!("#{} at ({:.0},{:.0})", id, (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- MouseOut ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseOut, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "mouseout", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".hover-box") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::remove_class(t, "hover-box-active"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
@@ -162,68 +174,110 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("MouseOut: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Mouse, "MouseOut", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- MouseEnter ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseEnter, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "mouseenter", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".hover-box") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = find_node(root, cur_id)
                 .and_then(|t| t.attributes.get("id").cloned())
                 .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Mouse, "MouseEnter", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- MouseLeave ---
         let s = shared.clone();
-        doc.events.add(".hover-box", HtmlEventType::MouseLeave, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "mouseleave", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".hover-box") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = find_node(root, cur_id)
                 .and_then(|t| t.attributes.get("id").cloned())
                 .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Mouse, "MouseLeave", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- MouseMove (on hover zone) ---
         let s = shared.clone();
-        doc.events.add("#zone-hover", HtmlEventType::MouseMove, Box::new(move |evt, root| {
-            s.lock().unwrap().push(EvCat::Mouse, "MouseMove", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
-        }));
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "mousemove", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#zone-hover") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            s.lock().unwrap().push(EvCat::Mouse, "MouseMove", &format!("({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Click ---
         let s = shared.clone();
-        doc.events.add("#btn-click", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-click") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "Click fired!");
             }
             s.lock().unwrap().push(EvCat::Mouse, "Click", "#btn-click");
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- DblClick ---
         let s = shared.clone();
-        doc.events.add("#btn-dblclick", HtmlEventType::DblClick, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "dblclick", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-dblclick") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "DblClick fired!");
             }
             s.lock().unwrap().push(EvCat::Mouse, "DblClick", "#btn-dblclick");
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- ContextMenu ---
         let s = shared.clone();
-        doc.events.add("#btn-ctx", HtmlEventType::ContextMenu, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "contextmenu", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#btn-ctx") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#click-status") {
                 dom::set_text_content(el, "ContextMenu fired!");
             }
-            s.lock().unwrap().push(EvCat::Mouse, "ContextMenu", &format!("#btn-ctx at ({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
+            s.lock().unwrap().push(EvCat::Mouse, "ContextMenu", &format!("#btn-ctx at ({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- DragStart (on drag cards) ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::DragStart, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "dragstart", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".drag-card") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::add_class(t, "drag-card-active"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
@@ -231,22 +285,34 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("Dragging #{}", id));
             }
             s.lock().unwrap().push(EvCat::Drag, "DragStart", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Drag ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::Drag, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "drag", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".drag-card") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = find_node(root, cur_id)
                 .and_then(|t| t.attributes.get("id").cloned())
                 .unwrap_or_default();
-            s.lock().unwrap().push(EvCat::Drag, "Drag", &format!("#{} at ({:.0},{:.0})", id, evt.client_pos.0, evt.client_pos.1));
-        }));
+            s.lock().unwrap().push(EvCat::Drag, "Drag", &format!("#{} at ({:.0},{:.0})", id, (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- DragEnd ---
         let s = shared.clone();
-        doc.events.add(".drag-card", HtmlEventType::DragEnd, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "dragend", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".drag-card") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::remove_class(t, "drag-card-active"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
@@ -254,11 +320,17 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("DragEnd #{}", id));
             }
             s.lock().unwrap().push(EvCat::Drag, "DragEnd", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- KeyDown ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::KeyDown, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "keydown", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "body") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             let kc   = evt.key_code;
             let key_name = key_code_name(kc);
             if let Some(el) = dom::query_selector_mut(root, "#key-display") {
@@ -270,11 +342,17 @@ impl ApplicationHandler for App {
             }
             s.lock().unwrap().push(EvCat::Key, "KeyDown", &format!("{} ({})", key_name, kc));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- KeyUp ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::KeyUp, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "keyup", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "body") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             let kc   = evt.key_code;
             let key_name = key_code_name(kc);
             if let Some(el) = dom::query_selector_mut(root, "#key-display") {
@@ -282,11 +360,17 @@ impl ApplicationHandler for App {
             }
             s.lock().unwrap().push(EvCat::Key, "KeyUp", &format!("{} ({})", key_name, kc));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Wheel (on wheel zone) ---
         let s = shared.clone();
-        doc.events.add("#zone-wheel", HtmlEventType::Wheel, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "wheel", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#zone-wheel") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             let dx = evt.delta_x;
             let dy = evt.delta_y;
             let mut st = s.lock().unwrap();
@@ -311,12 +395,18 @@ impl ApplicationHandler for App {
                 dom::set_style_property(el, "width", &format!("{}%", bar_pct));
             }
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Focus (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::Focus, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "focus", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".focus-item") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::add_class(t, "focus-item-focused"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
@@ -328,12 +418,18 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("Focus: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Focus, "Focus", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Blur (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::Blur, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "blur", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".focus-item") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = dom::find_box_mut(root, cur_id)
                 .map(|t| { dom::remove_class(t, "focus-item-focused"); t.attributes.get("id").cloned().unwrap_or_default() })
                 .unwrap_or_default();
@@ -345,53 +441,83 @@ impl ApplicationHandler for App {
                 dom::set_text_content(el, &format!("Blur: #{}", id));
             }
             s.lock().unwrap().push(EvCat::Focus, "Blur", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- FocusIn (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::FocusIn, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "focusin", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".focus-item") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = find_node(root, cur_id)
                 .and_then(|t| t.attributes.get("id").cloned())
                 .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Focus, "FocusIn", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- FocusOut (on focus items) ---
         let s = shared.clone();
-        doc.events.add(".focus-item", HtmlEventType::FocusOut, Box::new(move |evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "focusout", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".focus-item") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             let id = find_node(root, cur_id)
                 .and_then(|t| t.attributes.get("id").cloned())
                 .unwrap_or_default();
             s.lock().unwrap().push(EvCat::Focus, "FocusOut", &format!("#{}", id));
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- PointerDown ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerDown, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "pointerdown", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#pointer-canvas") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#pointer-status") {
-                dom::set_text_content(el, &format!("PointerDown at ({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
+                dom::set_text_content(el, &format!("PointerDown at ({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
             }
-            s.lock().unwrap().push(EvCat::Pointer, "PointerDown", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
+            s.lock().unwrap().push(EvCat::Pointer, "PointerDown", &format!("({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- PointerUp ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerUp, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "pointerup", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#pointer-canvas") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#pointer-status") {
-                dom::set_text_content(el, &format!("PointerUp at ({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
+                dom::set_text_content(el, &format!("PointerUp at ({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
             }
-            s.lock().unwrap().push(EvCat::Pointer, "PointerUp", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
+            s.lock().unwrap().push(EvCat::Pointer, "PointerUp", &format!("({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- PointerMove ---
         let s = shared.clone();
-        doc.events.add("#pointer-canvas", HtmlEventType::PointerMove, Box::new(move |evt, root| {
-            let cx = evt.client_pos.0;
-            let cy = evt.client_pos.1;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "pointermove", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#pointer-canvas") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cx = (evt.client_x, evt.client_y).0;
+            let cy = (evt.client_x, evt.client_y).1;
             // Find canvas rect first, then update dot
             let (canvas_x, canvas_y) = {
                 let canvas = dom::query_selector_mut(root, "#pointer-canvas");
@@ -408,37 +534,57 @@ impl ApplicationHandler for App {
             }
             s.lock().unwrap().push(EvCat::Pointer, "PointerMove", &format!("({:.0},{:.0})", cx, cy));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- PointerOver ---
         let s = shared.clone();
-        doc.events.add("#zone-pointer", HtmlEventType::PointerOver, Box::new(move |evt, root| {
-            s.lock().unwrap().push(EvCat::Pointer, "PointerOver", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
-        }));
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "pointerover", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#zone-pointer") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            s.lock().unwrap().push(EvCat::Pointer, "PointerOver", &format!("({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- PointerOut ---
         let s = shared.clone();
-        doc.events.add("#zone-pointer", HtmlEventType::PointerOut, Box::new(move |evt, root| {
-            s.lock().unwrap().push(EvCat::Pointer, "PointerOut", &format!("({:.0},{:.0})", evt.client_pos.0, evt.client_pos.1));
-        }));
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "pointerout", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#zone-pointer") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            s.lock().unwrap().push(EvCat::Pointer, "PointerOut", &format!("({:.0},{:.0})", (evt.client_x, evt.client_y).0, (evt.client_x, evt.client_y).1));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- Resize ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::Resize, Box::new(move |evt, root| {
-            let w = evt.client_pos.0 as u32;
-            let h = evt.client_pos.1 as u32;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "resize", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "body") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let w = (evt.client_x, evt.client_y).0 as u32;
+            let h = (evt.client_x, evt.client_y).1 as u32;
             if let Some(el) = dom::query_selector_mut(root, "#viewport-size") {
                 dom::set_text_content(el, &format!("{}x{}", w, h));
             }
             s.lock().unwrap().push(EvCat::Life, "Resize", &format!("{}x{}", w, h));
             let _ = root;
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // --- DOMContentLoaded ---
         let s = shared.clone();
-        doc.events.add("body", HtmlEventType::DOMContentLoaded, Box::new(move |_evt, _root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "DOMContentLoaded",
+            Box::new(move |_evt, _d: &mut webcore::Document| {
             s.lock().unwrap().push(EvCat::Life, "DOMContentLoaded", "document ready");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         self.doc      = Some(doc);
         self.window   = Some(window);

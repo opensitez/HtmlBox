@@ -222,15 +222,21 @@ impl App {
 
         // Toolbar buttons: match by class to avoid catching other buttons in the
         // document. Prevent default editor behavior for toolbar actions.
-        doc.events.add(".tb-btn", HtmlEventType::Click, Box::new(move |evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".tb-btn") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             // left-click only
             if evt.button != 0 { return; }
             // Prevent default editor behavior for toolbar actions
             evt.prevent_default();
             // Debug: log hit/test info
-            let doc_pos = evt.doc_pos;
+            let doc_pos = (evt.page_x(), evt.page_y());
             let btn_ptr = evt.target;
-            let cur_ptr = evt.current_target;
+            let cur_ptr = __cur;
             fn find_node_ref(node: &WebCore, id: u32) -> Option<&WebCore> {
                 if node.node_id == id { return Some(node); }
                 for c in &node.children { if let Some(f) = find_node_ref(c, id) { return Some(f); } }
@@ -312,7 +318,7 @@ impl App {
                      // layout will be done by caller after event processing
                  }
             }
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
     }
 }
 

@@ -2053,9 +2053,45 @@ fn dbg_json_num(json: &str, key: &str) -> Option<f32> {
     after[..end].parse().ok()
 }
 
-fn dbg_matches_query(node: &webcore::WebCore, query: &str) -> bool {
+/// Node ids matching `query`, resolved with the engine's own selector engine.
+fn dbg_query_ids(doc: &Document, query: &str) -> std::collections::HashSet<u32> {
+    doc.query_selector_all(query).into_iter().collect()
+}
+
+thread_local! {
+    /// Last (selector, matching node ids) — see `dbg_matches_query`.
+    static DBG_QUERY_MEMO: std::cell::RefCell<Option<(String, std::collections::HashSet<u32>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Does `node` match `query`?
+///
+/// The fast path below only understands `tag#id.class`. Anything else — a
+/// combinator, a pseudo-class, an attribute selector — is handed to the ENGINE's
+/// selector matcher via `query_selector_all`, because this hand-rolled parser
+/// used to answer `false` for those instead of admitting it could not tell:
+/// `{"cmd":"find","selector":"table tbody"}` reported `count: 0` on a document
+/// that plainly had one, which reads exactly like a missing element. A debug
+/// tool that lies about the DOM is worse than no debug tool.
+///
+/// One-entry memo because every caller walks the whole tree with a single fixed
+/// selector — without it this would be O(n²) per command.
+fn dbg_matches_query(doc: &Document, node: &webcore::WebCore, query: &str) -> bool {
     if node.tag == "#text" { return false; }
     let query = query.trim();
+    if query.contains([' ', '>', '+', '~', ':', '[', ',']) {
+        if node.node_id == 0 { return false; }
+        return DBG_QUERY_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            let stale = memo.as_ref().map(|(q, _)| q != query).unwrap_or(true);
+            if stale {
+                let ids: std::collections::HashSet<u32> =
+                    doc.query_selector_all(query).into_iter().collect();
+                *memo = Some((query.to_string(), ids));
+            }
+            memo.as_ref().unwrap().1.contains(&node.node_id)
+        });
+    }
     let mut tag_q = "";
     let mut id_q = "";
     let mut classes_q: Vec<&str> = Vec::new();
@@ -2246,7 +2282,7 @@ fn dbg_selector_center(doc: &Document, selector: &str) -> Option<(f32, f32)> {
     let mut result = None;
     Document::walk_all(&doc.root, &mut |node| {
         if result.is_some() { return; }
-        if dbg_matches_query(node, selector) {
+        if dbg_matches_query(doc, node, selector) {
             let r = &node.layout.content_rect;
             result = Some((r.x + r.w / 2.0, r.y + r.h / 2.0));
         }
@@ -2424,7 +2460,7 @@ impl BrowserApp {
                         let mut results = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     let id  = node.attributes.get("id").map(|v| v.as_str()).unwrap_or("");
                                     let cls = node.attributes.get("class").map(|v| v.as_str()).unwrap_or("");
                                     let r = &node.layout.content_rect;
@@ -2445,7 +2481,7 @@ impl BrowserApp {
                         let mut texts = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     let mut t = String::new();
                                     dbg_collect_text(node, &mut t);
                                     texts.push(dbg_json_escape(&t));
@@ -2463,7 +2499,7 @@ impl BrowserApp {
                         let mut values = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     if let Some(v) = node.attributes.get(&name) {
                                         values.push(dbg_json_escape(v));
                                     }
@@ -2481,7 +2517,7 @@ impl BrowserApp {
                         let mut results = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     let mut buf = String::new();
                                     dbg_serialize_html(node, &mut buf, 0);
                                     results.push(dbg_json_escape(&buf));
@@ -2500,7 +2536,7 @@ impl BrowserApp {
                         let mut parts = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     parts.push(dbg_inspect_json(node));
                                 }
                             });
@@ -2516,7 +2552,7 @@ impl BrowserApp {
                         let mut parts = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     parts.push(dbg_computed_json(node));
                                 }
                             });
@@ -2532,7 +2568,7 @@ impl BrowserApp {
                         let mut results = Vec::new();
                         if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     let rules: Vec<String> = node.matched_rules.iter().map(|r| {
                                         let decls: Vec<String> = r.declarations.iter()
                                             .filter(|(k, _)| !k.starts_with("--"))
@@ -2561,9 +2597,14 @@ impl BrowserApp {
                     (Some(sel), Some(prop), Some(val)) => {
                         let mut count = 0usize;
                         if let Some(doc) = self.tabs[self.active].doc.as_mut() {
+                            // Resolved against the PRE-mutation tree: a mutating
+                            // walk cannot hold the immutable borrow the engine's
+                            // matcher needs, and matching what the selector named
+                            // when the command arrived is the right semantics.
+                            let hits = dbg_query_ids(doc, &sel);
                             Document::walk_all_mut(&mut doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
-                                    webcore::css::apply_property(&mut node.style, &prop, &val);
+                                if hits.contains(&node.node_id) {
+                                    webcore::css::apply_property(std::sync::Arc::make_mut(&mut node.style), &prop, &val);
                                     node.layout.layout_dirty = true;
                                     count += 1;
                                 }
@@ -2580,8 +2621,9 @@ impl BrowserApp {
                     (Some(sel), Some(name), Some(val)) => {
                         let mut count = 0usize;
                         if let Some(doc) = self.tabs[self.active].doc.as_mut() {
+                            let hits = dbg_query_ids(doc, &sel);
                             Document::walk_all_mut(&mut doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if hits.contains(&node.node_id) {
                                     node.attributes.insert(name.clone(), val.clone());
                                     count += 1;
                                 }
@@ -2600,7 +2642,7 @@ impl BrowserApp {
                 if let Some(doc) = self.tabs[self.active].doc.as_ref() {
                     match sel.as_deref() {
                         Some(sel) => Document::walk_all(&doc.root, &mut |node| {
-                            if dbg_matches_query(node, sel) { dbg_dump_box(0, node, &mut buf); }
+                            if dbg_matches_query(doc, node, sel) { dbg_dump_box(0, node, &mut buf); }
                         }),
                         None => dbg_dump_box(0, &doc.root, &mut buf),
                     }
@@ -2622,7 +2664,7 @@ impl BrowserApp {
                         if let Some(doc) = self.tabs[self.active].doc.as_mut() {
                             self.renderer.render(doc, &mut pm, 1.0);
                             Document::walk_all(&doc.root, &mut |node| {
-                                if dbg_matches_query(node, &sel) {
+                                if dbg_matches_query(doc, node, &sel) {
                                     webcore::draw_inspect_overlay(node, &mut pm, 0.0, 0.0, 1.0);
                                     count += 1;
                                 }
@@ -2785,9 +2827,9 @@ impl BrowserApp {
                 let Some(doc) = self.tabs[self.active].doc.as_ref() else {
                     return r#"{"ok":false,"error":"no document"}"#.to_string();
                 };
-                let has_old = !doc.events.is_empty();
-                let has_new = !doc.event_targets.is_empty();
-                format!(r#"{{"ok":true,"old_listeners":{},"new_listeners":{}}}"#, has_old, has_new)
+                // There is one listener system now — the WHATWG one.
+                let has_listeners = !doc.event_targets.is_empty();
+                format!(r#"{{"ok":true,"listeners":{}}}"#, has_listeners)
             }
             // ── Force element state ──────────────────────────────────────────
             "force-state" => {
@@ -2816,15 +2858,18 @@ impl BrowserApp {
                 };
                 let query = dbg_json_str(line, "query").unwrap_or_default().to_lowercase();
                 let mut results: Vec<String> = Vec::new();
-                fn search_walk(node: &webcore::WebCore, q: &str, results: &mut Vec<String>) {
+                fn search_walk(doc: &webcore::Document, node: &webcore::WebCore, q: &str, results: &mut Vec<String>) {
                     if node.tag == "#text" && node.text.to_lowercase().contains(q) {
-                        let pid = node.parent;
+                        // ⛔ Ask the DOM. This read `node.parent`, a render-tree
+                        // field the mutation APIs never maintained, so every
+                        // script-created node reported `parent_id: 0`.
+                        let pid = doc.parent_node(node.node_id);
                         results.push(format!(r#"{{"node_id":{},"parent_id":{},"text":{}}}"#,
                             node.node_id, pid, dbg_json_escape(&node.text.trim().chars().take(100).collect::<String>())));
                     }
-                    for child in &node.children { search_walk(child, q, results); }
+                    for child in &node.children { search_walk(doc, child, q, results); }
                 }
-                search_walk(&doc.root, &query, &mut results);
+                search_walk(doc, &doc.root, &query, &mut results);
                 format!(r#"{{"ok":true,"count":{},"results":[{}]}}"#, results.len(), results.join(","))
             }
             // ── Box model (Chrome-style) ─────────────────────────────────────
@@ -4006,7 +4051,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
             let mut parts = Vec::new();
             Document::walk_all(&doc.root, &mut |node| {
-                if dbg_matches_query(node, &sel) { parts.push(dbg_inspect_json(node)); }
+                if dbg_matches_query(doc, node, &sel) { parts.push(dbg_inspect_json(node)); }
             });
             format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, parts.len(), parts.join(","))
         }
@@ -4015,7 +4060,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
             let mut parts = Vec::new();
             Document::walk_all(&doc.root, &mut |node| {
-                if dbg_matches_query(node, &sel) { parts.push(dbg_computed_json(node)); }
+                if dbg_matches_query(doc, node, &sel) { parts.push(dbg_computed_json(node)); }
             });
             format!(r#"{{"ok":true,"count":{},"elements":[{}]}}"#, parts.len(), parts.join(","))
         }
@@ -4024,7 +4069,7 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             let sel = dbg_json_str(line, "selector").unwrap_or_default();
             let mut results = Vec::new();
             Document::walk_all(&doc.root, &mut |node| {
-                if dbg_matches_query(node, &sel) {
+                if dbg_matches_query(doc, node, &sel) {
                     let rules: Vec<String> = node.matched_rules.iter().map(|r| {
                         let decls: Vec<String> = r.declarations.iter()
                             .filter(|(k, _)| !k.starts_with("--"))
@@ -4233,8 +4278,9 @@ fn dispatch_headless_cmd(doc: &mut Document, renderer: &mut Renderer, url: &str,
             match (dbg_json_str(line, "selector"), dbg_json_str(line, "name"), dbg_json_str(line, "value")) {
                 (Some(sel), Some(name), Some(val)) => {
                     let mut count = 0usize;
+                    let hits = dbg_query_ids(doc, &sel);
                     Document::walk_all_mut(&mut doc.root, &mut |node| {
-                        if dbg_matches_query(node, &sel) { node.attributes.insert(name.clone(), val.clone()); count += 1; }
+                        if hits.contains(&node.node_id) { node.attributes.insert(name.clone(), val.clone()); count += 1; }
                     });
                     if count > 0 { renderer.layout_engine().layout(doc, width); }
                     format!(r#"{{"ok":true,"modified":{}}}"#, count)

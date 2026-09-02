@@ -60,11 +60,17 @@ impl ApplicationHandler for App {
         let platform = Platform::new_windowed(window.clone());
         self.width = platform.logical_width();
 
-        let doc = load_html(HTML, self.width);
+        let mut doc = load_html(HTML, self.width);
 
         // Card selection on click (only fires when not dragging — handled below)
-        doc.events.add(".card", HtmlEventType::Click, Box::new(|evt, root| {
-            let cur_id = evt.current_target;
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(|evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, ".card") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
+            let cur_id = __cur;
             // Deselect all cards first
             deselect_all(root);
             // Select this card via node_id lookup
@@ -88,7 +94,7 @@ impl ApplicationHandler for App {
                     dom::set_text_content(info, &format!("{} ({})", title, id_str));
                 }
             }
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         self.doc      = Some(doc);
         self.window   = Some(window);

@@ -113,8 +113,14 @@ impl ApplicationHandler for App {
         if let Some(doc) = self.doc.as_mut() {
             let state = self.state.clone();
             // cell clicks: human plays X, then AI (O) via minimax
-            doc.events.add(".cell", HtmlEventType::Click, Box::new(move |evt, root| {
-                let cur_id = evt.current_target;
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, ".cell") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
+                let cur_id = __cur;
                 let id = dom::find_box_mut(root, cur_id)
                     .and_then(|t| dom::get_attribute(t, "id").map(|s| s.to_string()))
                     .unwrap_or_default();
@@ -154,11 +160,17 @@ impl ApplicationHandler for App {
                     }
                 }
                 if let Some(s) = dom::query_selector_mut(root, "#status") { dom::set_text_content(s, "Your turn"); }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
 
             // Reset button
             let state = self.state.clone();
-            doc.events.add("#reset", HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, "#reset") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 let mut st = state.lock().unwrap();
                 for i in 0..9 {
                     if let Some(c) = dom::query_selector_mut(root, &format!("#c{}", i)) {
@@ -170,17 +182,29 @@ impl ApplicationHandler for App {
                 }
                 st.next_x = true;
                 if let Some(s) = dom::query_selector_mut(root, "#status") { dom::set_text_content(s, "Your turn"); }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
 
             // Difficulty toggles
-            doc.events.add("#diff-easy", HtmlEventType::Click, Box::new(move |evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, "#diff-easy") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 if let Some(e) = dom::query_selector_mut(root, "#diff-easy") { dom::add_class(e, "btn-diff-active"); }
                 if let Some(e) = dom::query_selector_mut(root, "#diff-hard") { dom::remove_class(e, "btn-diff-active"); }
-            }));
-            doc.events.add("#diff-hard", HtmlEventType::Click, Box::new(move |evt, root| {
+            }), webcore::dom::events::ListenerOptions::default());
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, "#diff-hard") else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 if let Some(e) = dom::query_selector_mut(root, "#diff-hard") { dom::add_class(e, "btn-diff-active"); }
                 if let Some(e) = dom::query_selector_mut(root, "#diff-easy") { dom::remove_class(e, "btn-diff-active"); }
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
         }
         self.window   = Some(window);
         self.platform = Some(platform);

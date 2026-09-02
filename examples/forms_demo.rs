@@ -2,7 +2,7 @@
 //!
 //! Uses the same event system as graph_demo and event_playground:
 //! - `renderer.handle_window_event()` for all input routing
-//! - `doc.events.add()` for click handlers
+//! - `doc.add_event_listener()` for click handlers
 //! - `dom::set_text_content()` / `dom::set_attribute()` to update DOM
 //!
 //! Usage:
@@ -118,22 +118,40 @@ impl ApplicationHandler<()> for App {
         // Checkboxes: toggle and update summary
         for id in &["pep","mush","onion","saus","pepper","olive","cheese","jala"] {
             let sel = format!("#{}", id);
-            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, sel.as_str()) else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 // Toggle is already handled by process_mouse_event
                 update_summary(root);
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
         }
 
         // Radio buttons: update summary on size change
         for val in &["small", "medium", "large"] {
             let sel = format!("input[value={}]", val);
-            doc.events.add(&sel, HtmlEventType::Click, Box::new(|evt, root| {
+            let __root = doc.root.node_id;
+            doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+                // Delegation, the way a page writes it: one listener, then
+                // `closest()` to find which matching element was hit.
+                let Some(__cur) = __d.closest(evt.target, sel.as_str()) else { return };
+                let root = &mut __d.root;
+                let _ = &root;
                 update_summary(root);
-            }));
+            }), webcore::dom::events::ListenerOptions::default());
         }
 
         // Order button
-        doc.events.add("#order-btn", HtmlEventType::Click, Box::new(|evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#order-btn") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             if let Some(el) = dom::query_selector_mut(root, "#status") {
                 dom::set_text_content(el, "Order placed! Thank you!");
             }
@@ -141,10 +159,16 @@ impl ApplicationHandler<()> for App {
                 dom::set_attribute(el, "value", "1");
             }
             eprintln!("🍕 ORDER PLACED!");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // Reset button
-        doc.events.add("#reset-btn", HtmlEventType::Click, Box::new(|evt, root| {
+        let __root = doc.root.node_id;
+        doc.add_event_listener(__root, "click", Box::new(move |evt, __d: &mut webcore::Document| {
+            // Delegation, the way a page writes it: one listener, then
+            // `closest()` to find which matching element was hit.
+            let Some(__cur) = __d.closest(evt.target, "#reset-btn") else { return };
+            let root = &mut __d.root;
+            let _ = &root;
             // Clear text inputs
             for id in &["name", "phone"] {
                 if let Some(el) = dom::query_selector_mut(root, &format!("#{}", id)) {
@@ -165,7 +189,7 @@ impl ApplicationHandler<()> for App {
             }
             update_summary(root);
             eprintln!("🔄 Order reset");
-        }));
+        }), webcore::dom::events::ListenerOptions::default());
 
         // Initial summary
         update_summary(&mut doc.root);
