@@ -26,6 +26,7 @@ pub mod token_list_api;
 pub mod top_layer;
 pub mod validation_api;
 pub mod range;
+pub mod reclaim;
 pub mod reflect;
 pub mod url;
 pub mod traversal;
@@ -311,13 +312,13 @@ pub fn remove_data(b: &mut WebCore, key: &str) {
 
 /// Hide a box (sets `display: none`).
 pub fn hide(b: &mut WebCore) {
-    b.style.display = Display::None;
+    std::sync::Arc::make_mut(&mut b.style).display = Display::None;
 }
 
 /// Show a box (restores block display if hidden).
 pub fn show(b: &mut WebCore) {
     if b.style.display == Display::None {
-        b.style.display = Display::Block;
+        std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
     }
 }
 
@@ -331,7 +332,7 @@ pub fn is_visible(b: &WebCore) -> bool {
 /// Also persists the value in the `style` attribute so that a CSS re-cascade
 /// (e.g. after class toggling) does not overwrite the change.
 pub fn set_style_property(b: &mut WebCore, prop: &str, value: &str) {
-    apply_property(&mut b.style, prop, value);
+    apply_property(std::sync::Arc::make_mut(&mut b.style), prop, value);
     let style_str = b.attributes.entry_or_default("style");
     upsert_style_attr_prop(style_str, prop, value);
     mark_layout_dirty(b);
@@ -375,7 +376,7 @@ pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
             let prop = decl[..colon].trim();
             let val  = decl[colon+1..].trim();
             if !prop.is_empty() && !val.is_empty() {
-                apply_property(&mut b.style, prop, val);
+                apply_property(std::sync::Arc::make_mut(&mut b.style), prop, val);
                 let style_str = b.attributes.entry_or_default("style");
                 upsert_style_attr_prop(style_str, prop, val);
             }
@@ -436,146 +437,33 @@ pub fn get_last_child(b: &WebCore) -> Option<&WebCore> {
     b.children.last()
 }
 
-/// Find the next sibling of `target` within `parent`. O(1) via linked-list.
-pub fn get_next_sibling<'a>(parent: &'a WebCore, target_id: u32) -> Option<&'a WebCore> {
-    let target = parent.children.iter().find(|c| c.node_id == target_id)?;
-    let next_id = target.next_sibling;
-    if next_id == 0 { return None; }
-    parent.children.iter().find(|c| c.node_id == next_id)
-}
-
-/// Find the previous sibling of `target` within `parent`. O(1) via linked-list.
-pub fn get_prev_sibling<'a>(parent: &'a WebCore, target_id: u32) -> Option<&'a WebCore> {
-    let target = parent.children.iter().find(|c| c.node_id == target_id)?;
-    let prev_id = target.prev_sibling;
-    if prev_id == 0 { return None; }
-    parent.children.iter().find(|c| c.node_id == prev_id)
-}
-
 // ─── DOM tree mutation ────────────────────────────────────────────────────────
 
-/// Append `child` as the last child of `parent`.
-pub fn append_child(parent: &mut WebCore, mut child: WebCore) {
-    let child_id = child.node_id;
-    let old_last = parent.last_child;
-    child.parent = parent.node_id;
-    child.prev_sibling = old_last;
-    child.next_sibling = 0;
+/// Append `child` as the last child of `parent`, in the RENDER tree.
+///
+/// Order here is the `Vec`'s order, and that is the whole of it: the DOM's
+/// answer to `appendChild` comes from `DomArena`, which `Document::append_child`
+/// drives. This is the box that gets laid out.
+pub fn append_child(parent: &mut WebCore, child: WebCore) {
     parent.children.push(child);
-    // Update linked-list
-    if old_last != 0 {
-        if let Some(prev) = parent.children.iter_mut().rev().nth(1) {
-            if prev.node_id == old_last { prev.next_sibling = child_id; }
-        }
-    } else {
-        parent.first_child = child_id;
-    }
-    parent.last_child = child_id;
     mark_layout_dirty(parent);
 }
 
-/// Prepend `child` as the first child of `parent`.
-pub fn prepend_child(parent: &mut WebCore, mut child: WebCore) {
-    let child_id = child.node_id;
-    let old_first = parent.first_child;
-    child.parent = parent.node_id;
-    child.prev_sibling = 0;
-    child.next_sibling = old_first;
-    parent.children.insert(0, child);
-    if old_first != 0 {
-        if let Some(f) = parent.children.iter_mut().find(|c| c.node_id == old_first) {
-            f.prev_sibling = child_id;
-        }
-    } else {
-        parent.last_child = child_id;
-    }
-    parent.first_child = child_id;
-}
-
-/// Insert `new_node` before the child with `reference_id` within `parent`.
-pub fn insert_before(parent: &mut WebCore, reference_id: u32, mut new_node: WebCore) -> bool {
-    if let Some(idx) = parent.children.iter()
-        .position(|c| c.node_id == reference_id)
-    {
-        let new_id = new_node.node_id;
-        let prev = parent.children[idx].prev_sibling;
-        new_node.parent = parent.node_id;
-        new_node.prev_sibling = prev;
-        new_node.next_sibling = reference_id;
-        parent.children.insert(idx, new_node);
-        // Fix the reference node's prev (it shifted to idx+1)
-        parent.children[idx + 1].prev_sibling = new_id;
-        if prev != 0 {
-            if let Some(p) = parent.children.iter_mut().find(|c| c.node_id == prev) {
-                p.next_sibling = new_id;
-            }
-        } else {
-            parent.first_child = new_id;
-        }
-        true
-    } else {
-        false
-    }
-}
-/// Insert `new_node` after the child with `reference_id` within `parent`.
-pub fn insert_after(parent: &mut WebCore, reference_id: u32, mut new_node: WebCore) -> bool {
-    if let Some(idx) = parent.children.iter()
-        .position(|c| c.node_id == reference_id)
-    {
-        let new_id = new_node.node_id;
-        let next = parent.children[idx].next_sibling;
-        new_node.parent = parent.node_id;
-        new_node.prev_sibling = reference_id;
-        new_node.next_sibling = next;
-        parent.children[idx].next_sibling = new_id;
-        parent.children.insert(idx + 1, new_node);
-        // Fix the next node's prev_sibling
-        if next != 0 {
-            if let Some(n) = parent.children.iter_mut().find(|c| c.node_id == next) {
-                n.prev_sibling = new_id;
-            }
-        } else {
-            parent.last_child = new_id;
-        }
-        true
-    } else {
-        false
-    }
-}
-/// Remove the child at position `index` from `parent`, returning it.
-pub fn remove_child_at(parent: &mut WebCore, index: usize) -> Option<WebCore> {
-    if index < parent.children.len() {
-        Some(parent.children.remove(index))
-    } else {
-        None
+/// Insert `new_node` after the child with `reference_id`, in the RENDER tree.
+///
+/// Position comes from the `Vec` — there is no other order here. The DOM's
+/// `insertBefore`/`after` are `Document`'s, and go through `DomArena`.
+pub fn insert_after(parent: &mut WebCore, reference_id: u32, new_node: WebCore) -> bool {
+    match parent.children.iter().position(|c| c.node_id == reference_id) {
+        Some(idx) => { parent.children.insert(idx + 1, new_node); true }
+        None => false,
     }
 }
 
 /// Remove the child identified by node_id from `parent`, returning it.
 pub fn remove_child(parent: &mut WebCore, node_id: u32) -> Option<WebCore> {
-    if let Some(idx) = parent.children.iter().position(|c| c.node_id == node_id) {
-        let removed = parent.children.remove(idx);
-        let prev = removed.prev_sibling;
-        let next = removed.next_sibling;
-        // Update linked-list: patch prev→next and next→prev
-        if prev != 0 {
-            if let Some(p) = parent.children.iter_mut().find(|c| c.node_id == prev) {
-                p.next_sibling = next;
-            }
-        } else {
-            parent.first_child = next;
-        }
-        if next != 0 {
-            if let Some(n) = parent.children.iter_mut().find(|c| c.node_id == next) {
-                n.prev_sibling = prev;
-            }
-        } else {
-            parent.last_child = prev;
-        }
-        Some(removed)
-    } else {
-        None
-    }
+    let idx = parent.children.iter().position(|c| c.node_id == node_id)?;
+    Some(parent.children.remove(idx))
 }
 /// Deep-clone an element (WebCore implements Clone).
 pub fn clone_element(b: &WebCore) -> WebCore {
@@ -636,10 +524,10 @@ pub fn set_text_content(b: &mut WebCore, text: &str) {
     tn.text = text.to_string();
     // Inherit style from parent so text rendering picks up font/color.
     tn.style = b.style.clone();
-    tn.style.display = Display::Inline; // #text nodes must remain inline
-    tn.style.hover_style = None;
-    tn.style.active_style = None;
-    tn.style.visited_style = None;
+    std::sync::Arc::make_mut(&mut tn.style).display = Display::Inline; // #text nodes must remain inline
+    std::sync::Arc::make_mut(&mut tn.style).hover_style = None;
+    std::sync::Arc::make_mut(&mut tn.style).active_style = None;
+    std::sync::Arc::make_mut(&mut tn.style).visited_style = None;
     b.children.push(tn);
     mark_layout_dirty(b);
 }
@@ -1160,9 +1048,9 @@ impl Editor {
         // font, color, etc. without needing a full cascade.
         if let Some(src) = find_box_mut(root, caret_nid) {
             new_block.style = src.style.clone();
-            new_block.style.hover_style = None;
-            new_block.style.active_style = None;
-            new_block.style.visited_style = None;
+            std::sync::Arc::make_mut(&mut new_block.style).hover_style = None;
+            std::sync::Arc::make_mut(&mut new_block.style).active_style = None;
+            std::sync::Arc::make_mut(&mut new_block.style).visited_style = None;
         }
         mark_layout_dirty(&mut new_block);
 
@@ -1239,7 +1127,7 @@ impl Editor {
                         .position(|c| c.node_id == caret_nid)
                     {
                         ul.children[li_idx].tag = "p".to_string();
-                        apply_property(&mut ul.children[li_idx].style, "display", "block");
+                        apply_property(std::sync::Arc::make_mut(&mut ul.children[li_idx].style), "display", "block");
                         self.caret_box = Some(ul.children[li_idx].node_id);
 
                         // If the list now has only this one element, unwrap the <ul>
@@ -1267,12 +1155,12 @@ impl Editor {
                 {
                     let block = parent.children.remove(idx);
                     let mut li = WebCore::new("li");
-                    apply_property(&mut li.style, "display", "list-item");
+                    apply_property(std::sync::Arc::make_mut(&mut li.style), "display", "list-item");
                     li.text       = block.text;
                     li.children   = block.children;
                     li.layout.inline_runs = block.layout.inline_runs;
                     let mut ul = WebCore::new("ul");
-                    apply_property(&mut ul.style, "display", "block");
+                    apply_property(std::sync::Arc::make_mut(&mut ul.style), "display", "block");
                     ul.children.push(li);
                     parent.children.insert(idx, ul);
                     
@@ -1288,7 +1176,7 @@ impl Editor {
         if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", current + step_px);
-            apply_property(&mut b.style, "margin-left", &new_val);
+            apply_property(std::sync::Arc::make_mut(&mut b.style), "margin-left", &new_val);
             let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
@@ -1300,7 +1188,7 @@ impl Editor {
         if let Some(b) = find_box_mut(root, caret_nid) {
             let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
             let new_val = format!("{}px", (current - step_px).max(0.0));
-            apply_property(&mut b.style, "margin-left", &new_val);
+            apply_property(std::sync::Arc::make_mut(&mut b.style), "margin-left", &new_val);
             let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
@@ -1315,8 +1203,8 @@ impl Editor {
             {
                 let block = parent.children.remove(idx);
                 let mut bq = WebCore::new("blockquote");
-                apply_property(&mut bq.style, "display", "block");
-                apply_property(&mut bq.style, "margin-left", "40px");
+                apply_property(std::sync::Arc::make_mut(&mut bq.style), "display", "block");
+                apply_property(std::sync::Arc::make_mut(&mut bq.style), "margin-left", "40px");
                 bq.children.push(block);
                 parent.children.insert(idx, bq);
                 
@@ -1577,8 +1465,6 @@ fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) 
             for child in new_children.into_iter().rev() {
                 node.children.insert(idx, child);
             }
-            // Update linked-list pointers
-            crate::html::populate_sibling_links(node);
             return true;
         }
     }
@@ -1611,7 +1497,7 @@ pub fn insert_hr(editor: &Editor, root: &mut WebCore) {
             .position(|c| c.node_id == caret_id)
         {
             let mut hr = WebCore::new("hr");
-            apply_property(&mut hr.style, "display", "block");
+            apply_property(std::sync::Arc::make_mut(&mut hr.style), "display", "block");
             parent.children.insert(idx + 1, hr);
         }
     }

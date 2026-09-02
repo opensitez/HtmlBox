@@ -83,10 +83,10 @@ fn parse_html_full(
 
     // Always create html > body structure
     let mut html_box = parser.new_box("html");
-    apply_property(&mut html_box.style, "display", "block");
+    apply_property(std::sync::Arc::make_mut(&mut html_box.style), "display", "block");
 
     let mut body_box = parser.new_box("body");
-    apply_property(&mut body_box.style, "display", "block");
+    apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
 
     let mut body_children: Vec<WebCore> = Vec::new();
     let mut ol_counter = 0i32;
@@ -113,7 +113,7 @@ fn parse_html_full(
                 if parser.head_closed {
                     let mut node = parser.new_box("#comment");
                     node.text = data;
-                    apply_property(&mut node.style, "display", "none");
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "none");
                     body_children.push(node);
                 }
             }
@@ -142,7 +142,7 @@ fn parse_html_full(
                 if tag == "p" {
                     parser.head_closed = true;
                     let mut node = parser.new_box("p");
-                    apply_property(&mut node.style, "display", default_display("p"));
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display("p"));
                     body_children.push(node);
                 }
             }
@@ -152,7 +152,7 @@ fn parse_html_full(
                     "html" => {
                         // Apply attrs to html box
                         html_box.attributes = attrs;
-                        apply_property(&mut html_box.style, "display", "block");
+                        apply_property(std::sync::Arc::make_mut(&mut html_box.style), "display", "block");
                         apply_presentational_attrs(&mut html_box);
                         // Continue parsing html children
                         if !self_closing {
@@ -180,7 +180,7 @@ fn parse_html_full(
                         parser.head_closed = true;
                         // Apply attrs to body box
                         body_box.attributes = attrs;
-                        apply_property(&mut body_box.style, "display", "block");
+                        apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
                         apply_presentational_attrs(&mut body_box);
                         // Parse body children
                         if !self_closing {
@@ -224,7 +224,7 @@ fn parse_html_full(
     // cascade — so this adds the container the spec requires without changing
     // what is rendered.
     let mut head_box = parser.new_box("head");
-    apply_property(&mut head_box.style, "display", default_display("head"));
+    apply_property(std::sync::Arc::make_mut(&mut head_box.style), "display", default_display("head"));
     head_box.children = std::mem::take(&mut parser.head_children);
 
     // §13.2.6.4.19 "in frameset" — a `<frameset>` REPLACES the body: the
@@ -235,7 +235,7 @@ fn parse_html_full(
     let frameset = body_box.children.iter().position(|c| c.tag == "frameset");
     if let Some(at) = frameset {
         let mut fs = body_box.children.remove(at);
-        apply_property(&mut fs.style, "display", "block");
+        apply_property(std::sync::Arc::make_mut(&mut fs.style), "display", "block");
         html_box.children = vec![head_box, fs];
     } else {
         html_box.children = vec![head_box, body_box];
@@ -250,7 +250,7 @@ fn parse_html_full(
     unwrap_misplaced_table_parts(&mut html_box);
 
     // Wire arena parent-child relationships to mirror the WebCore tree.
-    wire_arena_children(&mut parser.arena, &html_box);
+    wire_arena_children(&mut parser.arena, &mut html_box);
 
     // Build combined stylesheet (UA + author)
     let mut stylesheet = ua_stylesheet();
@@ -279,8 +279,6 @@ fn parse_html_full(
 
     let mut doc = Document {
         root: html_box,
-        nodes: crate::types::NodeArena::new(),
-        nodes_stale: true,
         stylesheet,
         title,
         base_url: base_url.to_string(),
@@ -371,9 +369,6 @@ fn parse_html_full(
     // Post-cascade fixes
     apply_details_summary_post_cascade(&mut doc.root);
     number_lists(&mut doc.root);
-
-    // Populate linked-list sibling pointers on every node
-    populate_sibling_links(&mut doc.root);
 
     doc
 }

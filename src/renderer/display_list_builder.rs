@@ -373,7 +373,7 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
 
     // ── (c) Gradient background ──────────────────────────────────────────────
     if node.style.gradient_type != GradientType::None
-        && node.style.gradient_stops.len() >= 2
+        && node.style.rare().gradient_stops.len() >= 2
     {
         let opacity = eff_style.opacity;
         let grad_type_u8 = match node.style.gradient_type {
@@ -383,7 +383,7 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         };
         let stops: Vec<(Color, f32)> = node
             .style
-            .gradient_stops
+            .rare().gradient_stops
             .iter()
             .map(|s| {
                 let a = ((s.color.a as f32) * opacity) as u8;
@@ -1029,7 +1029,7 @@ fn build_inline_text(
 
             // Text color: use effective style color when run inherits from node
             let run_color =
-                if std::ptr::eq(style_ref as *const _, &node.style as *const _)
+                if std::ptr::eq(style_ref as *const _, node.style.as_ref() as *const _)
                     || ((is_hovered || is_active) && style_ref.color == node.style.color)
                 {
                     eff_style.color

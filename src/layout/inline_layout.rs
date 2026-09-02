@@ -181,7 +181,7 @@ pub fn layout_inline_block(
         || node.style.text_decoration.strikethrough
         || !node.style.href.is_empty()
     {
-        Some(&node.style)
+        Some(node.style.as_ref())
     } else {
         None
     };
@@ -208,7 +208,7 @@ pub fn layout_inline_block(
                 let run_text = node.text[run.text_offset..end].to_string();
                 let mut tmp = WebCore::new("#text");
                 tmp.text = run_text;
-                tmp.style = run.style.clone();
+                tmp.style = std::sync::Arc::new(run.style.clone());
                 collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
             }
         } else {
@@ -1021,7 +1021,9 @@ fn collect_items_inner(
         if !node.text.is_empty() {
             let start = *text_offset;
             tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
-            let mut run_style = node.style.clone();
+            // ⛔ `node.style.clone()` now clones the ARC. This wants the
+            // VALUE — it is mutated below and stored in an `InlineRun`.
+            let mut run_style = (*node.style).clone();
             // Inherit non-inherited visual properties from parent inline element
             // (span, a, etc.) that paint across descendants:
             // - text-decoration (not CSS-inherited but visually applies to children)
@@ -1091,7 +1093,7 @@ fn collect_items_inner(
     if !node.text.is_empty() {
         let start = *text_offset;
         tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
-        runs.push(InlineRun { text_offset: start, length: node.text.len(), style: node.style.clone() });
+        runs.push(InlineRun { text_offset: start, length: node.text.len(), style: (*node.style).clone() });
         *text_offset += node.text.len();
     }
 
@@ -1133,7 +1135,7 @@ fn collect_items_inner(
         || node.style.text_decoration.strikethrough
         || !node.style.href.is_empty()
     {
-        Some(&node.style)
+        Some(node.style.as_ref())
     } else {
         parent_decoration
     };
@@ -1596,7 +1598,7 @@ pub fn fill_char_x_for_line(
                            cursor_x: f32, run: &InlineRun, positions: &mut Vec<f32>| -> f32 {
         let seg_text = &flat[s..e];
         let font_px = run.style.font_size_px(16.0, 16.0);
-        let ct_w = weight_from_style(run.style.font_weight, &run.style.font_variation_settings);
+        let ct_w = weight_from_style(run.style.font_weight, &run.style.rare().font_variation_settings);
         let ct_s = match run.style.font_style {
             FontStyle::Italic  => CTextStyle::Italic,
             FontStyle::Oblique => CTextStyle::Oblique,

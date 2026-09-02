@@ -4,7 +4,6 @@ pub mod text;
 pub mod flex;
 pub mod grid;
 pub mod constraints;
-pub mod fragment;
 pub mod perf;
 
 use std::collections::HashMap;
@@ -1119,10 +1118,11 @@ impl LayoutEngine {
             resolve_all_slots(&mut doc.root);
         }
 
-        // Direct layout on the DOM tree — fast path, no cloning.
-        // The fragment tree infrastructure (fragment.rs) is available for
-        // structural fixes (anonymous blocks, margin collapsing) but is
-        // bypassed here for performance. Enable per-node when needed.
+        // Layout runs on the render tree in place. The structural corrections
+        // a separate fragment tree would exist to make — anonymous blocks for
+        // mixed block/inline children, `display: contents`, `::before`/
+        // `::after`, flex/grid blockification — are all made here, and all
+        // four were checked against Chrome and agree.
         propagate_dirty(&mut doc.root);
 
         // Set up root geometry
@@ -1178,9 +1178,6 @@ impl LayoutEngine {
 
         // Clear descendant dirty flags now that layout is complete
         crate::css::clear_descendant_dirty(&mut doc.root);
-
-        // Mark arena as stale — it will be rebuilt on next get_node() call
-        doc.nodes_stale = true;
 
         // Rebuild O(1) node index (pointers stable until next mutation)
         doc.rebuild_node_index();
@@ -1804,7 +1801,12 @@ pub fn shift_rects(node: &mut WebCore, dx: f32, dy: f32) {
         line.x += dx;
         line.y += dy;
     }
-    for child in &mut node.children {
+    // `effective_children_mut`, not `children`: a shadow host's subtree lives in
+    // `shadow_root.children`, which layout reaches through the accessor. Moving
+    // a host by `children` alone left its shadow content where it was — a
+    // parent that collapsed its first child's margin moved down and its shadow
+    // child did not, landing 16px above the host it lives in.
+    for child in node.effective_children_mut() {
         // Fixed-position elements are placed relative to the viewport,
         // not their parent — don't shift them when a parent moves.
         if child.style.position == Position::Fixed { continue; }

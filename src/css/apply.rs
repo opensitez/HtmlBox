@@ -695,7 +695,7 @@ pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
             }
             // Parse color stops
             let stops_str = if first_comma < inner.len() { &inner[first_comma + 1..] } else { "" };
-            style.gradient_stops.clear();
+            style.rare_mut().gradient_stops.clear();
             let n_stops = stops_str.split(',').count().max(1) as f32;
             for (i, stop) in stops_str.split(',').enumerate() {
                 let stop = stop.trim();
@@ -707,7 +707,7 @@ pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
                         .and_then(|p| p.trim_end_matches('%').parse::<f32>().ok())
                         .map(|p| p / 100.0)
                         .unwrap_or(i as f32 / (n_stops - 1.0).max(1.0));
-                    style.gradient_stops.push(GradientStop { color: c, position: pos });
+                    style.rare_mut().gradient_stops.push(GradientStop { color: c, position: pos });
                 }
             }
         }
@@ -716,7 +716,7 @@ pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
         if let Some(paren) = v.find('(') {
             let inner = &v[paren + 1..];
             let inner = inner.trim_end_matches(')');
-            style.gradient_stops.clear();
+            style.rare_mut().gradient_stops.clear();
             // Skip the optional shape/size/position descriptor before the first comma
             // (e.g. "circle at 50% 50%", "ellipse farthest-corner", "closest-side").
             // If the first comma-delimited segment doesn't parse as a color, treat it as a descriptor.
@@ -739,7 +739,7 @@ pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
                         .and_then(|p| p.trim().trim_end_matches('%').parse::<f32>().ok())
                         .map(|p| p / 100.0)
                         .unwrap_or(i as f32 / (n_stops - 1.0).max(1.0));
-                    style.gradient_stops.push(GradientStop { color: c, position: pos });
+                    style.rare_mut().gradient_stops.push(GradientStop { color: c, position: pos });
                 }
             }
         }

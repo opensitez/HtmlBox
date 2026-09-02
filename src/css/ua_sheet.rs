@@ -263,13 +263,13 @@ pub(crate) fn apply_host_rules(
     for (_, ri) in &matched {
         for (prop, val) in &shadow_sheet.rules[*ri].declarations {
             let resolved = resolve_var_references(val, vars);
-            apply_property(&mut host.style, prop, &resolved);
+            apply_property(std::sync::Arc::make_mut(&mut host.style), prop, &resolved);
         }
     }
     for (_, ri) in &matched {
         for (prop, val) in &shadow_sheet.rules[*ri].important_declarations {
             let resolved = resolve_var_references(val, vars);
-            apply_property(&mut host.style, prop, &resolved);
+            apply_property(std::sync::Arc::make_mut(&mut host.style), prop, &resolved);
         }
     }
 }

@@ -243,14 +243,14 @@ fn apply_matched_results(
 ) {
     if ancestors.len() >= MAX_CASCADE_DEPTH {
         if let Some(p) = parent_style {
-            root.style.inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
         }
         return;
     }
 
     if !root.is_element() {
         if let Some(p) = parent_style {
-            root.style.inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
         }
         return;
     }
@@ -258,8 +258,8 @@ fn apply_matched_results(
     if root.tag == "::before" || root.tag == "::after" {
         if let Some(p) = parent_style {
             let saved_display = root.style.display;
-            root.style.inherit_from(p);
-            root.style.display = saved_display;
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).display = saved_display;
         }
         return;
     }
@@ -583,7 +583,7 @@ fn apply_matched_results(
             }
         }
     }
-    root.style = style.clone();
+    root.style = std::sync::Arc::new(style.clone());
 
     if stylesheet.inspect_mode {
         root.matched_rules.clear();
@@ -607,7 +607,7 @@ fn apply_matched_results(
         let in_table = ancestors.iter().any(|a|
             matches!(a.tag.as_str(), "table" | "thead" | "tbody" | "tfoot" | "tr"));
         if in_table {
-            root.style.display = Display::Contents;
+            std::sync::Arc::make_mut(&mut root.style).display = Display::Contents;
         }
     }
 
@@ -648,18 +648,18 @@ fn apply_matched_results(
                 }
             }
         }
-        root.style.before_content = resolve_counters_in_content(&txt, counters);
-        root.style.before_style   = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).before_content = resolve_counters_in_content(&txt, counters);
+        std::sync::Arc::make_mut(&mut root.style).before_style = Some(ps);
     }
     if let Some((txt, ps)) = build_pseudo_style_shared(&mut after_matched, &root.style, local_vars, &stylesheet.rules) {
-        root.style.after_content = resolve_counters_in_content(&txt, counters);
-        root.style.after_style   = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).after_content = resolve_counters_in_content(&txt, counters);
+        std::sync::Arc::make_mut(&mut root.style).after_style = Some(ps);
     }
     if let Some((_, ps)) = build_pseudo_style_shared(&mut selection_matched, &root.style, local_vars, &stylesheet.rules) {
-        root.style.selection_style = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).selection_style = Some(ps);
     }
     if let Some((_, ps)) = build_pseudo_style_shared(&mut marker_matched, &root.style, local_vars, &stylesheet.rules) {
-        root.style.marker_style = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).marker_style = Some(ps);
     }
 
     // Create/update ::before and ::after child boxes
@@ -676,18 +676,18 @@ fn apply_matched_results(
             pseudo_box.text = root.style.before_content.clone();
             pseudo_box.tag = "::before".to_string();
             if let Some(ref ps) = root.style.before_style {
-                pseudo_box.style = *ps.clone();
+                pseudo_box.style = std::sync::Arc::new(*ps.clone());
             }
             if is_grid_or_flex && !pseudo_box.style.is_positioned()
                 && matches!(pseudo_box.style.display, Display::Inline) {
-                pseudo_box.style.display = Display::Block;
+                std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
             }
             if let Some(idx) = existing {
                 root.children[idx] = pseudo_box;
             } else {
                 root.children.insert(0, pseudo_box);
             }
-            root.style.before_content = String::new();
+            std::sync::Arc::make_mut(&mut root.style).before_content = String::new();
         } else {
             if let Some(idx) = root.children.iter().position(|c| c.tag == "::before") {
                 root.children.remove(idx);
@@ -703,18 +703,18 @@ fn apply_matched_results(
             pseudo_box.text = root.style.after_content.clone();
             pseudo_box.tag = "::after".to_string();
             if let Some(ref ps) = root.style.after_style {
-                pseudo_box.style = *ps.clone();
+                pseudo_box.style = std::sync::Arc::new(*ps.clone());
             }
             if is_grid_or_flex && !pseudo_box.style.is_positioned()
                 && matches!(pseudo_box.style.display, Display::Inline) {
-                pseudo_box.style.display = Display::Block;
+                std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
             }
             if let Some(idx) = existing {
                 root.children[idx] = pseudo_box;
             } else {
                 root.children.push(pseudo_box);
             }
-            root.style.after_content = String::new();
+            std::sync::Arc::make_mut(&mut root.style).after_content = String::new();
         } else {
             if let Some(idx) = root.children.iter().position(|c| c.tag == "::after") {
                 root.children.remove(idx);
@@ -864,6 +864,9 @@ fn cascade_children_sequential(
             vw, vh, focused_box, keyboard_focus,
             inherited_vars, candidates_buf, counters,
             hover_chain, &[],
+            // A cache local to this call: an incremental re-cascade
+            // touches one subtree, so nothing outside it can be shared into.
+            &mut crate::css::cascade::ShareCache::new(),
         );
     }
 }

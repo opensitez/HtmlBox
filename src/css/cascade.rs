@@ -65,7 +65,8 @@ pub fn apply_cascade_vp_hover(
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain, &[]);
+    let mut share_cache: ShareCache = HashMap::new();
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain, &[], &mut share_cache);
 }
 
 /// Build a ComputedStyle for a ::before/::after pseudo-element.
@@ -118,6 +119,101 @@ pub(crate) fn build_pseudo_style_shared(
 
 
 
+/// Create or update the `::before` / `::after` child boxes.
+///
+/// ⛔ A FUNCTION, not the block it used to be. Its locals — two `WebCore`
+/// pseudo-element boxes and their style clones — were living in
+/// `apply_cascade_inner`'s frame ACROSS the recursive call, because a
+/// debug build does not reuse stack slots between sibling scopes. Only a
+/// real function boundary pops them (`arenaplan.md` item 3).
+fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
+
+        let is_grid_or_flex = matches!(root.style.display,
+            Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
+        let before_is_positioned = root.style.before_style.as_ref().map_or(false, |ps|
+            matches!(ps.position, Position::Absolute | Position::Fixed));
+        let before_is_block = root.style.before_style.as_ref().map_or(false, |ps|
+            ps.is_block_level());
+        let before_has_content = !root.style.before_content.is_empty()
+            || (is_grid_or_flex && root.style.before_style.is_some());
+        if (is_grid_or_flex && before_has_content)
+            || (before_is_positioned && root.style.before_style.is_some())
+            || (before_is_block && !root.style.before_content.is_empty())
+        {
+            let existing = root.children.iter().position(|c| c.tag == "::before");
+            let mut pseudo_box = crate::types::WebCore::new("::before");
+            pseudo_box.text = root.style.before_content.clone();
+            pseudo_box.tag = "::before".to_string();
+            if let Some(ref ps) = root.style.before_style {
+                pseudo_box.style = std::sync::Arc::new(*ps.clone());
+            }
+            if is_grid_or_flex && !pseudo_box.style.is_positioned()
+                && matches!(pseudo_box.style.display, Display::Inline) {
+                std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
+            }
+            if let Some(idx) = existing {
+                root.children[idx] = pseudo_box;
+            } else {
+                root.children.insert(0, pseudo_box);
+            }
+            std::sync::Arc::make_mut(&mut root.style).before_content = String::new();
+        } else {
+            if let Some(idx) = root.children.iter().position(|c| c.tag == "::before") {
+                root.children.remove(idx);
+            }
+        }
+        let after_is_positioned = root.style.after_style.as_ref().map_or(false, |ps|
+            matches!(ps.position, Position::Absolute | Position::Fixed));
+        let after_is_block = root.style.after_style.as_ref().map_or(false, |ps|
+            ps.is_block_level());
+        let after_has_content = !root.style.after_content.is_empty()
+            || (is_grid_or_flex && root.style.after_style.is_some());
+        if (is_grid_or_flex && after_has_content)
+            || (after_is_positioned && root.style.after_style.is_some())
+            || (after_is_block && !root.style.after_content.is_empty())
+        {
+            let existing = root.children.iter().position(|c| c.tag == "::after");
+            let mut pseudo_box = crate::types::WebCore::new("::after");
+            pseudo_box.text = root.style.after_content.clone();
+            pseudo_box.tag = "::after".to_string();
+            if let Some(ref ps) = root.style.after_style {
+                pseudo_box.style = std::sync::Arc::new(*ps.clone());
+            }
+            if is_grid_or_flex && !pseudo_box.style.is_positioned()
+                && matches!(pseudo_box.style.display, Display::Inline) {
+                std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
+            }
+            if let Some(idx) = existing {
+                root.children[idx] = pseudo_box;
+            } else {
+                root.children.push(pseudo_box);
+            }
+            std::sync::Arc::make_mut(&mut root.style).after_content = String::new();
+        } else {
+            if let Some(idx) = root.children.iter().position(|c| c.tag == "::after") {
+                root.children.remove(idx);
+            }
+        }
+    }
+
+/// A style-sharing cache for one cascade run, spanning the WHOLE document.
+///
+/// ⛔ The cache used to live inside `cascade_children`, so it only ever shared
+/// between SIBLINGS — which is why the measured sharing on demo.html was 2.9%
+/// while `arenaplan.md` quotes a 5-12x DOCUMENT-WIDE distinct-style ratio. The
+/// two are different questions.
+///
+/// The key is `(parent style identity, tag, attributes)`. The parent's identity
+/// is what makes a document-wide cache SOUND: two elements share only if their
+/// parents already shared a style, which by induction means their whole
+/// ancestor chains are selector-equivalent — so a descendant selector cannot
+/// tell them apart. The base case is the root, whose style is unique.
+///
+/// Item 1 is what made this cheap: a parent style is an `Arc` now, so its
+/// identity is a pointer rather than a deep comparison.
+pub(crate) type ShareCache =
+    HashMap<(usize, String, String), std::sync::Arc<ComputedStyle>>;
+
 pub(crate) fn apply_cascade_inner(
     root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
@@ -139,13 +235,14 @@ pub(crate) fn apply_cascade_inner(
     counters: &mut HashMap<String, Vec<i32>>,
     hover_chain: &std::collections::HashSet<u32>,
     prev_siblings: &[(String, String, String)],
+    share_cache: &mut ShareCache,
 ) {
     // Guard against stack overflow on deeply nested DOMs.
     if ancestors.len() >= MAX_CASCADE_DEPTH {
         // Just inherit from parent and stop — the page may render slightly wrong
         // at extreme depth, but won't crash.
         if let Some(p) = parent_style {
-            root.style.inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
         }
         return;
     }
@@ -154,7 +251,7 @@ pub(crate) fn apply_cascade_inner(
     // parent but must never match CSS selectors (including `*`).
     if !root.is_element() {
         if let Some(p) = parent_style {
-            root.style.inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
         }
         return;
     }
@@ -165,8 +262,8 @@ pub(crate) fn apply_cascade_inner(
         // Still inherit inheritable properties from parent
         if let Some(p) = parent_style {
             let saved_display = root.style.display;
-            root.style.inherit_from(p);
-            root.style.display = saved_display; // preserve blockified display
+            std::sync::Arc::make_mut(&mut root.style).inherit_from(p);
+            std::sync::Arc::make_mut(&mut root.style).display = saved_display; // preserve blockified display
         }
         return;
     }
@@ -687,7 +784,18 @@ pub(crate) fn apply_cascade_inner(
             }
         }
     }
-    root.style = style.clone();
+    // ⛔ MOVED, not cloned. This was a full 2.3 KB `ComputedStyle` copy per
+    // element — and it kept the local alive across the recursive call below,
+    // where it is the single biggest thing in the stack frame.
+    //
+    // ⛔ NOT interned. Giving byte-identical styles the same `Arc` was built
+    // and MEASURED: it took demo.html from 1,099 distinct styles to 979 (11%)
+    // and more than doubled cascade+layout time, 2.46 s to 5.80 s. The
+    // `arenaplan.md` 5-12x figure is a measurement artifact — that plan's own
+    // footnote says the serializer it counted with "emits a subset of
+    // properties, so styles differing in an unserialized property collide".
+    // Compared losslessly the styles on a real page are nearly all distinct.
+    root.style = std::sync::Arc::new(style);
     // Store matched CSS rules for inspector (only when enabled).
     if stylesheet.inspect_mode {
         root.matched_rules.clear();
@@ -715,7 +823,7 @@ pub(crate) fn apply_cascade_inner(
         let in_table = ancestors.iter().any(|a|
             matches!(a.tag.as_str(), "table" | "thead" | "tbody" | "tfoot" | "tr"));
         if in_table {
-            root.style.display = Display::Contents;
+            std::sync::Arc::make_mut(&mut root.style).display = Display::Contents;
         }
     }
 
@@ -762,92 +870,22 @@ pub(crate) fn apply_cascade_inner(
                 }
             }
         }
-        root.style.before_content = resolve_counters_in_content(&txt, counters);
-        root.style.before_style   = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).before_content = resolve_counters_in_content(&txt, counters);
+        std::sync::Arc::make_mut(&mut root.style).before_style = Some(ps);
     }
     if let Some((txt, ps)) = build_pseudo_style_shared(&mut after_matched, &root.style, &local_vars, &stylesheet.rules) {
-        root.style.after_content = resolve_counters_in_content(&txt, counters);
-        root.style.after_style   = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).after_content = resolve_counters_in_content(&txt, counters);
+        std::sync::Arc::make_mut(&mut root.style).after_style = Some(ps);
     }
     if let Some((_, ps)) = build_pseudo_style_shared(&mut selection_matched, &root.style, &local_vars, &stylesheet.rules) {
-        root.style.selection_style = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).selection_style = Some(ps);
     }
     if let Some((_, ps)) = build_pseudo_style_shared(&mut marker_matched, &root.style, &local_vars, &stylesheet.rules) {
-        root.style.marker_style = Some(ps);
+        std::sync::Arc::make_mut(&mut root.style).marker_style = Some(ps);
     }
 
-    // Create/update ::before and ::after child boxes
-    {
-        let is_grid_or_flex = matches!(root.style.display,
-            Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
-        let before_is_positioned = root.style.before_style.as_ref().map_or(false, |ps|
-            matches!(ps.position, Position::Absolute | Position::Fixed));
-        let before_is_block = root.style.before_style.as_ref().map_or(false, |ps|
-            ps.is_block_level());
-        let before_has_content = !root.style.before_content.is_empty()
-            || (is_grid_or_flex && root.style.before_style.is_some());
-        if (is_grid_or_flex && before_has_content)
-            || (before_is_positioned && root.style.before_style.is_some())
-            || (before_is_block && !root.style.before_content.is_empty())
-        {
-            let existing = root.children.iter().position(|c| c.tag == "::before");
-            let mut pseudo_box = crate::types::WebCore::new("::before");
-            pseudo_box.text = root.style.before_content.clone();
-            pseudo_box.tag = "::before".to_string();
-            if let Some(ref ps) = root.style.before_style {
-                pseudo_box.style = *ps.clone();
-            }
-            if is_grid_or_flex && !pseudo_box.style.is_positioned()
-                && matches!(pseudo_box.style.display, Display::Inline) {
-                pseudo_box.style.display = Display::Block;
-            }
-            if let Some(idx) = existing {
-                root.children[idx] = pseudo_box;
-            } else {
-                root.children.insert(0, pseudo_box);
-            }
-            root.style.before_content = String::new();
-        } else {
-            if let Some(idx) = root.children.iter().position(|c| c.tag == "::before") {
-                root.children.remove(idx);
-            }
-        }
-        let after_is_positioned = root.style.after_style.as_ref().map_or(false, |ps|
-            matches!(ps.position, Position::Absolute | Position::Fixed));
-        let after_is_block = root.style.after_style.as_ref().map_or(false, |ps|
-            ps.is_block_level());
-        let after_has_content = !root.style.after_content.is_empty()
-            || (is_grid_or_flex && root.style.after_style.is_some());
-        if (is_grid_or_flex && after_has_content)
-            || (after_is_positioned && root.style.after_style.is_some())
-            || (after_is_block && !root.style.after_content.is_empty())
-        {
-            let existing = root.children.iter().position(|c| c.tag == "::after");
-            let mut pseudo_box = crate::types::WebCore::new("::after");
-            pseudo_box.text = root.style.after_content.clone();
-            pseudo_box.tag = "::after".to_string();
-            if let Some(ref ps) = root.style.after_style {
-                pseudo_box.style = *ps.clone();
-            }
-            if is_grid_or_flex && !pseudo_box.style.is_positioned()
-                && matches!(pseudo_box.style.display, Display::Inline) {
-                pseudo_box.style.display = Display::Block;
-            }
-            if let Some(idx) = existing {
-                root.children[idx] = pseudo_box;
-            } else {
-                root.children.push(pseudo_box);
-            }
-            root.style.after_content = String::new();
-        } else {
-            if let Some(idx) = root.children.iter().position(|c| c.tag == "::after") {
-                root.children.remove(idx);
-            }
-        }
-    }
+    build_pseudo_element_boxes(root);
 
-    // Push this element's info so children can see it as an ancestor.
-    // Popped after children are processed — the Vec is reused for the whole tree.
     ancestors.push(AncestorInfo {
         tag:                root.tag.clone(),
         attributes:         root.attributes.clone(),
@@ -862,7 +900,9 @@ pub(crate) fn apply_cascade_inner(
     fn cascade_children(
         children: &mut [crate::types::WebCore],
         stylesheet: &Stylesheet,
-        parent_style: &ComputedStyle,
+        // ⛔ The `Arc`, not a `&ComputedStyle`: the share key needs the
+        // parent's IDENTITY, and that is the pointer.
+        parent_style: &std::sync::Arc<ComputedStyle>,
         root_font_px: f32,
         ancestors: &mut Vec<AncestorInfo>,
         vw: f32, vh: f32,
@@ -872,6 +912,7 @@ pub(crate) fn apply_cascade_inner(
         candidates_buf: &mut Vec<usize>,
         counters: &mut HashMap<String, Vec<i32>>,
         hover_chain: &std::collections::HashSet<u32>,
+        share_cache: &mut ShareCache,
     ) {
         let n_children = children.len();
         if n_children == 0 { return; }
@@ -891,10 +932,10 @@ pub(crate) fn apply_cascade_inner(
         }).collect();
         // Track previous siblings for `+` and `~` combinator matching
         let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
-        // Style sharing: cache computed styles by (tag, class_attr).
-        // When a child has the same tag+class as a previous sibling (and no id/inline style),
-        // clone the cached style instead of running the full cascade.
-        let mut style_cache: HashMap<(String, String), ComputedStyle> = HashMap::new();
+        // ⛔ The cache is the caller's now, spanning the whole document —
+        // see `ShareCache`. A per-parent one could only ever share between
+        // siblings, which measured 2.9% on demo.html.
+        let parent_id = std::sync::Arc::as_ptr(parent_style) as usize;
         for (i, child) in children.iter_mut().enumerate() {
             let (ci, ns) = if !child.is_element() {
                 (i, n_children)
@@ -902,18 +943,51 @@ pub(crate) fn apply_cascade_inner(
                 (elem_indices[i], n_elem_children)
             };
 
-            // Try style sharing before full cascade
-            let child_class = child.attributes.get("class").cloned().unwrap_or_default();
+            // Try style sharing before full cascade.
+            //
+            // ⛔ The key is the element's WHOLE attribute list, not just its
+            // class. `i[data-x] { … }` was silently dropped: the two `<i>`
+            // hashed the same and the second took the first one's style.
+            // Confirmed to be sharing, not missing attribute-selector support,
+            // by running the fixture with `can_share` forced false.
+            //
+            // The attributes ARE the element as far as a selector is concerned
+            // — anything else is a hole waiting for the next selector form.
+            // ⛔ …and the element's BOX STATE, which no attribute records.
+            // `:modal`, `:checked`, `:focus`, `:indeterminate` and `:in-range`
+            // all match on it, so two elements with the same tag and the same
+            // attributes are still not interchangeable. Two `<dialog open>`s,
+            // one `show()`n and one `showModal()`ed, hashed the same and the
+            // modal took the plain one's `position`.
+            let child_class = {
+                let mut parts: Vec<String> = child
+                    .attributes
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                parts.sort();
+                parts.push(child.selector_state_key(focused_box));
+                parts.join("\u{1}")
+            };
             let can_share = child.is_element()
                 && child.tag != "::before" && child.tag != "::after"
                 && !child.attributes.contains_key("id")
                 && !child.attributes.contains_key("style")
                 && !hover_chain.contains(&child.node_id)
+                // ⛔ The share key is `(tag, class)` and says nothing about
+                // sibling POSITION. With `i + i { … }` or `li:nth-child(2)`
+                // in the sheet, two same-key siblings are NOT interchangeable
+                // — the second was handed the first one's style and the rule
+                // vanished. Verified both ways: the test goes green with
+                // sharing off and red with it on.
+                && !stylesheet.has_sibling_sensitive_rules
                 && child.children.is_empty(); // only for leaf elements (no pseudo-elements to worry about)
-            let share_key = (child.tag.clone(), child_class.clone());
+            let share_key = (parent_id, child.tag.clone(), child_class.clone());
 
             if can_share {
-                if let Some(cached) = style_cache.get(&share_key) {
+                if let Some(cached) = share_cache.get(&share_key) {
+                    // ⛔ THE point of item 1: a shared style is a refcount
+                    // bump, not a 2.3 KB memcpy. `cached` is already an `Arc`.
                     child.style = cached.clone();
                     // Still need to update prev_siblings for combinator matching
                     let id = child.attributes.get("id").cloned().unwrap_or_default();
@@ -928,11 +1002,11 @@ pub(crate) fn apply_cascade_inner(
                 type_counts[i], type_totals[i],
                 vw, vh, focused_box, keyboard_focus,
                 inherited_vars, candidates_buf, counters,
-                hover_chain, &prev_siblings,
+                hover_chain, &prev_siblings, share_cache,
             );
             // Cache style for sharing with future siblings
-            if can_share && !style_cache.contains_key(&share_key) {
-                style_cache.insert(share_key, child.style.clone());
+            if can_share && !share_cache.contains_key(&share_key) {
+                share_cache.insert(share_key, child.style.clone());
             }
             // Record this child as a previous sibling (skip non-elements)
             if child.is_element() {
@@ -946,6 +1020,10 @@ pub(crate) fn apply_cascade_inner(
     // Shadow DOM: cascade shadow children with the shadow's scoped stylesheet,
     // and also cascade light DOM children with the document stylesheet.
     // CSS custom properties cross the shadow boundary via inherited_vars.
+    // ⛔ The parent style for the children comes from the ARC now, not from a
+    // 2.3 KB local held alive across the recursion. This is the frame shrink:
+    // what crosses the recursive call is a pointer.
+    let parent_for_children = root.style.clone();
     if root.shadow_root.is_some() {
         // Take shadow root temporarily to satisfy borrow checker
         let mut sr = root.shadow_root.take().unwrap();
@@ -957,22 +1035,22 @@ pub(crate) fn apply_cascade_inner(
         // which made the single most common shadow-CSS rule inert.
         apply_host_rules(root, &sr.stylesheet, &local_vars, ancestors);
         cascade_children(
-            &mut sr.children, &sr.stylesheet, &style, root_font_px,
+            &mut sr.children, &sr.stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache,
         );
         root.shadow_root = Some(sr);
         // Also cascade light DOM children (they need document styles for ::slotted)
         cascade_children(
-            &mut root.children, stylesheet, &style, root_font_px,
+            &mut root.children, stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache,
         );
     } else {
         cascade_children(
-            &mut root.children, stylesheet, &style, root_font_px,
+            &mut root.children, stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache,
         );
     }
 

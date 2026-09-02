@@ -248,14 +248,9 @@ impl WebCore {
         Self {
             tag: tag.into(),
             node_id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            style: ComputedStyle::default(),
+            style: std::sync::Arc::new(ComputedStyle::default()),
             attributes: crate::dom::attrs::AttrMap::new(),
             text: String::new(),
-            parent: 0,
-            first_child: 0,
-            last_child: 0,
-            next_sibling: 0,
-            prev_sibling: 0,
             children: Vec::new(),
             layout: LayoutBox::default(),
 

@@ -330,16 +330,19 @@ fn shadow_content_lays_out_and_its_box_is_reachable() {
     assert!(rect.w > 0.0);
 }
 
+/// A shadow child collapses its margin exactly as a light child does.
+///
+/// ⛔ It did not: the host's border box sat at y=124 and the `<p>` at y=108,
+/// where the same markup in the light tree puts both at 124. The host's own
+/// rects were identical in the two cases, which is what said the host was
+/// right and only the child had moved.
+///
+/// `shift_rects` iterated `children` — the LIGHT children. A host that moves
+/// after its subtree is laid out (which is what absorbing a collapsed first-child
+/// margin does) took its light children along and left its shadow tree behind.
+/// It walks `effective_children_mut()` now, the same accessor layout uses to
+/// find them in the first place.
 #[test]
-#[ignore = "measured defect: a shadow child sits 16px above its host under \
-            margin collapsing. `<div style=height:100px>` then a host whose \
-            shadow tree is `<p style=height:40px>` puts the host border box at \
-            y=124 and the p at y=108; the same markup in the LIGHT tree puts \
-            both at 124. The host's own margin/border/content rects are \
-            identical in the two cases, so the host is right and only the \
-            child's position is wrong — the collapsed top margin is subtracted \
-            from the child without the host absorbing it. Lives in the block \
-            margin-collapsing path, not in the shadow code."]
 fn a_shadow_childs_margin_collapses_the_way_a_light_childs_does() {
     let mut d = crate::html::parse_html(
         r#"<div style="height:100px">spacer</div><div id="host"></div>"#);
@@ -466,4 +469,110 @@ fn a_shadow_elements_attributes_come_back_in_source_order_too() {
     assert_eq!(d.attributes_length(p), 4);
     assert_eq!(d.attributes_item(p, 1).map(|a| a.name), Some("zebra".into()));
     assert_eq!(d.class_list(p).length(), 0);
+}
+
+/// ⛔ The DOM surface answering for a node INSIDE a shadow tree.
+///
+/// A shadow node is a DOM node, but it is not an ARENA node — its id comes
+/// from a separate space counting down from `u32::MAX - 2` — so every
+/// accessor that reaches for the arena first was answering for it wrongly, or
+/// not at all. Four did, and one of them crashed:
+///
+/// | | was | Chrome |
+/// |---|---|---|
+/// | `shadowRoot.nodeName` | `""` | `#document-fragment` |
+/// | `p.localName` | `""` | `p` |
+/// | `p.textContent` | **panic** | `"hello!"` |
+/// | `p.isConnected` | `false` | `true` |
+///
+/// The panic is the one with no workaround: `arena.get` asserts on an
+/// out-of-range id, so `shadowRoot.querySelector("p").textContent` — an
+/// ordinary call — brought the process down.
+///
+/// Measured against Chrome with this exact markup, not assumed. What is NOT
+/// wrong is also pinned below, because a first pass compared against a
+/// different fixture and reported `host.childNodes` as a defect when it was
+/// correctly answering with a light-DOM text node.
+#[test]
+fn the_dom_surface_answers_for_a_node_inside_a_shadow_tree() {
+    let mut d = crate::html::parse_html("<div id=host></div>");
+    let host = d.get_element_by_id("host").unwrap();
+    let sr = d
+        .attach_shadow(host, crate::types::ShadowMode::Open)
+        .expect("attachShadow returns the root");
+    d.set_shadow_inner_html(host, "<p id=inner>hello<b>!</b></p>");
+    let p = d.shadow_children(host)[0];
+
+    // The four that were wrong.
+    assert_eq!(d.node_name(sr), "#document-fragment", "a ShadowRoot is a DocumentFragment");
+    assert_eq!(d.local_name(p), "p");
+    assert_eq!(d.text_content(p), "hello!", "and this used to PANIC");
+    assert!(d.is_connected(p), "connected through its host, DOM §4.4");
+
+    // …and the ones that were already right, so a fix cannot quietly trade one
+    // for another.
+    assert_eq!(d.node_type(sr), 11);
+    assert_eq!(d.node_type(p), 1);
+    assert_eq!(d.child_nodes(sr).len(), 1);
+    assert_eq!(d.child_nodes(p).len(), 2);
+    assert_eq!(d.parent_node(p), sr);
+    assert_eq!(d.get_attribute(p, "id").as_deref(), Some("inner"));
+    assert_eq!(d.child_nodes(host).len(), 0, "the host's LIGHT children");
+}
+
+/// A shadow node's `textContent` excludes comments, exactly as an ordinary
+/// node's does — the render-tree walk must not be a looser rule than the
+/// arena walk it stands in for.
+#[test]
+fn a_shadow_nodes_text_content_excludes_comments() {
+    let mut d = crate::html::parse_html("<div id=host></div>");
+    let host = d.get_element_by_id("host").unwrap();
+    d.attach_shadow(host, crate::types::ShadowMode::Open);
+    d.set_shadow_inner_html(host, "<p>a<!--hidden-->b</p>");
+    let p = d.shadow_children(host)[0];
+    assert_eq!(d.text_content(p), "ab", "a comment carries data but is not content");
+}
+
+/// A node in a shadow tree hanging off a DETACHED host is not connected.
+#[test]
+fn a_shadow_node_under_a_detached_host_is_not_connected() {
+    let mut d = crate::html::parse_html("<div id=other></div>");
+    let host = d.create_element("div");
+    d.attach_shadow(host, crate::types::ShadowMode::Open);
+    d.set_shadow_inner_html(host, "<p>x</p>");
+    let p = d.shadow_children(host)[0];
+    assert!(!d.is_connected(host), "the host was never inserted");
+    assert!(!d.is_connected(p), "so nothing in its shadow tree is connected");
+}
+
+
+/// ⛔ Why the render-tree `textContent` walk excludes only `#comment`, where
+/// the arena walk excludes comments AND processing instructions.
+///
+/// It is not a looser rule, it is the same rule over a narrower input. The
+/// render walk is reached only for nodes the arena has never held — today,
+/// shadow trees — and a shadow tree is built by the HTML parser, which folds
+/// `<?…?>` into a COMMENT (HTML §13.2.5.42). Measured, not assumed: the markup
+/// below produces `#text "a"`, `#comment "?foo bar?"`, `#text "b"`.
+///
+/// A PI's render box would be indistinguishable anyway — `create_processing_instruction`
+/// gives it the TARGET as its tag, not a `#`-prefixed name — so a tag-based
+/// exclusion could not express it. If the render walk ever sees an arena-backed
+/// node, this reasoning goes with it.
+#[test]
+fn a_processing_instruction_in_shadow_markup_is_a_comment() {
+    let mut d = crate::html::parse_html("<div id=host></div>");
+    let host = d.get_element_by_id("host").unwrap();
+    d.attach_shadow(host, crate::types::ShadowMode::Open);
+    d.set_shadow_inner_html(host, "<p>a<?foo bar?>b</p>");
+    let p = d.shadow_children(host)[0];
+
+    fn find<'a>(n: &'a crate::types::WebCore, id: u32) -> Option<&'a crate::types::WebCore> {
+        if n.node_id == id { return Some(n); }
+        n.effective_children().iter().find_map(|c| find(c, id))
+    }
+    let tags: Vec<&str> = find(&d.root, p).unwrap().children.iter()
+        .map(|c| c.tag.as_str()).collect();
+    assert_eq!(tags, vec!["#text", "#comment", "#text"], "the PI folded to a comment");
+    assert_eq!(d.text_content(p), "ab", "so the comment exclusion covers it");
 }

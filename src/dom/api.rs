@@ -49,8 +49,43 @@ impl Document {
     pub fn text_content(&self, id: u32) -> String {
         if id == 0 { return String::new(); }
         let mut out = String::new();
+        // ⛔ A shadow node is not in the arena — its id comes from a separate
+        // descending space — so `collect_text`'s `arena.get` PANICKED on
+        // `shadowRoot.querySelector("p").textContent`, an ordinary call with
+        // no workaround. The render tree is where a shadow tree lives, and it
+        // answers the same question.
+        if !self.arena.is_alive(NodeId(id)) {
+            if let Some(node) = self.find_webcore(id) {
+                Self::collect_text_render(node, &mut out);
+            } else if let Some(root) = self.shadow_root_by_id(id) {
+                for child in &root.children {
+                    Self::collect_text_render(child, &mut out);
+                }
+            }
+            return out;
+        }
         self.collect_text(NodeId(id), &mut out);
         out
+    }
+
+    /// `textContent` over the RENDER tree, for the nodes the arena has never
+    /// held. Same exclusion as [`Self::collect_text`] — comments carry data
+    /// and are not content.
+    ///
+    /// ⛔ That version also excludes processing instructions and this does not,
+    /// which is the same rule over a narrower input rather than a looser one:
+    /// the only nodes reaching here are shadow trees, built by the HTML parser,
+    /// which folds `<?…?>` into a comment (HTML §13.2.5.42). A PI's render box
+    /// carries its TARGET as its tag, so a tag-based test could not express the
+    /// exclusion anyway. Pinned by
+    /// `a_processing_instruction_in_shadow_markup_is_a_comment`.
+    fn collect_text_render(node: &WebCore, out: &mut String) {
+        if node.tag != "#comment" && !node.text.is_empty() {
+            out.push_str(&node.text);
+        }
+        for child in &node.children {
+            Self::collect_text_render(child, out);
+        }
     }
 
     fn collect_text(&self, id: NodeId, out: &mut String) {
@@ -110,6 +145,33 @@ impl Document {
                 for c in &sr.children { if let Some(f) = walk(c, id) { return Some(f); } }
             }
             if n.children.iter().any(|c| c.node_id == id) { return Some(n.node_id); }
+            n.children.iter().find_map(|c| walk(c, id))
+        }
+        walk(&self.root, id)
+    }
+
+    /// The HOST element whose shadow tree contains `id`, at any depth.
+    ///
+    /// `shadow_host_of_child` answers the PARENT, which for a shadow tree's top
+    /// level is the shadow root — a different question. Connectedness needs the
+    /// host, because that is the node that is or is not in the document.
+    ///
+    /// ⛔ Walks the whole render tree, and `is_connected` recurses through it
+    /// once per nesting level. Fine for the one-or-two shadow roots a page
+    /// has; worth knowing before putting `is_connected` in a loop.
+    fn shadow_host_of(&self, id: u32) -> Option<u32> {
+        fn contains(n: &WebCore, id: u32) -> bool {
+            n.node_id == id || n.children.iter().any(|c| contains(c, id))
+        }
+        fn walk(n: &WebCore, id: u32) -> Option<u32> {
+            if let Some(sr) = &n.shadow_root {
+                if sr.node_id == id || sr.children.iter().any(|c| contains(c, id)) {
+                    return Some(n.node_id);
+                }
+                for c in &sr.children {
+                    if let Some(h) = walk(c, id) { return Some(h); }
+                }
+            }
             n.children.iter().find_map(|c| walk(c, id))
         }
         walk(&self.root, id)
@@ -640,7 +702,7 @@ impl Document {
     /// answer identically — the same split a browser draws between its internal
     /// style struct and the `CSSStyleDeclaration` it hands to script.
     pub fn get_computed_style(&self, id: u32) -> Option<&crate::types::ComputedStyle> {
-        self.find_webcore(id).map(|node| &node.style)
+        self.find_webcore(id).map(|node| node.style.as_ref())
     }
 
     /// `font-size` on the root element — what `rem` resolves against.
@@ -1299,7 +1361,23 @@ impl Document {
     /// engine that upper-cased here would answer differently from the engine
     /// it is meant to replace.
     pub fn node_name(&self, id: u32) -> String {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return String::new(); }
+        if id == 0 { return String::new(); }
+        // A `ShadowRoot` IS a `DocumentFragment` (DOM §4.8), and every node
+        // answers a `nodeName` — a fragment's is `#document-fragment`. Shadow
+        // nodes are not arena nodes, so the arena guard below answered `""`
+        // for the whole shadow tree.
+        if !self.arena.is_alive(NodeId(id)) {
+            if self.shadow_root_by_id(id).is_some() {
+                return "#document-fragment".to_string();
+            }
+            if let Some(node) = self.find_webcore(id) {
+                return match node.tag.as_str() {
+                    "#text" | "#comment" => node.tag.clone(),
+                    tag => tag.to_ascii_uppercase(),
+                };
+            }
+            return String::new();
+        }
         let node = self.arena.get(NodeId(id));
         let name = node.tag.clone();
         // **An element's `nodeName` is its HTML-UPPERCASED qualified name**
@@ -1352,7 +1430,17 @@ impl Document {
     /// sitting in `pending_nodes` was created but never inserted, so it is
     /// disconnected by construction.
     pub fn is_connected(&self, id: u32) -> bool {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return false; }
+        if id == 0 { return false; }
+        // DOM §4.4: connected means the SHADOW-INCLUDING root is the document.
+        // A node in a shadow tree is connected exactly when its host is, and
+        // it is not an arena node — so the guard below called every one of
+        // them detached.
+        if !self.arena.is_alive(NodeId(id)) {
+            if let Some(host) = self.shadow_host_of(id) {
+                return self.is_connected(host);
+            }
+            return false;
+        }
         if self.pending_nodes.contains_key(&id) { return false; }
         let root = self.root.node_id;
         if id == root { return true; }
@@ -1445,7 +1533,7 @@ impl Document {
         let arena_id = self.arena.create_element(tag);
         let mut b = WebCore::new(tag);
         b.node_id = arena_id.0;
-        apply_property(&mut b.style, "display", crate::html::default_display(tag));
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", crate::html::default_display(tag));
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -1473,7 +1561,7 @@ impl Document {
         let mut b = WebCore::new("#comment");
         b.node_id = arena_id.0;
         b.text = text.to_string();
-        apply_property(&mut b.style, "display", "none");
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", "none");
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -2175,7 +2263,7 @@ impl Document {
         b.node_id = arena_id.0;
         // It never renders: it exists to be emptied into something that does,
         // and if one is ever left in a tree it must not draw.
-        apply_property(&mut b.style, "display", "none");
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", "none");
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0

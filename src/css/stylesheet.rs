@@ -25,6 +25,16 @@ pub struct Stylesheet {
     /// When true, the cascade stores matched CSS rules on each WebCore
     /// for inspector display. Off by default to avoid memory overhead.
     pub inspect_mode: bool,
+    /// True if any selector can tell two same-`(tag, class)` siblings apart —
+    /// a sibling combinator (`+`, `~`) or a positional pseudo-class
+    /// (`:nth-child`, `:first-child`, …).
+    ///
+    /// ⛔ This is the CORRECTNESS BOUNDARY for style sharing. The share key is
+    /// `(tag, class)`, which says nothing about WHERE among its siblings an
+    /// element sits — so with `i + i { color: red }` the second `<i>` was
+    /// handed the first one's style and the rule was silently dropped. Sharing
+    /// is off for a sheet that can make the distinction.
+    pub has_sibling_sensitive_rules: bool,
     /// True if any rule has :hover on a non-subject selector part (descendant hover rules).
     /// When true, descendants of hover-changed nodes must also be re-cascaded.
     pub has_hover_descendant_rules: bool,
@@ -152,6 +162,26 @@ impl Stylesheet {
 
         // Detect if any rule has :hover on a non-subject part (descendant hover selectors).
         // e.g., ".parent:hover .child" — :hover is on .parent (ancestor), not .child (subject).
+        // Can any selector distinguish two siblings that share `(tag, class)`?
+        self.has_sibling_sensitive_rules = self.rules.iter().any(|rule| {
+            rule.selectors.iter().any(|sel| {
+                sel.parts.iter().any(|part| match part {
+                    SelectorPart::Combinator(c) => matches!(
+                        c, Combinator::AdjacentSibling | Combinator::GeneralSibling
+                    ),
+                    SelectorPart::PseudoClass(pc) => {
+                        let name = pc.split('(').next().unwrap_or(pc);
+                        matches!(name,
+                            "first-child" | "last-child" | "only-child"
+                            | "first-of-type" | "last-of-type" | "only-of-type"
+                            | "nth-child" | "nth-last-child"
+                            | "nth-of-type" | "nth-last-of-type")
+                    }
+                    _ => false,
+                })
+            })
+        });
+
         self.has_hover_descendant_rules = false;
         'rules: for rule in &self.rules {
             if !rule.is_hover { continue; }

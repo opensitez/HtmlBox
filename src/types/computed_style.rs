@@ -9,8 +9,68 @@ use crate::html::*;
 
 // ─── Computed Style ───────────────────────────────────────────────────────────
 
+/// The rarely-set half of a computed style, kept behind a `Box`.
+///
+/// Every field is `Vec` or `String`, so the empty value is `const` — which is
+/// what lets `ComputedStyle::rare()` hand out a shared static instead of
+/// allocating for the 99.3% of elements that set none of them.
+#[derive(Clone, Debug, Default)]
+pub struct RareStyle {
+    pub grid_template_columns: Vec<GridTrackSize>,
+    pub grid_template_rows: Vec<GridTrackSize>,
+    pub grid_template_areas: Vec<Vec<String>>,
+    pub auto_repeat_columns: Vec<GridTrackSize>,
+    pub gradient_stops: Vec<GradientStop>,
+    pub animations: Vec<ParsedAnimation>,
+    pub transitions: Vec<ParsedTransition>,
+    pub font_variation_settings: Vec<(String, f32)>,
+    pub font_feature_settings: Vec<(String, u32)>,
+    pub quotes: Vec<String>,
+    pub filter: String,
+    pub backdrop_filter: String,
+    pub mask_image_url: String,
+}
+
+impl RareStyle {
+    pub const EMPTY: RareStyle = RareStyle {
+        grid_template_columns: Vec::new(),
+        grid_template_rows: Vec::new(),
+        grid_template_areas: Vec::new(),
+        auto_repeat_columns: Vec::new(),
+        gradient_stops: Vec::new(),
+        animations: Vec::new(),
+        transitions: Vec::new(),
+        font_variation_settings: Vec::new(),
+        font_feature_settings: Vec::new(),
+        quotes: Vec::new(),
+        filter: String::new(),
+        backdrop_filter: String::new(),
+        mask_image_url: String::new(),
+    };
+}
+
+impl ComputedStyle {
+    /// Read the rare properties. Never allocates.
+    pub fn rare(&self) -> &RareStyle {
+        static EMPTY: RareStyle = RareStyle::EMPTY;
+        self.rare.as_deref().unwrap_or(&EMPTY)
+    }
+
+    /// Write the rare properties, allocating the box on first use.
+    pub fn rare_mut(&mut self) -> &mut RareStyle {
+        self.rare.get_or_insert_with(|| Box::new(RareStyle::default()))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ComputedStyle {
+    /// The properties almost nothing sets — `arenaplan.md` item 2.
+    ///
+    /// ⛔ MEASURED before building: 8 of 1,132 elements on demo.html set any of
+    /// them (0.7%), and they cost 312 B in every `ComputedStyle` regardless.
+    /// Boxing them is about 10% of tree memory.
+    pub rare: Option<Box<RareStyle>>,
+
     // Display & layout model
     pub display:    Display,
     pub position:   Position,
@@ -69,10 +129,6 @@ pub struct ComputedStyle {
     pub font_size:                CssLength,
     pub font_weight:              FontWeight,
     pub font_style:               FontStyle,
-    /// Parsed `font-variation-settings` axes, e.g. `[("wght", 700.0), ("wdth", 75.0)]`.
-    pub font_variation_settings:  Vec<(String, f32)>,
-    /// Parsed `font-feature-settings` tags, e.g. `[("kern", 1), ("liga", 0)]`.
-    pub font_feature_settings:    Vec<(String, u32)>,
     pub line_height:              CssLength,
     pub letter_spacing:    CssLength,
     pub word_spacing:      CssLength,
@@ -106,13 +162,8 @@ pub struct ComputedStyle {
     pub row_gap:         CssLength,
     pub column_gap:      CssLength,
 
-    // Grid
-    pub grid_template_columns: Vec<GridTrackSize>,
-    pub grid_template_rows:    Vec<GridTrackSize>,
     pub grid_auto_columns:     GridTrackSize,
     pub grid_auto_rows:        GridTrackSize,
-    pub grid_template_areas:   Vec<Vec<String>>,
-    pub auto_repeat_columns:   Vec<GridTrackSize>,
     /// Named grid column lines: name → list of 0-based line indices
     pub grid_col_line_names:   std::collections::HashMap<String, Vec<usize>>,
     /// Named grid row lines: name → list of 0-based line indices
@@ -140,7 +191,6 @@ pub struct ComputedStyle {
     // Gradient background
     pub gradient_type:  GradientType,
     pub gradient_angle: f32,
-    pub gradient_stops: Vec<GradientStop>,
 
     // Background image / position / repeat / size
     pub background_size:       BackgroundSize,
@@ -199,8 +249,6 @@ pub struct ComputedStyle {
     // Background image URL
     pub background_image_url: String,
 
-    // CSS mask-image URL (used for icon masking)
-    pub mask_image_url: String,
 
     // Bidi & writing
     pub unicode_bidi: UnicodeBidi,
@@ -229,8 +277,6 @@ pub struct ComputedStyle {
     // Pointer events
     pub pointer_events: PointerEvents,
 
-    // Quotes
-    pub quotes: Vec<String>,
 
     // Container queries
     pub container_name: String,
@@ -299,8 +345,6 @@ pub struct ComputedStyle {
 
     // Transform / filter (stored raw; actual matrix math not implemented)
     pub transform:        String,
-    pub filter:           String,
-    pub backdrop_filter:  String,
 
     // Parsed transform / filter (for rendering)
     pub css_transform:        CssTransform,
@@ -311,9 +355,6 @@ pub struct ComputedStyle {
     // Text underline offset
     pub text_underline_offset: CssLength,
 
-    // Parsed CSS animations and transitions for this element
-    pub animations:  Vec<ParsedAnimation>,
-    pub transitions: Vec<ParsedTransition>,
     pub will_change: String,
 
     // Misc

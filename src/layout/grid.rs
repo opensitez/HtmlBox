@@ -116,8 +116,8 @@ pub fn layout_grid_subgrid(
             + ctx.col_gap * ctx.inherited_col_px().len().saturating_sub(1) as f32
         });
         let tracks = resolve_track_sizes(
-            &node.style.grid_template_columns,
-            &node.style.auto_repeat_columns,
+            &node.style.rare().grid_template_columns,
+            &node.style.rare().auto_repeat_columns,
             cw, font_px, root_font_px,
         );
         let gap = engine.res_len(&node.style.column_gap, font_px, cw, root_font_px);
@@ -154,15 +154,15 @@ pub fn layout_grid_subgrid(
     for path in &item_indices {
         let child = grid_child_mut(node, path);
         match child.style.display {
-            Display::Inline => { child.style.display = Display::Block; }
-            Display::InlineFlex => { child.style.display = Display::Flex; }
-            Display::InlineGrid => { child.style.display = Display::Grid; }
+            Display::Inline => { std::sync::Arc::make_mut(&mut child.style).display = Display::Block; }
+            Display::InlineFlex => { std::sync::Arc::make_mut(&mut child.style).display = Display::Flex; }
+            Display::InlineGrid => { std::sync::Arc::make_mut(&mut child.style).display = Display::Grid; }
             _ => {}
         }
     }
 
     // --- Placement ---
-    let area_map = build_area_map(&node.style.grid_template_areas);
+    let area_map = build_area_map(&node.style.rare().grid_template_areas);
     let sub_col_names = node.style.grid_col_line_names.clone();
     let sub_row_names = node.style.grid_row_line_names.clone();
     let mut placements: Vec<(usize, usize, usize, usize)> = vec![(0, 1, 0, 1); n_items];
@@ -171,7 +171,7 @@ pub fn layout_grid_subgrid(
 
     for (ii, path) in item_indices.iter().enumerate() {
         let child = grid_child_ref(node, path);
-        let n_sub_rows = node.style.grid_template_rows.len();
+        let n_sub_rows = node.style.rare().grid_template_rows.len();
         let (cs, ce, rs, re) = resolve_placement(child, &area_map, n_cols, n_sub_rows, &sub_col_names, &sub_row_names);
         placements[ii] = (cs, ce, rs, re);
         if ce > max_col { max_col = ce; }
@@ -266,7 +266,7 @@ pub fn layout_grid_subgrid(
             for r in rs..re.min(n_rows) { if hp > heights[r] { heights[r] = hp; } }
         }
         // Apply explicit row track sizes
-        for (ri, track) in node.style.grid_template_rows.iter().enumerate() {
+        for (ri, track) in node.style.rare().grid_template_rows.iter().enumerate() {
             if ri < heights.len() {
                 let px = track_to_px(track, content_w, font_px, root_font_px);
                 if px > 0.0 && px > heights[ri] { heights[ri] = px; }
@@ -310,9 +310,9 @@ pub fn layout_grid_subgrid(
                     - cr.border_top  - cr.border_bottom).max(0.0)
             };
             let saved = child.style.height.clone();
-            child.style.height = CssLength::Px(css_h);
+            std::sync::Arc::make_mut(&mut child.style).height = CssLength::Px(css_h);
             engine.layout_box(child, &Constraints::new(sw, ix, iy, font_px, root_font_px));
-            child.style.height = saved;
+            std::sync::Arc::make_mut(&mut child.style).height = saved;
         } else {
             engine.layout_box(child, &Constraints::new(sw, ix, iy, font_px, root_font_px));
         }
@@ -376,9 +376,9 @@ pub fn layout_grid(
 
     // Resolve column track sizes (pass gap for auto-fill/fit count)
     let col_gap_for_count = engine.res_len(&node.style.column_gap, font_px, content_w, root_font_px);
-    let col_tracks = resolve_track_sizes_with_gap(&node.style.grid_template_columns,
-        &node.style.auto_repeat_columns, content_w, font_px, root_font_px, col_gap_for_count);
-    let row_tracks = node.style.grid_template_rows.clone();
+    let col_tracks = resolve_track_sizes_with_gap(&node.style.rare().grid_template_columns,
+        &node.style.rare().auto_repeat_columns, content_w, font_px, root_font_px, col_gap_for_count);
+    let row_tracks = node.style.rare().grid_template_rows.clone();
 
     // Collect visible items (non-abs-positioned)
     // CSS Grid §4: whitespace-only anonymous grid items are not rendered
@@ -399,9 +399,9 @@ pub fn layout_grid(
     for path in &item_indices {
         let child = grid_child_mut(node, path);
         match child.style.display {
-            Display::Inline => { child.style.display = Display::Block; }
-            Display::InlineFlex => { child.style.display = Display::Flex; }
-            Display::InlineGrid => { child.style.display = Display::Grid; }
+            Display::Inline => { std::sync::Arc::make_mut(&mut child.style).display = Display::Block; }
+            Display::InlineFlex => { std::sync::Arc::make_mut(&mut child.style).display = Display::Flex; }
+            Display::InlineGrid => { std::sync::Arc::make_mut(&mut child.style).display = Display::Grid; }
             _ => {}
         }
     }
@@ -418,7 +418,7 @@ pub fn layout_grid(
     // ── Grid placement algorithm ─────────────────────────────────────────────
 
     // Named area lookup
-    let area_map = build_area_map(&node.style.grid_template_areas);
+    let area_map = build_area_map(&node.style.rare().grid_template_areas);
     let col_line_names = node.style.grid_col_line_names.clone();
     let row_line_names = node.style.grid_row_line_names.clone();
 
@@ -426,10 +426,10 @@ pub fn layout_grid(
     let n_explicit_rows = row_tracks.len();
 
     // Pre-compute area dimensions from grid-template-areas
-    let area_cols = if !node.style.grid_template_areas.is_empty() {
-        node.style.grid_template_areas[0].len()
+    let area_cols = if !node.style.rare().grid_template_areas.is_empty() {
+        node.style.rare().grid_template_areas[0].len()
     } else { 0 };
-    let area_rows = node.style.grid_template_areas.len();
+    let area_rows = node.style.rare().grid_template_areas.len();
 
     // Placement result: (col_start, col_end, row_start, row_end) — all 0-based
     let mut placements: Vec<(usize, usize, usize, usize)> = vec![(0, 1, 0, 1); n_items];
@@ -817,7 +817,7 @@ pub fn layout_grid(
 
     // Apply grid-auto-rows to implicit rows (rows beyond the explicit row count)
     {
-        let n_explicit_rows = node.style.grid_template_rows.len();
+        let n_explicit_rows = node.style.rare().grid_template_rows.len();
         let ar = &node.style.grid_auto_rows;
         if ar.kind == GridTrackKind::MinMax {
             // minmax(min, max): enforce min as floor, max as ceiling
@@ -973,10 +973,10 @@ pub fn layout_grid(
                     .max(0.0)
             };
             let saved_h = child.style.height.clone();
-            child.style.height = CssLength::Px(css_h);
+            std::sync::Arc::make_mut(&mut child.style).height = CssLength::Px(css_h);
             child.layout.layout_dirty = true;  // force re-layout with new height
             engine.layout_box(child, &Constraints::new(span_w, ix, iy, font_px, root_font_px));
-            child.style.height = saved_h;
+            std::sync::Arc::make_mut(&mut child.style).height = saved_h;
         } else {
             engine.layout_box(child, &Constraints::new(span_w, ix, iy, font_px, root_font_px));
         }

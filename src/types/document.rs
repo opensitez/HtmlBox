@@ -20,11 +20,6 @@ pub enum PickerKind {
 
 pub struct Document {
     pub root:            WebCore,
-    /// Flat node storage — all WebCore nodes indexed by node_id.
-    /// Rebuilt lazily on first `get_node()` after layout marks it stale.
-    pub nodes:           NodeArena,
-    /// True when the tree has changed since last arena rebuild.
-    pub nodes_stale:     bool,
     pub stylesheet:      Stylesheet,
     pub title:           String,
     pub base_url:        String,
@@ -37,9 +32,21 @@ pub struct Document {
     pub next_node_id:    u32,
     /// Bridge lookup: set of known node_ids in the tree.
     /// O(1) node lookup index: node_id → raw pointer into the WebCore tree.
-    /// Rebuilt by `rebuild_node_index()` after layout. Pointers are valid only
-    /// until the next tree mutation (layout, DOM change).
-    pub node_index: HashMap<u32, *const WebCore>,
+    /// A node's PATH from the root — the child index at each level.
+    ///
+    /// ⛔ This held `*const WebCore` and was UNSOUND. Its safety comment said
+    /// the pointers were "valid because the tree hasn't been mutated since
+    /// `rebuild_node_index()` was called" — an invariant nothing enforced.
+    /// `append_child` pushes to `parent.children`, the `Vec` reallocates, and
+    /// every cached pointer into it dangles; the next `get_box_by_id`
+    /// dereferenced one. Demonstrated by comparing the cached address against
+    /// a fresh walk, without dereferencing either.
+    ///
+    /// A path cannot dangle. A stale one leads to the wrong node or to none,
+    /// and the id is re-checked on arrival, so the answer is `None` rather
+    /// than undefined. `arenaplan.md` item 4 removes the need for it entirely:
+    /// once the payload is in arena-indexed arrays, a `NodeId` IS the index.
+    pub node_index: HashMap<u32, Vec<u32>>,
     /// Which grammar this document was built from — HTML or XML.
     ///
     /// The difference the DOM actually draws is CASE. An HTML document
@@ -692,8 +699,6 @@ impl Clone for Document {
     fn clone(&self) -> Self {
         Self {
             root:            self.root.clone(),
-            nodes:           NodeArena::new(), // rebuilt on demand
-            nodes_stale:     true,
             stylesheet:      self.stylesheet.clone(),
             title:           self.title.clone(),
             base_url:        self.base_url.clone(),

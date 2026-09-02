@@ -474,14 +474,14 @@ fn nth_child_animation_delay_per_dot() {
     let d3 = super::harness::find_box(&doc.root, &|b| b.attributes.get("id").map(|s| s == "d3").unwrap_or(false))
         .expect("d3 not found");
 
-    assert_eq!(d1.style.animations.len(), 1, "d1 should have 1 animation");
-    assert_eq!(d2.style.animations.len(), 1, "d2 should have 1 animation");
-    assert_eq!(d3.style.animations.len(), 1, "d3 should have 1 animation");
+    assert_eq!(d1.style.rare().animations.len(), 1, "d1 should have 1 animation");
+    assert_eq!(d2.style.rare().animations.len(), 1, "d2 should have 1 animation");
+    assert_eq!(d3.style.rare().animations.len(), 1, "d3 should have 1 animation");
 
-    assert!((d1.style.animations[0].delay_ms -   0.0).abs() < 1.0,
-        "d1 delay should be 0ms, got {}", d1.style.animations[0].delay_ms);
-    assert!((d2.style.animations[0].delay_ms - 200.0).abs() < 1.0,
-        "d2 delay should be 200ms, got {}", d2.style.animations[0].delay_ms);
-    assert!((d3.style.animations[0].delay_ms - 400.0).abs() < 1.0,
-        "d3 delay should be 400ms, got {}", d3.style.animations[0].delay_ms);
+    assert!((d1.style.rare().animations[0].delay_ms -   0.0).abs() < 1.0,
+        "d1 delay should be 0ms, got {}", d1.style.rare().animations[0].delay_ms);
+    assert!((d2.style.rare().animations[0].delay_ms - 200.0).abs() < 1.0,
+        "d2 delay should be 200ms, got {}", d2.style.rare().animations[0].delay_ms);
+    assert!((d3.style.rare().animations[0].delay_ms - 400.0).abs() < 1.0,
+        "d3 delay should be 400ms, got {}", d3.style.rare().animations[0].delay_ms);
 }

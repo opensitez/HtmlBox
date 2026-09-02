@@ -464,7 +464,8 @@ impl EngineFrame {
 
     /// Set a CSS variable on the root element.
     pub fn set_css_var(&mut self, name: &str, value: &str) {
-        self.doc.root.style.custom_props.insert(name.to_string(), value.to_string());
+        std::sync::Arc::make_mut(&mut self.doc.root.style)
+            .custom_props.insert(name.to_string(), value.to_string());
         self.mark_style_dirty();
         self.engine.invalidate_cascade();
     }
@@ -472,7 +473,8 @@ impl EngineFrame {
     /// Apply a theme (set of CSS variables) on :root.
     pub fn set_theme(&mut self, vars: &[(&str, &str)]) {
         for &(name, value) in vars {
-            self.doc.root.style.custom_props.insert(name.to_string(), value.to_string());
+            std::sync::Arc::make_mut(&mut self.doc.root.style)
+            .custom_props.insert(name.to_string(), value.to_string());
         }
         self.mark_style_dirty();
         self.engine.invalidate_cascade();

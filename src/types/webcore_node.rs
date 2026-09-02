@@ -13,19 +13,26 @@ use crate::html::*;
 #[derive(Clone, Debug)]
 pub struct WebCore {
     pub tag:        String,
-    pub node_id:    u32,                // Stable identity — index into Document.nodes
-    pub style:      ComputedStyle,
+    pub node_id:    u32,                // Stable identity — this node's `DomArena` id
+    /// The cascaded style, SHARED — `arenaplan.md` item 1.
+    ///
+    /// Elements do not need their own style, they need *a* style: real pages
+    /// compute 5-12x fewer distinct styles than they have elements. A mutation
+    /// takes `make_mut`, which copies only when the value is actually shared.
+    ///
+    /// ⛔ `Arc`, not `Rc` as the plan wrote: the parallel cascade hands parts
+    /// of the tree to rayon, and `Rc` is neither `Send` nor `Sync`.
+    pub style:      std::sync::Arc<ComputedStyle>,
     pub attributes: crate::dom::attrs::AttrMap,
     pub text:       String,             // Own text content
 
-    // ── Tree structure (linked-list children, O(1) insert/remove) ────────
-    pub parent:       u32,              // 0 = no parent (root)
-    pub first_child:  u32,              // 0 = no children
-    pub last_child:   u32,              // 0 = no children
-    pub next_sibling: u32,              // 0 = last child
-    pub prev_sibling: u32,              // 0 = first child
-
-    // DEPRECATED: Vec storage kept during migration. Will be removed.
+    /// This box's children, in render order.
+    ///
+    /// ⛔ The RENDER tree, which is not the DOM. It holds boxes the DOM must
+    /// never contain — `::before`/`::after`, anonymous table boxes — so it is
+    /// a different tree, not a copy of one. DOM structure is `Document::arena`,
+    /// which every WHATWG accessor reads; `node_id` is the link between them,
+    /// and is 0 for a box with no DOM node behind it.
     pub children:   Vec<WebCore>,
 
     /// Layout geometry — all layout-computed fields live here.
@@ -209,4 +216,32 @@ pub enum DocumentKind {
 pub enum ShadowMode {
     Open,
     Closed,
+}
+
+impl WebCore {
+    /// Everything a SELECTOR can match on that is not an attribute.
+    ///
+    /// ⛔ The style-sharing key used to be `(parent, tag, attributes)`, on the
+    /// stated premise that *"the attributes ARE the element as far as a
+    /// selector is concerned"*. They are not. `:modal`, `:popover-open`,
+    /// `:checked`, `:indeterminate`, `:focus` and `:in-range` all read the BOX,
+    /// and two elements identical in tag and attributes can differ in every one
+    /// of them — so the second was handed the first one's style and the rule
+    /// vanished. Two `<dialog open>`s, one `show()`n and one `showModal()`ed,
+    /// computed the same `position`.
+    ///
+    /// ⛔ Keep this in step with the `ctx.html_box` reads in `css/matching.rs`.
+    /// A state the matcher reads and this does not is a silently dropped rule,
+    /// which is exactly how the three holes before it looked. `:empty` is
+    /// deliberately absent — sharing already requires a leaf.
+    pub fn selector_state_key(&self, focused_box: u32) -> String {
+        format!(
+            "{:?}|{}|{}|{}|{}",
+            self.top_layer_kind,
+            self.checkedness,
+            self.value_state.as_deref().unwrap_or(""),
+            self.data.get("indeterminate").map(String::as_str).unwrap_or(""),
+            self.node_id != 0 && self.node_id == focused_box,
+        )
+    }
 }

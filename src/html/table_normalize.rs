@@ -41,7 +41,7 @@ fn wrap_bare_cells_in_row(table: &mut WebCore) {
         if child.tag == "td" || child.tag == "th" {
             let r = row.get_or_insert_with(|| {
                 let mut n = WebCore::new("tr");
-                apply_property(&mut n.style, "display", default_display("tr"));
+                apply_property(std::sync::Arc::make_mut(&mut n.style), "display", default_display("tr"));
                 n
             });
             r.children.push(child);
@@ -77,7 +77,7 @@ fn group_rows_into_tbody(table: &mut WebCore) {
         if child.tag == "tr" {
             let tbody = current.get_or_insert_with(|| {
                 let mut b = WebCore::new("tbody");
-                apply_property(&mut b.style, "display", default_display("tbody"));
+                apply_property(std::sync::Arc::make_mut(&mut b.style), "display", default_display("tbody"));
                 b
             });
             tbody.children.append(&mut pending_ws);

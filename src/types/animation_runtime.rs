@@ -15,7 +15,7 @@ impl Document {
         let mut current: Vec<(u32, ParsedAnimation)> = Vec::new();
         fn collect(node: &WebCore, out: &mut Vec<(u32, ParsedAnimation)>) {
             let id = node.node_id;
-            for a in &node.style.animations {
+            for a in &node.style.rare().animations {
                 out.push((id, a.clone()));
             }
             for child in &node.children { collect(child, out); }
@@ -56,7 +56,7 @@ impl Document {
             out: &mut Vec<(u32, Vec<ParsedTransition>, HashMap<String, String>)>,
         ) {
             let id = node.node_id;
-            if !node.style.transitions.is_empty() {
+            if !node.style.rare().transitions.is_empty() {
                 // Base values: use the clean cascade snapshot when available, so that
                 // animation_overrides applied to node.style don't corrupt detection.
                 let base = if cascade_ran {
@@ -74,7 +74,7 @@ impl Document {
                         for (k, v) in hover_vals { vals.insert(k, v); }
                     }
                 }
-                out.push((id, node.style.transitions.clone(), vals));
+                out.push((id, node.style.rare().transitions.clone(), vals));
             }
             for child in &node.children {
                 collect(child, hovered, cascade_ran, cascade_styles, out);
@@ -85,7 +85,7 @@ impl Document {
         // When cascade ran, save the clean base styles for hover-only frames.
         if cascade_ran {
             fn snapshot(node: &WebCore, out: &mut HashMap<u32, HashMap<String, String>>) {
-                if !node.style.transitions.is_empty() {
+                if !node.style.rare().transitions.is_empty() {
                     out.insert(node.node_id, extract_transitionable(node));
                 }
                 for child in &node.children { snapshot(child, out); }

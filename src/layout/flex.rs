@@ -139,7 +139,7 @@ pub fn layout_flex(
         // CSS Flexbox §4: blockify inline-level flex items (temporary — restored after layout)
         let saved_display = child.style.display;
         if matches!(child.style.display, Display::Inline) {
-            child.style.display = Display::Block;
+            std::sync::Arc::make_mut(&mut child.style).display = Display::Block;
         }
 
         let child_font = child.style.font_size_px(font_px, root_font_px);
@@ -680,9 +680,9 @@ pub fn layout_flex(
         let sw = item.saved_width.clone();
         let sh = item.saved_height.clone();
         let sd = item.saved_display;
-        child_mut(node, &item.path).style.width   = sw;
-        child_mut(node, &item.path).style.height  = sh;
-        child_mut(node, &item.path).style.display = sd;
+        std::sync::Arc::make_mut(&mut child_mut(node, &item.path).style).width = sw;
+        std::sync::Arc::make_mut(&mut child_mut(node, &item.path).style).height = sh;
+        std::sync::Arc::make_mut(&mut child_mut(node, &item.path).style).display = sd;
     }
 
     // ── Content height ────────────────────────────────────────────────────────

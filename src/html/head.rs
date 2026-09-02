@@ -97,7 +97,7 @@ pub(crate) fn handle_head_tag(
             // contents leak into the body.
             let mut node = parser.new_box("template");
             node.attributes = attrs;
-            apply_property(&mut node.style, "display", "none");
+            apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "none");
             if !self_closing {
                 let mut children = Vec::new();
                 let mut ol = 0i32;

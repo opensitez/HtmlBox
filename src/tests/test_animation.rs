@@ -388,10 +388,10 @@ fn interpolate_stops_between_non_zero_stops() {
 #[test]
 fn style_animation_shorthand_parsed() {
     let s = style_with("animation", "spin 2s linear infinite");
-    assert_eq!(s.animations.len(), 1);
-    assert_eq!(s.animations[0].name, "spin");
-    assert!((s.animations[0].duration_ms - 2000.0).abs() < 1.0);
-    assert!(s.animations[0].iteration_count.is_infinite());
+    assert_eq!(s.rare().animations.len(), 1);
+    assert_eq!(s.rare().animations[0].name, "spin");
+    assert!((s.rare().animations[0].duration_ms - 2000.0).abs() < 1.0);
+    assert!(s.rare().animations[0].iteration_count.is_infinite());
 }
 
 #[test]
@@ -403,21 +403,21 @@ fn style_animation_sub_properties() {
     crate::css::apply_property(&mut s, "animation-iteration-count", "3");
     crate::css::apply_property(&mut s, "animation-direction", "alternate");
     crate::css::apply_property(&mut s, "animation-fill-mode", "both");
-    assert_eq!(s.animations[0].name, "fade");
-    assert!((s.animations[0].duration_ms - 500.0).abs() < 1.0);
-    assert_eq!(s.animations[0].timing_fn, EasingFn::EaseOut);
-    assert!((s.animations[0].iteration_count - 3.0).abs() < 0.01);
-    assert_eq!(s.animations[0].direction, AnimDirection::Alternate);
-    assert_eq!(s.animations[0].fill_mode, FillMode::Both);
+    assert_eq!(s.rare().animations[0].name, "fade");
+    assert!((s.rare().animations[0].duration_ms - 500.0).abs() < 1.0);
+    assert_eq!(s.rare().animations[0].timing_fn, EasingFn::EaseOut);
+    assert!((s.rare().animations[0].iteration_count - 3.0).abs() < 0.01);
+    assert_eq!(s.rare().animations[0].direction, AnimDirection::Alternate);
+    assert_eq!(s.rare().animations[0].fill_mode, FillMode::Both);
 }
 
 #[test]
 fn style_transition_shorthand_parsed() {
     let s = style_with("transition", "opacity 0.3s ease-in-out");
-    assert_eq!(s.transitions.len(), 1);
-    assert_eq!(s.transitions[0].property, "opacity");
-    assert!((s.transitions[0].duration_ms - 300.0).abs() < 1.0);
-    assert_eq!(s.transitions[0].timing_fn, EasingFn::EaseInOut);
+    assert_eq!(s.rare().transitions.len(), 1);
+    assert_eq!(s.rare().transitions[0].property, "opacity");
+    assert!((s.rare().transitions[0].duration_ms - 300.0).abs() < 1.0);
+    assert_eq!(s.rare().transitions[0].timing_fn, EasingFn::EaseInOut);
 }
 
 #[test]
@@ -427,10 +427,10 @@ fn style_transition_sub_properties() {
     crate::css::apply_property(&mut s, "transition-duration", "200ms");
     crate::css::apply_property(&mut s, "transition-timing-function", "linear");
     crate::css::apply_property(&mut s, "transition-delay", "50ms");
-    assert_eq!(s.transitions[0].property, "color");
-    assert!((s.transitions[0].duration_ms - 200.0).abs() < 1.0);
-    assert_eq!(s.transitions[0].timing_fn, EasingFn::Linear);
-    assert!((s.transitions[0].delay_ms - 50.0).abs() < 1.0);
+    assert_eq!(s.rare().transitions[0].property, "color");
+    assert!((s.rare().transitions[0].duration_ms - 200.0).abs() < 1.0);
+    assert_eq!(s.rare().transitions[0].timing_fn, EasingFn::Linear);
+    assert!((s.rare().transitions[0].delay_ms - 50.0).abs() < 1.0);
 }
 
 // ── Document::sync_animations ─────────────────────────────────────────────────

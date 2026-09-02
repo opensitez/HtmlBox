@@ -537,17 +537,19 @@ fn apply_font(s: &mut ComputedStyle, v: &str) {
     super::apply_font_shorthand(s, v);
 }
 fn apply_font_variation_settings(s: &mut ComputedStyle, v: &str) {
-    s.font_variation_settings = super::parse_variation_settings(v);
-    for (tag, val) in &s.font_variation_settings {
+    s.rare_mut().font_variation_settings = super::parse_variation_settings(v);
+    // ⛔ Cloned: `&s.rare()` borrows the whole style for the loop, and the
+    // body writes to it. The list is empty for 99.3% of elements.
+    for (tag, val) in s.rare().font_variation_settings.clone() {
         if tag == "wght" {
-            s.font_weight = FontWeight::Value(*val as u16);
+            s.font_weight = FontWeight::Value(val as u16);
         }
     }
 }
 fn apply_font_feature_settings(s: &mut ComputedStyle, v: &str) {
-    s.font_feature_settings = super::parse_feature_settings(v);
-    for (tag, val) in &s.font_feature_settings {
-        if tag == "smcp" { s.small_caps = *val != 0; }
+    s.rare_mut().font_feature_settings = super::parse_feature_settings(v);
+    for (tag, val) in s.rare().font_feature_settings.clone() {
+        if tag == "smcp" { s.small_caps = val != 0; }
     }
 }
 fn apply_font_variant(s: &mut ComputedStyle, v: &str) {
@@ -577,8 +579,8 @@ fn copy_font_family(d: &mut ComputedStyle, s: &ComputedStyle) { d.font_family = 
 fn copy_font_weight(d: &mut ComputedStyle, s: &ComputedStyle) { d.font_weight = s.font_weight; }
 fn copy_font_style(d: &mut ComputedStyle, s: &ComputedStyle)  { d.font_style = s.font_style; }
 fn copy_line_height(d: &mut ComputedStyle, s: &ComputedStyle) { d.line_height = s.line_height.clone(); }
-fn copy_font_variation_settings(d: &mut ComputedStyle, s: &ComputedStyle) { d.font_variation_settings = s.font_variation_settings.clone(); }
-fn copy_font_feature_settings(d: &mut ComputedStyle, s: &ComputedStyle) { d.font_feature_settings = s.font_feature_settings.clone(); d.small_caps = s.small_caps; }
+fn copy_font_variation_settings(d: &mut ComputedStyle, s: &ComputedStyle) { d.rare_mut().font_variation_settings = s.rare().font_variation_settings.clone(); }
+fn copy_font_feature_settings(d: &mut ComputedStyle, s: &ComputedStyle) { d.rare_mut().font_feature_settings = s.rare().font_feature_settings.clone(); d.small_caps = s.small_caps; }
 fn copy_font_variant(d: &mut ComputedStyle, s: &ComputedStyle) { d.small_caps = s.small_caps; }
 fn copy_font_stretch(d: &mut ComputedStyle, s: &ComputedStyle) { d.font_stretch = s.font_stretch; }
 
@@ -1188,13 +1190,13 @@ fn copy_column_gap(d: &mut ComputedStyle, s: &ComputedStyle)      { d.column_gap
 
 fn apply_grid_template_columns(s: &mut ComputedStyle, v: &str) {
     let mut names = std::collections::HashMap::new();
-    let tracks = super::parse_track_list_with_names(v, &mut s.auto_repeat_columns, &mut names);
+    let tracks = super::parse_track_list_with_names(v, &mut s.rare_mut().auto_repeat_columns, &mut names);
     if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
         s.subgrid_columns = true;
-        s.grid_template_columns = Vec::new();
+        s.rare_mut().grid_template_columns = Vec::new();
     } else {
         s.subgrid_columns = false;
-        s.grid_template_columns = tracks;
+        s.rare_mut().grid_template_columns = tracks;
     }
     s.grid_col_line_names = names;
 }
@@ -1204,15 +1206,15 @@ fn apply_grid_template_rows(s: &mut ComputedStyle, v: &str) {
     let tracks = super::parse_track_list_with_names(v, &mut dummy, &mut names);
     if tracks.first().map(|t| t.is_subgrid()).unwrap_or(false) {
         s.subgrid_rows = true;
-        s.grid_template_rows = Vec::new();
+        s.rare_mut().grid_template_rows = Vec::new();
     } else {
         s.subgrid_rows = false;
-        s.grid_template_rows = tracks;
+        s.rare_mut().grid_template_rows = tracks;
     }
     s.grid_row_line_names = names;
 }
 fn apply_grid_template_areas(s: &mut ComputedStyle, v: &str) {
-    s.grid_template_areas = super::parse_grid_template_areas(v);
+    s.rare_mut().grid_template_areas = super::parse_grid_template_areas(v);
 }
 fn apply_grid_auto_columns(s: &mut ComputedStyle, v: &str) {
     s.grid_auto_columns = super::parse_single_track(v);
@@ -1311,7 +1313,7 @@ fn apply_grid_area(s: &mut ComputedStyle, v: &str) {
 }
 fn apply_grid_template(s: &mut ComputedStyle, v: &str) {
     if v == "none" {
-        s.grid_template_rows.clear(); s.grid_template_columns.clear();
+        s.rare_mut().grid_template_rows.clear(); s.rare_mut().grid_template_columns.clear();
         s.subgrid_columns = false; s.subgrid_rows = false;
     } else if let Some(slash) = v.find('/') {
         let rows_part = v[..slash].trim();
@@ -1321,9 +1323,9 @@ fn apply_grid_template(s: &mut ComputedStyle, v: &str) {
     }
 }
 
-fn copy_grid_template_columns(d: &mut ComputedStyle, s: &ComputedStyle) { d.grid_template_columns = s.grid_template_columns.clone(); d.auto_repeat_columns = s.auto_repeat_columns.clone(); d.grid_col_line_names = s.grid_col_line_names.clone(); d.subgrid_columns = s.subgrid_columns; }
-fn copy_grid_template_rows(d: &mut ComputedStyle, s: &ComputedStyle)    { d.grid_template_rows = s.grid_template_rows.clone(); d.grid_row_line_names = s.grid_row_line_names.clone(); d.subgrid_rows = s.subgrid_rows; }
-fn copy_grid_template_areas(d: &mut ComputedStyle, s: &ComputedStyle)   { d.grid_template_areas = s.grid_template_areas.clone(); }
+fn copy_grid_template_columns(d: &mut ComputedStyle, s: &ComputedStyle) { d.rare_mut().grid_template_columns = s.rare().grid_template_columns.clone(); d.rare_mut().auto_repeat_columns = s.rare().auto_repeat_columns.clone(); d.grid_col_line_names = s.grid_col_line_names.clone(); d.subgrid_columns = s.subgrid_columns; }
+fn copy_grid_template_rows(d: &mut ComputedStyle, s: &ComputedStyle)    { d.rare_mut().grid_template_rows = s.rare().grid_template_rows.clone(); d.grid_row_line_names = s.grid_row_line_names.clone(); d.subgrid_rows = s.subgrid_rows; }
+fn copy_grid_template_areas(d: &mut ComputedStyle, s: &ComputedStyle)   { d.rare_mut().grid_template_areas = s.rare().grid_template_areas.clone(); }
 fn copy_grid_auto_columns(d: &mut ComputedStyle, s: &ComputedStyle)     { d.grid_auto_columns = s.grid_auto_columns.clone(); }
 fn copy_grid_auto_rows(d: &mut ComputedStyle, s: &ComputedStyle)        { d.grid_auto_rows = s.grid_auto_rows.clone(); }
 fn copy_grid_auto_flow(d: &mut ComputedStyle, s: &ComputedStyle)        { d.grid_auto_flow = s.grid_auto_flow; }
@@ -1498,7 +1500,7 @@ fn apply_background_attachment(s: &mut ComputedStyle, v: &str) {
     };
 }
 
-fn copy_background_image(d: &mut ComputedStyle, s: &ComputedStyle)      { d.background_image_url = s.background_image_url.clone(); d.gradient_type = s.gradient_type; d.gradient_angle = s.gradient_angle; d.gradient_stops = s.gradient_stops.clone(); }
+fn copy_background_image(d: &mut ComputedStyle, s: &ComputedStyle)      { d.background_image_url = s.background_image_url.clone(); d.gradient_type = s.gradient_type; d.gradient_angle = s.gradient_angle; d.rare_mut().gradient_stops = s.rare().gradient_stops.clone(); }
 fn copy_background_size(d: &mut ComputedStyle, s: &ComputedStyle)       { d.background_size = s.background_size; d.background_size_w = s.background_size_w.clone(); d.background_size_h = s.background_size_h.clone(); }
 fn copy_background_position(d: &mut ComputedStyle, s: &ComputedStyle)   { d.background_position_x = s.background_position_x.clone(); d.background_position_y = s.background_position_y.clone(); }
 fn copy_background_repeat(d: &mut ComputedStyle, s: &ComputedStyle)     { d.background_repeat = s.background_repeat; }
@@ -1508,12 +1510,12 @@ fn copy_background_attachment(d: &mut ComputedStyle, s: &ComputedStyle) { d.back
 
 fn apply_mask_image(s: &mut ComputedStyle, v: &str) {
     if v == "none" {
-        s.mask_image_url.clear();
+        s.rare_mut().mask_image_url.clear();
     } else if let Some(url) = super::extract_url(v) {
-        s.mask_image_url = url;
+        s.rare_mut().mask_image_url = url;
     }
 }
-fn copy_mask_image(d: &mut ComputedStyle, s: &ComputedStyle) { d.mask_image_url = s.mask_image_url.clone(); }
+fn copy_mask_image(d: &mut ComputedStyle, s: &ComputedStyle) { d.rare_mut().mask_image_url = s.rare().mask_image_url.clone(); }
 
 // ── Outline ─────────────────────────────────────────────────────────────────
 
@@ -1667,26 +1669,26 @@ fn apply_transform_origin(s: &mut ComputedStyle, v: &str) {
     s.transform_origin_y = oy;
 }
 fn apply_filter(s: &mut ComputedStyle, v: &str) {
-    s.filter = v.to_string();
+    s.rare_mut().filter = v.to_string();
     s.css_filter = super::parse_css_filter(v);
 }
 fn apply_backdrop_filter(s: &mut ComputedStyle, v: &str) {
-    s.backdrop_filter = v.to_string();
+    s.rare_mut().backdrop_filter = v.to_string();
 }
 
 fn copy_transform(d: &mut ComputedStyle, s: &ComputedStyle)        { d.transform = s.transform.clone(); d.css_transform = s.css_transform.clone(); }
 fn copy_transform_origin(d: &mut ComputedStyle, s: &ComputedStyle) { d.transform_origin_x = s.transform_origin_x; d.transform_origin_y = s.transform_origin_y; }
-fn copy_filter(d: &mut ComputedStyle, s: &ComputedStyle)           { d.filter = s.filter.clone(); d.css_filter = s.css_filter.clone(); }
-fn copy_backdrop_filter(d: &mut ComputedStyle, s: &ComputedStyle)  { d.backdrop_filter = s.backdrop_filter.clone(); }
+fn copy_filter(d: &mut ComputedStyle, s: &ComputedStyle)           { d.rare_mut().filter = s.rare().filter.clone(); d.css_filter = s.css_filter.clone(); }
+fn copy_backdrop_filter(d: &mut ComputedStyle, s: &ComputedStyle)  { d.rare_mut().backdrop_filter = s.rare().backdrop_filter.clone(); }
 
 // ── Transition / animation ──────────────────────────────────────────────────
 
 fn apply_transition(s: &mut ComputedStyle, v: &str) {
-    s.transitions = super::parse_transition_shorthand(v);
+    s.rare_mut().transitions = super::parse_transition_shorthand(v);
 }
 fn ensure_transition(s: &mut ComputedStyle) {
-    if s.transitions.is_empty() {
-        s.transitions.push(ParsedTransition {
+    if s.rare().transitions.is_empty() {
+        s.rare_mut().transitions.push(ParsedTransition {
             property: String::new(), duration_ms: 0.0,
             delay_ms: 0.0, timing_fn: EasingFn::Ease,
         });
@@ -1694,27 +1696,27 @@ fn ensure_transition(s: &mut ComputedStyle) {
 }
 fn apply_transition_property(s: &mut ComputedStyle, v: &str) {
     ensure_transition(s);
-    for tr in &mut s.transitions { tr.property = v.to_string(); }
+    for tr in &mut s.rare_mut().transitions { tr.property = v.to_string(); }
 }
 fn apply_transition_duration(s: &mut ComputedStyle, v: &str) {
     ensure_transition(s);
-    for tr in &mut s.transitions { tr.duration_ms = super::parse_time_ms(v).unwrap_or(0.0); }
+    for tr in &mut s.rare_mut().transitions { tr.duration_ms = super::parse_time_ms(v).unwrap_or(0.0); }
 }
 fn apply_transition_timing_function(s: &mut ComputedStyle, v: &str) {
     ensure_transition(s);
-    for tr in &mut s.transitions { tr.timing_fn = super::parse_easing(v); }
+    for tr in &mut s.rare_mut().transitions { tr.timing_fn = super::parse_easing(v); }
 }
 fn apply_transition_delay(s: &mut ComputedStyle, v: &str) {
     ensure_transition(s);
-    for tr in &mut s.transitions { tr.delay_ms = super::parse_time_ms(v).unwrap_or(0.0); }
+    for tr in &mut s.rare_mut().transitions { tr.delay_ms = super::parse_time_ms(v).unwrap_or(0.0); }
 }
 
 fn apply_animation(s: &mut ComputedStyle, v: &str) {
-    s.animations = super::parse_animation_shorthand(v);
+    s.rare_mut().animations = super::parse_animation_shorthand(v);
 }
 fn ensure_animation(s: &mut ComputedStyle) {
-    if s.animations.is_empty() {
-        s.animations.push(ParsedAnimation {
+    if s.rare().animations.is_empty() {
+        s.rare_mut().animations.push(ParsedAnimation {
             name: String::new(), duration_ms: 0.0, delay_ms: 0.0,
             timing_fn: EasingFn::Ease, iteration_count: 1.0,
             direction: AnimDirection::Normal, fill_mode: FillMode::None,
@@ -1724,43 +1726,43 @@ fn ensure_animation(s: &mut ComputedStyle) {
 }
 fn apply_animation_name(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.name = v.to_string(); }
+    for anim in &mut s.rare_mut().animations { anim.name = v.to_string(); }
 }
 fn apply_animation_duration(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.duration_ms = super::parse_time_ms(v).unwrap_or(0.0); }
+    for anim in &mut s.rare_mut().animations { anim.duration_ms = super::parse_time_ms(v).unwrap_or(0.0); }
 }
 fn apply_animation_timing_function(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.timing_fn = super::parse_easing(v); }
+    for anim in &mut s.rare_mut().animations { anim.timing_fn = super::parse_easing(v); }
 }
 fn apply_animation_delay(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.delay_ms = super::parse_time_ms(v).unwrap_or(0.0); }
+    for anim in &mut s.rare_mut().animations { anim.delay_ms = super::parse_time_ms(v).unwrap_or(0.0); }
 }
 fn apply_animation_iteration_count(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.iteration_count = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) }; }
+    for anim in &mut s.rare_mut().animations { anim.iteration_count = if v == "infinite" { f32::INFINITY } else { v.parse().unwrap_or(1.0) }; }
 }
 fn apply_animation_direction(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.direction = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal }; }
+    for anim in &mut s.rare_mut().animations { anim.direction = match v { "reverse" => AnimDirection::Reverse, "alternate" => AnimDirection::Alternate, "alternate-reverse" => AnimDirection::AlternateReverse, _ => AnimDirection::Normal }; }
 }
 fn apply_animation_fill_mode(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.fill_mode = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None }; }
+    for anim in &mut s.rare_mut().animations { anim.fill_mode = match v { "forwards" => FillMode::Forwards, "backwards" => FillMode::Backwards, "both" => FillMode::Both, _ => FillMode::None }; }
 }
 fn apply_animation_play_state(s: &mut ComputedStyle, v: &str) {
     ensure_animation(s);
-    for anim in &mut s.animations { anim.play_state_paused = v == "paused"; }
+    for anim in &mut s.rare_mut().animations { anim.play_state_paused = v == "paused"; }
 }
 fn apply_will_change(s: &mut ComputedStyle, v: &str) {
     s.will_change = v.to_string();
     s.will_change_transform = v.contains("transform");
 }
 
-fn copy_transition(d: &mut ComputedStyle, s: &ComputedStyle)  { d.transitions = s.transitions.clone(); }
-fn copy_animation(d: &mut ComputedStyle, s: &ComputedStyle)   { d.animations = s.animations.clone(); }
+fn copy_transition(d: &mut ComputedStyle, s: &ComputedStyle)  { d.rare_mut().transitions = s.rare().transitions.clone(); }
+fn copy_animation(d: &mut ComputedStyle, s: &ComputedStyle)   { d.rare_mut().animations = s.rare().animations.clone(); }
 fn copy_will_change(d: &mut ComputedStyle, s: &ComputedStyle) { d.will_change = s.will_change.clone(); d.will_change_transform = s.will_change_transform; }
 
 // ── Unicode-bidi & writing ──────────────────────────────────────────────────
@@ -1829,7 +1831,7 @@ fn copy_caret_color(d: &mut ComputedStyle, s: &ComputedStyle) { d.caret_color = 
 // ── Quotes ──────────────────────────────────────────────────────────────────
 
 fn apply_quotes(s: &mut ComputedStyle, v: &str) {
-    s.quotes.clear();
+    s.rare_mut().quotes.clear();
     if v != "none" && v != "auto" {
         let bytes = v.as_bytes();
         let mut i = 0;
@@ -1838,14 +1840,14 @@ fn apply_quotes(s: &mut ComputedStyle, v: &str) {
                 let q = bytes[i]; i += 1;
                 let start = i;
                 while i < bytes.len() && bytes[i] != q { i += 1; }
-                s.quotes.push(v[start..i].to_string());
+                s.rare_mut().quotes.push(v[start..i].to_string());
                 if i < bytes.len() { i += 1; }
             } else { i += 1; }
         }
     }
 }
 
-fn copy_quotes(d: &mut ComputedStyle, s: &ComputedStyle) { d.quotes = s.quotes.clone(); }
+fn copy_quotes(d: &mut ComputedStyle, s: &ComputedStyle) { d.rare_mut().quotes = s.rare().quotes.clone(); }
 
 // ── Container queries ───────────────────────────────────────────────────────
 

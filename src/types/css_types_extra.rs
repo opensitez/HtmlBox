@@ -143,6 +143,7 @@ pub enum ClipPathKind { #[default] None, Inset, Circle, Ellipse, Polygon }
 impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
+            rare: None,
             display:    Display::Inline,
             position:   Position::Static,
             float:      Float::None,
@@ -197,8 +198,6 @@ impl Default for ComputedStyle {
             font_size:               CssLength::Px(16.0),
             font_weight:             FontWeight::Normal,
             font_style:              FontStyle::Normal,
-            font_variation_settings: Vec::new(),
-            font_feature_settings:   Vec::new(),
             line_height:             CssLength::Em(1.2),
             letter_spacing:   CssLength::Zero,
             word_spacing:     CssLength::Zero,
@@ -230,12 +229,8 @@ impl Default for ComputedStyle {
             row_gap:         CssLength::Zero,
             column_gap:      CssLength::Zero,
 
-            grid_template_columns: Vec::new(),
-            grid_template_rows:    Vec::new(),
             grid_auto_columns:     GridTrackSize::default(),
             grid_auto_rows:        GridTrackSize::default(),
-            grid_template_areas:   Vec::new(),
-            auto_repeat_columns:   Vec::new(),
             grid_col_line_names:   std::collections::HashMap::new(),
             grid_row_line_names:   std::collections::HashMap::new(),
             subgrid_columns:       false,
@@ -259,7 +254,6 @@ impl Default for ComputedStyle {
 
             gradient_type:  GradientType::None,
             gradient_angle: 180.0,
-            gradient_stops: Vec::new(),
 
             background_size:       BackgroundSize::Auto,
             background_size_w:     CssLength::Auto,
@@ -304,7 +298,6 @@ impl Default for ComputedStyle {
             border_bottom_right_radius: CssLength::Zero,
 
             background_image_url: String::new(),
-            mask_image_url: String::new(),
 
             unicode_bidi: UnicodeBidi::Normal,
             writing_mode: WritingMode::HorizontalTB,
@@ -325,7 +318,6 @@ impl Default for ComputedStyle {
 
             pointer_events: PointerEvents::Auto,
 
-            quotes: Vec::new(),
 
             container_name: String::new(),
             container_type: ContainerType::Normal,
@@ -377,8 +369,6 @@ impl Default for ComputedStyle {
             column_span_all:   false,
 
             transform:       String::new(),
-            filter:          String::new(),
-            backdrop_filter: String::new(),
 
             css_transform:      CssTransform::default(),
             transform_origin_x: 0.5,
@@ -387,8 +377,6 @@ impl Default for ComputedStyle {
 
             text_underline_offset: CssLength::Auto,
 
-            animations:  Vec::new(),
-            transitions: Vec::new(),
             will_change: String::new(),
 
             scroll_behavior: ScrollBehavior::Auto,

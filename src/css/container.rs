@@ -117,7 +117,7 @@ fn apply_container_cascade_inner(
             for (_, decls) in &cont_matched {
                 for (prop, val) in decls {
                     let resolved = resolve_var_references(val, &stylesheet.variables);
-                    apply_property(&mut node.style, prop, &resolved);
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), prop, &resolved);
                 }
             }
             // Mark layout dirty so the subtree pruning doesn't suppress the

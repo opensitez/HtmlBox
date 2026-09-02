@@ -78,6 +78,16 @@ impl TraversalStore {
         Self { map: HashMap::new(), next_id: 1 }
     }
 
+    /// Every NODE this store keeps a reference to.
+    ///
+    /// ⛔ Not the map's keys — those are TRAVERSAL handles from `next_id`. The
+    /// node ids are `root` and `current` INSIDE each value. Reading the keys
+    /// would both miss these and offer up handle integers as if they named
+    /// nodes.
+    pub fn node_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.map.values().flat_map(|t| [t.root, t.current])
+    }
+
     pub fn insert(&mut self, t: Traversal) -> u32 {
         self.next_id += 1;
         let id = self.next_id;

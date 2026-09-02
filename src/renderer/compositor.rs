@@ -211,7 +211,7 @@ impl Compositor {
         }
 
         // CSS filter
-        if !node.style.filter.is_empty() {
+        if !node.style.rare().filter.is_empty() {
             return Some(LayerReason::Filter);
         }
 

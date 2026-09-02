@@ -479,10 +479,10 @@ pub fn layout_table(
                     let row = row_ref_mut(node, &row_refs[row_idx]);
                     let cell = &mut row.children[ci];
                     let is_ua_default = |v: &CssLength| v.is_auto() || matches!(v, CssLength::Px(p) if *p == 1.0);
-                    if is_ua_default(&cell.style.padding_left)   { cell.style.padding_left   = cellpad.clone(); }
-                    if is_ua_default(&cell.style.padding_right)  { cell.style.padding_right  = cellpad.clone(); }
-                    if is_ua_default(&cell.style.padding_top)    { cell.style.padding_top    = cellpad.clone(); }
-                    if is_ua_default(&cell.style.padding_bottom) { cell.style.padding_bottom = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_left)   { std::sync::Arc::make_mut(&mut cell.style).padding_left = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_right)  { std::sync::Arc::make_mut(&mut cell.style).padding_right = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_top)    { std::sync::Arc::make_mut(&mut cell.style).padding_top = cellpad.clone(); }
+                    if is_ua_default(&cell.style.padding_bottom) { std::sync::Arc::make_mut(&mut cell.style).padding_bottom = cellpad.clone(); }
                 }
 
                 // Layout cell — cell_w is already the resolved column width,
@@ -638,11 +638,11 @@ pub fn layout_table(
 
                 // empty-cells: hide in separate border mode
                 if !collapse && empty_cells_hide {
-                    cell.style.border_top_style    = BorderStyle::None;
-                    cell.style.border_right_style  = BorderStyle::None;
-                    cell.style.border_bottom_style = BorderStyle::None;
-                    cell.style.border_left_style   = BorderStyle::None;
-                    cell.style.background_color    = Color::TRANSPARENT;
+                    std::sync::Arc::make_mut(&mut cell.style).border_top_style = BorderStyle::None;
+                    std::sync::Arc::make_mut(&mut cell.style).border_right_style = BorderStyle::None;
+                    std::sync::Arc::make_mut(&mut cell.style).border_bottom_style = BorderStyle::None;
+                    std::sync::Arc::make_mut(&mut cell.style).border_left_style = BorderStyle::None;
+                    std::sync::Arc::make_mut(&mut cell.style).background_color = Color::TRANSPARENT;
                 }
 
                 if matches!(pos, Position::Relative | Position::Sticky) {
@@ -694,14 +694,14 @@ pub fn layout_table(
     if collapse && num_rows > 0 && num_cols > 0 {
         resolve_collapsed_borders(node, &row_refs, &grid, num_rows, num_cols);
         // Clear table's own border in collapse mode (cells handle it)
-        node.style.border_top_style    = BorderStyle::None;
-        node.style.border_top_width    = CssLength::Zero;
-        node.style.border_right_style  = BorderStyle::None;
-        node.style.border_right_width  = CssLength::Zero;
-        node.style.border_bottom_style = BorderStyle::None;
-        node.style.border_bottom_width = CssLength::Zero;
-        node.style.border_left_style   = BorderStyle::None;
-        node.style.border_left_width   = CssLength::Zero;
+        std::sync::Arc::make_mut(&mut node.style).border_top_style = BorderStyle::None;
+        std::sync::Arc::make_mut(&mut node.style).border_top_width = CssLength::Zero;
+        std::sync::Arc::make_mut(&mut node.style).border_right_style = BorderStyle::None;
+        std::sync::Arc::make_mut(&mut node.style).border_right_width = CssLength::Zero;
+        std::sync::Arc::make_mut(&mut node.style).border_bottom_style = BorderStyle::None;
+        std::sync::Arc::make_mut(&mut node.style).border_bottom_width = CssLength::Zero;
+        std::sync::Arc::make_mut(&mut node.style).border_left_style = BorderStyle::None;
+        std::sync::Arc::make_mut(&mut node.style).border_left_width = CssLength::Zero;
     }
 
     // ── Position caption ──────────────────────────────────────────────────────
@@ -772,13 +772,13 @@ fn resolve_collapsed_borders(
             if border_wins(top_w, top_s, bot_w, bot_s) {
                 let (ri, ci) = bot_path.unwrap();
                 let row = row_ref_mut(node, &row_refs[ri]);
-                row.children[ci].style.border_top_style = BorderStyle::None;
-                row.children[ci].style.border_top_width = CssLength::Zero;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_top_style = BorderStyle::None;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_top_width = CssLength::Zero;
             } else {
                 let (ri, ci) = top_path.unwrap();
                 let row = row_ref_mut(node, &row_refs[ri]);
-                row.children[ci].style.border_bottom_style = BorderStyle::None;
-                row.children[ci].style.border_bottom_width = CssLength::Zero;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_bottom_style = BorderStyle::None;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_bottom_width = CssLength::Zero;
             }
         }
     }
@@ -806,13 +806,13 @@ fn resolve_collapsed_borders(
             if border_wins(l_w, l_s, r_w, r_s) {
                 let (ri, ci) = right_path.unwrap();
                 let row = row_ref_mut(node, &row_refs[ri]);
-                row.children[ci].style.border_left_style = BorderStyle::None;
-                row.children[ci].style.border_left_width = CssLength::Zero;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_left_style = BorderStyle::None;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_left_width = CssLength::Zero;
             } else {
                 let (ri, ci) = left_path.unwrap();
                 let row = row_ref_mut(node, &row_refs[ri]);
-                row.children[ci].style.border_right_style = BorderStyle::None;
-                row.children[ci].style.border_right_width = CssLength::Zero;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_right_style = BorderStyle::None;
+                std::sync::Arc::make_mut(&mut row.children[ci].style).border_right_width = CssLength::Zero;
             }
         }
     }
@@ -843,9 +843,9 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_top_width = tbl_top_w.clone();
-                cell.style.border_top_style = tbl_top_s;
-                cell.style.border_top_color = tbl_top_c;
+                std::sync::Arc::make_mut(&mut cell.style).border_top_width = tbl_top_w.clone();
+                std::sync::Arc::make_mut(&mut cell.style).border_top_style = tbl_top_s;
+                std::sync::Arc::make_mut(&mut cell.style).border_top_color = tbl_top_c;
             }
         }
     }
@@ -860,9 +860,9 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_bottom_width = tbl_bot_w.clone();
-                cell.style.border_bottom_style = tbl_bot_s;
-                cell.style.border_bottom_color = tbl_bot_c;
+                std::sync::Arc::make_mut(&mut cell.style).border_bottom_width = tbl_bot_w.clone();
+                std::sync::Arc::make_mut(&mut cell.style).border_bottom_style = tbl_bot_s;
+                std::sync::Arc::make_mut(&mut cell.style).border_bottom_color = tbl_bot_c;
             }
         }
     }
@@ -877,9 +877,9 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_left_width = tbl_left_w.clone();
-                cell.style.border_left_style = tbl_left_s;
-                cell.style.border_left_color = tbl_left_c;
+                std::sync::Arc::make_mut(&mut cell.style).border_left_width = tbl_left_w.clone();
+                std::sync::Arc::make_mut(&mut cell.style).border_left_style = tbl_left_s;
+                std::sync::Arc::make_mut(&mut cell.style).border_left_color = tbl_left_c;
             }
         }
     }
@@ -894,9 +894,9 @@ fn resolve_collapsed_borders(
             };
             if border_wins(tw, ts, cw, cs) {
                 let cell = &mut row_ref_mut(node, &row_refs[ri]).children[ci];
-                cell.style.border_right_width = tbl_right_w.clone();
-                cell.style.border_right_style = tbl_right_s;
-                cell.style.border_right_color = tbl_right_c;
+                std::sync::Arc::make_mut(&mut cell.style).border_right_width = tbl_right_w.clone();
+                std::sync::Arc::make_mut(&mut cell.style).border_right_style = tbl_right_s;
+                std::sync::Arc::make_mut(&mut cell.style).border_right_color = tbl_right_c;
             }
         }
     }

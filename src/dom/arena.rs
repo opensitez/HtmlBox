@@ -202,11 +202,22 @@ impl Default for DirtyFlags {
 
 /// Arena allocator for DOM nodes.
 ///
-/// Slot 0 is reserved (NodeId::NONE).  Freed nodes go on a free list and are
-/// reused by the next allocation — no memory grows without bound.
+/// Slot 0 is reserved (`NodeId::NONE`). **An id is never reissued.** Freeing a
+/// node marks its slot dead and leaves it dead, so a stale id can never name a
+/// DIFFERENT node — every map keyed by node id (hover, focus, `event_targets`,
+/// ranges, traversals, `node_index`, `custom_validity`, `pending_nodes`)
+/// depends on that.
+///
+/// ⛔ It does not follow that a stale id reads as absent. Only [`Self::try_get`]
+/// consults `alive`; [`Self::get`] and [`Self::get_mut`] check bounds under
+/// `debug_assert` and nothing else, so they hand back a dead node's contents.
+///
+/// The same rule the widget engine states for documents: an id already handed
+/// out must never address a different node. The cost is one dead `Vec` slot
+/// per freed node; reclaiming those needs to know when a node is garbage,
+/// which is a question this layer cannot answer — script holds the id.
 pub struct DomArena {
     nodes: Vec<Node>,
-    free_list: Vec<NodeId>,
 }
 
 impl DomArena {
@@ -227,10 +238,7 @@ impl DomArena {
             dirty: DirtyFlags::NONE,
             alive: false,
         };
-        DomArena {
-            nodes: vec![sentinel],
-            free_list: Vec::new(),
-        }
+        DomArena { nodes: vec![sentinel] }
     }
 
     // ── Allocation ──
@@ -307,14 +315,9 @@ impl DomArena {
     }
 
     fn alloc(&mut self, node: Node) -> NodeId {
-        if let Some(id) = self.free_list.pop() {
-            self.nodes[id.index()] = node;
-            id
-        } else {
-            let id = NodeId(self.nodes.len() as u32);
-            self.nodes.push(node);
-            id
-        }
+        let id = NodeId(self.nodes.len() as u32);
+        self.nodes.push(node);
+        id
     }
 
     // ── Access ──
@@ -435,7 +438,12 @@ impl DomArena {
         self.mark_dirty(parent, DirtyFlags::LAYOUT);
     }
 
-    /// Free a detached node (and all its descendants) for reuse.
+    /// Mark a detached node and all its descendants dead.
+    ///
+    /// The slot is NOT returned to a pool — see the type's own note. That is
+    /// what makes this safe to call: `id` can never come to name a different
+    /// node. Callers must reach the node through [`DomArena::try_get`] to see
+    /// it as gone.
     pub fn free(&mut self, id: NodeId) {
         if !self.is_alive(id) { return; }
         // Free children first
@@ -446,7 +454,6 @@ impl DomArena {
             child = next;
         }
         self.nodes[id.index()].alive = false;
-        self.free_list.push(id);
     }
 
     // ── Dirty Flag Propagation ──
@@ -673,21 +680,26 @@ mod tests {
         assert_eq!(arena.get(a).next_sibling, NodeId::NONE);
     }
 
+    /// A freed id is never handed out again.
+    ///
+    /// Reusing the slot would make every id-keyed map name a different node
+    /// than the one it was keyed on, and nothing at this layer can detect it —
+    /// the id compares equal either way.
     #[test]
-    fn free_and_reuse() {
+    fn a_freed_id_is_never_reissued() {
         let mut arena = DomArena::new();
         let a = arena.create_element("a");
-        let b = arena.create_element("b");
+        let _b = arena.create_element("b");
         assert_eq!(arena.len(), 3); // sentinel + a + b
 
         arena.free(a);
         assert!(!arena.is_alive(a));
+        assert!(arena.try_get(a).is_none(), "a stale id resolves to nothing");
 
-        // Next alloc reuses the freed slot
         let c = arena.create_element("c");
-        assert_eq!(c, a); // same NodeId reused
+        assert_ne!(c, a, "the dead slot is not recycled onto a new element");
         assert_eq!(arena.get(c).tag, "c");
-        assert_eq!(arena.len(), 3); // no growth
+        assert_eq!(arena.len(), 4, "a dead slot is retained, not reused");
     }
 
     #[test]

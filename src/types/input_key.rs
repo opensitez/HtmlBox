@@ -175,7 +175,20 @@ impl Document {
                 // Typing changes `:in-range`, `:valid` and friends the same way
                 // a click changes `:checked` — see the note at the click path.
                 self.style_dirty = true;
-            } else if self.editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl) {
+            } else if {
+                // ⛔ The editor mutates the render tree with no arena in
+                // scope, so the DOM has to be told afterwards — see
+                // `resync_subtree`.
+                let mut editor = std::mem::take(&mut self.editor);
+                let handled = editor.handle_key_event(&mut self.root, etype, key_code, ch, ctrl);
+                self.editor = editor;
+                if handled {
+                    let mut root = std::mem::replace(&mut self.root, WebCore::new("#placeholder"));
+                    crate::html::arena_wiring::resync_subtree(&mut self.arena, &mut root);
+                    self.root = root;
+                }
+                handled
+            } {
                 redraw = true;
             }
         }

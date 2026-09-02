@@ -15,7 +15,7 @@ pub fn apply_animation_overrides(
     let id = node.node_id;
     if let Some(props) = overrides.get(&id) {
         for (prop, val) in props {
-            apply_property(&mut node.style, prop, val);
+            apply_property(std::sync::Arc::make_mut(&mut node.style), prop, val);
         }
         // Propagate inherited properties (like `color`) to descendant text nodes.
         // Text nodes have no explicit CSS rules — they inherit everything — so their
@@ -52,7 +52,7 @@ fn propagate_to_text_descendants(children: &mut Vec<WebCore>, props: &[(&str, &s
     for child in children {
         if child.is_text_node() {
             for &(prop, val) in props {
-                apply_property(&mut child.style, prop, val);
+                apply_property(std::sync::Arc::make_mut(&mut child.style), prop, val);
             }
         } else {
             propagate_to_text_descendants(&mut child.children, props);

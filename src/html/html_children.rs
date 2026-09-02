@@ -29,7 +29,7 @@ pub(crate) fn parse_html_children(
                 if parser.head_closed {
                     let mut node = parser.new_box("#comment");
                     node.text = data;
-                    apply_property(&mut node.style, "display", "none");
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "none");
                     body_children.push(node);
                 }
             }
@@ -68,7 +68,7 @@ pub(crate) fn parse_html_children(
                     "body" => {
                         parser.head_closed = true;
                         body_box.attributes = attrs;
-                        apply_property(&mut body_box.style, "display", "block");
+                        apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
                         apply_presentational_attrs(body_box);
                         if !self_closing {
                             parser.parse_children_into("body", body_children, ol_counter);

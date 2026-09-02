@@ -15,10 +15,10 @@ pub(crate) fn apply_details_summary_post_cascade(node: &mut WebCore) {
         let is_open = node.attributes.contains_key("open");
         for child in &mut node.children {
             if child.tag == "summary" {
-                child.style.display = Display::ListItem;
-                child.style.list_style_type = ListStyleType::Disclosure;
+                std::sync::Arc::make_mut(&mut child.style).display = Display::ListItem;
+                std::sync::Arc::make_mut(&mut child.style).list_style_type = ListStyleType::Disclosure;
             } else if !is_open {
-                child.style.display = Display::None;
+                std::sync::Arc::make_mut(&mut child.style).display = Display::None;
             }
         }
     }

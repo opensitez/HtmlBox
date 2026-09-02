@@ -43,6 +43,14 @@ pub struct RangeStore {
 impl RangeStore {
     pub fn new() -> Self { Self { map: HashMap::new(), next_id: 0 } }
 
+    /// Every NODE this store keeps a reference to.
+    ///
+    /// ⛔ Not the map's keys — those are RANGE handles. The node ids are the
+    /// two containers inside each value. See `TraversalStore::node_ids`.
+    pub fn node_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.map.values().flat_map(|r| [r.start_container, r.end_container])
+    }
+
     pub fn insert(&mut self, r: RangeState) -> u32 {
         self.next_id += 1;
         let id = self.next_id;

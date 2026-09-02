@@ -13,8 +13,6 @@ impl Document {
     pub fn new() -> Self {
         Self {
             root:            WebCore::new("html"),
-            nodes:           NodeArena::new(),
-            nodes_stale:     true,
             stylesheet:      Stylesheet::default(),
             title:           String::new(),
             arena:           DomArena::new(),
@@ -100,13 +98,18 @@ impl Document {
     /// Called after layout (tree structure is stable until next mutation).
     pub fn rebuild_node_index(&mut self) {
         self.node_index.clear();
-        fn collect(node: &WebCore, map: &mut HashMap<u32, *const WebCore>) {
+        fn collect(node: &WebCore, path: &mut Vec<u32>, map: &mut HashMap<u32, Vec<u32>>) {
             if node.node_id != 0 {
-                map.insert(node.node_id, node as *const WebCore);
+                map.insert(node.node_id, path.clone());
             }
-            for child in &node.children { collect(child, map); }
+            for (i, child) in node.children.iter().enumerate() {
+                path.push(i as u32);
+                collect(child, path, map);
+                path.pop();
+            }
         }
-        collect(&self.root, &mut self.node_index);
+        let mut path = Vec::new();
+        collect(&self.root, &mut path, &mut self.node_index);
     }
 
     /// Backward-compat alias.
@@ -117,11 +120,21 @@ impl Document {
     #[inline]
     pub fn get_box_by_id(&self, node_id: u32) -> Option<&WebCore> {
         if node_id == 0 { return None; }
-        // Fast path: O(1) index lookup
-        if let Some(&ptr) = self.node_index.get(&node_id) {
-            // SAFETY: pointer is valid because the tree hasn't been mutated
-            // since rebuild_node_index() was called.
-            return Some(unsafe { &*ptr });
+        // Follow the cached path. O(depth) rather than O(1), and no `unsafe`:
+        // a stale path leads somewhere wrong, which the id check below
+        // rejects, where a stale POINTER was undefined behaviour.
+        if let Some(path) = self.node_index.get(&node_id) {
+            let mut cur = &self.root;
+            let mut ok = true;
+            for step in path {
+                match cur.children.get(*step as usize) {
+                    Some(next) => cur = next,
+                    None => { ok = false; break; }
+                }
+            }
+            if ok && cur.node_id == node_id {
+                return Some(cur);
+            }
         }
         // Fallback: tree walk (index not built yet)
         fn walk(node: &WebCore, id: u32) -> Option<&WebCore> {
@@ -136,12 +149,6 @@ impl Document {
     #[inline]
     pub fn get_node(&self, node_id: u32) -> Option<&WebCore> {
         self.get_box_by_id(node_id)
-    }
-
-    /// Rebuild the flat arena from the tree on demand.
-    pub fn sync_arena(&mut self) {
-        self.nodes = NodeArena::from_tree(&self.root);
-        self.nodes_stale = false;
     }
 
     /// O(1) mutable node lookup via tree walk (arena stores clones, not references).

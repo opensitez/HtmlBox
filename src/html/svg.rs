@@ -56,8 +56,8 @@ pub fn load_background_images(node: &mut WebCore, base_url: &str) {
         }
     }
     // Load mask-image (CSS masking for icons etc.)
-    if node.mask_image_data.is_none() && !node.style.mask_image_url.is_empty() {
-        let url = node.style.mask_image_url.clone();
+    if node.mask_image_data.is_none() && !node.style.rare().mask_image_url.is_empty() {
+        let url = node.style.rare().mask_image_url.clone();
         if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
             node.mask_image_data   = Some(data);
             node.mask_image_width  = w;

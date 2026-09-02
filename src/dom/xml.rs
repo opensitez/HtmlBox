@@ -23,7 +23,7 @@ impl Document {
         let arena_id = self.arena.create_element_ns(namespace, qualified_name);
         let mut b = WebCore::new(qualified_name);
         b.node_id = arena_id.0;
-        apply_property(&mut b.style, "display", crate::html::default_display(qualified_name));
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", crate::html::default_display(qualified_name));
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -39,7 +39,7 @@ impl Document {
         let mut b = WebCore::new("#cdata-section");
         b.node_id = arena_id.0;
         b.text = data.to_string();
-        apply_property(&mut b.style, "display", "none");
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", "none");
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -51,7 +51,7 @@ impl Document {
         let mut b = WebCore::new(target);
         b.node_id = arena_id.0;
         b.text = data.to_string();
-        apply_property(&mut b.style, "display", "none");
+        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", "none");
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -76,7 +76,14 @@ impl Document {
 
     /// `node.localName` — the qualified name without its prefix.
     pub fn local_name(&self, id: u32) -> String {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return String::new(); }
+        if id == 0 { return String::new(); }
+        // ⛔ A shadow node is not an arena node, so the guard answered `""` for
+        // every element in a shadow tree. The render tree holds the tag.
+        if !self.arena.is_alive(NodeId(id)) {
+            let Some(node) = self.find_webcore(id) else { return String::new() };
+            let tag = node.tag.clone();
+            return tag.split_once(':').map(|(_, l)| l.to_string()).unwrap_or(tag);
+        }
         let tag = &self.arena.get(NodeId(id)).tag;
         match tag.split_once(':') {
             Some((_, local)) => local.to_string(),

@@ -130,10 +130,10 @@ pub(crate) fn resolve_picture_source(picture: &mut WebCore, base_url: &str, vw: 
                 // than the fallback <img>). Applied to the STYLE, not to the
                 // width/height content attributes, for the same reason.
                 if let Some(ref w) = best_width {
-                    crate::css::apply_property(&mut child.style, "width", &format!("{}px", w));
+                    crate::css::apply_property(std::sync::Arc::make_mut(&mut child.style), "width", &format!("{}px", w));
                 }
                 if let Some(ref h) = best_height {
-                    crate::css::apply_property(&mut child.style, "height", &format!("{}px", h));
+                    crate::css::apply_property(std::sync::Arc::make_mut(&mut child.style), "height", &format!("{}px", h));
                 }
                 break;
             }
@@ -156,7 +156,7 @@ pub(crate) fn number_lists(node: &mut WebCore) {
         let mut idx = 1i32;
         for child in &mut node.children {
             if child.tag == "li" {
-                child.style.list_index = idx;
+                std::sync::Arc::make_mut(&mut child.style).list_index = idx;
                 idx += 1;
             }
         }
@@ -233,7 +233,7 @@ impl crate::html::parser::HtmlParser {
         if matches!(node.tag.as_str(), "table" | "thead" | "tbody" | "tfoot") {
             for child in &mut node.children {
                 if child.tag == "form" {
-                    child.style.display = Display::Contents;
+                    std::sync::Arc::make_mut(&mut child.style).display = Display::Contents;
                 }
             }
         }
@@ -265,7 +265,7 @@ impl crate::html::parser::HtmlParser {
             fn hide_options(node: &mut WebCore) {
                 for child in &mut node.children {
                     if matches!(child.tag.as_str(), "option" | "optgroup") {
-                        apply_property(&mut child.style, "display", "none");
+                        apply_property(std::sync::Arc::make_mut(&mut child.style), "display", "none");
                         hide_options(child);
                     }
                 }
@@ -283,7 +283,7 @@ impl crate::html::parser::HtmlParser {
             // is also the only reading that tracks a selection the user has
             // changed since parse.
             // Set overflow hidden so options don't leak
-            apply_property(&mut node.style, "overflow", "hidden");
+            apply_property(std::sync::Arc::make_mut(&mut node.style), "overflow", "hidden");
         }
         // <input>: seed the control's state from its content attributes.
         if node.tag == "input" {
@@ -333,7 +333,7 @@ impl crate::html::parser::HtmlParser {
                 if child.tag == "summary" {
                     // summary always visible
                 } else if !is_open {
-                    apply_property(&mut child.style, "display", "none");
+                    apply_property(std::sync::Arc::make_mut(&mut child.style), "display", "none");
                 }
             }
         }

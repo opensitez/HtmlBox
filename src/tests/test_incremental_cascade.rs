@@ -93,7 +93,7 @@ fn incremental_cascade_correctness() {
 
     // Compare: the hovered link should have the same color in both
     fn find_style(root: &crate::types::WebCore, id: u32) -> Option<crate::types::ComputedStyle> {
-        if root.node_id == id { return Some(root.style.clone()); }
+        if root.node_id == id { return Some((*root.style).clone()); }
         for child in &root.children {
             if let Some(s) = find_style(child, id) { return Some(s); }
         }

@@ -17,127 +17,127 @@ fn make_box(tag: &str) -> WebCore {
     // Em values are resolved by the layout engine relative to the element's own font size.
     match tag {
         "h1" => {
-            b.style.font_size = CssLength::Em(2.0);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(0.67);
-            b.style.margin_bottom = CssLength::Em(0.67);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(2.0);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(0.67);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(0.67);
         }
         "h2" => {
-            b.style.font_size = CssLength::Em(1.5);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(0.83);
-            b.style.margin_bottom = CssLength::Em(0.83);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(1.5);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(0.83);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(0.83);
         }
         "h3" => {
-            b.style.font_size = CssLength::Em(1.17);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(1.17);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "h4" => {
-            b.style.font_size = CssLength::Em(1.0);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.33);
-            b.style.margin_bottom = CssLength::Em(1.33);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.33);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.33);
         }
         "h5" => {
-            b.style.font_size = CssLength::Em(0.83);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.67);
-            b.style.margin_bottom = CssLength::Em(1.67);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(0.83);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.67);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.67);
         }
         "h6" => {
-            b.style.font_size = CssLength::Em(0.67);
-            b.style.font_weight = FontWeight::Bold;
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(2.33);
-            b.style.margin_bottom = CssLength::Em(2.33);
+            std::sync::Arc::make_mut(&mut b.style).font_size = CssLength::Em(0.67);
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(2.33);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(2.33);
         }
         "p" => {
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "blockquote" => {
-            b.style.display = Display::Block;
-            b.style.margin_left = CssLength::Px(40.0);
-            b.style.margin_right = CssLength::Px(40.0);
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_left = CssLength::Px(40.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_right = CssLength::Px(40.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "pre" => {
-            b.style.display = Display::Block;
-            b.style.white_space = WhiteSpace::Pre;
-            b.style.font_family = "monospace".to_string();
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).white_space = WhiteSpace::Pre;
+            std::sync::Arc::make_mut(&mut b.style).font_family = "monospace".to_string();
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "ul" | "ol" => {
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
-            b.style.padding_left = CssLength::Px(40.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_left = CssLength::Px(40.0);
         }
         "li" => {
-            b.style.display = Display::ListItem;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::ListItem;
         }
         "hr" => {
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(0.5);
-            b.style.margin_bottom = CssLength::Em(0.5);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(0.5);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(0.5);
         }
         "table" => {
-            b.style.display = Display::Table;
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Table;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "thead" | "tbody" | "tfoot" => {
-            b.style.display = Display::TableRowGroup;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::TableRowGroup;
         }
         "tr" => {
-            b.style.display = Display::TableRow;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::TableRow;
         }
         "th" => {
-            b.style.display = Display::TableHeaderCell;
-            b.style.font_weight = FontWeight::Bold;
-            b.style.text_align = TextAlign::Center;
-            b.style.padding_top = CssLength::Px(4.0);
-            b.style.padding_bottom = CssLength::Px(4.0);
-            b.style.padding_left = CssLength::Px(8.0);
-            b.style.padding_right = CssLength::Px(8.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::TableHeaderCell;
+            std::sync::Arc::make_mut(&mut b.style).font_weight = FontWeight::Bold;
+            std::sync::Arc::make_mut(&mut b.style).text_align = TextAlign::Center;
+            std::sync::Arc::make_mut(&mut b.style).padding_top = CssLength::Px(4.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_bottom = CssLength::Px(4.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_left = CssLength::Px(8.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_right = CssLength::Px(8.0);
         }
         "td" => {
-            b.style.display = Display::TableCell;
-            b.style.padding_top = CssLength::Px(4.0);
-            b.style.padding_bottom = CssLength::Px(4.0);
-            b.style.padding_left = CssLength::Px(8.0);
-            b.style.padding_right = CssLength::Px(8.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::TableCell;
+            std::sync::Arc::make_mut(&mut b.style).padding_top = CssLength::Px(4.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_bottom = CssLength::Px(4.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_left = CssLength::Px(8.0);
+            std::sync::Arc::make_mut(&mut b.style).padding_right = CssLength::Px(8.0);
         }
         "dl" => {
-            b.style.display = Display::Block;
-            b.style.margin_top = CssLength::Em(1.0);
-            b.style.margin_bottom = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_top = CssLength::Em(1.0);
+            std::sync::Arc::make_mut(&mut b.style).margin_bottom = CssLength::Em(1.0);
         }
         "dd" => {
-            b.style.display = Display::Block;
-            b.style.margin_left = CssLength::Px(40.0);
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).margin_left = CssLength::Px(40.0);
         }
         "dt" => {
-            b.style.display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
         }
         "img" => {
-            b.style.display = Display::InlineBlock;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::InlineBlock;
         }
         "div" => {
-            b.style.display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
         }
         _ => {
-            b.style.display = Display::Block;
+            std::sync::Arc::make_mut(&mut b.style).display = Display::Block;
         }
     }
     b
@@ -252,7 +252,7 @@ impl<'a> InlineParser<'a> {
     }
 
     fn parse(&self, block: &mut WebCore, text: &str) {
-        let base_style = block.style.clone();
+        let base_style = (*block.style).clone();
         // Reset inline-specific fields for base style
         let mut s = ComputedStyle::default();
         // Inherit font from block for headings etc
@@ -369,10 +369,10 @@ impl<'a> InlineParser<'a> {
                             // Load image pixel data (file path or data URL)
                             if let Some((data, w, h)) = load_image_from_src(url, "") {
                                 if img.style.width.is_auto() {
-                                    crate::css::apply_property(&mut img.style, "width", &format!("{}px", w));
+                                    crate::css::apply_property(std::sync::Arc::make_mut(&mut img.style), "width", &format!("{}px", w));
                                 }
                                 if img.style.height.is_auto() {
-                                    crate::css::apply_property(&mut img.style, "height", &format!("{}px", h));
+                                    crate::css::apply_property(std::sync::Arc::make_mut(&mut img.style), "height", &format!("{}px", h));
                                 }
                                 img.image_data   = Some(data);
                                 img.image_width  = w;
@@ -1009,7 +1009,7 @@ impl<'a> BlockParser<'a> {
                     code_content.push_str(&self.lines[self.pos]);
                     self.pos += 1;
                 }
-                let code_style = pre.style.clone();
+                let code_style = (*pre.style).clone();
                 append_run(&mut pre, &code_content, code_style);
                 parent.children.push(pre);
                 continue;
@@ -1054,7 +1054,7 @@ impl<'a> BlockParser<'a> {
                         code_content.push_str(strip_indented_code(l));
                         self.pos += 1;
                     }
-                    let code_style = pre.style.clone();
+                    let code_style = (*pre.style).clone();
                     append_run(&mut pre, &code_content, code_style);
                     parent.children.push(pre);
                     continue;
@@ -1098,7 +1098,7 @@ impl<'a> BlockParser<'a> {
                     html_content.push_str(&self.lines[self.pos]);
                     self.pos += 1;
                 }
-                let html_style = html_box.style.clone();
+                let html_style = (*html_box.style).clone();
                 append_run(&mut html_box, &html_content, html_style);
                 parent.children.push(html_box);
                 continue;
@@ -1206,12 +1206,12 @@ impl<'a> BlockParser<'a> {
         let mut list = make_box(list_tag);
         list.data.insert("md-bullet".to_string(), first_item.marker.clone());
         if first_item.ordered {
-            list.style.list_style_type = ListStyleType::Decimal;
+            std::sync::Arc::make_mut(&mut list.style).list_style_type = ListStyleType::Decimal;
             if first_item.number != 1 {
                 list.data.insert("md-start".to_string(), first_item.number.to_string());
             }
         } else {
-            list.style.list_style_type = ListStyleType::Disc;
+            std::sync::Arc::make_mut(&mut list.style).list_style_type = ListStyleType::Disc;
         }
 
         let base_indent = first_item.indent;
@@ -1242,8 +1242,8 @@ impl<'a> BlockParser<'a> {
             if li_info.valid && li_info.indent == base_indent && li_info.ordered == first_item.ordered {
                 let mut item = make_box("li");
                 if first_item.ordered {
-                    item.style.list_style_type = ListStyleType::Decimal;
-                    item.style.list_index = li_info.number;
+                    std::sync::Arc::make_mut(&mut item.style).list_style_type = ListStyleType::Decimal;
+                    std::sync::Arc::make_mut(&mut item.style).list_index = li_info.number;
                 }
 
                 if li_info.task_state >= 0 {
@@ -1337,7 +1337,7 @@ impl<'a> BlockParser<'a> {
         for (i, cell_text) in header_cells.iter().enumerate() {
             let mut th = make_box("th");
             if i < alignments.len() {
-                th.style.text_align = alignments[i];
+                std::sync::Arc::make_mut(&mut th.style).text_align = alignments[i];
             }
             let ip = InlineParser::new(self.refs);
             ip.parse(&mut th, cell_text);
@@ -1355,7 +1355,7 @@ impl<'a> BlockParser<'a> {
             for (i, cell_text) in cells.iter().enumerate() {
                 let mut td = make_box("td");
                 if i < alignments.len() {
-                    td.style.text_align = alignments[i];
+                    std::sync::Arc::make_mut(&mut td.style).text_align = alignments[i];
                 }
                 let ip = InlineParser::new(self.refs);
                 ip.parse(&mut td, cell_text);
@@ -1461,7 +1461,7 @@ pub fn parse_markdown(markdown: &str) -> Document {
     // Without this, layout() wipes every style set by make_box() with ComputedStyle::default().
     doc.stylesheet = ua_stylesheet();
     doc.root.tag = "body".to_string();
-    doc.root.style.display = Display::Block;
+    std::sync::Arc::make_mut(&mut doc.root.style).display = Display::Block;
     doc.root.children.clear();
 
     let lines = split_lines(markdown);

@@ -141,6 +141,9 @@ fn apply_cascade_incremental_walk(
             ancestors, child_index, sibling_count, type_child_index, type_sibling_count,
             vw, vh, focused_box, keyboard_focus,
             inherited_vars, candidates_buf, counters, hover_chain, &[],
+            // A cache local to this call: an incremental re-cascade
+            // touches one subtree, so nothing outside it can be shared into.
+            &mut crate::css::cascade::ShareCache::new(),
         );
         return;
     }
@@ -237,21 +240,27 @@ fn swap_hover_inner(
         let should_hover = in_hover;
         if should_hover != node.hover_applied {
             // Swap: style becomes the other variant, hover_style stores the current
-            let other = node.style.hover_style.take().unwrap();
+            let other = std::sync::Arc::make_mut(&mut node.style).hover_style.take().unwrap();
             // Preserve hover_style/active_style/visited_style from the base side
-            let _hs_backup = node.style.hover_style.take(); // already None after take above
-            let as_backup = node.style.active_style.take();
-            let vs_backup = node.style.visited_style.take();
+            let _hs_backup = std::sync::Arc::make_mut(&mut node.style).hover_style.take(); // already None after take above
+            let as_backup = std::sync::Arc::make_mut(&mut node.style).active_style.take();
+            let vs_backup = std::sync::Arc::make_mut(&mut node.style).visited_style.take();
             // Preserve before/after pseudo styles from the incoming variant
             // (the other style may have different before_style/before_content)
-            let cur_before_style = node.style.before_style.take();
-            let cur_before_content = std::mem::take(&mut node.style.before_content);
-            let cur_after_style = node.style.after_style.take();
-            let cur_after_content = std::mem::take(&mut node.style.after_content);
+            let cur_before_style = std::sync::Arc::make_mut(&mut node.style).before_style.take();
+            let cur_before_content = std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).before_content);
+            let cur_after_style = std::sync::Arc::make_mut(&mut node.style).after_style.take();
+            let cur_after_content = std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).after_content);
 
-            let cur_style = std::mem::replace(&mut node.style, *other);
+            let cur_style = std::mem::replace(&mut node.style, std::sync::Arc::new(*other));
             // Store the old style as the new hover_style (for swapping back)
-            let mut stored = Box::new(cur_style);
+            // ⛔ `cur_style` is an `Arc` now. Take the value OUT of it when
+            // this node is its only owner — which is the common case here,
+            // since a hovered element is excluded from sharing — and fall back
+            // to a clone only when it really is shared.
+            let mut stored = Box::new(
+                std::sync::Arc::try_unwrap(cur_style).unwrap_or_else(|a| (*a).clone()),
+            );
             stored.hover_style = None;
             stored.active_style = None;
             stored.visited_style = None;
@@ -261,9 +270,9 @@ fn swap_hover_inner(
             stored.after_style = cur_after_style;
             stored.after_content = cur_after_content;
 
-            node.style.hover_style = Some(stored);
-            node.style.active_style = as_backup;
-            node.style.visited_style = vs_backup;
+            std::sync::Arc::make_mut(&mut node.style).hover_style = Some(stored);
+            std::sync::Arc::make_mut(&mut node.style).active_style = as_backup;
+            std::sync::Arc::make_mut(&mut node.style).visited_style = vs_backup;
             node.hover_applied = should_hover;
             changed = true;
 
@@ -282,18 +291,18 @@ fn swap_hover_inner(
                     let mut pseudo_box = crate::types::WebCore::new("::before");
                     pseudo_box.text = node.style.before_content.clone();
                     if let Some(ref ps) = node.style.before_style {
-                        pseudo_box.style = *ps.clone();
+                        pseudo_box.style = std::sync::Arc::new(*ps.clone());
                     }
                     if is_grid_or_flex && !pseudo_box.style.is_positioned()
                         && matches!(pseudo_box.style.display, Display::Inline) {
-                        pseudo_box.style.display = Display::Block;
+                        std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
                     }
                     if let Some(idx) = existing {
                         node.children[idx] = pseudo_box;
                     } else {
                         node.children.insert(0, pseudo_box);
                     }
-                    node.style.before_content = String::new();
+                    std::sync::Arc::make_mut(&mut node.style).before_content = String::new();
                 }
             } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::before") {
                 node.children.remove(idx);
@@ -308,18 +317,18 @@ fn swap_hover_inner(
                     let mut pseudo_box = crate::types::WebCore::new("::after");
                     pseudo_box.text = node.style.after_content.clone();
                     if let Some(ref ps) = node.style.after_style {
-                        pseudo_box.style = *ps.clone();
+                        pseudo_box.style = std::sync::Arc::new(*ps.clone());
                     }
                     if is_grid_or_flex && !pseudo_box.style.is_positioned()
                         && matches!(pseudo_box.style.display, Display::Inline) {
-                        pseudo_box.style.display = Display::Block;
+                        std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
                     }
                     if let Some(idx) = existing {
                         node.children[idx] = pseudo_box;
                     } else {
                         node.children.push(pseudo_box);
                     }
-                    node.style.after_content = String::new();
+                    std::sync::Arc::make_mut(&mut node.style).after_content = String::new();
                 }
             } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::after") {
                 node.children.remove(idx);

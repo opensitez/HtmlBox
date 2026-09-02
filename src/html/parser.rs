@@ -110,7 +110,7 @@ impl HtmlParser {
         let mut node = self.new_box(tag);
         node.attributes = attrs;
         node.text = text;
-        apply_property(&mut node.style, "display", "none");
+        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "none");
         self.head_children.push(node);
     }
 
@@ -298,7 +298,7 @@ impl HtmlParser {
                         // EMPTY paragraph after the div. Every browser has it.
                         self.pos += 1;
                         let mut node = self.new_box("p");
-                        apply_property(&mut node.style, "display", default_display("p"));
+                        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display("p"));
                         stack.last_mut().unwrap().node.children.push(node);
                     } else {
                         // Stray close tag with no matching open — ignore it.
@@ -313,7 +313,7 @@ impl HtmlParser {
                     self.pos += 1;
                     let mut node = self.new_box("#comment");
                     node.text = data;
-                    apply_property(&mut node.style, "display", "none");
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "none");
                     stack.last_mut().unwrap().node.children.push(node);
                 }
 
@@ -381,7 +381,7 @@ impl HtmlParser {
                         let mut script_node = self.new_box(&tag);
                         script_node.attributes = attrs.clone();
                         script_node.text = content.clone();
-                        apply_property(&mut script_node.style, "display", "none");
+                        apply_property(std::sync::Arc::make_mut(&mut script_node.style), "display", "none");
                         stack.last_mut().unwrap().node.children.push(script_node);
                         let host_handled = if let Some(ref mut f) = self.on_script {
                             f(&tag, &attrs, &content)
@@ -439,7 +439,7 @@ impl HtmlParser {
 
                         let mut node = self.new_box("svg");
                         node.attributes = attrs;
-                        apply_property(&mut node.style, "display", "inline-block");
+                        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "inline-block");
                         node.svg_markup = Some(svg_markup);
                         node.svg_viewbox_w = vb_w as f32;
                         node.svg_viewbox_h = vb_h as f32;
@@ -448,10 +448,10 @@ impl HtmlParser {
                         // CSS cascade will override these. If no explicit dimensions,
                         // the layout engine uses svg_viewbox_w/h.
                         if let Some(w) = explicit_w {
-                            apply_property(&mut node.style, "width", &format!("{}px", w));
+                            apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", w));
                         }
                         if let Some(h) = explicit_h {
-                            apply_property(&mut node.style, "height", &format!("{}px", h));
+                            apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", h));
                         }
 
                         // Don't rasterize here — deferred to render time at the correct display size.
@@ -493,7 +493,7 @@ impl HtmlParser {
                         }
                         let mut style_node = self.new_box("style");
                         style_node.text = css;
-                        apply_property(&mut style_node.style, "display", "none");
+                        apply_property(std::sync::Arc::make_mut(&mut style_node.style), "display", "none");
                         stack.last_mut().unwrap().node.children.push(style_node);
                         continue;
                     }
@@ -512,7 +512,7 @@ impl HtmlParser {
                     // Build the node
                     let mut node = self.new_box(&tag);
                     node.attributes = attrs;
-                    apply_property(&mut node.style, "display", default_display(&tag));
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display(&tag));
                     apply_presentational_attrs(&mut node);
 
                     // <img> handling
@@ -550,14 +550,14 @@ impl HtmlParser {
                         if tag == "ol" { frame.ol_counter = 0; }
                         if tag == "li" {
                             frame.ol_counter += 1;
-                            node.style.list_index = frame.ol_counter;
+                            std::sync::Arc::make_mut(&mut node.style).list_index = frame.ol_counter;
                         }
                     }
 
                     // Summary: always list-item + Disclosure marker
                     if tag == "summary" {
-                        node.style.display = Display::ListItem;
-                        node.style.list_style_type = ListStyleType::Disclosure;
+                        std::sync::Arc::make_mut(&mut node.style).display = Display::ListItem;
+                        std::sync::Arc::make_mut(&mut node.style).list_style_type = ListStyleType::Disclosure;
                     }
 
                     // `<a>` and `<nobr>` close a still-open element of their own
@@ -733,7 +733,7 @@ impl HtmlParser {
             // `parse_children_into`.
             let mut style_node = self.new_box("style");
             style_node.text = css;
-            apply_property(&mut style_node.style, "display", "none");
+            apply_property(std::sync::Arc::make_mut(&mut style_node.style), "display", "none");
             children.push(style_node);
             return;
         }
@@ -763,12 +763,12 @@ impl HtmlParser {
             let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
             let mut node = self.new_box("svg");
             node.attributes = attrs;
-            apply_property(&mut node.style, "display", "inline-block");
+            apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "inline-block");
             node.svg_markup = Some(svg_markup);
             node.svg_viewbox_w = vb_w as f32;
             node.svg_viewbox_h = vb_h as f32;
-            if let Some(w) = explicit_w { apply_property(&mut node.style, "width", &format!("{}px", w)); }
-            if let Some(h) = explicit_h { apply_property(&mut node.style, "height", &format!("{}px", h)); }
+            if let Some(w) = explicit_w { apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", w)); }
+            if let Some(h) = explicit_h { apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", h)); }
             apply_presentational_attrs(&mut node);
             children.push(node);
             return;
@@ -776,7 +776,7 @@ impl HtmlParser {
 
         let mut node = self.new_box(&tag);
         node.attributes = attrs;
-        apply_property(&mut node.style, "display", default_display(&tag));
+        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display(&tag));
         apply_presentational_attrs(&mut node);
 
         if tag == "img" {
@@ -804,10 +804,10 @@ impl HtmlParser {
             let w = node.attributes.get("width").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_w);
             let h = node.attributes.get("height").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_h);
             if node.style.width.is_auto() {
-                node.style.width = crate::types::CssLength::Px(w as f32);
+                std::sync::Arc::make_mut(&mut node.style).width = crate::types::CssLength::Px(w as f32);
             }
             if node.style.height.is_auto() {
-                node.style.height = crate::types::CssLength::Px(h as f32);
+                std::sync::Arc::make_mut(&mut node.style).height = crate::types::CssLength::Px(h as f32);
             }
             if tag == "canvas" {
                 node.image_width = w;
@@ -827,11 +827,11 @@ impl HtmlParser {
         if tag == "ol" { *ol_counter = 0; }
         if tag == "li" {
             *ol_counter += 1;
-            node.style.list_index = *ol_counter;
+            std::sync::Arc::make_mut(&mut node.style).list_index = *ol_counter;
         }
         if tag == "summary" {
-            node.style.display = Display::ListItem;
-            node.style.list_style_type = ListStyleType::Disclosure;
+            std::sync::Arc::make_mut(&mut node.style).display = Display::ListItem;
+            std::sync::Arc::make_mut(&mut node.style).list_style_type = ListStyleType::Disclosure;
         }
 
         if !self_closing {

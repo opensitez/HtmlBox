@@ -380,6 +380,16 @@ impl EventTargetMap {
         Self { listeners: HashMap::new(), next_id: 1, handler_slots: HashMap::new() }
     }
 
+    /// Every NODE this map keeps a reference to.
+    ///
+    /// `listeners` IS keyed by node id, and `handler_slots`' key is
+    /// `(node_id, handler_name)` — its VALUE is a listener id and is not a node.
+    /// Both halves are here because a node can hold an `onclick` slot with no
+    /// entry in `listeners`.
+    pub fn node_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.listeners.keys().copied().chain(self.handler_slots.keys().map(|(n, _)| *n))
+    }
+
     /// Fold listeners registered DURING a dispatch back in.
     ///
     /// `Document::dispatch_event` moves this map out of the document so a

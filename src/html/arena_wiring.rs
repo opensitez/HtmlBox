@@ -9,13 +9,36 @@ use crate::css::*;
 
 /// Walk the WebCore tree and wire arena parent-child links to mirror it.
 /// Called once after parsing is complete and the full WebCore tree is built.
-pub(crate) fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &WebCore) {
+pub(crate) fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &mut WebCore) {
     use crate::dom::arena::NodeId;
     let root_id = NodeId(root.node_id);
     if root_id.is_none() || !arena.is_alive(root_id) { return; }
-    for child in &root.children {
-        let child_id = NodeId(child.node_id);
-        if child_id.is_none() || !arena.is_alive(child_id) { continue; }
+    // ⛔ THIS node's own attributes, before its children's. The loop below used
+    // to be the only place attributes were copied, so the node it was first
+    // called on — `<html>` — never got its own: `documentElement`'s `lang`,
+    // `class` and everything else were missing from the arena on 10 of the 24
+    // example pages.
+    for (k, v) in root.attributes.iter() {
+        arena.get_mut(root_id).attributes.insert(k.clone(), v.clone());
+    }
+    for child in &mut root.children {
+        let mut child_id = NodeId(child.node_id);
+        if child_id.is_none() || !arena.is_alive(child_id) {
+            // ⛔ A SYNTHESIZED node — `WebCore::new` hands out ids from its own
+            // counter starting at 500,000, which the arena has never heard of.
+            // Table normalization creates a `<tbody>` that way.
+            //
+            // This used to `continue` (and, for the subtree root, `return`),
+            // so everything below such a node was never wired: a `<td>`'s text
+            // node did not reach the arena at all, and `textContent` on a table
+            // cell answered `""`. Give it an arena node instead.
+            child_id = match child.tag.as_str() {
+                "#text" => arena.create_text(&child.text),
+                "#comment" => arena.create_comment(&child.text),
+                tag => arena.create_element(tag),
+            };
+            child.node_id = child_id.0;
+        }
         // Set data on arena character-data nodes — comments carry text too.
         if child.tag == "#text" || child.tag == "#comment" {
             arena.get_mut(child_id).text = child.text.clone();
@@ -58,31 +81,6 @@ fn rebuild_arena_recursive(arena: &mut crate::dom::arena::DomArena, node: &mut W
         let child_id = NodeId(child.node_id);
         arena.append_child(arena_id, child_id);
     }
-    // Populate linked-list pointers on WebCore (second pass — all node_ids assigned)
-    populate_sibling_links(node);
-}
-
-/// Populate parent/first_child/last_child/next_sibling/prev_sibling on a node
-/// and all its Vec children. Called after node_ids are assigned.
-pub fn populate_sibling_links(node: &mut WebCore) {
-    let parent_id = node.node_id;
-    let n = node.children.len();
-    if n == 0 {
-        node.first_child = 0;
-        node.last_child = 0;
-        return;
-    }
-    node.first_child = node.children[0].node_id;
-    node.last_child = node.children[n - 1].node_id;
-    for i in 0..n {
-        node.children[i].parent = parent_id;
-        node.children[i].prev_sibling = if i > 0 { node.children[i - 1].node_id } else { 0 };
-        node.children[i].next_sibling = if i + 1 < n { node.children[i + 1].node_id } else { 0 };
-    }
-    // Recurse
-    for child in &mut node.children {
-        populate_sibling_links(child);
-    }
 }
 
 /// Rebuild arena nodes for a subtree and append each child to `parent_arena_id`.
@@ -95,4 +93,50 @@ pub fn rebuild_arena_recursive_pub(
     rebuild_arena_recursive(arena, node);
     let child_id = crate::dom::arena::NodeId(node.node_id);
     arena.append_child(parent_arena_id, child_id);
+}
+
+/// Make the arena's view of `root`'s subtree match the `WebCore` tree exactly.
+///
+/// ⛔ Needed because the EDITOR mutates the render tree with no arena in
+/// scope: `Editor::insert_br` and its neighbours take `&mut WebCore`, create
+/// nodes with `WebCore::new` (whose ids come from a private counter the arena
+/// has never heard of), and there is no `Document` to dual-write to. After an
+/// Enter keypress in a `contenteditable`, `textContent` still answered the
+/// PRE-EDIT text.
+///
+/// This is a concrete instance of `arenaplan.md` item 4's rationale — two
+/// structures that must be kept in sync, and a mutation path that cannot.
+/// Folding `WebCore` into the arena removes the need for this function.
+///
+/// Unlike `wire_arena_children` it also DETACHES: an edit can delete a node,
+/// and appending alone would leave the arena holding it.
+pub(crate) fn resync_subtree(arena: &mut crate::dom::arena::DomArena, root: &mut WebCore) {
+    use crate::dom::arena::NodeId;
+    let root_id = NodeId(root.node_id);
+    if root_id.is_none() || !arena.is_alive(root_id) { return; }
+
+    let existing: Vec<NodeId> = arena.children(root_id).collect();
+    for child in existing {
+        arena.remove_child(child);
+    }
+    for child in &mut root.children {
+        let mut child_id = NodeId(child.node_id);
+        if child_id.is_none() || !arena.is_alive(child_id) {
+            child_id = match child.tag.as_str() {
+                "#text" => arena.create_text(&child.text),
+                "#comment" => arena.create_comment(&child.text),
+                tag => arena.create_element(tag),
+            };
+            child.node_id = child_id.0;
+        }
+        if child.tag == "#text" || child.tag == "#comment" {
+            arena.get_mut(child_id).text = child.text.clone();
+        }
+        // ⛔ No attribute copy here. The only caller is the EDITOR, and no
+        // editing operation changes an attribute on a node the arena already
+        // has — it creates nodes (handled above) or moves them (which keeps
+        // their attributes). A mutation proved the line was unfalsifiable.
+        arena.append_child(root_id, child_id);
+        resync_subtree(arena, child);
+    }
 }

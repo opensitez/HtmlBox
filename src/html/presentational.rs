@@ -57,53 +57,53 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
     for (attr, val) in ordered_attrs {
         match attr.as_str() {
             "align" => match val.as_str() {
-                "center"  => apply_property(&mut node.style, "text-align", "center"),
-                "right"   => apply_property(&mut node.style, "text-align", "right"),
-                "left"    => apply_property(&mut node.style, "text-align", "left"),
-                "justify" => apply_property(&mut node.style, "text-align", "justify"),
+                "center"  => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "center"),
+                "right"   => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "right"),
+                "left"    => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "left"),
+                "justify" => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "justify"),
                 _ => {}
             },
             "valign" => match val.as_str() {
-                "top"    => apply_property(&mut node.style, "vertical-align", "top"),
-                "middle" => apply_property(&mut node.style, "vertical-align", "middle"),
-                "bottom" => apply_property(&mut node.style, "vertical-align", "bottom"),
+                "top"    => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "top"),
+                "middle" => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "middle"),
+                "bottom" => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "bottom"),
                 _ => {}
             },
             "bgcolor" | "background-color" => {
-                apply_property(&mut node.style, "background-color", val);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "background-color", val);
             }
             "color" => {
-                apply_property(&mut node.style, "color", val);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "color", val);
             }
             "text" if tag == "body" => {
                 // handled above by translating to `color` attribute
             }
             "width" => {
                 if val.ends_with('%') {
-                    apply_property(&mut node.style, "width", val);
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "width", val);
                 } else if let Ok(n) = val.parse::<f32>() {
-                    apply_property(&mut node.style, "width", &format!("{}px", n));
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", n));
                 }
             }
             "height" => {
                 if val.ends_with('%') {
-                    apply_property(&mut node.style, "height", val);
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "height", val);
                 } else if let Ok(n) = val.parse::<f32>() {
-                    apply_property(&mut node.style, "height", &format!("{}px", n));
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", n));
                 }
             }
             "border" if tag == "table" => {
                 if val == "0" {
-                    apply_property(&mut node.style, "border", "0px solid transparent");
+                    apply_property(std::sync::Arc::make_mut(&mut node.style), "border", "0px solid transparent");
                 } else if let Ok(n) = val.parse::<f32>() {
                     if n > 0.0 {
-                        apply_property(&mut node.style, "border", &format!("{}px solid black", n));
+                        apply_property(std::sync::Arc::make_mut(&mut node.style), "border", &format!("{}px solid black", n));
                     }
                 }
             }
             // FONT legacy attributes
             "face" if tag == "font" => {
-                apply_property(&mut node.style, "font-family", val);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "font-family", val);
             }
             "size" if tag == "input" => {
                 // HTML input size attribute: number of characters wide
@@ -139,14 +139,14 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
                     "4" => 18.0, "5" => 24.0, "6" => 32.0, "7" => 48.0,
                     _ => 16.0,
                 };
-                apply_property(&mut node.style, "font-size", &format!("{}px", px));
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "font-size", &format!("{}px", px));
             }
             // TABLE legacy attributes
             "cellpadding" if tag == "table" => {
-                apply_property(&mut node.style, "cellpadding", val);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "cellpadding", val);
             }
             "cellspacing" if tag == "table" => {
-                apply_property(&mut node.style, "cellspacing", val);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), "cellspacing", val);
             }
             // COL attributes
             "span" if tag == "col" => {
@@ -165,8 +165,8 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
     // dir attribute
     if let Some(dir) = attrs.get("dir") {
         match dir.to_ascii_lowercase().as_str() {
-            "rtl" => apply_property(&mut node.style, "direction", "rtl"),
-            "ltr" => apply_property(&mut node.style, "direction", "ltr"),
+            "rtl" => apply_property(std::sync::Arc::make_mut(&mut node.style), "direction", "rtl"),
+            "ltr" => apply_property(std::sync::Arc::make_mut(&mut node.style), "direction", "ltr"),
             _ => {}
         }
     }
@@ -181,7 +181,7 @@ fn apply_inline_style(node: &mut WebCore, css: &str) {
             let val  = decl[colon+1..].trim();
             if !prop.is_empty() && !val.is_empty() {
                 let normalized = normalize_css_value(val);
-                apply_property(&mut node.style, prop, &normalized);
+                apply_property(std::sync::Arc::make_mut(&mut node.style), prop, &normalized);
             }
         }
     }

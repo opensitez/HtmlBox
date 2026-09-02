@@ -403,13 +403,13 @@ fn css_radial_gradient_with_position_stops() {
     apply_property(&mut style, "background",
         "radial-gradient(circle at 50% 50%, #fbbf24 0%, #f97316 60%, transparent 100%)");
     assert_eq!(style.gradient_type, GradientType::Radial, "should be radial gradient");
-    assert_eq!(style.gradient_stops.len(), 3, "should have 3 stops, not {}", style.gradient_stops.len());
-    assert_eq!(style.gradient_stops[0].color, Color::rgba(0xfb, 0xbf, 0x24, 0xff));
-    assert!((style.gradient_stops[0].position - 0.0).abs() < 0.01);
-    assert_eq!(style.gradient_stops[1].color, Color::rgba(0xf9, 0x73, 0x16, 0xff));
-    assert!((style.gradient_stops[1].position - 0.60).abs() < 0.01);
-    assert_eq!(style.gradient_stops[2].color, Color::TRANSPARENT);
-    assert!((style.gradient_stops[2].position - 1.0).abs() < 0.01);
+    assert_eq!(style.rare().gradient_stops.len(), 3, "should have 3 stops, not {}", style.rare().gradient_stops.len());
+    assert_eq!(style.rare().gradient_stops[0].color, Color::rgba(0xfb, 0xbf, 0x24, 0xff));
+    assert!((style.rare().gradient_stops[0].position - 0.0).abs() < 0.01);
+    assert_eq!(style.rare().gradient_stops[1].color, Color::rgba(0xf9, 0x73, 0x16, 0xff));
+    assert!((style.rare().gradient_stops[1].position - 0.60).abs() < 0.01);
+    assert_eq!(style.rare().gradient_stops[2].color, Color::TRANSPARENT);
+    assert!((style.rare().gradient_stops[2].position - 1.0).abs() < 0.01);
 }
 
 #[test]
@@ -419,11 +419,11 @@ fn css_radial_gradient_bare_colors() {
     apply_property(&mut style, "background",
         "radial-gradient(#ff0000, #0000ff)");
     assert_eq!(style.gradient_type, GradientType::Radial);
-    assert_eq!(style.gradient_stops.len(), 2, "should have 2 stops");
-    assert_eq!(style.gradient_stops[0].color, Color::rgb(255, 0, 0));
-    assert!((style.gradient_stops[0].position - 0.0).abs() < 0.01);
-    assert_eq!(style.gradient_stops[1].color, Color::rgb(0, 0, 255));
-    assert!((style.gradient_stops[1].position - 1.0).abs() < 0.01);
+    assert_eq!(style.rare().gradient_stops.len(), 2, "should have 2 stops");
+    assert_eq!(style.rare().gradient_stops[0].color, Color::rgb(255, 0, 0));
+    assert!((style.rare().gradient_stops[0].position - 0.0).abs() < 0.01);
+    assert_eq!(style.rare().gradient_stops[1].color, Color::rgb(0, 0, 255));
+    assert!((style.rare().gradient_stops[1].position - 1.0).abs() < 0.01);
 }
 
 // ── CSS Variable Inheritance ─────────────────────────────────────────────────

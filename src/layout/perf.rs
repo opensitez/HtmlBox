@@ -13,8 +13,6 @@ pub struct PerfCounters {
     pub cascade_ms: f32,
     /// Total layout time (includes all sub-phases).
     pub layout_ms: f32,
-    /// Fragment tree generation time.
-    pub fragment_gen_ms: f32,
     /// Display list build time.
     pub display_list_ms: f32,
     /// Display list replay (paint) time.
