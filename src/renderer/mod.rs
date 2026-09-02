@@ -287,9 +287,12 @@ impl Renderer {
     pub fn load_html_with_base(&mut self, html: &str, base_url: &str, viewport_width: f32, viewport_height: f32) -> crate::Document {
         // Pass our component registry so the initial layout uses the same
         // intrinsic measurements as subsequent relayouts.
-        let doc = crate::load_html_with_registry(
-            html, base_url, viewport_width, viewport_height,
-            self.component_registry.clone(),
+        // ⛔ `self`, not a fresh `Renderer`. This called `load_html_with_registry`,
+        // which built its own — a second `FontSystem` (3.2 s cold, 173 ms warm)
+        // constructed, used for one layout and dropped, while ours sat unused.
+        let registry = self.component_registry.clone();
+        let doc = crate::load_html_reusing(
+            html, base_url, viewport_width, viewport_height, registry, Some(self),
         );
         // Sync engine state so subsequent layout() calls use the right viewport
         let engine = self.layout_engine();
@@ -324,13 +327,27 @@ impl Renderer {
 
         // Only rebuild display list when layout/hover changed — NOT on scroll.
         // Scroll is handled by replaying the cached list with a different offset.
+        // ⛔ `position: sticky` is the ONE scheme whose painted position depends
+        // on the scroll offset, so a page containing one cannot reuse a list
+        // across scroll positions. Everything else — static, relative, float,
+        // absolute — is positioned in the document and translates cleanly, and
+        // `fixed` lives in its own untranslated list.
+        let scroll_moved = doc.scroll_x != self.cached_scroll_x
+            || doc.scroll_y != self.cached_scroll_y;
+        let has_sticky = scroll_moved && has_sticky_box(&doc.root);
         let needs_rebuild = self.display_list_dirty
             || self.cached_display_list.is_none()
-            || layout_changed || hover_changed;
+            || layout_changed || hover_changed || has_sticky;
 
         if needs_rebuild {
             // Build display list with full document extent (not scroll-clipped)
             // so it can be reused across scroll positions.
+            // ⛔ Built at scroll 0,0 — in DOCUMENT coordinates. This passed
+            // `doc.scroll_x/y`, which baked the scroll position into the list,
+            // so the cached list was only valid at the offset it was built for
+            // and every scroll needed a full rebuild of the whole document's
+            // display list. The comment above has always claimed the list is
+            // reused across scroll positions; now it is.
             let list = display_list_builder::build_display_list_full(
                 &doc.root, view_w, doc.root.layout.margin_rect.h.max(view_h),
                 doc.scroll_x, doc.scroll_y,
@@ -351,7 +368,25 @@ impl Renderer {
 
         // Replay display list (cached — only rebuilt on layout/hover change)
         if let Some(ref list) = self.cached_display_list {
-            display_list_replay::replay_with_text(list, pixmap, scale * zoom, &mut self.font_system, &mut self.swash_cache);
+            // The scroll offset is applied HERE, at replay, which is what makes
+            // one cached list serve every scroll position.
+            display_list_replay::replay_with_scroll(
+                list, pixmap, scale * zoom,
+                &mut self.font_system, &mut self.swash_cache,
+                doc.scroll_x, doc.scroll_y,
+            );
+            // `position: fixed` content, at scroll 0 — it does not move.
+            if !list.fixed_commands.is_empty() {
+                let fixed = crate::renderer::display_list::DisplayList {
+                    commands: list.fixed_commands.clone(),
+                    fixed_commands: Vec::new(),
+                };
+                display_list_replay::replay_with_scroll(
+                    &fixed, pixmap, scale * zoom,
+                    &mut self.font_system, &mut self.swash_cache,
+                    0.0, 0.0,
+                );
+            }
         }
         // Paint custom components on top of the display list
         if !self.component_registry.map.is_empty() || !self.component_registry.components.is_empty() {
@@ -771,4 +806,14 @@ pub fn draw_inspect_overlay(node: &WebCore, pixmap: &mut Pixmap, scroll_x: f32, 
     fill_rect(pixmap, p.x-sx, c.y-sy, c.x-p.x, c.h, 128, 200, 120, 80);
     fill_rect(pixmap, c.x+c.w-sx, c.y-sy, (p.x+p.w)-(c.x+c.w), c.h, 128, 200, 120, 80);
     fill_rect(pixmap, c.x-sx, c.y-sy, c.w, c.h, 100, 150, 255, 60);
+}
+
+/// Does any box in the tree use `position: sticky`?
+///
+/// Asked only when the scroll has actually moved, and only to decide whether
+/// the display list can be reused — sticky is the one positioning scheme whose
+/// painted position is a function of the scroll offset.
+fn has_sticky_box(node: &crate::types::WebCore) -> bool {
+    if node.style.position == crate::types::Position::Sticky { return true; }
+    node.children.iter().any(has_sticky_box)
 }

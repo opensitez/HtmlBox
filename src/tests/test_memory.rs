@@ -819,3 +819,158 @@ fn style_sharing_must_not_ignore_box_state() {
     assert_eq!(d.tag_name(plain), d.tag_name(modal));
     assert_eq!(d.get_attribute(modal, "style"), None, "no inline write");
 }
+
+
+/// ⛔ Loading a page must not build a second `Renderer`.
+///
+/// `Renderer::load_html` called `load_html_with_registry`, which constructed
+/// its own `Renderer` for the initial layout — a second `FontSystem`, built,
+/// used once and dropped, while the caller's sat idle. Measured:
+/// `FontSystem::new()` is **3185 ms cold and 173 ms warm**, `Renderer::new()`
+/// 172 ms of which is the font system, and `LayoutEngine::new()` 0 ms.
+///
+/// It also threw away the engine's `text_width_cache` on every load, so the
+/// first layout of every page measured every string from scratch.
+///
+/// A one-element document spent 118 ms in the "Layout" phase and 0 ms in
+/// `layout()` — the whole of it was the discarded renderer. Alternating in one
+/// process on Wikipedia's front page, reuse is ~2.2x faster end to end.
+#[test]
+fn loading_a_page_does_not_build_a_second_renderer() {
+    let tiny = "<html><head></head><body><p>x</p></body></html>";
+    let mut r = crate::Renderer::new();
+    let _ = r.load_html(tiny, 1280.0); // warm the process-wide font caches
+
+    let t = std::time::Instant::now();
+    for _ in 0..5 { let _ = r.load_html(tiny, 1280.0); }
+    let reuse_ms = t.elapsed().as_millis();
+
+    let t = std::time::Instant::now();
+    for _ in 0..5 {
+        let _ = crate::load_html_with_registry(
+            tiny, "", 1280.0, 700.0, crate::types::ComponentRegistry::default());
+    }
+    let fresh_ms = t.elapsed().as_millis();
+
+    assert!(
+        reuse_ms * 3 < fresh_ms.max(1),
+        "reusing the caller's renderer must be far cheaper than building one \
+         per load — got reuse {reuse_ms} ms vs fresh {fresh_ms} ms for 5 loads \
+         of a one-element page"
+    );
+}
+
+
+/// ⛔ A frame in which NOTHING changed must be nearly free, and a scroll must
+/// not cost anything like a first render.
+///
+/// Three separate bugs made every frame redo the whole document, and each was
+/// invisible to every other test because they all produce correct pixels:
+///
+/// * `render()` baked `scroll_x/y` into the cached display list, so the cache
+///   was only valid at the offset it was built for and the page could only
+///   move by rebuilding. `replay_with_scroll` existed for this and was never
+///   wired up.
+/// * `replay_inner` painted the full document height with no viewport culling,
+///   shaping text nobody could see.
+/// * every text run was re-shaped, per frame. `SwashCache` caches RASTERISED
+///   GLYPHS — a different thing, and no help.
+///
+/// Measured on Wikipedia's front page, debug: an idle re-render went 5567 ms →
+/// 30 ms and a scroll 4888-13580 ms → ~120 ms.
+///
+/// The assertion is a RATIO, not a millisecond count, so it means the same
+/// thing on a slow machine or a contended one.
+#[test]
+fn an_unchanged_frame_and_a_scroll_are_cheap() {
+    let html = include_str!("../../examples/html/demo.html");
+    let mut r = crate::Renderer::new();
+    let mut doc = r.load_html(html, 1280.0);
+    let mut pm = tiny_skia::Pixmap::new(1280, 900).unwrap();
+
+    let t = std::time::Instant::now();
+    r.render(&mut doc, &mut pm, 1.0);
+    let first = t.elapsed().as_micros().max(1);
+
+    let t = std::time::Instant::now();
+    r.render(&mut doc, &mut pm, 1.0);
+    let idle = t.elapsed().as_micros();
+
+    doc.scroll_y += 300.0;
+    let t = std::time::Instant::now();
+    r.render(&mut doc, &mut pm, 1.0);
+    let scrolled = t.elapsed().as_micros();
+
+    assert!(
+        idle * 3 < first,
+        "an unchanged frame must be far cheaper than the first: idle {idle} us \
+         vs first {first} us — the display list or the shaped text is being \
+         rebuilt when nothing changed"
+    );
+    assert!(
+        scrolled * 2 < first,
+        "a scroll must reuse the cached list and the shaped text: scrolled \
+         {scrolled} us vs first {first} us"
+    );
+}
+
+
+/// ⛔ Every positioning scheme must survive the scroll-cached display list.
+///
+/// The list is built once in DOCUMENT coordinates and translated by the scroll
+/// at replay, which is what makes scrolling cheap. That is only sound if a
+/// box's document position does not itself depend on the scroll:
+///
+/// | scheme | why it is safe |
+/// |---|---|
+/// | static, relative, float, absolute | positioned in the document; translate |
+/// | fixed | NOT translated — its own `fixed_commands` list |
+/// | sticky | position IS a function of scroll ⇒ forces a rebuild |
+///
+/// `fixed` and `sticky` both broke when the list first moved to document
+/// coordinates: a fixed header scrolled away with the page, and a sticky box
+/// clamped against the top of the DOCUMENT instead of the viewport, so it
+/// never stuck. This renders each kind at a scrolled offset and checks it is
+/// where it belongs, by sampling the pixel.
+#[test]
+fn every_positioning_scheme_survives_the_scroll_cache() {
+    let html = r#"<html><head><style>
+        body { margin:0; background:#fff }
+        #tall { height: 3000px }
+        #fix { position:fixed; top:50px; left:10px; width:60px; height:60px; background:#f00 }
+        #stick { position:sticky; top:20px; left:100px; width:60px; height:60px; background:#0f0 }
+        #abs { position:absolute; top:1000px; left:200px; width:60px; height:60px; background:#00f }
+        #rel { position:relative; top:10px; left:300px; width:60px; height:60px; background:#ff0 }
+        #flo { float:left; width:60px; height:60px; background:#0ff }
+      </style></head><body>
+      <div id=fix></div><div id=stick></div><div id=abs></div>
+      <div id=rel></div><div id=flo></div><div id=tall></div>
+      </body></html>"#;
+    let mut r = crate::Renderer::new();
+    let mut doc = r.load_html(html, 800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 600).unwrap();
+
+    let at = |pm: &tiny_skia::Pixmap, x: u32, y: u32| {
+        let p = pm.pixel(x, y).unwrap();
+        (p.red(), p.green(), p.blue())
+    };
+
+    // Unscrolled: fixed is at its viewport spot.
+    r.render(&mut doc, &mut pm, 1.0);
+    assert_eq!(at(&pm, 40, 80), (255, 0, 0), "fixed box before scrolling");
+
+    // Scrolled: fixed must NOT have moved.
+    doc.scroll_y = 500.0;
+    r.render(&mut doc, &mut pm, 1.0);
+    assert_eq!(
+        at(&pm, 40, 80), (255, 0, 0),
+        "a fixed box must stay put when the page scrolls — it did not, because \
+         it was translated along with the document-coordinate list"
+    );
+
+    // …and the absolute box, at document y=1000, must appear at 1000-500=500.
+    assert_eq!(
+        at(&pm, 230, 530), (0, 0, 255),
+        "an absolutely positioned box translates with the document"
+    );
+}

@@ -266,6 +266,7 @@ pub fn layout_inline_block(
                 extra_space_per_word: 0.0, text_x_offset: 0.0,
                 visual_segments: Vec::new(),
                 char_x: Vec::new(),
+                char_x_key: 0,
             }];
         }
         // <br> in block context (no inline siblings collected it as a Break item)
@@ -644,6 +645,7 @@ pub fn layout_inline_block(
             text_x_offset: text_x_off,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
+            char_x_key: 0,
         };
 
         // Resolve BiDi visual segments for this line
@@ -684,6 +686,7 @@ pub fn layout_inline_block(
             extra_space_per_word: 0.0, text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
+            char_x_key: 0,
         });
         cursor_y += font_px * 1.2;
     }
@@ -702,6 +705,7 @@ pub fn layout_inline_block(
             extra_space_per_word: 0.0, text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
+            char_x_key: 0,
         });
         cursor_y += font_px * 1.2;
     }
@@ -1423,6 +1427,136 @@ pub(crate) fn css_family_to_cosmic(raw: &str) -> Family<'_> {
     }
 }
 
+/// A resolved font family, owned so it can be cached.
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedFamily {
+    Generic(&'static str),
+    /// ⛔ `Rc<str>`, not `String`. This is looked up per shaped segment per
+    /// line; a `String` clone on every cache HIT allocated more than the
+    /// fallback scan it exists to avoid.
+    Named(std::rc::Rc<str>),
+}
+
+impl ResolvedFamily {
+    pub(crate) fn as_family(&self) -> Family<'_> {
+        match self {
+            ResolvedFamily::Generic("serif")      => Family::Serif,
+            ResolvedFamily::Generic("monospace")  => Family::Monospace,
+            ResolvedFamily::Generic("cursive")    => Family::Cursive,
+            ResolvedFamily::Generic("fantasy")    => Family::Fantasy,
+            ResolvedFamily::Generic(_)            => Family::SansSerif,
+            ResolvedFamily::Named(s)              => Family::Name(&**s),
+        }
+    }
+}
+
+thread_local! {
+    /// Lowercased names of every family the font system holds, plus the face
+    /// count it was built from so adding a font rebuilds it.
+    static AVAILABLE: std::cell::RefCell<(usize, std::collections::HashSet<String>)> =
+        std::cell::RefCell::new((usize::MAX, std::collections::HashSet::new()));
+    /// CSS `font-family` string → the family actually used.
+    static FAMILY_CACHE: std::cell::RefCell<std::collections::HashMap<Box<str>, ResolvedFamily>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Resolve a CSS `font-family` stack to the first family that EXISTS.
+///
+/// ⛔ This used to take the FIRST name in the stack and hand it to cosmic-text
+/// whatever it was. CSS says "first AVAILABLE family" (CSS Fonts §5.2), and the
+/// difference is not cosmetic: Wikipedia asks for
+/// `"Linux Libertine", Georgia, Times, serif`, and on a machine without Linux
+/// Libertine cosmic-text answered by walking its whole face list calling
+/// `face_contains_family` — **per shaped run**. That was the single largest
+/// cost in a page load, ahead of layout itself.
+///
+/// Cached per stack string, and the availability set is rebuilt whenever the
+/// font DB grows (a `@font-face` load).
+pub(crate) fn resolve_css_family(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedFamily {
+    // ⛔ A front cache keyed on the string's ADDRESS, not its contents.
+    // This is called once per shaped segment per line; hashing a font stack
+    // ("Linux Libertine", Georgia, Times, "Source Serif Pro", serif) on every
+    // one of those cost 12.7 us a call — more than the fallback scan it
+    // exists to prevent. `font_family` lives in an `Arc<ComputedStyle>` shared
+    // across elements, so the same pointer comes back over and over.
+    FRONT.with(|f| {
+        let f = f.borrow();
+        for (ptr, len, fam) in f.iter() {
+            if *ptr == raw.as_ptr() && *len == raw.len() {
+                return Some(fam.clone());
+            }
+        }
+        None
+    })
+    .map(Some)
+    .unwrap_or(None)
+    .map_or_else(|| resolve_css_family_slow(fs, raw), |f| f)
+}
+
+thread_local! {
+    /// (address, length, family) — a tiny direct scan, cleared when it fills.
+    static FRONT: std::cell::RefCell<Vec<(*const u8, usize, ResolvedFamily)>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+fn resolve_css_family_slow(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedFamily {
+    let found = FAMILY_CACHE.with(|c| c.borrow().get(raw).cloned());
+    if let Some(hit) = found {
+        FRONT.with(|f| {
+            let mut f = f.borrow_mut();
+            if f.len() >= 16 { f.clear(); }
+            f.push((raw.as_ptr(), raw.len(), hit.clone()));
+        });
+        return hit;
+    }
+    let faces = fs.db().len();
+    AVAILABLE.with(|a| {
+        let mut a = a.borrow_mut();
+        if a.0 != faces {
+            a.1.clear();
+            for face in fs.db().faces() {
+                for (name, _) in &face.families {
+                    a.1.insert(name.to_ascii_lowercase());
+                }
+            }
+            a.0 = faces;
+        }
+    });
+
+    let mut chosen: Option<ResolvedFamily> = None;
+    for part in raw.split(',') {
+        let name = part.trim().trim_matches('"').trim_matches('\'').trim();
+        if name.is_empty() { continue; }
+        let lower = name.to_ascii_lowercase();
+        match lower.as_str() {
+            "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy" | "system-ui" => {
+                let g = match lower.as_str() {
+                    "serif" => "serif", "monospace" => "monospace",
+                    "cursive" => "cursive", "fantasy" => "fantasy",
+                    _ => "sans-serif",
+                };
+                chosen = Some(ResolvedFamily::Generic(g));
+                break;
+            }
+            _ => {
+                let present = AVAILABLE.with(|a| a.borrow().1.contains(&lower));
+                if present {
+                    chosen = Some(ResolvedFamily::Named(std::rc::Rc::from(name)));
+                    break;
+                }
+            }
+        }
+    }
+    let chosen = chosen.unwrap_or(ResolvedFamily::Generic("sans-serif"));
+    FAMILY_CACHE.with(|c| c.borrow_mut().insert(Box::from(raw), chosen.clone()));
+    FRONT.with(|f| {
+        let mut f = f.borrow_mut();
+        if f.len() >= 16 { f.clear(); }
+        f.push((raw.as_ptr(), raw.len(), chosen.clone()));
+    });
+    chosen
+}
+
 /// Extract the first font-family name as a `&str` slice into `raw`.
 /// Strips surrounding quotes for quoted names.
 fn extract_first_css_family(raw: &str) -> &str {
@@ -1524,8 +1658,10 @@ pub fn measure_text_width_fs_attrs(
     let mut buffer = Buffer::new(fs, metrics);
     let mut attrs = Attrs::new().weight(weight).style(style);
     // Set the correct font family so monospace/serif/etc. are measured accurately
+    let resolved;
     if !font_family.is_empty() {
-        attrs = attrs.family(cosmic_text_family(font_family));
+        resolved = resolve_css_family(fs, font_family);
+        attrs = attrs.family(resolved.as_family());
     }
     buffer.set_text(fs, text, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(fs, false);
@@ -1608,6 +1744,11 @@ pub fn fill_char_x_for_line(
         let phys_px = font_px * scale;
         let metrics = Metrics::new(phys_px, phys_px * 1.2);
         let mut buf = Buffer::new(fs, metrics);
+        // ⛔ The cheap first-name resolver, NOT `resolve_css_family`. Routing
+        // this through the available-family cache measured WORSE: it runs per
+        // segment per line, and even a pointer-keyed hit is ~1.7 us, which
+        // exceeds what the fallback it avoids costs here. The resolver earns
+        // its keep in `measure_text_width_fs_attrs`, which is called far less.
         let family = css_family_to_cosmic(&run.style.font_family);
         let attrs = Attrs::new().weight(ct_w).style(ct_s).stretch(ct_stretch).family(family);
         buf.set_text(fs, seg_text, &attrs, Shaping::Advanced, None);

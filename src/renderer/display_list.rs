@@ -239,11 +239,19 @@ pub enum ImageRef {
 #[derive(Clone, Debug, Default)]
 pub struct DisplayList {
     pub commands: Vec<PaintCmd>,
+    /// `position: fixed` content, in VIEWPORT coordinates.
+    ///
+    /// ⛔ Separate because `commands` is in DOCUMENT coordinates and replay
+    /// translates it by the scroll offset — which is what lets one cached list
+    /// serve every scroll position. Fixed content must NOT move, so it cannot
+    /// live in the same list. Replaying these with the same translation makes
+    /// a fixed header scroll away with the page.
+    pub fixed_commands: Vec<PaintCmd>,
 }
 
 impl DisplayList {
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self { commands: Vec::new(), fixed_commands: Vec::new() }
     }
 
     pub fn push(&mut self, cmd: PaintCmd) {

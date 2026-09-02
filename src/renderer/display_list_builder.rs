@@ -21,6 +21,8 @@ pub fn build_display_list(root: &WebCore, viewport_w: f32, viewport_h: f32) -> D
     let ctx = BuildContext {
         scroll_x: 0.0,
         scroll_y: 0.0,
+        sticky_scroll_x: 0.0,
+        sticky_scroll_y: 0.0,
         hovered_id: 0,
         active_id: 0,
         visited_hrefs: &visited,
@@ -44,8 +46,13 @@ pub fn build_display_list_full(
 ) -> DisplayList {
     let doc_h = crate::types::Document::scroll_height(root).max(viewport_h);
     let ctx = BuildContext {
-        scroll_x,
-        scroll_y,
+        // ⛔ The list is built in DOCUMENT coordinates so replay can translate
+        // it to any scroll position. The caller's scroll is kept only for
+        // `position: sticky`, whose position genuinely depends on it.
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        sticky_scroll_x: scroll_x,
+        sticky_scroll_y: scroll_y,
         hovered_id,
         active_id,
         visited_hrefs,
@@ -57,6 +64,7 @@ pub fn build_display_list_full(
     // Fixed elements: rendered at viewport position (already scroll=0)
     let fixed_ctx = BuildContext {
         scroll_x: 0.0, scroll_y: 0.0,
+        sticky_scroll_x: 0.0, sticky_scroll_y: 0.0,
         hovered_id, active_id, visited_hrefs,
         clip: Rect::new(0.0, 0.0, viewport_w, viewport_h),
     };
@@ -71,7 +79,10 @@ pub fn build_display_list_full(
             None
         }
         if let Some(node) = find_node(root, fid) {
-            build_for_box(node, &mut list, &fixed_ctx);
+            // Into a list of its own — see `DisplayList::fixed_commands`.
+            let mut fixed = DisplayList::new();
+            build_for_box(node, &mut fixed, &fixed_ctx);
+            list.fixed_commands.extend(fixed.commands);
         }
     }
 
@@ -81,6 +92,15 @@ pub fn build_display_list_full(
 struct BuildContext<'a> {
     scroll_x: f32,
     scroll_y: f32,
+    /// The live scroll offset, for `position: sticky` ONLY.
+    ///
+    /// ⛔ `scroll_x/y` are 0 now — the list is built in DOCUMENT coordinates so
+    /// one cached list can serve every scroll position. Sticky is the one
+    /// scheme whose position genuinely depends on the scroll, so it needs the
+    /// real value, and a page containing one has to rebuild its list when the
+    /// scroll changes (see `Renderer::render`).
+    sticky_scroll_x: f32,
+    sticky_scroll_y: f32,
     hovered_id: u32,
     active_id: u32,
     visited_hrefs: &'a std::collections::HashSet<String>,
@@ -209,13 +229,17 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         let left_val = node.style.left.resolve(font_px, ctx.clip.w, 16.0);
         let nat_x = pr.x - sx;
         let nat_y = pr.y - sy;
+        // ⛔ In DOCUMENT coordinates the sticky edge is the scroll offset plus
+        // the inset, not the clip origin plus the inset. With the list built at
+        // scroll 0 the old form clamped against the top of the page, so a
+        // sticky element never stuck.
         let cx = if !node.style.left.is_auto() {
-            nat_x.max(ctx.clip.x + left_val)
+            nat_x.max(ctx.sticky_scroll_x + ctx.clip.x + left_val)
         } else {
             nat_x
         };
         let cy = if !node.style.top.is_auto() {
-            nat_y.max(ctx.clip.y + top_val)
+            nat_y.max(ctx.sticky_scroll_y + ctx.clip.y + top_val)
         } else {
             nat_y
         };
@@ -579,6 +603,8 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     let child_ctx = BuildContext {
         scroll_x: child_sx,
         scroll_y: child_sy,
+        sticky_scroll_x: ctx.sticky_scroll_x,
+        sticky_scroll_y: ctx.sticky_scroll_y,
         hovered_id: ctx.hovered_id,
         active_id: ctx.active_id,
         visited_hrefs: ctx.visited_hrefs,

@@ -20,6 +20,37 @@ pub fn replay(list: &DisplayList, pixmap: &mut Pixmap, scale: f32) {
 }
 
 /// Replay with text rendering via cosmic_text.
+/// How far outside the viewport a command is still painted. Generous, because
+/// a command's own bounds do not account for shadows, outlines or decoration
+/// that spill beyond them.
+const CULL_MARGIN: f32 = 512.0;
+
+thread_local! {
+    /// (font-DB face count, shaped buffers by text+attrs). See the note at the
+    /// shaping site: this is the difference between re-shaping every visible
+    /// text run on every frame and shaping each distinct one once.
+    static SHAPED: std::cell::RefCell<(usize, std::collections::HashMap<u64, Buffer>)> =
+        std::cell::RefCell::new((usize::MAX, std::collections::HashMap::new()));
+}
+
+/// The document-space vertical extent of a DRAWING command, or `None` for a
+/// command that must never be skipped (anything that manipulates a stack, and
+/// anything whose extent is not simply its rect).
+fn cmd_y_range(cmd: &PaintCmd) -> Option<(f32, f32)> {
+    match cmd {
+        PaintCmd::FillRect { rect, .. }
+        | PaintCmd::Border { rect, .. }
+        | PaintCmd::Image { rect, .. }
+        | PaintCmd::Gradient { rect, .. }
+        | PaintCmd::Outline { rect, .. } => Some((rect.y, rect.y + rect.h)),
+        PaintCmd::Text { y, font_size, line_height, .. } => {
+            let pad = font_size.max(*line_height) * 2.0;
+            Some((y - pad, y + pad))
+        }
+        _ => None,
+    }
+}
+
 pub fn replay_with_text(
     list: &DisplayList,
     pixmap: &mut Pixmap,
@@ -72,7 +103,36 @@ fn replay_inner(
     let pw = pixmap.width();
     let ph = pixmap.height();
 
+    // ── Viewport culling ────────────────────────────────────────────────────
+    //
+    // ⛔ Replay used to paint the WHOLE document every frame. The display list
+    // covers the full page height, so on a long page most commands drew far
+    // outside the pixmap — and a `Text` command costs a cosmic-text shaping
+    // pass whether or not any of it lands on screen. Measured on Wikipedia: a
+    // render with NOTHING changed cost 5567 ms, and so did every scroll.
+    //
+    // Only DRAWING commands are skipped, and only while no transform is in
+    // effect — a transform can move a command anywhere, and the push/pop
+    // commands must all run or the clip and layer stacks desync.
+    let vis_top = scroll_y - CULL_MARGIN;
+    let vis_bot = scroll_y + (ph as f32) / scale.max(0.001) + CULL_MARGIN;
+    let mut transform_depth = 0i32;
+
     for cmd in &list.commands {
+        match cmd {
+            PaintCmd::PushTransform { .. } => transform_depth += 1,
+            PaintCmd::PopTransform      => transform_depth -= 1,
+            _ => {}
+        }
+        // ⛔ Also never while a LAYER is active. `PushOpacity`, `PushFilter`
+        // and `PushBlendMode` redirect drawing into an offscreen pixmap that is
+        // composited later, so a command inside one cannot be judged against
+        // the document band the way an ordinary command can.
+        if transform_depth == 0 && layer_stack.is_empty() {
+            if let Some((top, bot)) = cmd_y_range(cmd) {
+                if bot < vis_top || top > vis_bot { continue; }
+            }
+        }
         // Get the current clip mask (topmost on the stack)
         let clip_mask = clip_mask_stack.last().and_then(|m| m.as_ref());
 
@@ -1084,19 +1144,57 @@ fn draw_text_cmd(
     };
     let attrs = Attrs::new().weight(ct_w).style(ct_s).family(family);
 
-    let mut buf = Buffer::new(font_system, metrics);
-    buf.set_size(font_system, None, Some((phys_lh + 4.0).max(1.0)));
-    buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
-    buf.shape_until_scroll(font_system, false);
-
     let phys_x = x * sc;
     let phys_y = y * sc;
     let ct_color = CTextColor::rgba(color.r, color.g, color.b, color.a);
 
-    blit_shaped_buffer(pixmap, font_system, swash_cache, &mut buf, phys_x, phys_y, ct_color);
+    // ⛔ SHAPE ONCE, BLIT MANY. This built a `Buffer` and ran a full
+    // cosmic-text shaping pass for EVERY text run on EVERY frame — so a page
+    // that had not changed at all re-shaped all its visible text just to put
+    // the same pixels back. `SwashCache` caches RASTERISED GLYPHS, which is a
+    // different thing and does not help here.
+    //
+    // The shaped buffer depends only on the string and the font attributes, so
+    // it is cached on those. Position and colour are applied at blit time.
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        phys_px.to_bits().hash(&mut h);
+        phys_lh.to_bits().hash(&mut h);
+        font_weight.hash(&mut h);
+        font_style.hash(&mut h);
+        font_family.hash(&mut h);
+        // ⛔ In the key even though this function IGNORES them today — they
+        // are a property of the run, and the day they reach the shaper a stale
+        // buffer would be a silent wrong-glyph-positions bug.
+        _letter_spacing.to_bits().hash(&mut h);
+        _small_caps.hash(&mut h);
+        h.finish()
+    };
+
+    let line_w = SHAPED.with(|cell| {
+        let mut map = cell.borrow_mut();
+        // A font load changes what any string shapes to, so the whole cache
+        // goes when the face count moves.
+        let faces = font_system.db().len();
+        if map.0 != faces { map.1.clear(); map.0 = faces; }
+        // Bounded: a long session on many pages should not grow for ever.
+        if map.1.len() > 8192 { map.1.clear(); }
+
+        if !map.1.contains_key(&key) {
+            let mut buf = Buffer::new(font_system, metrics);
+            buf.set_size(font_system, None, Some((phys_lh + 4.0).max(1.0)));
+            buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+            buf.shape_until_scroll(font_system, false);
+            map.1.insert(key, buf);
+        }
+        let buf = map.1.get_mut(&key).expect("just inserted");
+        blit_shaped_buffer(pixmap, font_system, swash_cache, buf, phys_x, phys_y, ct_color);
+        buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0)
+    });
 
     // Draw text decorations (underline, overline, strikethrough)
-    let line_w = buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0);
     let thickness = (decoration.thickness * sc).max(1.0);
     let mut paint = Paint::default();
     paint.set_color(to_sk_color(&Color::rgba(

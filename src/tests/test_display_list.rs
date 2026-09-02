@@ -159,23 +159,34 @@ fn hover_style_applied_in_display_list() {
 
 // ── Scrolling ───────────────────────────────────────────────────────────────
 
+/// ⛔ The display list is SCROLL-INDEPENDENT — the scroll is applied at replay.
+///
+/// This test used to assert the opposite: that building at scroll 100 moved
+/// the rect up by 100. That was the old contract, and it is why scrolling cost
+/// seconds — a list with the offset baked in is only valid at that one offset,
+/// so the page could only move by rebuilding the whole document's list. The
+/// list is now built in DOCUMENT coordinates and translated by
+/// `replay_with_scroll`, which is what lets one build serve every scroll
+/// position.
+///
+/// The scroll argument survives for `position: sticky` alone — the one scheme
+/// whose position really is a function of the scroll.
 #[test]
-fn scroll_offset_shifts_positions() {
+fn the_display_list_is_scroll_independent() {
     let html = r#"<div style="background: blue; width: 100px; height: 50px; position: absolute; top: 200px; left: 100px">x</div>"#;
     let doc = parse_html(html);
     let mut f = EngineFrame::new(doc, 800.0, 600.0);
     f.update_frame();
 
-    let list_no_scroll = build_display_list_full(
+    let unscrolled = build_display_list_full(
         &f.doc.root, 800.0, 600.0, 0.0, 0.0, 0, 0,
         &std::collections::HashSet::new(),
     );
-    let list_scrolled = build_display_list_full(
+    let scrolled = build_display_list_full(
         &f.doc.root, 800.0, 600.0, 0.0, 100.0, 0, 0,
         &std::collections::HashSet::new(),
     );
 
-    // Find the blue rect's Y position in each
     fn find_blue_y(list: &DisplayList) -> Option<f32> {
         for cmd in &list.commands {
             if let PaintCmd::FillRect { rect, color, .. } = cmd {
@@ -184,13 +195,15 @@ fn scroll_offset_shifts_positions() {
         }
         None
     }
-    let y_no_scroll = find_blue_y(&list_no_scroll);
-    let y_scrolled = find_blue_y(&list_scrolled);
+    let y1 = find_blue_y(&unscrolled).expect("the blue box is painted");
+    let y2 = find_blue_y(&scrolled).expect("the blue box is painted");
 
-    if let (Some(y1), Some(y2)) = (y_no_scroll, y_scrolled) {
-        assert!((y1 - y2 - 100.0).abs() < 2.0,
-            "scroll should shift Y by 100: no_scroll={} scrolled={}", y1, y2);
-    }
+    assert!(
+        (y1 - y2).abs() < 0.01,
+        "the same box must build to the same document position whatever the \
+         scroll — got {y1} and {y2}; a scroll-dependent list cannot be cached"
+    );
+    assert!((y1 - 200.0).abs() < 2.0, "and that position is the DOCUMENT one");
 }
 
 // ── Pseudo-elements ─────────────────────────────────────────────────────────

@@ -106,6 +106,25 @@ pub fn load_html_with_registry(
     viewport_height: f32,
     registry: types::ComponentRegistry,
 ) -> Document {
+    load_html_reusing(html, base_url, viewport_width, viewport_height, registry, None)
+}
+
+/// The same load, but laying out with a renderer the caller ALREADY has.
+///
+/// ⛔ The initial layout needs a `FontSystem`, and this used to get one by
+/// constructing a whole `Renderer` here — so `Renderer::load_html` built a
+/// second font system, used it once and dropped it, while its own sat idle.
+/// `FontSystem::new()` is **3.2 s cold and 173 ms warm**; `LayoutEngine::new()`
+/// is 0 ms. That was the entire fixed cost of loading a page: a one-element
+/// document measured 118 ms in the "Layout" phase and 0 ms in `layout()`.
+pub fn load_html_reusing(
+    html: &str,
+    base_url: &str,
+    viewport_width: f32,
+    viewport_height: f32,
+    registry: types::ComponentRegistry,
+    reuse: Option<&mut Renderer>,
+) -> Document {
     use std::sync::{mpsc, atomic::{AtomicUsize, Ordering}, Arc};
 
     // Channel for CSS results — fetches start during parsing via the hook.
@@ -163,8 +182,11 @@ pub fn load_html_with_registry(
     doc.stylesheet.resolve_variables_for_viewport(viewport_width, viewport_height);
     doc.stylesheet.rebuild_index();
     eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
-    css::apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, viewport_width, viewport_height, 0, false);
-    eprintln!("  Cascade: {:.0}ms", t2.elapsed().as_millis());
+    // ⛔ No cascade here. `layout()` runs one itself — a better one, with the
+    // hover chain and focus — whenever the engine has not cascaded at this
+    // viewport or the DOM is style-dirty, which is always true on a first
+    // load. Running one here too meant every page load cascaded TWICE.
+    eprintln!("  Cascade: {:.0}ms (deferred to layout)", t2.elapsed().as_millis());
 
     // Resolve <picture> elements with real viewport dimensions before image fetching
     let base = doc.base_url.clone();
@@ -174,7 +196,14 @@ pub fn load_html_with_registry(
     start_async_image_fetches(&mut doc);
 
     let t3 = std::time::Instant::now();
-    let mut renderer = Renderer::new();
+    let mut owned: Option<Renderer> = None;
+    let renderer: &mut Renderer = match reuse {
+        Some(r) => r,
+        None => {
+            owned = Some(Renderer::new());
+            owned.as_mut().expect("just set")
+        }
+    };
     renderer.component_registry = registry;
     {
         let engine = renderer.layout_engine();

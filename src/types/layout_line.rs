@@ -28,4 +28,15 @@ pub struct LayoutLine {
     pub visual_segments: Vec<VisualSegment>,
     /// Per-character-boundary x positions relative to `self.x + text_x_offset`, in logical pixels.
     pub char_x: Vec<f32>,
+    /// Fingerprint of everything `char_x` was shaped from — the line's text,
+    /// the styles of the runs covering it, the justification spacing and the
+    /// device scale.
+    ///
+    /// ⛔ Filling `char_x` re-shapes the line through cosmic-text and was the
+    /// single largest cost in a layout (72,805 profile samples on Wikipedia),
+    /// repeated on every layout even when nothing about the line had changed.
+    /// The existing early-stop could not help: it needs `old_line_idx > 0` and
+    /// copies the whole TAIL, so the first line is always re-shaped and a block
+    /// of one or two lines never benefits. `0` means "not computed".
+    pub char_x_key: u64,
 }
