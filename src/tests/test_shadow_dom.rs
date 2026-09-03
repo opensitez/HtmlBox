@@ -246,3 +246,33 @@ fn attach_shadow_programmatic() {
     let sr = host.shadow_root.as_ref().unwrap();
     assert!(sr.children.iter().any(|c| c.tag == "p"), "shadow tree should have <p>");
 }
+
+// ── The path a real page takes ──────────────────────────────────────────────
+
+/// Shadow styles have to work through `Renderer::load_html`, which is what an
+/// actual page load runs — the helpers above call the cascade directly and so
+/// cannot see a break in that path.
+#[test]
+fn shadow_styles_apply_through_the_renderer() {
+    let mut r = crate::Renderer::new();
+    let d = r.load_html(
+        "<style>body{margin:0}</style>\
+         <div id=host><template shadowrootmode=open>\
+         <style>p{color:rgb(0,128,0);height:40px}</style>\
+         <p id=inner>shadowed</p></template></div>", 800.0);
+    // `getElementById` deliberately does NOT pierce the boundary, so the node
+    // is reached through the render tree instead.
+    fn find<'a>(n: &'a crate::WebCore, id: &str) -> Option<&'a crate::WebCore> {
+        if n.attributes.get("id").map(|v| v == id).unwrap_or(false) { return Some(n) }
+        if let Some(sr) = &n.shadow_root {
+            for c in &sr.children { if let Some(f) = find(c, id) { return Some(f) } }
+        }
+        for c in &n.children { if let Some(f) = find(c, id) { return Some(f) } }
+        None
+    }
+    let p = find(&d.root, "inner").expect("shadow <p> in the render tree");
+    assert_eq!(p.style.color, crate::types::Color::rgb(0, 128, 0),
+               "the shadow <style> must colour its own tree");
+    assert!((p.layout.border_rect.h - 40.0).abs() < 0.5,
+            "…and size it, got {}", p.layout.border_rect.h);
+}

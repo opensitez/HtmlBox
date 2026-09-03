@@ -66,20 +66,72 @@ pub fn apply_cascade_vp_hover(
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
     let mut share_cache: ShareCache = HashMap::new();
-    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain, &[], &mut share_cache);
+    apply_cascade_inner(root, stylesheet, parent_style, root_font_px, &mut ancestors, 0, 1, 0, 1, vw, vh, focused_box, keyboard_focus, &stylesheet.variables, &mut candidates_buf, &mut counters, hover_chain, &[], &mut share_cache, None);
 }
 
 /// Build a ComputedStyle for a ::before/::after pseudo-element.
 /// Inherits inherited properties from `base` (the originating element's style),
 /// resets non-inherited properties to CSS initial values, then applies matched declarations.
+/// The generated text of a `content` declaration, or `None` when it names no
+/// pseudo-element at all. `content: ""` returns `Some("")`.
+fn pseudo_content(value: &str) -> Option<String> {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("none") || v.eq_ignore_ascii_case("normal") {
+        return None;
+    }
+    Some(resolve_content_value(value))
+}
+
+/// The last word on `display`, run once every declaration has been applied.
+///
+/// ⛔ COMPUTED-VALUE TIME, not declaration time (CSS Display 3 §2.7). A
+/// blockification done inside `float`'s own applier depends on where `float`
+/// sits among the declarations, so `float:left; display:inline` and
+/// `display:inline; float:left` came out different — and the two cascade
+/// implementations, which order matched rules differently, disagreed about the
+/// same element on a re-cascade.
+pub(crate) fn finalize_display(style: &mut ComputedStyle, tag: &str, has_explicit_display: bool) {
+    // A block-level element left Inline by nothing but the default takes Block.
+    if matches!(style.display, Display::Inline) && !has_explicit_display {
+        let should_be_block = matches!(tag,
+            "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+            | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "blockquote" | "hr"
+            | "section" | "article" | "aside" | "nav" | "header" | "footer" | "main"
+            | "address" | "figure" | "figcaption" | "details" | "center"
+            | "form" | "fieldset" | "legend" | "hgroup" | "search");
+        if should_be_block {
+            style.display = Display::Block;
+        }
+    }
+    // Floated and absolutely positioned boxes are blockified.
+    let out_of_flow = !matches!(style.float, Float::None)
+        || matches!(style.position, Position::Absolute | Position::Fixed);
+    if out_of_flow {
+        style.display = match style.display {
+            Display::Inline | Display::InlineBlock => Display::Block,
+            Display::InlineFlex => Display::Flex,
+            Display::InlineGrid => Display::Grid,
+            Display::TableRow | Display::TableCell | Display::TableHeaderCell
+            | Display::TableRowGroup | Display::TableHeaderGroup | Display::TableFooterGroup
+            | Display::TableColumn | Display::TableColumnGroup | Display::TableCaption
+            | Display::Ruby | Display::RubyText => Display::Block,
+            other => other,
+        };
+    }
+}
+
 pub(crate) fn build_pseudo_style_shared(
     matched: &mut Vec<(u32, usize)>,
     base: &ComputedStyle,
     vars: &HashMap<String, String>,
     rules: &[CssRule],
-) -> Option<(String, Box<ComputedStyle>)> {
+) -> Option<(Option<String>, Box<ComputedStyle>)> {
     if matched.is_empty() { return None; }
-    matched.sort_by_key(|(sp, _)| *sp);
+    // ⛔ LAYER first, then specificity — CSS Cascade 5 §6.4.4. Sorting on
+    // specificity alone made `@layer` ordering invisible: a rule in an earlier
+    // layer could beat one in a later layer just by being more specific, and
+    // layer order fell back to source order.
+    matched.sort_by_key(|(sp, idx)| (rules[*idx].layer_rank, *sp));
     let mut ps = base.clone();
     // Reset sizing properties that should not leak from parent
     ps.width = CssLength::Auto;
@@ -88,12 +140,16 @@ pub(crate) fn build_pseudo_style_shared(
     ps.after_style  = None;
     ps.before_content = String::new();
     ps.after_content  = String::new();
-    let mut content = String::new();
+    // **`content` decides whether the pseudo-element exists at all**
+    // (css-pseudo-4 §2.1): `none` — which is what `normal` computes to here,
+    // and what an absent declaration leaves — generates nothing. `""` is a
+    // real, empty pseudo-element, so the two cannot collapse to one string.
+    let mut content: Option<String> = None;
     for &(_, ri) in matched.iter() {
         for (prop, val) in &rules[ri].declarations {
             let resolved = resolve_var_references(val, vars);
             if prop == "content" {
-                content = resolve_content_value(&resolved);
+                content = pseudo_content(&resolved);
             } else {
                 apply_property(&mut ps, prop, &resolved);
             }
@@ -107,7 +163,7 @@ pub(crate) fn build_pseudo_style_shared(
             for (prop, val) in &rules[ri].important_declarations {
                 let resolved = resolve_var_references(val, vars);
                 if prop == "content" {
-                    content = resolve_content_value(&resolved);
+                    content = pseudo_content(&resolved);
                 } else {
                     apply_property(&mut ps, prop, &resolved);
                 }
@@ -126,7 +182,7 @@ pub(crate) fn build_pseudo_style_shared(
 /// `apply_cascade_inner`'s frame ACROSS the recursive call, because a
 /// debug build does not reuse stack slots between sibling scopes. Only a
 /// real function boundary pops them (`arenaplan.md` item 3).
-fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
+pub(crate) fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
 
         let is_grid_or_flex = matches!(root.style.display,
             Display::Grid | Display::InlineGrid | Display::Flex | Display::InlineFlex);
@@ -134,12 +190,11 @@ fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
             matches!(ps.position, Position::Absolute | Position::Fixed));
         let before_is_block = root.style.before_style.as_ref().map_or(false, |ps|
             ps.is_block_level());
-        let before_has_content = !root.style.before_content.is_empty()
-            || (is_grid_or_flex && root.style.before_style.is_some());
-        if (is_grid_or_flex && before_has_content)
-            || (before_is_positioned && root.style.before_style.is_some())
-            || (before_is_block && !root.style.before_content.is_empty())
-        {
+        // `before_style` is Some only when `content` generated the pseudo-element,
+        // so it — not the generated TEXT, which is empty for `content: ""` — is
+        // what says the box may exist.
+        let before_generated = root.style.before_style.is_some();
+        if before_generated && (is_grid_or_flex || before_is_positioned || before_is_block) {
             let existing = root.children.iter().position(|c| c.tag == "::before");
             let mut pseudo_box = crate::types::WebCore::new("::before");
             pseudo_box.text = root.style.before_content.clone();
@@ -166,12 +221,8 @@ fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
             matches!(ps.position, Position::Absolute | Position::Fixed));
         let after_is_block = root.style.after_style.as_ref().map_or(false, |ps|
             ps.is_block_level());
-        let after_has_content = !root.style.after_content.is_empty()
-            || (is_grid_or_flex && root.style.after_style.is_some());
-        if (is_grid_or_flex && after_has_content)
-            || (after_is_positioned && root.style.after_style.is_some())
-            || (after_is_block && !root.style.after_content.is_empty())
-        {
+        let after_generated = root.style.after_style.is_some();
+        if after_generated && (is_grid_or_flex || after_is_positioned || after_is_block) {
             let existing = root.children.iter().position(|c| c.tag == "::after");
             let mut pseudo_box = crate::types::WebCore::new("::after");
             pseudo_box.text = root.style.after_content.clone();
@@ -214,6 +265,125 @@ fn build_pseudo_element_boxes(root: &mut crate::types::WebCore) {
 pub(crate) type ShareCache =
     HashMap<(usize, String, String), std::sync::Arc<ComputedStyle>>;
 
+/// Every rule that matched one element, bucketed by what it styles.
+///
+/// ⛔ ONE shape for both cascades. The parallel pass computes these off-thread
+/// and hands them to `apply_cascade_inner`, which otherwise computes them
+/// itself — so there is a single matcher, a single set of buckets, and no way
+/// for the two paths to disagree about which rules apply to an element.
+#[derive(Clone, Default)]
+pub(crate) struct MatchSets {
+    pub matched:           Vec<(u32, usize)>,
+    pub hover_matched:     Vec<(u32, usize)>,
+    pub active_matched:    Vec<(u32, usize)>,
+    pub visited_matched:   Vec<(u32, usize)>,
+    pub before_matched:    Vec<(u32, usize)>,
+    pub after_matched:     Vec<(u32, usize)>,
+    pub selection_matched: Vec<(u32, usize)>,
+    pub marker_matched:    Vec<(u32, usize)>,
+}
+
+/// Precomputed match results, keyed by `node_id`.
+///
+/// ⛔ `node_id`, not a path through `children`. A path is invalidated the moment
+/// `build_pseudo_element_boxes` inserts a `::before` at index 0 during the apply
+/// walk: every later sibling then reads its neighbour's rules, and the last one
+/// reads none at all. `node_id` is stable across that insertion.
+pub(crate) type MatchMap = HashMap<u32, MatchSets>;
+
+/// Run the selectors of `stylesheet` against one element.
+///
+/// The only place a selector is tested during a cascade. `candidates_buf` is a
+/// scratch Vec the caller owns so the walk allocates once, not once per node.
+pub(crate) fn match_rules(
+    node: &crate::types::WebCore,
+    stylesheet: &Stylesheet,
+    ancestors: &[AncestorInfo],
+    child_index: usize,
+    sibling_count: usize,
+    type_child_index: usize,
+    type_sibling_count: usize,
+    vw: f32,
+    vh: f32,
+    focused_box: u32,
+    keyboard_focus: bool,
+    hover_chain: &std::collections::HashSet<u32>,
+    prev_siblings: &[(String, String, String)],
+    candidates_buf: &mut Vec<usize>,
+) -> MatchSets {
+    // ⛔ `html_box` is the element itself, always. `:has()`, `:empty`, `:focus`,
+    // `:focus-within`, `:modal`, `:popover-open`, `:checked`, `:indeterminate`
+    // and `:placeholder-shown` all read the BOX; without one they answer false
+    // or fall back to the content attribute, which is a different page.
+    let match_ctx = MatchContext {
+        focused_box,
+        keyboard_focus,
+        type_child_index,
+        type_sibling_count,
+        html_box: Some(node),
+        hover_chain,
+        element_id: node.node_id,
+        prev_siblings,
+    };
+
+    let mut sets = MatchSets::default();
+
+    // The selector index narrows the candidates instead of scanning every rule.
+    let id = node.attributes.get("id").map(|s| s.as_str());
+    let class_attr = node.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
+    let classes: Vec<&str> = class_attr.split_whitespace().collect();
+    stylesheet.candidate_rules(&node.tag, id, &classes, candidates_buf);
+
+    for &rule_idx in candidates_buf.iter() {
+        let rule = &stylesheet.rules[rule_idx];
+        // Rules whose @media condition does not match the viewport are not in
+        // the cascade at all.
+        if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
+            continue;
+        }
+        // Container rules need layout context — a post-layout pass applies them.
+        if !rule.container_condition.is_empty() { continue; }
+        for sel in &rule.selectors {
+            // Per-selector state flags are precomputed; nothing is scanned here.
+            let has_hover   = sel.has_hover;
+            let has_active  = sel.has_active;
+            let has_visited = sel.has_visited;
+
+            if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
+                if matches_selector_with_ancestors(
+                    &sel.base_parts, &node.tag, &node.attributes,
+                    child_index, sibling_count, ancestors, &match_ctx,
+                ) {
+                    if has_hover   { sets.hover_matched.push((rule.specificity, rule_idx)); }
+                    if has_active  { sets.active_matched.push((rule.specificity, rule_idx)); }
+                    if has_visited { sets.visited_matched.push((rule.specificity, rule_idx)); }
+                    // With a hover chain live, the FULL selector is tested too:
+                    // a `:hover` rule that matches now applies as a normal rule,
+                    // so it can change layout (`display: block` on a menu).
+                    if has_hover && !hover_chain.is_empty()
+                        && sel.matches_with_ancestors_ctx(node, child_index, sibling_count, ancestors, &match_ctx) {
+                        sets.matched.push((rule.specificity, rule_idx));
+                    }
+                    break;
+                }
+                continue;
+            }
+            if sel.matches_with_ancestors_ctx(node, child_index, sibling_count, ancestors, &match_ctx) {
+                match rule.pseudo_element {
+                    PseudoElement::Before     => sets.before_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::After      => sets.after_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::Selection  => sets.selection_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::Marker     => sets.marker_matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::None       => sets.matched.push((rule.specificity, rule_idx)),
+                    PseudoElement::Ignored    => {}
+                }
+                break;
+            }
+        }
+    }
+    sets
+}
+
 pub(crate) fn apply_cascade_inner(
     root: &mut crate::types::WebCore,
     stylesheet: &Stylesheet,
@@ -236,6 +406,9 @@ pub(crate) fn apply_cascade_inner(
     hover_chain: &std::collections::HashSet<u32>,
     prev_siblings: &[(String, String, String)],
     share_cache: &mut ShareCache,
+    // Selector matches computed off-thread by the parallel pass, keyed by
+    // `node_id`. `None`, or a miss, means match inline — never "no rules".
+    precomputed: Option<&MatchMap>,
 ) {
     // Guard against stack overflow on deeply nested DOMs.
     if ancestors.len() >= MAX_CASCADE_DEPTH {
@@ -404,84 +577,29 @@ pub(crate) fn apply_cascade_inner(
         }
     }
 
-    // Build MatchContext for this element
-    let match_ctx = MatchContext {
-        focused_box,
-        keyboard_focus,
-        type_child_index,
-        type_sibling_count,
-        html_box: Some(root),
-        hover_chain,
-        element_id: root.node_id, prev_siblings,
+    // Selector matching — the SAME function the parallel pass runs, so a
+    // precomputed result and an inline one can never disagree.
+    let precomputed_here = precomputed
+        .filter(|_| root.node_id != 0)
+        .and_then(|m| m.get(&root.node_id));
+    let sets = match precomputed_here {
+        Some(sets) => sets.clone(),
+        // ⛔ A miss MATCHES, it does not mean "no rules". An element the parallel
+        // pass never saw — a box with no DOM node behind it, or a shadow subtree,
+        // which is matched against its own scoped sheet — has to be cascaded, and
+        // handing it an empty result renders it unstyled with nothing to show for it.
+        None => match_rules(
+            root, stylesheet, ancestors, child_index, sibling_count,
+            type_child_index, type_sibling_count, vw, vh,
+            focused_box, keyboard_focus, hover_chain, prev_siblings, candidates_buf,
+        ),
     };
-
-    // Apply UA / author stylesheet rules (after presentational attrs, before inline style)
-    // Store (specificity, rule_index) — avoid cloning declaration HashMaps per match.
-    let mut matched:           Vec<(u32, usize)> = Vec::new();
-    let mut hover_matched:   Vec<(u32, usize)> = Vec::new();
-    let mut active_matched:  Vec<(u32, usize)> = Vec::new();
-    let mut visited_matched: Vec<(u32, usize)> = Vec::new();
-    let mut before_matched:    Vec<(u32, usize)> = Vec::new();
-    let mut after_matched:     Vec<(u32, usize)> = Vec::new();
-    let mut selection_matched: Vec<(u32, usize)> = Vec::new();
-    let mut marker_matched:    Vec<(u32, usize)> = Vec::new();
-
-    // Use selector index to narrow down candidate rules instead of scanning all rules.
-    let tag = &root.tag;
-    let id = root.attributes.get("id").map(|s| s.as_str());
-    let class_attr = root.attributes.get("class").cloned().unwrap_or_default();
-    let classes: Vec<&str> = class_attr.split_whitespace().collect();
-    stylesheet.candidate_rules(tag, id, &classes, candidates_buf);
-
-    for &rule_idx in candidates_buf.iter() {
-        let rule = &stylesheet.rules[rule_idx];
-        // Skip rules whose @media condition doesn't match the viewport
-        if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
-            continue;
-        }
-        // Container rules require layout context — applied in a post-layout pass.
-        if !rule.container_condition.is_empty() { continue; }
-        for sel in &rule.selectors {
-            // Use pre-computed per-selector state flags (no scanning needed).
-            let has_hover   = sel.has_hover;
-            let has_active  = sel.has_active;
-            let has_visited = sel.has_visited;
-
-            if (has_hover || has_active || has_visited) && rule.pseudo_element == PseudoElement::None {
-                // Use pre-computed base_parts (no per-match allocation)
-                if matches_selector_with_ancestors(
-                    &sel.base_parts, &root.tag, &root.attributes,
-                    child_index, sibling_count, ancestors, &match_ctx,
-                ) {
-                    if has_hover   { hover_matched.push((rule.specificity, rule_idx)); }
-                    if has_active  { active_matched.push((rule.specificity, rule_idx)); }
-                    if has_visited { visited_matched.push((rule.specificity, rule_idx)); }
-                    // When hover chain is active, also match the FULL selector
-                    // (with :hover intact). If it matches, apply the rule as a
-                    // normal rule so it affects layout (e.g. display:block on hover).
-                    if has_hover && !hover_chain.is_empty() {
-                        if sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
-                            matched.push((rule.specificity, rule_idx));
-                        }
-                    }
-                    break;
-                }
-                continue;
-            }
-            if sel.matches_with_ancestors_ctx(root, child_index, sibling_count, ancestors, &match_ctx) {
-                match rule.pseudo_element {
-                    PseudoElement::Before     => before_matched.push((rule.specificity, rule_idx)),
-                    PseudoElement::After      => after_matched.push((rule.specificity, rule_idx)),
-                    PseudoElement::Selection  => selection_matched.push((rule.specificity, rule_idx)),
-                    PseudoElement::Marker     => marker_matched.push((rule.specificity, rule_idx)),
-                    PseudoElement::None       => matched.push((rule.specificity, rule_idx)),
-                    PseudoElement::Ignored    => {}
-                }
-                break;
-            }
-        }
-    }
-    matched.sort_by_key(|(sp, _)| *sp);
+    let MatchSets {
+        mut matched, mut hover_matched, mut active_matched,
+        mut visited_matched, mut before_matched, mut after_matched,
+        mut selection_matched, mut marker_matched,
+    } = sets;
+    matched.sort_by_key(|(sp, idx)| (stylesheet.rules[*idx].layer_rank, *sp));
     // Build variable scope: inherited from parent + any --custom-properties from matched rules.
     // Only clone the map when new custom properties are actually defined — most elements
     // don't define any, so we avoid O(vars) cloning at every node.
@@ -607,7 +725,7 @@ pub(crate) fn apply_cascade_inner(
     }
     // Hover style — clone the base style and overlay all matched hover declarations.
     if !hover_matched.is_empty() {
-        hover_matched.sort_by_key(|(sp, _)| *sp);
+        hover_matched.sort_by_key(|(sp, idx)| (stylesheet.rules[*idx].layer_rank, *sp));
         let mut hs = style.clone();
         for &(_, ri) in &hover_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
@@ -625,7 +743,7 @@ pub(crate) fn apply_cascade_inner(
     }
     // Active style — clone the base style and overlay all matched active declarations.
     if !active_matched.is_empty() {
-        active_matched.sort_by_key(|(sp, _)| *sp);
+        active_matched.sort_by_key(|(sp, idx)| (stylesheet.rules[*idx].layer_rank, *sp));
         let mut as_ = style.clone();
         for &(_, ri) in &active_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
@@ -642,7 +760,7 @@ pub(crate) fn apply_cascade_inner(
     }
     // Visited style — clone the base style and overlay all matched visited declarations.
     if !visited_matched.is_empty() {
-        visited_matched.sort_by_key(|(sp, _)| *sp);
+        visited_matched.sort_by_key(|(sp, idx)| (stylesheet.rules[*idx].layer_rank, *sp));
         let mut vs = style.clone();
         for &(_, ri) in &visited_matched {
             for &(id, ref val) in &stylesheet.rules[ri].compiled_decls {
@@ -725,6 +843,18 @@ pub(crate) fn apply_cascade_inner(
     // Re-apply table layout HTML attributes after CSS rules so UA/author stylesheets
     // cannot silently override them (e.g. UA "border-spacing: 2px" must not win over
     // cellspacing="0").  These are still below inline style priority.
+    //
+    // `valign` joins them for the same reason: the UA sheet gives `td`/`th` the
+    // default `vertical-align: middle` a cell must have, and a presentational
+    // hint has to outrank the UA sheet (HTML §15.2 places hints at the start of
+    // the AUTHOR origin). The general ordering — hints applied before every
+    // matched rule instead of between the UA and author passes — is still wrong
+    // for `align`, `bgcolor`, `width` and `height`; see cssgaps.md.
+    if matches!(root.tag.as_str(), "td" | "th" | "tr" | "thead" | "tbody" | "tfoot") {
+        if let Some(v) = root.attributes.get("valign").cloned() {
+            apply_property(&mut style, "vertical-align", &v);
+        }
+    }
     if root.tag == "table" {
         if let Some(v) = root.attributes.get("cellspacing").cloned() {
             if let Ok(n) = v.parse::<f32>() {
@@ -765,25 +895,10 @@ pub(crate) fn apply_cascade_inner(
     // Preserve list_index: set by the HTML parser (ol counter), not by CSS.
     // The fresh ComputedStyle defaults list_index=0, so carry the old value forward.
     style.list_index = root.style.list_index;
-    // Safety: block-level elements that end up as Inline despite no author CSS
-    // setting display:inline should be forced to Block. Only apply when no
-    // matched rule explicitly sets display (i.e., the Inline came from default).
-    if matches!(style.display, Display::Inline) {
-        let has_explicit_display = matched.iter().any(|&(_, ri)| {
-            stylesheet.rules[ri].declarations.iter().any(|(k, _)| k == "display")
-        });
-        if !has_explicit_display {
-            let should_be_block = matches!(root.tag.as_str(),
-                "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "blockquote" | "hr"
-                | "section" | "article" | "aside" | "nav" | "header" | "footer" | "main"
-                | "address" | "figure" | "figcaption" | "details" | "center"
-                | "form" | "fieldset" | "legend" | "hgroup" | "search");
-            if should_be_block {
-                style.display = Display::Block;
-            }
-        }
-    }
+    let has_explicit_display = matched.iter().any(|&(_, ri)| {
+        stylesheet.rules[ri].declarations.iter().any(|(k, _)| k == "display")
+    });
+    finalize_display(&mut style, &root.tag, has_explicit_display);
     // ⛔ MOVED, not cloned. This was a full 2.3 KB `ComputedStyle` copy per
     // element — and it kept the local alive across the recursive call below,
     // where it is the single biggest thing in the stack frame.
@@ -857,7 +972,7 @@ pub(crate) fn apply_cascade_inner(
         }
     }
 
-    if let Some((txt, ps)) = build_pseudo_style_shared(&mut before_matched, &root.style, &local_vars, &stylesheet.rules) {
+    if let Some((Some(txt), ps)) = build_pseudo_style_shared(&mut before_matched, &root.style, &local_vars, &stylesheet.rules) {
         // ::before may carry counter-increment/counter-reset — apply before resolving content
         for (name, val) in &ps.counter_reset {
             counters.entry(name.clone()).or_insert_with(Vec::new).push(*val);
@@ -873,7 +988,7 @@ pub(crate) fn apply_cascade_inner(
         std::sync::Arc::make_mut(&mut root.style).before_content = resolve_counters_in_content(&txt, counters);
         std::sync::Arc::make_mut(&mut root.style).before_style = Some(ps);
     }
-    if let Some((txt, ps)) = build_pseudo_style_shared(&mut after_matched, &root.style, &local_vars, &stylesheet.rules) {
+    if let Some((Some(txt), ps)) = build_pseudo_style_shared(&mut after_matched, &root.style, &local_vars, &stylesheet.rules) {
         std::sync::Arc::make_mut(&mut root.style).after_content = resolve_counters_in_content(&txt, counters);
         std::sync::Arc::make_mut(&mut root.style).after_style = Some(ps);
     }
@@ -913,6 +1028,7 @@ pub(crate) fn apply_cascade_inner(
         counters: &mut HashMap<String, Vec<i32>>,
         hover_chain: &std::collections::HashSet<u32>,
         share_cache: &mut ShareCache,
+        precomputed: Option<&MatchMap>,
     ) {
         let n_children = children.len();
         if n_children == 0 { return; }
@@ -991,7 +1107,7 @@ pub(crate) fn apply_cascade_inner(
                     child.style = cached.clone();
                     // Still need to update prev_siblings for combinator matching
                     let id = child.attributes.get("id").cloned().unwrap_or_default();
-                    prev_siblings.push((child.tag.to_ascii_lowercase(), child_class, id));
+                    prev_siblings.push((child.tag.clone(), id, child_class));
                     continue;
                 }
             }
@@ -1002,7 +1118,7 @@ pub(crate) fn apply_cascade_inner(
                 type_counts[i], type_totals[i],
                 vw, vh, focused_box, keyboard_focus,
                 inherited_vars, candidates_buf, counters,
-                hover_chain, &prev_siblings, share_cache,
+                hover_chain, &prev_siblings, share_cache, precomputed,
             );
             // Cache style for sharing with future siblings
             if can_share && !share_cache.contains_key(&share_key) {
@@ -1034,23 +1150,27 @@ pub(crate) fn apply_cascade_inner(
         // both in hand. `:host` rules were returning false unconditionally,
         // which made the single most common shadow-CSS rule inert.
         apply_host_rules(root, &sr.stylesheet, &local_vars, ancestors);
+        // ⛔ `None`, not the map: pass 1 walks the LIGHT tree only, and the map
+        // is keyed globally by `node_id`. A shadow child that happened to carry
+        // an id from the light pass would be handed rules matched against the
+        // DOCUMENT sheet instead of its own scoped one.
         cascade_children(
             &mut sr.children, &sr.stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain, share_cache,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache, None,
         );
         root.shadow_root = Some(sr);
         // Also cascade light DOM children (they need document styles for ::slotted)
         cascade_children(
             &mut root.children, stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain, share_cache,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache, precomputed,
         );
     } else {
         cascade_children(
             &mut root.children, stylesheet, &parent_for_children, root_font_px,
             ancestors, vw, vh, focused_box, keyboard_focus,
-            &local_vars, candidates_buf, counters, hover_chain, share_cache,
+            &local_vars, candidates_buf, counters, hover_chain, share_cache, precomputed,
         );
     }
 

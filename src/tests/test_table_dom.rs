@@ -183,3 +183,38 @@ fn a_row_outside_a_table_has_no_index() {
     let cell = d.create_element("td");
     assert_eq!(d.cell_index(cell), -1);
 }
+
+// ── Cell vertical alignment (CSS 2.1 §17.5.3) ───────────────────────────────
+
+/// **A table cell centres its content by default.** Browsers get this from a UA
+/// rule of `vertical-align: middle` on the row plus `vertical-align: inherit`
+/// on the cell. `vertical-align` is NOT an inherited property, so setting it
+/// only on `tr` never reached `td`/`th` and every cell in a row taller than its
+/// own content sat flush to the top.
+#[test]
+fn a_table_cell_centres_its_content_by_default() {
+    let doc = crate::tests::harness::parse_and_layout(
+        "<style>* { margin:0; padding:0 } td { padding:0 }</style>\
+         <table><tr>\
+           <td id=short>x</td>\
+           <td id=tall style='height:100px'>y</td>\
+         </tr></table>",
+        400.0);
+    fn by_id<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
+        if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+        for c in &n.children { if let Some(f) = by_id(c, id) { return Some(f); } }
+        None
+    }
+    let short = by_id(&doc.root, "short").unwrap();
+    // The cell is stretched to the row height; its single line of text must sit
+    // in the middle of it, not at the top.
+    let cell_h = short.layout.content_rect.h;
+    assert!(cell_h > 50.0, "the row is tall, so the cell is too: {cell_h}");
+    // Measured against the PADDING box: the vertical-align offset moves
+    // `content_rect.y` and the line cache together, so a content-relative
+    // reading is zero by construction and would prove nothing.
+    let line_y = short.layout.line_cache.first().map(|l| l.y).unwrap_or(0.0)
+        - short.layout.padding_rect.y;
+    assert!(line_y > 20.0,
+        "the cell's line should be centred, not at the top — offset {line_y} in a {cell_h}px cell");
+}

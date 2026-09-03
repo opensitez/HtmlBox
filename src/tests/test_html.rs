@@ -1314,29 +1314,32 @@ fn table_cellspacing_nonzero() {
 
 #[test]
 fn table_no_border_attr_no_cell_borders() {
-    // Without border attr, td should not get a border from HTML attribute propagation.
-    let doc = parse(r#"<table><tr><td>A</td></tr></table>"#);
-    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
-    let w = match cell.style.border_top_width {
-        crate::types::CssLength::Px(v) => v,
-        crate::types::CssLength::Zero => 0.0,
-        _ => -1.0,
-    };
-    assert_eq!(w, 0.0,
-        "td without table border attr should have 0 border, got {:?}", cell.style.border_top_width);
+    // Without a border attribute a td draws no border — asserted as the USED
+    // width, since the initial COMPUTED width is `medium` (3px) and it is
+    // `border-style: none` that zeroes it. See `table_border_zero_no_cell_borders`.
+    let mut doc = parse(r#"<table><tr><td>A</td></tr></table>"#);
+    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap().node_id;
+    assert_eq!(doc.computed_style_property(cell, "border-top-style"), "none");
+    assert_eq!(
+        doc.computed_style_property(cell, "border-top-width"), "0px",
+        "a td in a table with no border attribute draws no border"
+    );
 }
 
 #[test]
 fn table_border_zero_no_cell_borders() {
-    let doc = parse(r#"<table border="0"><tr><td>A</td></tr></table>"#);
-    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
-    let w = match cell.style.border_top_width {
-        crate::types::CssLength::Px(v) => v,
-        crate::types::CssLength::Zero => 0.0,
-        _ => -1.0,
-    };
-    assert_eq!(w, 0.0,
-        "td in table with border=\"0\" should have no border, got {:?}", cell.style.border_top_width);
+    // ⛔ The USED width, not the raw computed field. The initial COMPUTED
+    // border width is `medium` (3px) per CSS Backgrounds 3 §4.3 — it is the
+    // `border-style: none` that makes the used width zero. This asserted the
+    // computed field was 0, which was only true while that initial value was
+    // wrong. Chrome on the same markup: `width=0px style=none`.
+    let mut doc = parse(r#"<table border="0"><tr><td>A</td></tr></table>"#);
+    let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap().node_id;
+    assert_eq!(doc.computed_style_property(cell, "border-top-style"), "none");
+    assert_eq!(
+        doc.computed_style_property(cell, "border-top-width"), "0px",
+        "a td in a table with border=\"0\" draws no border"
+    );
 }
 
 #[test]

@@ -3803,6 +3803,7 @@ dependencies = [
  "accesskit 0.17.1",
  "accesskit_winit",
  "base64 0.21.7",
+ "brotli",
  "bytemuck",
  "cosmic-text",
  "encoding_rs",

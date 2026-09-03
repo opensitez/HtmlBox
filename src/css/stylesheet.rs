@@ -22,6 +22,8 @@ pub struct Stylesheet {
     idx_by_tag:   HashMap<String, Vec<usize>>,
     idx_universal: Vec<usize>,  // rules with * or no specific key selector
     idx_dirty:    bool,
+    /// `@layer` names in declaration order. See `layer_rank`.
+    pub layer_order: Vec<String>,
     /// When true, the cascade stores matched CSS rules on each WebCore
     /// for inspector display. Off by default to avoid memory overhead.
     pub inspect_mode: bool,
@@ -75,9 +77,18 @@ impl Stylesheet {
         }
     }
 
+    /// Parse an EXTERNAL stylesheet — a `<link rel=stylesheet>`.
+    ///
+    /// ⛔ Author origin, like every other author sheet. This routed to
+    /// `parse_and_add`, the same entry the UA sheet uses, so a linked sheet's
+    /// rules kept their raw specificity while an inline `<style>` got
+    /// `AUTHOR_ORIGIN_BOOST` on the way into the document. A `<style>` rule
+    /// therefore beat a more specific rule from a linked sheet, and a UA rule
+    /// could beat one outright — on a site whose CSS is mostly external, which
+    /// is most sites, the cascade came out wrong.
     pub fn parse_and_add_with_base(&mut self, css: &str, css_base_url: &str) {
         let resolved = resolve_css_urls(css, css_base_url);
-        self.parse_and_add(&resolved);
+        self.parse_and_add_author(&resolved);
     }
 
     /// Parse a CSS string from an external `<link>` with a `media` attribute.
@@ -99,6 +110,14 @@ impl Stylesheet {
     }
 
     /// Parse a CSS string and append its rules. Also extracts CSS variables from `:root`.
+    /// Where a rule's layer sorts. Later layers beat earlier ones, and an
+    /// UNLAYERED normal declaration beats every layered one — CSS Cascade 5
+    /// §6.4.4 — so unlayered takes the maximum rank.
+    pub fn layer_rank(&self, layer: &str) -> u32 {
+        if layer.is_empty() { return u32::MAX; }
+        self.layer_order.iter().position(|n| n == layer).map(|i| i as u32).unwrap_or(0)
+    }
+
     pub fn parse_and_add(&mut self, css: &str) {
         // Strip comments once, share the cleaned string across all extractors.
         let cleaned = strip_css_comments(css);
@@ -112,6 +131,14 @@ impl Stylesheet {
         // Extract @keyframes blocks
         let kf = extract_keyframes_cleaned(cleaned);
         self.keyframes.extend(kf);
+        // Pick up the layer order this sheet declared, appending any name we
+        // have not seen — a later sheet may add layers but cannot reorder the
+        // ones already fixed.
+        for name in crate::css::parser::declared_layers() {
+            if !self.layer_order.iter().any(|n| *n == name) {
+                self.layer_order.push(name);
+            }
+        }
         if let Some(rules) = parse_stylesheet_cleaned(cleaned) {
             for r in rules {
                 self.rules.push(r);
@@ -152,6 +179,12 @@ impl Stylesheet {
                     }
                 }
             }
+        }
+        // Resolve every rule's layer to its sort rank once, here, rather than
+        // looking the name up per comparison in the cascade.
+        for i in 0..self.rules.len() {
+            let rank = self.layer_rank(&self.rules[i].layer);
+            self.rules[i].layer_rank = rank;
         }
         self.idx_dirty = false;
 

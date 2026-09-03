@@ -38,6 +38,10 @@ pub fn escape_attr(value: &str) -> String { escape_html(value) }
 pub fn serialize_length(len: &CssLength) -> String {
     match len {
         CssLength::Auto    => String::new(),  // auto == default, skip
+        CssLength::Content => "content".to_string(),
+        CssLength::MinContent => "min-content".to_string(),
+        CssLength::MaxContent => "max-content".to_string(),
+        CssLength::FitContent => "fit-content".to_string(),
         CssLength::None    => String::new(),
         CssLength::Zero    => String::new(),
         CssLength::Px(v)   => format!("{}px", *v as i32),
@@ -45,6 +49,8 @@ pub fn serialize_length(len: &CssLength) -> String {
         CssLength::Rem(v)  => format!("{}rem", v),
         CssLength::Percent(v) => format!("{}%", v),
         CssLength::Vw(v)      => format!("{}vw", v),
+        CssLength::Vmin(v)    => format!("{}vmin", v),
+        CssLength::Vmax(v)    => format!("{}vmax", v),
         CssLength::Vh(v)      => format!("{}vh", v),
         CssLength::Calc(c) => {
             let labels = ["%", "px", "em", "rem", "vw", "vh"];
@@ -325,6 +331,8 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
             JustifyContent::SpaceBetween => "space-between",
             JustifyContent::SpaceAround  => "space-around",
             JustifyContent::SpaceEvenly  => "space-evenly",
+            JustifyContent::Left         => "left",
+            JustifyContent::Right        => "right",
         };
         if !jc_str.is_empty() {
             parts.push(("justify-content".into(), jc_str.into()));
@@ -336,6 +344,7 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
             AlignItems::FlexEnd   => "flex-end",
             AlignItems::Center    => "center",
             AlignItems::Baseline  => "baseline",
+            AlignItems::LastBaseline => "last baseline",
         };
         if !ai_str.is_empty() {
             parts.push(("align-items".into(), ai_str.into()));

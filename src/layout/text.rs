@@ -5,7 +5,7 @@
 
 use unicode_bidi::{BidiInfo, Level};
 use crate::types::*;
-use crate::layout::inline_layout::{InlineItem, InlineItemKind, measure_text_width, approx_font_metrics};
+use crate::layout::inline_layout::{InlineItem, InlineItemKind, measure_text_width};
 
 // ─── BiDi: paragraph direction detection ─────────────────────────────────────
 
@@ -187,29 +187,6 @@ pub fn measure_char_width_ts(ch: char, font_px: f32, letter_spacing_px: f32, tab
                   else if ch == ' '                { space_w }
                   else                             { base };
     advance + letter_spacing_px
-}
-
-// ─── Font metrics ────────────────────────────────────────────────────────────
-
-/// Return (ascent, descent) in px for a given font size.
-/// Delegates to the same approximation used in inline_layout.rs.
-pub fn font_metrics(font_px: f32) -> (f32, f32) {
-    approx_font_metrics(font_px, None)
-}
-
-// ─── Line metrics ────────────────────────────────────────────────────────────
-
-/// Compute (height, ascent, descent) for a set of inline items on a single line.
-/// Mirrors LayoutEngine::MeasureLineMetrics in C++.
-pub fn measure_line_metrics(items: &[InlineItem]) -> (f32, f32, f32) {
-    let mut max_ascent  = 0.0f32;
-    let mut max_descent = 0.0f32;
-    for item in items {
-        if item.ascent  > max_ascent  { max_ascent  = item.ascent;  }
-        if item.descent > max_descent { max_descent = item.descent; }
-    }
-    let height = (max_ascent + max_descent).max(16.0);
-    (height, max_ascent, max_descent)
 }
 
 // ─── Line breaking ────────────────────────────────────────────────────────────

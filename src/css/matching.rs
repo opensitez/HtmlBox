@@ -190,33 +190,70 @@ pub fn matches_selector_with_ancestors(
                         false
                     }
                 }
+                // ⛔ Both sibling branches RECURSE. They used to match
+                // `left_parts` as a flat compound directly against the sibling,
+                // which is only correct when `left_parts` contains no further
+                // combinator — and `matches_part_with_context` answers `true`
+                // for a `Combinator` part, so anything to its left was then
+                // tested against the SIBLING instead of the sibling's ancestor.
+                //
+                // The effect: sibling combinators worked alone and failed the
+                // moment anything preceded them. `i + i` matched; `#p i + i`
+                // and `#p > i + i` did not — so `.container > li + li` and
+                // `.card h2 + p`, which are everyday selectors, silently never
+                // applied.
                 Combinator::AdjacentSibling => {
-                    // Match left_parts against the immediately previous non-text sibling
-                    if let Some(last) = ctx.prev_siblings.last() {
-                        let mut sib_attrs = crate::dom::attrs::AttrMap::new();
-                        if !last.1.is_empty() { sib_attrs.insert("id".to_string(), last.1.clone()); }
-                        if !last.2.is_empty() { sib_attrs.insert("class".to_string(), last.2.clone()); }
-                        left_parts.iter().all(|p| matches_part_with_context(
-                            p, &last.0, &sib_attrs, 0, 0, ancestors, ctx,
-                        ))
-                    } else {
-                        false
+                    match ctx.prev_siblings.split_last() {
+                        Some((last, before)) => matches_sibling(
+                            left_parts, last, before, ancestors, ctx),
+                        None => false,
                     }
                 }
                 Combinator::GeneralSibling => {
-                    // Match left_parts against ANY previous non-text sibling
-                    ctx.prev_siblings.iter().any(|sib| {
-                        let mut sib_attrs = crate::dom::attrs::AttrMap::new();
-                        if !sib.1.is_empty() { sib_attrs.insert("id".to_string(), sib.1.clone()); }
-                        if !sib.2.is_empty() { sib_attrs.insert("class".to_string(), sib.2.clone()); }
-                        left_parts.iter().all(|p| matches_part_with_context(
-                            p, &sib.0, &sib_attrs, 0, 0, ancestors, ctx,
-                        ))
+                    // Any previous sibling, each seen with only ITS OWN
+                    // preceding siblings — so a nested `a ~ b + c` is judged
+                    // against the right list rather than the subject's.
+                    (0..ctx.prev_siblings.len()).any(|i| {
+                        matches_sibling(
+                            left_parts, &ctx.prev_siblings[i], &ctx.prev_siblings[..i],
+                            ancestors, ctx)
                     })
                 }
             }
         }
     }
+}
+
+/// Match the left-hand side of a sibling combinator against one sibling.
+///
+/// Recurses through `matches_selector_with_ancestors` so any further
+/// combinator inside `left_parts` is resolved against that sibling's own
+/// context: the siblings that precede IT, and the ancestors it shares with the
+/// subject.
+fn matches_sibling(
+    left_parts: &[SelectorPart],
+    sib: &(String, String, String),
+    sib_prev: &[(String, String, String)],
+    ancestors: &[AncestorInfo],
+    ctx: &MatchContext<'_>,
+) -> bool {
+    let mut attrs = crate::dom::attrs::AttrMap::new();
+    if !sib.1.is_empty() { attrs.insert("id".to_string(), sib.1.clone()); }
+    if !sib.2.is_empty() { attrs.insert("class".to_string(), sib.2.clone()); }
+    let sib_ctx = MatchContext {
+        focused_box: ctx.focused_box,
+        keyboard_focus: ctx.keyboard_focus,
+        type_child_index: 0,
+        type_sibling_count: 0,
+        // ⛔ Not the subject's box: `:has()` and the other box-state
+        // pseudo-classes must not answer for the sibling from it.
+        html_box: None,
+        hover_chain: ctx.hover_chain,
+        element_id: 0,
+        prev_siblings: sib_prev,
+    };
+    matches_selector_with_ancestors(
+        left_parts, &sib.0, &attrs, sib_prev.len(), 0, ancestors, &sib_ctx)
 }
 
 pub(crate) fn matches_part_with_context(
@@ -456,9 +493,28 @@ pub(crate) fn matches_part_with_context(
                 _ => {
                     // nth-child(expr) / nth-of-type(expr)
                     if let Some(inner) = pc.strip_prefix("nth-child(").and_then(|s| s.strip_suffix(')')) {
+                        // `An+B of S` — Selectors 4 §9.3. The index counts only
+                        // siblings matching S, and the element itself must
+                        // match S too. Without this the whole argument was
+                        // handed to the An+B parser, which cannot read
+                        // `2 of .pick` and answered no-match for everything.
+                        if let Some((nth, sel_src)) = split_nth_of(inner) {
+                            let sel = crate::css::parser::parse_selector(&sel_src);
+                            if !sel.valid { return false; }
+                            if !simple_matches(&sel, tag, attrs) { return false; }
+                            let index = ctx.prev_siblings.iter()
+                                .filter(|(t, i, c)| simple_matches_raw(&sel, t, i, c))
+                                .count();
+                            return nth_matches(&nth, index + 1);
+                        }
                         return nth_matches(inner, child_index + 1); // CSS is 1-based
                     }
                     if let Some(inner) = pc.strip_prefix("nth-last-child(").and_then(|s| s.strip_suffix(')')) {
+                        // ⛔ The `of S` form needs the FOLLOWING siblings to
+                        // count from the end, and only the preceding ones are
+                        // in scope here. Answers false rather than counting the
+                        // wrong set.
+                        if split_nth_of(inner).is_some() { return false; }
                         let from_end = sibling_count - child_index; // 1-based from end
                         return nth_matches(inner, from_end);
                     }
@@ -574,11 +630,52 @@ fn is_or_contains_focused(b: &crate::types::WebCore, focused: u32) -> bool {
 }
 
 /// Check if any descendant of `node` matches `sel`.
+/// Does anything in `node`'s subtree satisfy the relative selector `sel`?
+///
+/// ⛔ A `:has()` argument is a RELATIVE selector (Selectors 4 §4.5): a leading
+/// combinator relates to the ANCHOR — the element `:has()` is written on — not
+/// to some ancestor of it. `:has(> em)` asks for a DIRECT CHILD that is an
+/// `<em>`, and this matched the argument against every descendant with an
+/// empty ancestor list, so the leading `>` had nothing to relate to and the
+/// whole selector never matched.
 fn has_descendant_matching(
     node: &crate::types::WebCore,
     sel: &CssSelector,
     focused_box: u32,
 ) -> bool {
+    // A leading child combinator restricts the search to the anchor's own
+    // children; a leading descendant combinator, or none, searches the subtree.
+    if let Some(SelectorPart::Combinator(c)) = sel.parts.first() {
+        match c {
+            Combinator::Child => {
+                let rest = &sel.parts[1..];
+                let empty_hover = std::collections::HashSet::new();
+                return node.children.iter().filter(|c| c.is_element()).any(|child| {
+                    let ctx = MatchContext {
+                        focused_box,
+                        keyboard_focus: false,
+                        type_child_index: 0,
+                        type_sibling_count: 1,
+                        html_box: Some(child),
+                        hover_chain: &empty_hover,
+                        element_id: child.node_id,
+                        prev_siblings: &[],
+                    };
+                    matches_selector_with_ancestors(
+                        rest, &child.tag, &child.attributes, 0, 1, &[], &ctx)
+                });
+            }
+            // ⛔ A leading `+`/`~` relates to the anchor's SIBLINGS, which are
+            // not reachable from here — this function only sees the subtree.
+            // Not supported; it answers false rather than pretending.
+            Combinator::AdjacentSibling | Combinator::GeneralSibling => return false,
+            Combinator::Descendant => {
+                let mut stripped = sel.clone();
+                stripped.parts.remove(0);
+                return has_descendant_matching(node, &stripped, focused_box);
+            }
+        }
+    }
     let empty_hover = std::collections::HashSet::new();
     for child in &node.children {
         let ctx = MatchContext {
@@ -636,4 +733,50 @@ fn parse_nth_ab(expr: &str) -> (i32, i32) {
     } else {
         (0, expr.parse().unwrap_or(0))
     }
+}
+
+
+/// Split `"2 of .pick"` into `("2", ".pick")`. `None` when there is no `of`.
+///
+/// The keyword is ASCII case-insensitive and must be a whole word, so a
+/// selector containing the letters "of" — `.of`, `[data-of]` — is not split.
+fn split_nth_of(inner: &str) -> Option<(String, String)> {
+    let lower = inner.to_ascii_lowercase();
+    let mut at = None;
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = lower[i..].find("of") {
+        let p = i + pos;
+        let before_ok = p > 0 && (bytes[p - 1] as char).is_ascii_whitespace();
+        let after = p + 2;
+        let after_ok = after < bytes.len() && (bytes[after] as char).is_ascii_whitespace();
+        if before_ok && after_ok { at = Some(p); break; }
+        i = p + 2;
+        if i >= lower.len() { break; }
+    }
+    let at = at?;
+    let nth = inner[..at].trim().to_string();
+    let sel = inner[at + 2..].trim().to_string();
+    if nth.is_empty() || sel.is_empty() { return None; }
+    Some((nth, sel))
+}
+
+/// Does a selector with no combinators match this tag/attrs?
+fn simple_matches(sel: &CssSelector, tag: &str, attrs: &crate::dom::attrs::AttrMap) -> bool {
+    let id = attrs.get("id").cloned().unwrap_or_default();
+    let class = attrs.get("class").cloned().unwrap_or_default();
+    simple_matches_raw(sel, tag, &id, &class)
+}
+
+/// The same, against the (tag, id, class) triple a sibling is recorded as.
+fn simple_matches_raw(sel: &CssSelector, tag: &str, id: &str, class: &str) -> bool {
+    sel.parts.iter().all(|p| match p {
+        SelectorPart::Universal => true,
+        SelectorPart::Tag(t) => t.eq_ignore_ascii_case(tag),
+        SelectorPart::Id(i) => i == id,
+        SelectorPart::Class(c) => class.split_whitespace().any(|k| k == c),
+        // Anything richer than a compound of tag/id/class is not answerable
+        // from what a sibling record holds.
+        _ => false,
+    })
 }

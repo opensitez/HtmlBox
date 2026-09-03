@@ -27,9 +27,25 @@ pub fn mark_hover_dirty(
             path: &std::collections::HashSet<u32>, has_hover_desc: bool,
             sensitive: &std::collections::HashSet<u32>) -> bool {
         let mut any_dirty = false;
-        // Only mark cascade_dirty if this node is hover-sensitive (has hover CSS rules)
-        if toggled.contains(&node.node_id) && (sensitive.is_empty() || sensitive.contains(&node.node_id)) {
+        // Only mark cascade_dirty if this node is hover-sensitive — it has
+        // hover rules of its own.
+        //
+        // ⛔ …unless the sheet has hover rules whose SUBJECT is a descendant.
+        // `li:hover div` gives the `<li>` no hover style at all, so it is not
+        // in the sensitive set, so its toggle was skipped and the panel inside
+        // it never re-cascaded. The set is an optimisation; it cannot be
+        // trusted once a hover somewhere can restyle a subtree.
+        let considered = has_hover_desc || sensitive.is_empty()
+            || sensitive.contains(&node.node_id);
+        if toggled.contains(&node.node_id) && considered {
             node.cascade_dirty = true;
+            // ⛔ Geometry too, not only style. A hover rule routinely changes
+            // the BOX — `max-height` on a dropdown panel is how nearly every
+            // menu opens — and the incremental path never marked layout dirty,
+            // so the new style was computed and the old geometry kept. A menu
+            // that toggles `display` appeared to work because that rebuilds the
+            // box anyway; one that animates `max-height` stayed shut.
+            node.layout.layout_dirty = true;
             any_dirty = true;
             if has_hover_desc {
                 mark_children_cascade_dirty(node);
@@ -54,6 +70,7 @@ pub fn mark_hover_dirty(
 fn mark_children_cascade_dirty(node: &mut crate::types::WebCore) {
     for child in &mut node.children {
         child.cascade_dirty = true;
+        child.layout.layout_dirty = true;
         mark_children_cascade_dirty(child);
     }
 }
@@ -144,6 +161,9 @@ fn apply_cascade_incremental_walk(
             // A cache local to this call: an incremental re-cascade
             // touches one subtree, so nothing outside it can be shared into.
             &mut crate::css::cascade::ShareCache::new(),
+            // Nothing precomputed: the incremental walk re-matches the dirty
+            // subtree with the current hover chain, which is what changed.
+            None,
         );
         return;
     }
@@ -276,63 +296,9 @@ fn swap_hover_inner(
             node.hover_applied = should_hover;
             changed = true;
 
-            // Handle ::before/::after pseudo-element creation/removal
-            // (swap_hover_inner path — simpler conditions than full cascade)
-            let is_grid_or_flex = matches!(node.style.display,
-                crate::types::Display::Grid | crate::types::Display::InlineGrid
-                | crate::types::Display::Flex | crate::types::Display::InlineFlex);
-            if !node.style.before_content.is_empty() {
-                let before_is_positioned = node.style.before_style.as_ref().map_or(false, |ps|
-                    matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
-                let before_is_block = node.style.before_style.as_ref().map_or(false, |ps|
-                    ps.is_block_level());
-                if is_grid_or_flex || before_is_positioned || before_is_block {
-                    let existing = node.children.iter().position(|c| c.tag == "::before");
-                    let mut pseudo_box = crate::types::WebCore::new("::before");
-                    pseudo_box.text = node.style.before_content.clone();
-                    if let Some(ref ps) = node.style.before_style {
-                        pseudo_box.style = std::sync::Arc::new(*ps.clone());
-                    }
-                    if is_grid_or_flex && !pseudo_box.style.is_positioned()
-                        && matches!(pseudo_box.style.display, Display::Inline) {
-                        std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
-                    }
-                    if let Some(idx) = existing {
-                        node.children[idx] = pseudo_box;
-                    } else {
-                        node.children.insert(0, pseudo_box);
-                    }
-                    std::sync::Arc::make_mut(&mut node.style).before_content = String::new();
-                }
-            } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::before") {
-                node.children.remove(idx);
-            }
-            if !node.style.after_content.is_empty() {
-                let after_is_positioned = node.style.after_style.as_ref().map_or(false, |ps|
-                    matches!(ps.position, crate::types::Position::Absolute | crate::types::Position::Fixed));
-                let after_is_block = node.style.after_style.as_ref().map_or(false, |ps|
-                    ps.is_block_level());
-                if is_grid_or_flex || after_is_positioned || after_is_block {
-                    let existing = node.children.iter().position(|c| c.tag == "::after");
-                    let mut pseudo_box = crate::types::WebCore::new("::after");
-                    pseudo_box.text = node.style.after_content.clone();
-                    if let Some(ref ps) = node.style.after_style {
-                        pseudo_box.style = std::sync::Arc::new(*ps.clone());
-                    }
-                    if is_grid_or_flex && !pseudo_box.style.is_positioned()
-                        && matches!(pseudo_box.style.display, Display::Inline) {
-                        std::sync::Arc::make_mut(&mut pseudo_box.style).display = Display::Block;
-                    }
-                    if let Some(idx) = existing {
-                        node.children[idx] = pseudo_box;
-                    } else {
-                        node.children.push(pseudo_box);
-                    }
-                    std::sync::Arc::make_mut(&mut node.style).after_content = String::new();
-                }
-            } else if let Some(idx) = node.children.iter().position(|c| c.tag == "::after") {
-                node.children.remove(idx);
-            }
+            // The same builder the full cascade uses: a hover swap that
+            // decided differently left the two passes with different boxes.
+            crate::css::cascade::build_pseudo_element_boxes(node);
         }
     }
 

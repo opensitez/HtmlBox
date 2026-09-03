@@ -485,3 +485,42 @@ fn nth_child_animation_delay_per_dot() {
     assert!((d3.style.rare().animations[0].delay_ms - 400.0).abs() < 1.0,
         "d3 delay should be 400ms, got {}", d3.style.rare().animations[0].delay_ms);
 }
+
+// ── Soundness guard for the parallel matching pass ───────────────────────────
+
+/// **The `unsafe impl Sync for MatchNode` in `css/cascade_parallel.rs` rests on
+/// one invariant: selector matching reads DOM and element state and NEVER
+/// touches `layout`.** `WebCore` is not `Sync` solely because `LayoutBox` holds
+/// a `Cell<f32>` intrinsic-width memo, so a matcher that reached into `layout`
+/// would turn the parallel pass into a data race.
+///
+/// The invariant was documented in a comment, which nothing enforces. This
+/// checks it: if you need `layout` while matching, the parallel pass is no
+/// longer sound and that `unsafe impl` has to go — do not silence this test.
+#[test]
+fn selector_matching_never_reads_layout() {
+    /// First line of code (comments stripped) that touches `layout`, if any.
+    fn offending(src: &str) -> Option<(usize, String)> {
+        src.lines().enumerate().find_map(|(i, line)| {
+            let code = line.split("//").next().unwrap_or("");
+            code.contains(".layout").then(|| (i + 1, line.trim().to_string()))
+        })
+    }
+    // The check must be able to fail: a matcher that reads `layout` is caught,
+    // and prose about layout in a comment is not.
+    assert!(offending("let w = node.layout.margin_rect.w;").is_some(),
+        "the guard cannot detect a real `.layout` read");
+    assert!(offending("// nothing here touches .layout at all").is_none(),
+        "the guard trips on a comment");
+
+    for (name, src) in [
+        ("css/matching.rs", include_str!("../css/matching.rs")),
+        ("css/selector.rs", include_str!("../css/selector.rs")),
+    ] {
+        if let Some((line_no, text)) = offending(src) {
+            panic!("{name}:{line_no} reads `.layout` during selector matching, which \
+                    voids the `unsafe impl Sync for MatchNode` in \
+                    css/cascade_parallel.rs:\n  {text}");
+        }
+    }
+}

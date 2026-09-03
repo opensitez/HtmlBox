@@ -461,6 +461,24 @@ impl HtmlParser {
 
                     self.fire_hook(&tag, &attrs);
 
+                    // ⛔ Register a `<link rel=stylesheet>` wherever it appears.
+                    // The hook fires above, so a loader driven by the hook did
+                    // fetch these — but `linked_stylesheets` was only filled by
+                    // the `<head>` path, and a loader that walks THAT list saw
+                    // just the head sheets. usps.com serves two of its eight in
+                    // the head and six in the body, the navigation's among them,
+                    // so the page rendered with a fraction of its CSS.
+                    if tag == "link" {
+                        let rel = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+                        let href = attrs.get("href").cloned().unwrap_or_default();
+                        if rel.eq_ignore_ascii_case("stylesheet") && !href.is_empty() {
+                            let media = attrs.get("media").cloned().unwrap_or_default();
+                            if !self.linked_stylesheets.iter().any(|(h, _)| *h == href) {
+                                self.linked_stylesheets.push((href, media));
+                            }
+                        }
+                    }
+
                     // Skip non-visual tags entirely
                     if is_non_visual(&tag) {
                         if !self_closing { self.skip_until_close(&tag); }
@@ -720,6 +738,28 @@ impl HtmlParser {
                     self.stylesheet.rules.push(rule);
                 }
             }
+            return;
+        }
+        // ⛔ A `<link rel=stylesheet>` counts wherever it appears, not only in
+        // `<head>`. Body-inserted stylesheets are ordinary on the web — usps.com
+        // serves two of its eight in the head and SIX in the body, including the
+        // one that styles the navigation. Skipping them as "non-visual" meant
+        // those sheets were never registered and never fetched, and the page
+        // rendered with a fraction of its CSS: unstyled nav, no layout, one
+        // long column.
+        if tag == "link" {
+            let rel = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+            let media = attrs.get("media").map(|s| s.as_str()).unwrap_or("");
+            let href = attrs.get("href").cloned().unwrap_or_default();
+            if rel.eq_ignore_ascii_case("stylesheet") && !href.is_empty() {
+                // Print-only sheets are not fetched for screen rendering, the
+                // same rule the head path applies.
+                if !media.eq_ignore_ascii_case("print") {
+                    self.fire_hook(&tag, &attrs);
+                }
+                self.linked_stylesheets.push((href, media.to_string()));
+            }
+            if !self_closing { self.skip_until_close(&tag); }
             return;
         }
         if is_non_visual(&tag) {

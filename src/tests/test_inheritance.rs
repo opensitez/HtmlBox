@@ -91,7 +91,12 @@ fn test_text_shadow_inherited_by_text_node() {
     assert!((ts.offset_x - 2.0).abs() < 0.01, "offset_x should be 2");
     assert!((ts.offset_y - 2.0).abs() < 0.01, "offset_y should be 2");
     assert!((ts.blur - 4.0).abs() < 0.01,     "blur should be 4");
-    assert_eq!(ts.color.a, 76,                 "alpha ~ 0.3*255 = 76");
+    // ⛔ 77, not 76. `0.3 * 255` is 76.5, and this asserted the old
+    // TRUNCATING conversion. Chrome settles the tie: `#0000004D` (77)
+    // round-trips to `0.3`, while `#0000004C` (76) comes back as `0.298` — so
+    // 0.3 maps to 77. Channels round now, which also fixed `hsl(120 50% 50%)`
+    // coming out `rgb(63, …)` where every browser says 64.
+    assert_eq!(ts.color.a, 77, "0.3 * 255 = 76.5, which rounds to 77");
 }
 
 #[test]

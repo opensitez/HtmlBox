@@ -52,6 +52,12 @@ const WOFF1_MAGIC: [u8; 4] = [0x77, 0x4F, 0x46, 0x46];
 
 fn load_font_bytes(fs: &mut cosmic_text::FontSystem, data: Vec<u8>) {
     if data.starts_with(&WOFF2_MAGIC) {
+        // WOFF2 is Brotli plus a `glyf`/`loca` transform; decoding it in-house
+        // keeps the font on the same streaming path as every other resource.
+        match crate::woff2::decode(&data) {
+            Some(sfnt) => { fs.db_mut().load_font_data(sfnt); }
+            None => {}
+        }
         return;
     }
     let font_data = if data.starts_with(&WOFF1_MAGIC) {
@@ -394,7 +400,16 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     let border_top    = if style.border_top_style    != BorderStyle::None { res(&style.border_top_width)    } else { 0.0 };
     let border_bottom = if style.border_bottom_style != BorderStyle::None { res(&style.border_bottom_width) } else { 0.0 };
 
-    let content_width = if style.width.is_auto() {
+    // ⛔ `width` and `height` DO NOT APPLY to a non-replaced inline box —
+    // CSS 2.1 §10.2 and §10.5. An `<span style="width:100px;height:50px">`
+    // is sized by its text, and this sized it 100x50; Chrome answers 8x18 for
+    // the same markup.
+    //
+    // `inline-block`, `inline-flex` and the replaced elements are all
+    // inline-LEVEL but do take a width, so the test is `display: inline`
+    // exactly, not "is inline-level".
+    let inline_ignores_size = style.display == Display::Inline;
+    let content_width = if style.width.is_auto() || inline_ignores_size {
         None
     } else {
         let mut w = res(&style.width).max(0.0);
@@ -408,7 +423,7 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     // CSS 2.1 §10.5: percentage heights resolve against the containing block's height.
     // If the containing block's height is not explicitly set (containing_h is None),
     // percentage heights are treated as auto.
-    let content_height = if style.height.is_auto() {
+    let content_height = if style.height.is_auto() || inline_ignores_size {
         None
     } else if matches!(style.height, CssLength::Percent(_)) {
         match containing_h {
@@ -601,22 +616,107 @@ impl LayoutEngine {
         }
     }
 
+    /// Intrinsic dimensions of a replaced element: the decoded image, else the
+    /// `width`/`height` content attributes, else an `<svg>` viewBox. `None`
+    /// when the box is not replaced or its natural size is unknown.
+    ///
+    /// Layout and the intrinsic-width walk both size replaced boxes, so they
+    /// read the natural size from here and cannot disagree about it.
+    pub(crate) fn intrinsic_dimensions(&self, node: &WebCore) -> Option<(f32, f32)> {
+        if node.is_image_element() {
+            if node.image_width > 0 && node.image_height > 0 {
+                return Some((node.image_width as f32, node.image_height as f32));
+            }
+            // Nothing decoded yet: the attributes stand in so the box reserves
+            // the right shape before the bytes arrive.
+            let attr = |k: &str| node.attributes.get(k)
+                .and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            let (attr_w, attr_h) = (attr("width"), attr("height"));
+            return match (attr_w > 0.0, attr_h > 0.0) {
+                (true, true) => Some((attr_w, attr_h)),
+                (true, false) => Some((attr_w, attr_w * 0.75)),
+                (false, true) => Some((attr_h * 1.333, attr_h)),
+                (false, false) => None,
+            };
+        }
+        if node.tag == "svg" && node.svg_viewbox_w > 0.0 && node.svg_viewbox_h > 0.0 {
+            return Some((node.svg_viewbox_w, node.svg_viewbox_h));
+        }
+        None
+    }
+
+    /// **A replaced element contributes the size it is DISPLAYED at, not its
+    /// natural size** (CSS2.1 §10.4). With `width: auto` and a definite height
+    /// the used width follows the height through the intrinsic ratio, so a
+    /// 1024×1024 photo shown at `height: 150px` contributes 150 — reading the
+    /// natural width instead made every card in a wrapping flex row as wide as
+    /// the photo behind it.
+    ///
+    /// The result is a CONTENT-box width; the caller adds padding and border.
+    fn replaced_intrinsic_width(&self, node: &WebCore, font_px: f32, root_font_px: f32) -> Option<f32> {
+        let (iw, ih) = self.intrinsic_dimensions(node)?;
+        if iw <= 0.0 || ih <= 0.0 { return None; }
+        // A percentage has no containing block to resolve against while
+        // measuring intrinsics, so it counts as indefinite.
+        let definite = |len: &CssLength| -> f32 {
+            if len.is_auto() || matches!(len, CssLength::Percent(_)) { return 0.0; }
+            len.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h)
+        };
+        let h = definite(&node.style.height);
+        if h > 0.0 {
+            return Some((h * iw / ih).round().max(0.0));
+        }
+        let (mut w, mut h) = (iw, ih);
+        let max_w = definite(&node.style.max_width);
+        if max_w > 0.0 && w > max_w {
+            h = (max_w * ih / iw).round();
+            w = max_w;
+        }
+        let max_h = definite(&node.style.max_height);
+        if max_h > 0.0 && h > max_h {
+            w = (max_h * iw / ih).round();
+        }
+        Some(w.max(0.0))
+    }
+
     /// Compute the min-content width of a node (the smallest width it can take
     /// without overflowing).  For text, this is the width of the longest word.
     pub fn min_content_width(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+        self.min_content_width_inner(node, parent_font_px, root_font_px, true)
+    }
+
+    /// Min-content width with the element's own `width` ignored. This is the
+    /// CONTENT size suggestion of Flexbox §4.5 — the automatic minimum is the
+    /// smaller of it and the specified size, so reading the specified width
+    /// here would make the two the same number and stop the item shrinking.
+    pub fn min_content_width_of_content(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+        self.min_content_width_inner(node, parent_font_px, root_font_px, false)
+    }
+
+    fn min_content_width_inner(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32, honor_width: bool) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
         // Explicit width → use that directly
-        if !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
+        if honor_width && !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
             let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
+            // ⛔ A `border-box` width ALREADY contains the padding and border,
+            // and every caller adds those again on top of what we return — the
+            // contract here is a CONTENT width. Handing back the raw value made
+            // a shrink-to-fit parent wider by exactly the child's padding and
+            // border, on the near-universal `* { box-sizing: border-box }`.
+            if node.style.box_sizing == BoxSizing::BorderBox {
+                let rb = self.res_box(&node.style, font_px, 0.0, root_font_px);
+                let edges = rb.padding_left + rb.padding_right + rb.border_left + rb.border_right;
+                return (w - edges).max(0.0);
+            }
             return w.max(0.0);
         }
 
-        // Replaced elements (img): use natural dimensions
-        if node.is_image_element() && node.image_width > 0 {
-            return node.image_width as f32;
+        // Replaced elements: the size they are shown at, ratio included.
+        if let Some(w) = self.replaced_intrinsic_width(node, font_px, root_font_px) {
+            return w;
         }
 
         // Custom component: use cached dimensions (like a replaced element)
@@ -656,6 +756,36 @@ impl LayoutEngine {
             return max_word;
         }
 
+        // ⛔ A SINGLE-LINE ROW FLEX CONTAINER SUMS ITS ITEMS (css-flexbox-1
+        // §9.9). Its min-content main size is computed exactly like the
+        // max-content main size, but from the items' MIN-content
+        // contributions — so the items sit side by side and their widths add.
+        // Taking the max here reported `min-content` on a nowrap row flex as
+        // the widest single item, which is what a wrap container does.
+        let single_line_row_flex =
+            matches!(node.style.display, Display::Flex | Display::InlineFlex)
+            && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse)
+            && matches!(node.style.flex_wrap, FlexWrap::Nowrap);
+        if single_line_row_flex {
+            let gap = self.res_len(&node.style.column_gap, font_px, 0.0, root_font_px);
+            let mut total = 0.0f32;
+            let mut count = 0usize;
+            for ch in &node.children {
+                if matches!(ch.style.display, Display::None) { continue; }
+                if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+                let child_font = ch.style.font_size_px(font_px, root_font_px);
+                let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
+                let child_outer = child_rbox.padding_left + child_rbox.padding_right
+                    + child_rbox.border_left + child_rbox.border_right
+                    + child_rbox.margin_left + child_rbox.margin_right;
+                if count > 0 { total += gap; }
+                total += self.min_content_width(ch, font_px, root_font_px) + child_outer;
+                count += 1;
+            }
+            return total + pad_border;
+        }
+
         // For containers: max of children's min-content widths
         let mut max_w = 0.0f32;
         for ch in &node.children {
@@ -673,19 +803,40 @@ impl LayoutEngine {
     }
 
     pub fn max_content_width(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+        self.max_content_width_inner(node, parent_font_px, root_font_px, true)
+    }
+
+    /// Max-content width with the element's own `width` ignored, which is what
+    /// `flex-basis: content` asks for (Flexbox §7.2.3): size from the content
+    /// and disregard the specified size.
+    pub fn max_content_width_of_content(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+        self.max_content_width_inner(node, parent_font_px, root_font_px, false)
+    }
+
+    fn max_content_width_inner(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32, honor_width: bool) -> f32 {
         if matches!(node.style.display, Display::None) { return 0.0; }
 
         // Explicit width → use that directly (but skip percentages — they can't
         // resolve without a known containing width during intrinsic measurement).
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-        if !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
+        if honor_width && !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
             let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
+            // ⛔ A `border-box` width ALREADY contains the padding and border,
+            // and every caller adds those again on top of what we return — the
+            // contract here is a CONTENT width. Handing back the raw value made
+            // a shrink-to-fit parent wider by exactly the child's padding and
+            // border, on the near-universal `* { box-sizing: border-box }`.
+            if node.style.box_sizing == BoxSizing::BorderBox {
+                let rb = self.res_box(&node.style, font_px, 0.0, root_font_px);
+                let edges = rb.padding_left + rb.padding_right + rb.border_left + rb.border_right;
+                return (w - edges).max(0.0);
+            }
             return w.max(0.0);
         }
 
-        // Replaced elements (img): use natural dimensions.
-        if node.is_image_element() && node.image_width > 0 {
-            return node.image_width as f32;
+        // Replaced elements: the size they are shown at, ratio included.
+        if let Some(w) = self.replaced_intrinsic_width(node, font_px, root_font_px) {
+            return w;
         }
 
         // **An `<input>` button is sized by its LABEL, which is an attribute.**
@@ -781,12 +932,34 @@ impl LayoutEngine {
                 let child_outer = child_rbox.padding_left + child_rbox.padding_right
                     + child_rbox.border_left + child_rbox.border_right
                     + child_rbox.margin_left + child_rbox.margin_right;
-                // Use flex-basis if explicit, otherwise max-content width.
-                let child_main = if !ch.style.flex_basis.is_auto() {
+                // Use flex-basis if it gives a definite length. `content` says
+                // to measure the content, and a percentage has nothing to
+                // resolve against during intrinsic measurement, so both fall
+                // through to the content measurement rather than reading 0.
+                let basis_is_definite = !ch.style.flex_basis.is_auto()
+                    && !matches!(ch.style.flex_basis, CssLength::Content | CssLength::Percent(_));
+                let mut child_main = if basis_is_definite {
                     self.res_len(&ch.style.flex_basis, child_font, 0.0, root_font_px).max(0.0)
+                } else if matches!(ch.style.flex_basis, CssLength::Content) {
+                    self.max_content_width_of_content(ch, font_px, root_font_px)
                 } else {
                     self.max_content_width(ch, font_px, root_font_px)
                 };
+                // ⛔ A GROWABLE ITEM CONTRIBUTES ITS MAX-CONTENT SIZE. `flex-basis`
+                // is where the distribution STARTS, not a ceiling on what the
+                // container needs to be (css-flexbox-1 §9.9). Reading a
+                // `flex: 1 1 0` item's basis as its contribution made it count for
+                // nothing, so `width: max-content` on the container came out as
+                // wide as the remaining items alone.
+                if ch.style.flex_grow > 0.0 {
+                    let mc = self.max_content_width(ch, font_px, root_font_px);
+                    if mc > child_main { child_main = mc; }
+                }
+                // The item's own minimum still floors that contribution.
+                if !ch.style.min_width.is_auto() {
+                    let mw = self.res_len(&ch.style.min_width, child_font, 0.0, root_font_px);
+                    if mw > child_main { child_main = mw; }
+                }
                 total += child_main + child_outer;
                 if count > 0 { total += gap; }
                 count += 1;
@@ -796,8 +969,14 @@ impl LayoutEngine {
 
         // Column flex or block: max of children's max-content widths.
         // Exception: floated children sit side by side, so sum their widths.
+        // ⛔ INLINE SIBLINGS SUM, BLOCK SIBLINGS MAX. max-content is the content
+        // laid out with NO soft wrap opportunity taken (css-sizing-3 §5.1), so
+        // everything that shares a line contributes its width to that line. A
+        // plain max over all children measured `Hello <b>World</b>` as the wider
+        // single word, and any shrink-to-fit box sized from it then wrapped.
         let mut max_w = 0.0f32;
         let mut float_sum = 0.0f32;
+        let mut run = 0.0f32; // the inline run being accumulated
         for ch in &node.children {
             if matches!(ch.style.display, Display::None) { continue; }
             if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
@@ -809,10 +988,23 @@ impl LayoutEngine {
             let cw = self.max_content_width(ch, font_px, root_font_px) + child_outer;
             if !matches!(ch.style.float, Float::None) {
                 float_sum += cw;
+                continue;
+            }
+            if ch.tag == "br" {
+                if run > max_w { max_w = run; }
+                run = 0.0;
+                continue;
+            }
+            if ch.style.is_inline_level() {
+                run += cw;
             } else {
+                // A block-level child ends the current line and owns its own.
+                if run > max_w { max_w = run; }
+                run = 0.0;
                 if cw > max_w { max_w = cw; }
             }
         }
+        if run > max_w { max_w = run; }
         // Container must be wide enough for both floats and normal flow
         max_w.max(float_sum) + pad_border
     }
@@ -845,9 +1037,10 @@ impl LayoutEngine {
                     // Strip query string for extension check
                     let url_for_ext = url_clean.split('?').next().unwrap_or(url_clean);
 
-                    // Skip font formats we can't handle (eot, svg, woff2)
-                    if url_for_ext.ends_with(".eot") || url_for_ext.ends_with(".svg")
-                       || url_for_ext.ends_with(".woff2") {
+                    // Skip the formats that are genuinely unreadable. `.eot`
+                    // is IE-only and `.svg` fonts were removed from browsers;
+                    // `.woff2` is decoded (see `load_font_bytes`).
+                    if url_for_ext.ends_with(".eot") || url_for_ext.ends_with(".svg") {
                         continue;
                     }
 
@@ -868,8 +1061,15 @@ impl LayoutEngine {
                         remote.push((face.family.clone(), resolved));
                         found = true;
                     } else if !resolved.is_empty() {
-                        // Local file — load immediately
-                        if let Ok(data) = std::fs::read(&resolved) {
+                        // Local file — load immediately.
+                        //
+                        // ⛔ `file://` has to come off first: `resolve_url`
+                        // returns a URL, and `fs::read` wants a path. A
+                        // `@font-face` pointing at a local file silently
+                        // loaded nothing, and the text was measured in the
+                        // fallback font instead.
+                        let path = resolved.strip_prefix("file://").unwrap_or(&resolved);
+                        if let Ok(data) = std::fs::read(path) {
                             load_font_bytes(fs, data);
                             found = true;
                         }
@@ -954,10 +1154,17 @@ impl LayoutEngine {
         doc.viewport_h = self.viewport_h;
         // Compute root font-size from the <html> element's computed style.
         // Used for `rem` unit resolution throughout layout.
-        let root_font_px = {
-            let html_fs = doc.root.style.font_size_px(self.root_font_px, self.root_font_px);
-            if html_fs > 0.0 { html_fs } else { self.root_font_px }
-        };
+        // ⛔ The cascade resolves `<html>`'s own font-size, so its base must be
+        // the INITIAL size — not a value derived from that same element. This
+        // read `<html>`'s style first and fed the result back in as the base,
+        // so `html { font-size: 62.5% }` — the standard "1rem = 10px" idiom —
+        // resolved to 62.5% of 10 = 6.25px, and every later layout applied the
+        // percentage again: 3.9, 2.4, down to the 1px floor. Every `rem` on the
+        // page collapsed with it, and with them every line height and box.
+        // The cascade publishes the resolved root size itself (see the `html`
+        // branch in `cascade.rs`), and layout picks it up below.
+        let cascade_root_px = self.root_font_px;
+        let root_font_px = cascade_root_px;
 
         // Rebuild selector index if rules changed (lazy, skips if already up-to-date).
         doc.stylesheet.rebuild_index();
@@ -1009,7 +1216,17 @@ impl LayoutEngine {
             let old_chain = crate::css::build_hover_chain(&doc.root, doc.prev_hovered_box);
             let new_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             // Mark dirty flags on nodes affected by hover change
-            crate::css::mark_hover_dirty(&mut doc.root, &old_chain, &new_chain, false, &doc.hover_sensitive_nodes);
+            // ⛔ The stylesheet's own flag, not a hardcoded `false`. It is set
+            // when a rule styles a DESCENDANT of a hovered element — `li:hover
+            // div`, which is how essentially every dropdown menu is built.
+            // Passing `false` meant those descendants were never marked dirty,
+            // so the incremental hover cascade skipped them and the panel never
+            // opened. Hovering the element itself worked, which is why simple
+            // `a:hover` colour changes looked fine while no menu did.
+            crate::css::mark_hover_dirty(
+                &mut doc.root, &old_chain, &new_chain,
+                doc.stylesheet.has_hover_descendant_rules,
+                &doc.hover_sensitive_nodes);
 
             crate::css::apply_cascade_incremental(
                 &mut doc.root, &doc.stylesheet, None, root_font_px,
@@ -1022,6 +1239,13 @@ impl LayoutEngine {
             true
         } else {
             false
+        };
+
+        // `rem` in LAYOUT resolves against what the root actually computed to,
+        // which the cascade has now written as an absolute length.
+        let root_font_px = match doc.root.style.font_size {
+            crate::types::CssLength::Px(v) if v > 0.0 => v,
+            _ => cascade_root_px,
         };
 
         // ── CSS animation / transition runtime ─────────────────────────────
@@ -1286,27 +1510,9 @@ impl LayoutEngine {
         // dimensions are known, compute the auto dimension to preserve the
         // image's intrinsic aspect ratio (CSS Images §5.1).
         // For <svg>, intrinsic dimensions come from viewBox.
-        let (has_intrinsic, iw, ih) = if node.is_image_element() && node.image_width > 0 && node.image_height > 0 {
-            (true, node.image_width as f32, node.image_height as f32)
-        } else if node.is_image_element() {
-            // No loaded image data — use HTML width/height attributes as intrinsic dimensions
-            // for aspect ratio computation. Attributes were parsed into style.width/height.
-            let attr_w = node.attributes.get("width").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-            let attr_h = node.attributes.get("height").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-            if attr_w > 0.0 && attr_h > 0.0 {
-                (true, attr_w, attr_h)
-            } else if attr_w > 0.0 {
-                // Only width attr — set a default aspect ratio (4:3)
-                (true, attr_w, attr_w * 0.75)
-            } else if attr_h > 0.0 {
-                (true, attr_h * 1.333, attr_h)
-            } else {
-                (false, 0.0, 0.0)
-            }
-        } else if node.tag == "svg" && node.svg_viewbox_w > 0.0 && node.svg_viewbox_h > 0.0 {
-            (true, node.svg_viewbox_w, node.svg_viewbox_h)
-        } else {
-            (false, 0.0, 0.0)
+        let (has_intrinsic, iw, ih) = match self.intrinsic_dimensions(node) {
+            Some((w, h)) => (true, w, h),
+            None => (false, 0.0, 0.0),
         };
         // Compute intrinsic aspect ratio dimensions WITHOUT mutating style.
         // The resolved values are applied to rbox after resolve_box_vp.

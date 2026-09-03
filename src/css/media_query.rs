@@ -15,6 +15,19 @@ pub fn evaluate_media(condition: &str, vw: f32, vh: f32) -> bool {
     let cond = condition.trim();
     if cond.is_empty() { return true; }
 
+    // ⛔ `only` is a no-op qualifier — `only print` IS `print` (Media Queries
+    // §3). Leaving it attached meant the string matched no known media type
+    // and fell through to the permissive default, so a print stylesheet
+    // written `@media only print` (or `<link media="only print">`) applied to
+    // the SCREEN: `display: block` everywhere, columns and floats dropped,
+    // navigation hidden. A page styled that way renders as one long column,
+    // exactly as if it had been printed.
+    let cond = match cond.len() >= 5 && cond[..5].eq_ignore_ascii_case("only ") {
+        true  => cond[5..].trim_start(),
+        false => cond,
+    };
+    if cond.is_empty() { return true; }
+
     // Handle comma-separated list at top level (OR semantics)
     // We first split on `and`/`or` outside parens, then check named types.
     // But comma is always OR at the top level.
@@ -60,8 +73,16 @@ pub fn evaluate_media(condition: &str, vw: f32, vh: f32) -> bool {
     if !cond.starts_with('(') {
         return match cond.to_ascii_lowercase().as_str() {
             "screen" | "all" => true,
-            "print"  => false,
-            _ => true,  // unknown media type — fail-open
+            // Everything that is not a screen. The deprecated types are listed
+            // because they must not match either — a `<link media="handheld">`
+            // sheet applying to a desktop render is the same failure as the
+            // print one.
+            "print" | "speech" | "aural" | "braille" | "embossed"
+            | "handheld" | "projection" | "tty" | "tv" => false,
+            // Anything unrecognised is more likely a parse artefact than a
+            // real media type, so it stays permissive rather than silently
+            // dropping a stylesheet.
+            _ => true,
         };
     }
 
@@ -156,13 +177,34 @@ pub(crate) fn find_keyword_outside_parens(s: &str, keyword: &str) -> Option<usiz
     None
 }
 
+/// A length in a media query, in px.
+///
+/// ⛔ This was a THIRD private unit table — `px`, `em`, and a bare `parse()`
+/// for everything else. A bare parse of `"40rem"` FAILS, giving 0, and
+/// `(min-width: 40rem)` with a threshold of 0 matches every viewport. Every
+/// rem-based breakpoint — which is what Bootstrap and Tailwind emit — was
+/// therefore always on. Measured: `(min-width: 4000rem)` (64000px) matched a
+/// 1200px viewport; Chrome correctly does not.
+///
+/// `parse_length` is the single unit definition. Relative units in a media
+/// query resolve against the INITIAL font size, not any element's — Media
+/// Queries 4 §1.3 — so both `em` and `rem` are 16px here.
 pub(crate) fn parse_media_px(s: &str) -> f32 {
     let s = s.trim();
-    if s.ends_with("px") {
-        s[..s.len()-2].trim().parse().unwrap_or(0.0)
-    } else if s.ends_with("em") {
-        s[..s.len()-2].trim().parse::<f32>().unwrap_or(0.0) * 16.0
-    } else {
-        s.parse().unwrap_or(0.0)
-    }
+    if s.is_empty() { return 0.0; }
+    crate::css::value_parse::parse_length(s)
+        .resolve_vp(16.0, 0.0, 16.0, viewport().0, viewport().1)
+}
+
+thread_local! {
+    /// The viewport the media query is being evaluated against, so `vw`/`vh`
+    /// inside one mean what they say.
+    static MQ_VIEWPORT: std::cell::Cell<(f32, f32)> = std::cell::Cell::new((0.0, 0.0));
+}
+
+fn viewport() -> (f32, f32) { MQ_VIEWPORT.with(|v| v.get()) }
+
+/// Record the viewport for the duration of a media-query evaluation.
+pub(crate) fn set_media_viewport(w: f32, h: f32) {
+    MQ_VIEWPORT.with(|v| v.set((w, h)));
 }

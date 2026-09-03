@@ -154,6 +154,12 @@ pub struct ComputedStyle {
     pub align_items:     AlignItems,
     pub align_self:      AlignSelf,
     pub align_content:   AlignContent,
+    /// `safe` / `unsafe` overflow-position bits (Box Alignment §4.4).
+    /// bit 0 `justify-content`, 1 `align-content`, 2 `align-items`,
+    /// 3 `align-self`. `safe` makes an alignment fall back to start rather
+    /// than overflow the container's start edge; the default is `unsafe`,
+    /// which is what a bare `center` / `flex-end` means.
+    pub align_safety:    u8,
     pub flex_grow:       f32,
     pub flex_shrink:     f32,
     pub flex_basis:      CssLength,

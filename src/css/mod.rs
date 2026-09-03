@@ -57,6 +57,9 @@ pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
     let lower = inner.to_ascii_lowercase();
     let lower = lower.trim();
 
+    // So `vw`/`vh` inside the query mean the viewport being queried.
+    crate::css::media_query::set_media_viewport(w, h);
+
     // Legacy min-/max- syntax
     if let Some(rest) = lower.strip_prefix("min-width:")  { return w >= parse_media_px(rest.trim()); }
     if let Some(rest) = lower.strip_prefix("max-width:")  { return w <= parse_media_px(rest.trim()); }

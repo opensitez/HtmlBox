@@ -704,13 +704,8 @@ fn apply_z_index(s: &mut ComputedStyle, v: &str) {
 }
 fn apply_float(s: &mut ComputedStyle, v: &str) {
     s.float = match v { "left" => Float::Left, "right" => Float::Right, _ => Float::None };
-    if s.float != Float::None {
-        s.display = match s.display {
-            Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
-                => Display::Block,
-            other => other,
-        };
-    }
+    // Blockification is settled once, after the whole declaration block, by
+    // `finalize_display` — doing it here would depend on declaration order.
 }
 fn apply_clear(s: &mut ComputedStyle, v: &str) {
     s.clear = match v { "left" => Clear::Left, "right" => Clear::Right, "both" => Clear::Both, _ => Clear::None };
@@ -1058,36 +1053,46 @@ fn apply_flex_wrap(s: &mut ComputedStyle, v: &str) {
 }
 fn apply_flex_grow(s: &mut ComputedStyle, v: &str)   { s.flex_grow   = v.parse().unwrap_or(0.0); }
 fn apply_flex_shrink(s: &mut ComputedStyle, v: &str) { s.flex_shrink = v.parse().unwrap_or(1.0); }
-fn apply_flex_basis(s: &mut ComputedStyle, v: &str)  { s.flex_basis  = parse_length(v); }
+fn apply_flex_basis(s: &mut ComputedStyle, v: &str)  {
+    // `content` is legal on `flex-basis` alone (Flexbox §7.2.3), so it is read
+    // here rather than in the shared length parser.
+    s.flex_basis = if v.trim().eq_ignore_ascii_case("content") { CssLength::Content }
+                   else { parse_length(v) };
+}
 fn apply_order(s: &mut ComputedStyle, v: &str)       { s.order       = v.parse().unwrap_or(0); }
 
 fn apply_flex(s: &mut ComputedStyle, v: &str) {
-    match v {
-        "none" => { s.flex_grow = 0.0; s.flex_shrink = 0.0; s.flex_basis = CssLength::Auto; }
-        "auto" => { s.flex_grow = 1.0; s.flex_shrink = 1.0; s.flex_basis = CssLength::Auto; }
-        _ => {
-            let toks = super::split_css_shorthand_values(v);
-            if toks.len() == 1 {
-                let t = toks[0].as_str();
-                if t.ends_with('%') || t.ends_with("px") || t.ends_with("em")
-                    || t.ends_with("rem") || t.ends_with("vw") || t.ends_with("vh")
-                {
-                    s.flex_grow = 1.0;
-                    s.flex_shrink = 1.0;
-                    s.flex_basis = parse_length(t);
-                } else {
-                    s.flex_grow = t.parse().unwrap_or(0.0);
-                    s.flex_shrink = 1.0;
-                    s.flex_basis = CssLength::Px(0.0);
-                }
-            } else {
-                if let Some(t0) = toks.first() { s.flex_grow = t0.parse().unwrap_or(0.0); }
-                if let Some(t1) = toks.get(1)  { s.flex_shrink = t1.parse().unwrap_or(1.0); }
-                else                            { s.flex_shrink = 1.0; s.flex_basis = CssLength::Px(0.0); }
-                if let Some(t2) = toks.get(2)  { s.flex_basis = parse_length(t2.as_str()); }
-            }
+    // Flexbox §7: the components may appear in any order — two numbers give
+    // grow then shrink, and anything else is the basis. Reading the basis only
+    // out of the THIRD slot dropped it from every two-value form, so
+    // `flex: 1 30%` silently kept whatever basis the element already had.
+    if v.trim().eq_ignore_ascii_case("none") {
+        s.flex_grow = 0.0; s.flex_shrink = 0.0; s.flex_basis = CssLength::Auto;
+        return;
+    }
+    let mut grow:   Option<f32>       = None;
+    let mut shrink: Option<f32>       = None;
+    let mut basis:  Option<CssLength> = None;
+    for tok in super::split_css_shorthand_values(v) {
+        let t = tok.as_str();
+        if let Ok(n) = t.parse::<f32>() {
+            // A bare number is a flex factor — unless both are already taken,
+            // in which case it is the basis (`flex: 1 1 0`).
+            if grow.is_none()        { grow = Some(n); }
+            else if shrink.is_none() { shrink = Some(n); }
+            else if basis.is_none()  { basis = Some(CssLength::Zero); }
+            continue;
+        }
+        if basis.is_none() {
+            basis = Some(if t.eq_ignore_ascii_case("content") { CssLength::Content }
+                         else { parse_length(t) });
         }
     }
+    // Omitted components take the shorthand's own defaults, which are not the
+    // properties' initial values: an absent basis is 0, not `auto`.
+    s.flex_grow   = grow.unwrap_or(1.0);
+    s.flex_shrink = shrink.unwrap_or(1.0);
+    s.flex_basis  = basis.unwrap_or(CssLength::Zero);
 }
 fn apply_flex_flow(s: &mut ComputedStyle, v: &str) {
     for tok in v.split_whitespace() {
@@ -1103,39 +1108,84 @@ fn apply_flex_flow(s: &mut ComputedStyle, v: &str) {
         }
     }
 }
+/// Split an alignment value into its `<overflow-position>` and the position
+/// keyword, per the Box Alignment grammar. `first baseline` and `last baseline`
+/// collapse to the baseline keywords the callers below understand.
+///
+/// The parsers used to match the whole declaration as one string, so every
+/// two-word form in the grammar — `safe center`, `unsafe flex-end`,
+/// `first baseline`, `last baseline` — missed and silently took the property's
+/// initial value instead.
+fn split_alignment(v: &str) -> (&str, bool) {
+    let v = v.trim();
+    let mut safe = false;
+    let mut rest = v;
+    if let Some(r) = v.strip_prefix("safe ")   { safe = true;  rest = r.trim(); }
+    else if let Some(r) = v.strip_prefix("unsafe ") { safe = false; rest = r.trim(); }
+    let rest = match rest {
+        "first baseline" => "baseline",
+        "last baseline"  => "last-baseline",
+        other            => other,
+    };
+    (rest, safe)
+}
+
+/// Set or clear one of the `align_safety` bits.
+fn set_safety(s: &mut ComputedStyle, bit: u8, safe: bool) {
+    if safe { s.align_safety |= bit; } else { s.align_safety &= !bit; }
+}
+
+pub const SAFETY_JUSTIFY_CONTENT: u8 = 1;
+pub const SAFETY_ALIGN_CONTENT:   u8 = 2;
+pub const SAFETY_ALIGN_ITEMS:     u8 = 4;
+pub const SAFETY_ALIGN_SELF:      u8 = 8;
+
 fn apply_justify_content(s: &mut ComputedStyle, v: &str) {
+    let (v, safe) = split_alignment(v);
+    set_safety(s, SAFETY_JUSTIFY_CONTENT, safe);
     s.justify_content = match v {
-        "flex-end" | "end"   => JustifyContent::FlexEnd,
+        "flex-end" | "end" | "self-end" => JustifyContent::FlexEnd,
         "center"             => JustifyContent::Center,
         "space-between"      => JustifyContent::SpaceBetween,
         "space-around"       => JustifyContent::SpaceAround,
         "space-evenly"       => JustifyContent::SpaceEvenly,
+        // Physical, and so immune to `row-reverse`.
+        "left"               => JustifyContent::Left,
+        "right"              => JustifyContent::Right,
         _                    => JustifyContent::FlexStart,
     };
 }
 fn apply_align_items(s: &mut ComputedStyle, v: &str) {
+    let (v, safe) = split_alignment(v);
+    set_safety(s, SAFETY_ALIGN_ITEMS, safe);
     s.align_items = match v {
         "flex-start" | "start" | "self-start" => AlignItems::FlexStart,
         "flex-end"   | "end"   | "self-end"   => AlignItems::FlexEnd,
-        "center"     => AlignItems::Center,
-        "baseline"   => AlignItems::Baseline,
-        _            => AlignItems::Stretch,
+        "center"        => AlignItems::Center,
+        "baseline"      => AlignItems::Baseline,
+        "last-baseline" => AlignItems::LastBaseline,
+        _               => AlignItems::Stretch,
     };
 }
 fn apply_align_self(s: &mut ComputedStyle, v: &str) {
+    let (v, safe) = split_alignment(v);
+    set_safety(s, SAFETY_ALIGN_SELF, safe);
     s.align_self = match v {
         "flex-start" | "start" | "self-start" => AlignSelf::FlexStart,
         "flex-end"   | "end"   | "self-end"   => AlignSelf::FlexEnd,
-        "center"     => AlignSelf::Center,
-        "baseline"   => AlignSelf::Baseline,
-        "stretch"    => AlignSelf::Stretch,
-        _            => AlignSelf::Auto,
+        "center"        => AlignSelf::Center,
+        "baseline"      => AlignSelf::Baseline,
+        "last-baseline" => AlignSelf::LastBaseline,
+        "stretch"       => AlignSelf::Stretch,
+        _               => AlignSelf::Auto,
     };
 }
 fn apply_align_content(s: &mut ComputedStyle, v: &str) {
+    let (v, safe) = split_alignment(v);
+    set_safety(s, SAFETY_ALIGN_CONTENT, safe);
     s.align_content = match v {
-        "flex-start"   => AlignContent::FlexStart,
-        "flex-end"     => AlignContent::FlexEnd,
+        "flex-start" | "start" | "baseline" | "last-baseline" => AlignContent::FlexStart,
+        "flex-end"   | "end"   => AlignContent::FlexEnd,
         "center"       => AlignContent::Center,
         "space-between"=> AlignContent::SpaceBetween,
         "space-around" => AlignContent::SpaceAround,
@@ -1144,29 +1194,41 @@ fn apply_align_content(s: &mut ComputedStyle, v: &str) {
     };
 }
 fn apply_justify_items(s: &mut ComputedStyle, v: &str) {
+    let (v, _) = split_alignment(v);
     s.justify_items = match v {
-        "flex-start" | "start" => AlignItems::FlexStart,
-        "flex-end"   | "end"   => AlignItems::FlexEnd,
-        "center"               => AlignItems::Center,
-        "baseline"             => AlignItems::Baseline,
-        _                      => AlignItems::Stretch,
+        "flex-start" | "start" | "self-start" | "left" => AlignItems::FlexStart,
+        "flex-end"   | "end"   | "self-end"   | "right" => AlignItems::FlexEnd,
+        "center"        => AlignItems::Center,
+        "baseline"      => AlignItems::Baseline,
+        "last-baseline" => AlignItems::LastBaseline,
+        _               => AlignItems::Stretch,
     };
 }
 fn apply_justify_self(s: &mut ComputedStyle, v: &str) {
+    let (v, _) = split_alignment(v);
     s.justify_self = match v {
-        "flex-start" | "start" => AlignSelf::FlexStart,
-        "flex-end"   | "end"   => AlignSelf::FlexEnd,
-        "center"               => AlignSelf::Center,
-        "baseline"             => AlignSelf::Baseline,
-        "stretch"              => AlignSelf::Stretch,
-        _                      => AlignSelf::Auto,
+        "flex-start" | "start" | "self-start" | "left" => AlignSelf::FlexStart,
+        "flex-end"   | "end"   | "self-end"   | "right" => AlignSelf::FlexEnd,
+        "center"        => AlignSelf::Center,
+        "baseline"      => AlignSelf::Baseline,
+        "last-baseline" => AlignSelf::LastBaseline,
+        "stretch"       => AlignSelf::Stretch,
+        _               => AlignSelf::Auto,
     };
 }
 fn apply_gap(s: &mut ComputedStyle, v: &str) {
-    let g = parse_length(v);
-    s.row_gap = g.clone();
-    s.column_gap = g.clone();
-    s.gap = g;
+    // `gap: <row> <column>` — the one-value form applies to both. Parsing the
+    // whole declaration as a single length made `gap: 10px 30px` unparseable,
+    // so both gaps fell back to their initial value.
+    let toks = super::split_css_shorthand_values(v);
+    let row = parse_length(toks.first().map(|t| t.as_str()).unwrap_or(v));
+    let col = match toks.get(1) {
+        Some(t) => parse_length(t.as_str()),
+        None    => row.clone(),
+    };
+    s.row_gap = row.clone();
+    s.column_gap = col;
+    s.gap = row;
 }
 fn apply_row_gap(s: &mut ComputedStyle, v: &str)    { s.row_gap    = parse_length(v); }
 fn apply_column_gap(s: &mut ComputedStyle, v: &str) { s.column_gap = parse_length(v); }
@@ -2179,6 +2241,10 @@ fn apply_place_content(s: &mut ComputedStyle, v: &str) {
 
 // ── Accent color ────────────────────────────────────────────────────────────
 
-fn apply_accent_color(s: &mut ComputedStyle, v: &str) {
-    if let Some(c) = parse_color(v) { s.background_color = c; }
+fn apply_accent_color(_s: &mut ComputedStyle, _v: &str) {
+    // ⛔ DOES NOTHING, deliberately. `accent-color` tints a control's own
+    // accent — a checkbox tick, a radio dot, a range thumb — and there is no
+    // field for it yet. Assigning it into `background_color` painted a solid
+    // block over the control and fought a real `background-color` in the same
+    // rule, which is worse than not supporting the property at all.
 }

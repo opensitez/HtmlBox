@@ -155,7 +155,11 @@ impl Default for ComputedStyle {
             box_sizing: BoxSizing::ContentBox,
             width:      CssLength::Auto,
             height:     CssLength::Auto,
-            min_width:  CssLength::Zero,
+            // `auto`, which is the CSS initial value. It computes to 0 in
+            // normal flow, but on a flex item it means the content-based
+            // minimum (Flexbox §4.5) — defaulting to `Zero` made that branch
+            // dead, so a flex item would shrink to nothing.
+            min_width:  CssLength::Auto,
             max_width:  CssLength::None,
             min_height: CssLength::Auto,
             max_height: CssLength::None,
@@ -170,10 +174,18 @@ impl Default for ComputedStyle {
             padding_bottom: CssLength::Zero,
             padding_left:   CssLength::Zero,
 
-            border_top_width:    CssLength::Px(0.0),
-            border_right_width:  CssLength::Px(0.0),
-            border_bottom_width: CssLength::Px(0.0),
-            border_left_width:   CssLength::Px(0.0),
+            // ⛔ `medium`, which CSS Backgrounds 3 §4.3 pins at exactly 3px —
+            // not 0. Safe because the USED width is zeroed whenever the
+            // matching `border-*-style` is `none` (`layout/mod.rs`), which is
+            // itself the initial value, so an element with no border declared
+            // still occupies no border space.
+            //
+            // It matters for `border-style: solid` with no width given, and
+            // for anything that resets a width to its initial value.
+            border_top_width:    CssLength::Px(3.0),
+            border_right_width:  CssLength::Px(3.0),
+            border_bottom_width: CssLength::Px(3.0),
+            border_left_width:   CssLength::Px(3.0),
 
             border_top_style:    BorderStyle::None,
             border_right_style:  BorderStyle::None,
@@ -221,13 +233,20 @@ impl Default for ComputedStyle {
             align_items:     AlignItems::Stretch,
             align_self:      AlignSelf::Auto,
             align_content:   AlignContent::Stretch,
+            align_safety:    0,
             flex_grow:       0.0,
             flex_shrink:     1.0,
             flex_basis:      CssLength::Auto,
             order:           0,
             gap:             CssLength::Zero,
             row_gap:         CssLength::Zero,
-            column_gap:      CssLength::Zero,
+            // ⛔ `normal`, not zero. `column-gap`'s initial value is `normal`,
+            // which in a MULTI-COLUMN container computes to 1em
+            // (css-multicol-1 §4.2); in flex and grid it resolves to 0, which
+            // is what `res_len` gives for `Auto`. Storing `Zero` made an unset
+            // gap indistinguishable from an author's `column-gap: 0`, so every
+            // multicol block rendered with its columns touching.
+            column_gap:      CssLength::Auto,
 
             grid_auto_columns:     GridTrackSize::default(),
             grid_auto_rows:        GridTrackSize::default(),

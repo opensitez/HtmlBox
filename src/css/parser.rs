@@ -41,6 +41,21 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
                 continue;
             }
 
+            // ⛔ `@layer a, b;` — the STATEMENT form, which has no block. It
+            // exists purely to fix the order of the layers it names, and was
+            // being skipped with every other braceless at-rule, so the order it
+            // declared was thrown away and layers fell back to source order.
+            if at_lower.starts_with("@layer") && s.find('{').map_or(true, |b| s.find(';').map_or(false, |sc| sc < b)) {
+                if let Some(semi) = s.find(';') {
+                    for name in s[6..semi].split(',') {
+                        let n = name.trim();
+                        if !n.is_empty() { declare_layer(n); }
+                    }
+                    s = &s[semi + 1..];
+                    continue;
+                }
+            }
+
             // Find the opening brace
             let brace = match s.find('{') {
                 Some(p) => p,
@@ -86,9 +101,20 @@ fn parse_stylesheet_inner(css: &str, parent_media: &str) -> Option<Vec<CssRule>>
                     for r in inner_rules { rules.push(r); }
                 }
             } else if at_lower.starts_with("@layer") {
-                // @layer — parse inner rules (ignore layer ordering for now)
+                // `@layer name { … }` — every rule inside belongs to that layer.
+                // Naming a layer here also declares its order, if a preceding
+                // `@layer a, b;` statement did not already.
+                let name = at_header
+                    .trim_start_matches(|c: char| c != ' ' && c != '\t')
+                    .trim()
+                    .to_string();
+                declare_layer(&name);
                 if let Some(inner_rules) = parse_stylesheet_inner(inner_block, parent_media) {
-                    for r in inner_rules { rules.push(r); }
+                    for mut r in inner_rules {
+                        // An inner `@layer` wins — it is the more specific one.
+                        if r.layer.is_empty() { r.layer = name.clone(); }
+                        rules.push(r);
+                    }
                 }
             }
             // else: @keyframes, @font-face, etc. — skip the block
@@ -379,9 +405,25 @@ pub fn parse_selector(s: &str) -> CssSelector {
                     _ => { parts.push(SelectorPart::Combinator(Combinator::Descendant)); }
                 }
             }
-            '>' => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::Child)); }
-            '+' => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::AdjacentSibling)); }
-            '~' => { chars.next(); parts.push(SelectorPart::Combinator(Combinator::GeneralSibling)); }
+            // ⛔ Skip the whitespace AFTER the combinator. Without this the
+            // space in `"> em"` reaches the whitespace arm below and pushes a
+            // SECOND, descendant combinator — `[Child, Descendant, em]` — which
+            // matches nothing. It only bit selectors starting with a
+            // combinator, because in `div > em` the whitespace arm sees the
+            // `>` first and already skips past it; a RELATIVE selector like a
+            // `:has(> em)` argument starts with one.
+            '>' | '+' | '~' => {
+                let c = match ch {
+                    '>' => Combinator::Child,
+                    '+' => Combinator::AdjacentSibling,
+                    _   => Combinator::GeneralSibling,
+                };
+                chars.next();
+                while matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n')) {
+                    chars.next();
+                }
+                parts.push(SelectorPart::Combinator(c));
+            }
             '#' => {
                 chars.next();
                 let id = read_ident(&mut chars);
@@ -621,4 +663,28 @@ fn strip_quotes(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+
+thread_local! {
+    /// Layer names in DECLARATION order, for the sheet currently being parsed.
+    ///
+    /// Order comes from whichever appears first: a `@layer a, b;` statement or
+    /// the first `@layer a { … }` block. CSS Cascade 5 §6.4.4.
+    static LAYER_ORDER: std::cell::RefCell<Vec<String>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+fn declare_layer(name: &str) {
+    let name = name.trim();
+    if name.is_empty() { return; }
+    LAYER_ORDER.with(|l| {
+        let mut l = l.borrow_mut();
+        if !l.iter().any(|n| n == name) { l.push(name.to_string()); }
+    });
+}
+
+/// The layer names declared so far, in order.
+pub fn declared_layers() -> Vec<String> {
+    LAYER_ORDER.with(|l| l.borrow().clone())
 }

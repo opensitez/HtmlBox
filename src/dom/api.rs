@@ -2011,9 +2011,35 @@ impl Document {
         // with a real rect — it is just not reachable from `root.children` —
         // so the shadow-aware lookup is the fallback rather than a second
         // answer for the same node.
-        self.get_node(id)
-            .or_else(|| self.find_webcore(id))
-            .map(|node| node.layout.border_rect)
+        let node = self.get_node(id).or_else(|| self.find_webcore(id))?;
+        let rect = node.layout.border_rect;
+        // ⛔ The TRANSFORMED border box — CSSOM View §4 says this returns the
+        // bounding rectangle of the element's transformed border boxes, and
+        // this answered the untransformed one, so a page could not find out
+        // where a transformed element actually is.
+        //
+        // Costs nothing on the overwhelmingly common path: no transform, no
+        // work. Only the element's OWN transform is composed — an ancestor's
+        // is not, which is a further step.
+        if node.style.transform.is_empty() || node.style.transform == "none" {
+            return Some(rect);
+        }
+        let m = crate::renderer::display_list_builder::compute_transform_matrix(
+            &node.style, &rect);
+        let pt = |x: f32, y: f32| (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]);
+        let corners = [
+            pt(rect.x, rect.y),
+            pt(rect.x + rect.w, rect.y),
+            pt(rect.x, rect.y + rect.h),
+            pt(rect.x + rect.w, rect.y + rect.h),
+        ];
+        let (mut x0, mut y0) = (f32::INFINITY, f32::INFINITY);
+        let (mut x1, mut y1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for (x, y) in corners {
+            x0 = x0.min(x); y0 = y0.min(y);
+            x1 = x1.max(x); y1 = y1.max(y);
+        }
+        Some(Rect::new(x0, y0, x1 - x0, y1 - y0))
     }
 
     /// Get the offset width (border box width).
@@ -2696,27 +2722,37 @@ impl Document {
         None
     }
 
+    /// The origin `offsetLeft` / `offsetTop` measure from.
+    ///
+    /// ⛔ A statically-positioned `body` is NOT subtracted. Every engine
+    /// returns the document-relative offset when the offset parent is the body
+    /// — a `<div>` at the top of a default page reports `offsetTop` 8, its
+    /// distance from the page, not 0, its distance from the body's padding
+    /// edge. Subtracting the body put every such element 8px off, which is
+    /// most elements on most pages.
+    fn offset_origin(&mut self, id: u32) -> (f32, f32) {
+        let Some(parent) = self.offset_parent(id) else { return (0.0, 0.0) };
+        if Some(parent) == self.body()
+            && self.computed_style_property(parent, "position") == "static"
+        {
+            return (0.0, 0.0);
+        }
+        self.get_bounding_client_rect(parent)
+            .map(|r| (r.x, r.y))
+            .unwrap_or((0.0, 0.0))
+    }
+
     /// `element.offsetTop` — the border box's top edge, relative to
     /// [`offset_parent`](Self::offset_parent) rather than to the viewport.
     pub fn offset_top(&mut self, id: u32) -> f32 {
         let own = self.get_bounding_client_rect(id).map(|r| r.y).unwrap_or(0.0);
-        let origin = self
-            .offset_parent(id)
-            .and_then(|p| self.get_bounding_client_rect(p))
-            .map(|r| r.y)
-            .unwrap_or(0.0);
-        own - origin
+        own - self.offset_origin(id).1
     }
 
     /// `element.offsetLeft` — see [`offset_top`](Self::offset_top).
     pub fn offset_left(&mut self, id: u32) -> f32 {
         let own = self.get_bounding_client_rect(id).map(|r| r.x).unwrap_or(0.0);
-        let origin = self
-            .offset_parent(id)
-            .and_then(|p| self.get_bounding_client_rect(p))
-            .map(|r| r.x)
-            .unwrap_or(0.0);
-        own - origin
+        own - self.offset_origin(id).0
     }
 
     // ─── The namespaced accessors that were missing their pair ─────────────

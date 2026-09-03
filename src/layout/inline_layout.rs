@@ -38,6 +38,26 @@ pub fn layout_inline_block(
         Some(w) => w,
         None    => (containing_w - rbox.h_space()).max(0.0),
     };
+    // CSS Sizing §5 — the intrinsic keywords, resolved here because this is
+    // where the node is in hand. See the same branch in `block.rs`: they read
+    // as `auto` to every caller that cannot measure content, so a
+    // `width: min-content` box otherwise filled its containing block.
+    // Only when nothing definite was resolved: a forced size — the main size
+    // flex hands its items — outranks the item's own intrinsic keyword.
+    let raw_w = match node.style.width.intrinsic().filter(|_| rbox.content_width.is_none()) {
+        Some(kind) => {
+            let avail = raw_w;
+            let mn = engine.min_content_width_of_content(node, font_px, root_font_px);
+            let mx = engine.max_content_width_of_content(node, font_px, root_font_px);
+            match kind {
+                CssLength::MinContent => mn,
+                CssLength::MaxContent => mx,
+                _ => mx.min(avail).max(mn),
+            }
+        }
+        None => raw_w,
+    };
+
     // Apply min/max-width, converting from border-box to content-box when needed.
     // CSS: with box-sizing:border-box, min/max-width refer to the border box, not the content box.
     let bb_extra = if node.style.box_sizing == crate::types::BoxSizing::BorderBox {
@@ -473,20 +493,26 @@ pub fn layout_inline_block(
 
         let line_items = &items[item_idx..line_end];
 
-        // Compute line metrics from items
-        let (mut line_h, mut line_asc, mut line_desc) =
-            measure_metrics(line_items, font_px);
-
-        // CSS line-height: apply only when explicitly set (not auto)
-        if !node.style.line_height.is_auto() {
-            let lh_val = engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px);
-            if lh_val > line_h {
-                let half = ((lh_val - line_h) / 2.0).floor();
-                line_asc  += half;
-                line_desc += (lh_val - line_h) - half;
-                line_h     = lh_val;
-            }
-        }
+        // Compute line metrics from the items and the STRUT.
+        //
+        // CSS 2.1 §10.8: every line box contains a strut — a zero-width inline
+        // box carrying the block's own font and line-height — whose ascent and
+        // descent take part in the line box's height. Without it a line holding
+        // only atomic inlines had no room below the baseline at all: a 20px
+        // image or inline-block produced a 20px line where a browser gives 25.
+        // The `line-height` was instead bolted on afterwards, and only ever to
+        // GROW the line, so it could not shrink one either.
+        let (strut_asc, strut_desc) = strut_metrics(engine, node, font_px, root_font_px);
+        let (raw_h, line_asc, mut line_desc) =
+            measure_metrics(line_items, strut_asc, strut_desc);
+        // A line box occupies whole pixels, which is what a browser reports:
+        // half-leading lands on a half pixel, and leaving it there made every
+        // line half a pixel short — invisible on one line and a drift of one
+        // pixel per two lines down a page. Rounded, not ceiled: the font
+        // extent carries floating-point dust, and `ceil` turned an exact 19
+        // into 20. The extra goes BELOW the baseline so the text does not move.
+        let line_h = raw_h.round();
+        line_desc += line_h - raw_h;
 
         // Measure content width: CSS requires stripping leading/trailing
         // collapsible whitespace from each line before alignment.
@@ -660,9 +686,30 @@ pub fn layout_inline_block(
         // even when initially off-screen.
         let line_visible = engine.viewport_h <= 0.0 || ll.y < engine.viewport_h * 10.0;
         if line_visible {
-            if let Some(fs_ptr) = engine.font_system {
-                let fs = unsafe { &mut *fs_ptr };
-                fill_char_x_for_line(fs, &flat_text, &runs, &mut ll, engine.scale);
+            // ⛔ Re-shaping this line is the most expensive thing a layout does
+            // (72,805 profile samples on Wikipedia). Nothing about the glyph
+            // positions changes unless the line's TEXT, the STYLES of the runs
+            // covering it, its justification spacing, its BiDi segmentation or
+            // the device scale change — so fingerprint exactly those and reuse
+            // the previous line's `char_x` when they match.
+            //
+            // The existing early-stop cannot do this job: it needs
+            // `old_line_idx > 0` and copies the whole TAIL, so the first line is
+            // always re-shaped and a block of one or two lines never benefits.
+            let key = char_x_fingerprint(&flat_text, &runs, &ll, engine.scale);
+            let reused = old_lines.get(old_line_idx).and_then(|ol| {
+                (ol.char_x_key == key && key != 0 && !ol.char_x.is_empty())
+                    .then(|| ol.char_x.clone())
+            });
+            match reused {
+                Some(prev) => { ll.char_x = prev; ll.char_x_key = key; }
+                None => {
+                    if let Some(fs_ptr) = engine.font_system {
+                        let fs = unsafe { &mut *fs_ptr };
+                        fill_char_x_for_line(fs, &flat_text, &runs, &mut ll, engine.scale);
+                        ll.char_x_key = key;
+                    }
+                }
             }
         }
 
@@ -904,22 +951,55 @@ fn set_box_rects(
 
 // ─── Line metrics ─────────────────────────────────────────────────────────────
 
-fn measure_metrics(items: &[InlineItem], fallback_font_px: f32) -> (f32, f32, f32) {
-    let mut max_asc  = 0.0f32;
-    let mut max_desc = 0.0f32;
-    let mut any = false;
+/// Line metrics: the tallest ascent and deepest descent among the line's items
+/// AND the strut, which is always present (CSS 2.1 §10.8). An empty line is
+/// exactly the strut.
+fn measure_metrics(items: &[InlineItem], strut_asc: f32, strut_desc: f32) -> (f32, f32, f32) {
+    let mut max_asc  = strut_asc;
+    let mut max_desc = strut_desc;
     for it in items {
         if matches!(it.kind, InlineItemKind::Break) { continue; }
         if it.ascent  > max_asc  { max_asc  = it.ascent;  }
         if it.descent > max_desc { max_desc = it.descent; }
-        any = true;
     }
-    if !any {
-        let (a, d) = approx_font_metrics(fallback_font_px, None);
-        return (a + d, a, d);
-    }
-    let h = (max_asc + max_desc).max(fallback_font_px * 1.2);
-    (h, max_asc, max_desc)
+    (max_asc + max_desc, max_asc, max_desc)
+}
+
+/// Split an inline box's leading evenly above and below its font
+/// (CSS 2.1 §10.8.1). A `line-height` under the font's own height gives
+/// negative leading, which is how a tight `line-height` shrinks a line.
+fn half_leading(font_asc: f32, font_desc: f32, line_h: f32) -> (f32, f32) {
+    let lead = line_h - (font_asc + font_desc);
+    let half = lead / 2.0;
+    (font_asc + half, font_desc + (lead - half))
+}
+
+/// The height of a line box holding a single atomic inline `box_h` tall, strut
+/// included. `block.rs` builds such lines directly when a block mixes inline
+/// children with block-level ones, and it needs the same answer this module
+/// computes for a full inline formatting context.
+pub fn strut_line_height(
+    engine: &LayoutEngine,
+    node: &WebCore,
+    font_px: f32,
+    root_font_px: f32,
+    box_h: f32,
+) -> f32 {
+    let (strut_asc, strut_desc) = strut_metrics(engine, node, font_px, root_font_px);
+    // The box hangs from the baseline, so it competes with the strut's ascent.
+    (box_h.max(strut_asc) + strut_desc).round()
+}
+
+/// The strut for a block: its own font and `line-height`.
+fn strut_metrics(engine: &LayoutEngine, node: &WebCore, font_px: f32, root_font_px: f32) -> (f32, f32) {
+    let fs = unsafe { engine.font_system.map(|fs| &mut *fs) };
+    let (fa, fd, natural_lh) = font_metrics(fs, &node.style.font_family, font_px);
+    let line_h = if node.style.line_height.is_auto() {
+        natural_lh
+    } else {
+        engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px)
+    };
+    half_leading(fa, fd, line_h)
 }
 
 // ─── Inline Item ──────────────────────────────────────────────────────────────
@@ -1016,15 +1096,27 @@ fn collect_items_inner(
 
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
-    let (ascent, descent) = approx_font_metrics(font_px, font_system);
-    let line_h = engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px)
-                     .max(font_px * 1.2);
+    let (font_asc, font_desc, natural_lh) =
+        font_metrics(font_system, &node.style.font_family, font_px);
+    // `line-height: normal` is the font's own natural line height.
+    let line_h = if node.style.line_height.is_auto() {
+        natural_lh
+    } else {
+        engine.res_len(&node.style.line_height, font_px, 0.0, root_font_px)
+    };
+    // CSS 2.1 §10.8.1: an inline box's leading is split evenly above and below
+    // its font, and it is THOSE half-leading-adjusted edges that size the line
+    // box — not the bare font metrics. Using the raw metrics put the baseline
+    // too high and let a large-font span inflate the line past its own
+    // `line-height`.
+    let (ascent, descent) = half_leading(font_asc, font_desc, line_h);
 
     // ── Text node ─────────────────────────────────────────────────────────
     if node.is_text_node() {
         if !node.text.is_empty() {
             let start = *text_offset;
-            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
+            let (letter_s, word_s) = resolved_spacings(engine, &node.style, font_px, root_font_px);
+            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family, letter_s, word_s);
             // ⛔ `node.style.clone()` now clones the ARC. This wants the
             // VALUE — it is mutated below and stored in an `InlineRun`.
             let mut run_style = (*node.style).clone();
@@ -1096,7 +1188,8 @@ fn collect_items_inner(
     // ── Own text ──────────────────────────────────────────────────────────
     if !node.text.is_empty() {
         let start = *text_offset;
-        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family);
+        let (letter_s, word_s) = resolved_spacings(engine, &node.style, font_px, root_font_px);
+        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family, letter_s, word_s);
         runs.push(InlineRun { text_offset: start, length: node.text.len(), style: (*node.style).clone() });
         *text_offset += node.text.len();
     }
@@ -1107,13 +1200,14 @@ fn collect_items_inner(
     let has_inline_decoration = !is_direct_child
         && matches!(node.style.display, Display::Inline);
     let (inline_left, inline_right) = if has_inline_decoration {
-        let l = engine.res_len(&node.style.padding_left, font_px, 0.0, root_font_px)
-            + engine.res_len(&node.style.border_left_width, font_px, 0.0, root_font_px)
-            + engine.res_len(&node.style.margin_left, font_px, 0.0, root_font_px);
-        let r = engine.res_len(&node.style.padding_right, font_px, 0.0, root_font_px)
-            + engine.res_len(&node.style.border_right_width, font_px, 0.0, root_font_px)
-            + engine.res_len(&node.style.margin_right, font_px, 0.0, root_font_px);
-        (l, r)
+        // ⛔ THROUGH `res_box`, which is the one place that knows a border with
+        // no style occupies nothing (CSS Backgrounds §4.3). `border-width`
+        // computes to `medium` — 3px — so reading the width on its own put 3px
+        // on the first line and 3px on the last of every nested inline box, and
+        // a flex item sized to its own text then broke onto a second line.
+        let rb = engine.res_box(&node.style, font_px, 0.0, root_font_px);
+        (rb.padding_left + rb.border_left + rb.margin_left,
+         rb.padding_right + rb.border_right + rb.margin_right)
     } else {
         (0.0, 0.0)
     };
@@ -1168,9 +1262,34 @@ fn collect_items_inner(
     }
 }
 
+/// Used values of `letter-spacing` and `word-spacing`, in px.
+///
+/// `normal` computes to `auto` here, which is zero spacing — resolving it as a
+/// length would hand back whatever `auto` degrades to.
+fn resolved_spacings(
+    engine: &LayoutEngine,
+    style:  &ComputedStyle,
+    font_px: f32,
+    root_font_px: f32,
+) -> (f32, f32) {
+    let res = |len: &CssLength| -> f32 {
+        if len.is_auto() { 0.0 } else { engine.res_len(len, font_px, 0.0, root_font_px) }
+    };
+    (res(&style.letter_spacing), res(&style.word_spacing))
+}
+
 /// Split `text` at whitespace boundaries and emit word/space InlineItems.
 /// For `white-space: pre`, `pre-wrap`, and `pre-line`, newlines (`\n`) produce
 /// a forced `Break` item rather than being treated as a collapsible space.
+///
+/// `letter_spacing` and `word_spacing` are the resolved used values in px.
+/// **They are part of the ADVANCE of the items, not a paint-time flourish**
+/// (css-text-3 §8.1/§8.2): the same items are summed for the shrink-to-fit
+/// width, walked by `break_one_line` to pick wrap points, and measured again
+/// by `fill_char_x_for_line`. Leaving the spacing out of the advance sizes the
+/// box for text narrower than what is painted into it, which clips the last
+/// character inside an `overflow: hidden` box and overlaps the next inline
+/// outside one.
 fn tokenize_text(
     engine:      &LayoutEngine,
     text:        &str,
@@ -1185,6 +1304,8 @@ fn tokenize_text(
     font_weight: FontWeight,
     font_style:  FontStyle,
     font_family: &str,
+    letter_spacing: f32,
+    word_spacing:   f32,
 ) {
     if text.is_empty() { return; }
 
@@ -1201,17 +1322,23 @@ fn tokenize_text(
 
         if (at_end || is_space || is_nl) && i > word_start {
             // Emit word — use cached measurement to avoid redundant font shaping
+            let word = &text[word_start..i];
             let w = engine.measure_text_cached(
-                &text[word_start..i], font_px,
+                word, font_px,
                 font_weight, font_style, font_family,
             );
+            // css-text-3 §8.2: tracking is inserted after EVERY typographic
+            // character unit, the last one included — a browser's box for
+            // `letter-spacing: 4px` on five letters is twenty pixels wider,
+            // not sixteen.
+            let tracking = letter_spacing * word.chars().count() as f32;
             items.push(InlineItem {
                 kind:      InlineItemKind::Text {
                     text_start: base_offset + word_start,
                     text_len:   i - word_start,
                     box_idx,
                 },
-                advance:   w,
+                advance:   w + tracking,
                 ascent,
                 descent,
                 height:    line_h,
@@ -1254,6 +1381,9 @@ fn tokenize_text(
             let space_w = engine.measure_text_cached(
                 " ", font_px, font_weight, font_style, font_family,
             );
+            // A space is a word separator (css-text-3 §8.1) and a character
+            // (§8.2), so it carries both spacings.
+            let space_w = space_w + word_spacing + letter_spacing;
             // In white-space:pre / pre-wrap, spaces are significant (not collapsible).
             // Mark them as non-space so break_one_line doesn't strip leading whitespace,
             // and non-breakable in pre mode (only \n breaks lines).
@@ -1422,6 +1552,11 @@ pub(crate) fn css_family_to_cosmic(raw: &str) -> Family<'_> {
         "monospace"  => Family::Monospace,
         "cursive"    => Family::Cursive,
         "fantasy"    => Family::Fantasy,
+        // ⛔ `system-ui` IS a generic, and `resolve_css_family` — the resolver
+        // the MEASURING path uses — treats it as one. Passing it through as a
+        // face name here meant a box was measured with the sans-serif generic
+        // and painted with whatever cosmic-text made of the literal name.
+        "system-ui"  => Family::SansSerif,
         ""           => Family::SansSerif,
         name         => Family::Name(name),
     }
@@ -1700,8 +1835,124 @@ pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {
     }).sum()
 }
 
-pub fn approx_font_metrics(font_px: f32, _fs: Option<&mut cosmic_text::FontSystem>) -> (f32, f32) {
-    (font_px * 0.80, font_px * 0.20)
+/// The font's ascent, descent and natural line height at `font_px`.
+///
+/// ⛔ Reads the REAL font when a font system is available. The flat
+/// `0.80 / 0.20` guess it used to return sums to one em, but a text font's
+/// ascent and descent sum to well over that — Menlo is 0.928 / 0.236 — so the
+/// baseline sat too high inside every line box and `line-height: normal` was
+/// the wrong height. The ratios are cached per family: this is the layout hot
+/// path, and shaping a probe per element would be a per-frame cost.
+pub fn font_metrics(
+    fs: Option<&mut cosmic_text::FontSystem>,
+    family: &str,
+    font_px: f32,
+) -> (f32, f32, f32) {
+    // Fallback ratios, used when no font system is reachable. They are a
+    // typical text font's, not an em box.
+    // (ascent, descent, leading) as fractions of the em.
+    const FALLBACK: (f32, f32, f32) = (0.8, 0.2, 0.2);
+    let (a, d, lead) = match fs {
+        Some(fs) => font_metric_ratios(fs, family).unwrap_or(FALLBACK),
+        None => FALLBACK,
+    };
+    // ⛔ Rounded to whole pixels, which is what a browser's font metrics are:
+    // the leading is then computed from the ROUNDED extent, so a `line-height`
+    // one pixel off the font's own height splits into a clean half-pixel above
+    // and below. Leaving the raw fractions in put every such line a pixel
+    // short of what a browser reports.
+    let asc = (a * font_px).round();
+    let desc = (d * font_px).round();
+    (asc, desc, asc + desc + (lead * font_px).round())
+}
+
+thread_local! {
+    static FONT_RATIOS: std::cell::RefCell<std::collections::HashMap<String, Option<(f32, f32, f32)>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Ascent, descent and leading as fractions of the em.
+fn font_metric_ratios(fs: &mut cosmic_text::FontSystem, family: &str) -> Option<(f32, f32, f32)> {
+    let key = family.trim().to_ascii_lowercase();
+    if let Some(hit) = FONT_RATIOS.with(|c| c.borrow().get(&key).copied()) {
+        return hit;
+    }
+    let computed = measure_font_ratios(fs, family);
+    FONT_RATIOS.with(|c| { c.borrow_mut().insert(key, computed); });
+    computed
+}
+
+fn measure_font_ratios(fs: &mut cosmic_text::FontSystem, family: &str) -> Option<(f32, f32, f32)> {
+    let resolved;
+    let mut attrs = Attrs::new();
+    if !family.is_empty() {
+        resolved = resolve_css_family(fs, family);
+        attrs = attrs.family(resolved.as_family());
+    }
+    // Shape one glyph purely to learn which face the family resolves to.
+    let mut buffer = Buffer::new(fs, Metrics::new(16.0, 16.0));
+    buffer.set_text(fs, "x", &attrs, Shaping::Advanced, None);
+    buffer.shape_until_scroll(fs, false);
+    let font_id = buffer.layout_runs().next()?.glyphs.first()?.font_id;
+    // The regular face's metrics stand in for every weight and style of the
+    // family. Vertical metrics rarely differ across a family's faces, and
+    // keying the cache on weight and style would multiply the probes on the
+    // layout hot path for a sub-pixel difference.
+    let font = fs.get_font(font_id, Weight::NORMAL)?;
+    let m = font.metrics();
+    let upem = m.units_per_em as f32;
+    if upem <= 0.0 { return None; }
+    // `descent` is negative in font units — it measures DOWN from the baseline.
+    let asc = m.ascent / upem;
+    let desc = -m.descent / upem;
+    if asc <= 0.0 || desc < 0.0 { return None; }
+    // The leading is carried as its own ratio rather than folded into a
+    // natural line height and subtracted back out later — that subtraction
+    // left floating-point dust on an exact value.
+    Some((asc, desc, m.leading.max(0.0) / upem))
+}
+
+/// Everything `fill_char_x_for_line` shapes from, as one number.
+///
+/// ⛔ Must cover every input that moves a glyph. A field left out here is a
+/// stale-position bug that renders as text drawn at the wrong offsets, which no
+/// other test would catch. `0` means "do not reuse".
+fn char_x_fingerprint(
+    flat: &str,
+    runs: &[InlineRun],
+    line: &crate::types::LayoutLine,
+    scale: f32,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let start = line.text_start;
+    let end = (line.text_start + line.text_length).min(flat.len());
+    if end <= start { return 0; }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    flat[start..end].hash(&mut h);
+    line.extra_space_per_word.to_bits().hash(&mut h);
+    line.text_x_offset.to_bits().hash(&mut h);
+    scale.to_bits().hash(&mut h);
+    for vs in &line.visual_segments {
+        vs.logical_start.hash(&mut h);
+        vs.length.hash(&mut h);
+    }
+    for r in runs {
+        // Only the runs that touch this line can affect its glyphs.
+        if r.text_offset + r.length <= start || r.text_offset >= end { continue; }
+        r.text_offset.hash(&mut h);
+        r.length.hash(&mut h);
+        r.style.font_size_px(16.0, 16.0).to_bits().hash(&mut h);
+        r.style.word_spacing.resolve(16.0, 0.0, 16.0).to_bits().hash(&mut h);
+        // Tracking moves every glyph on the line, so a run that only changed
+        // its `letter-spacing` must not be handed the previous `char_x`.
+        r.style.letter_spacing.resolve(16.0, 0.0, 16.0).to_bits().hash(&mut h);
+        r.style.font_weight.value().hash(&mut h);
+        (r.style.font_style as u8).hash(&mut h);
+        r.style.font_stretch.to_bits().hash(&mut h);
+        r.style.font_family.hash(&mut h);
+    }
+    let v = h.finish();
+    if v == 0 { 1 } else { v }
 }
 
 // ─── Accurate per-character x positions using cosmic_text ────────────────────
@@ -1776,10 +2027,15 @@ pub fn fill_char_x_for_line(
             let lw = lr.line_w * inv_scale;
             if lw > seg_advance { seg_advance = lw; }
         }
+        // The shaper knows nothing about the two spacing properties, so the
+        // segment's advance has to carry them or this cursor drifts out of
+        // step with the item advances the line was built from.
         let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
+        let letter_s = run.style.letter_spacing.resolve(font_px, 0.0, 16.0);
         let extra = line.extra_space_per_word;
         let n_spc = seg_text.chars().filter(|&c| c == ' ').count() as f32;
-        seg_advance + n_spc * (word_s + extra)
+        let n_chars = seg_text.chars().count() as f32;
+        seg_advance + n_spc * (word_s + extra) + n_chars * letter_s
     };
 
     let mut cursor_x = 0.0f32;

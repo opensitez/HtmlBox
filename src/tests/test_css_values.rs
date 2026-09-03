@@ -174,3 +174,118 @@ fn clamp_width_in_layout() {
     // 50% of containing block (~784px after body margins), clamp(200, ~392, 600) → ~392
     assert!(w > 200.0 && w < 600.0, "clamp(200,50%,600) should be between bounds, got {}", w);
 }
+
+// ── line-height is not a plain length ────────────────────────────────────────
+
+/// **A unitless `line-height` is a MULTIPLE of the font size, not pixels**
+/// (CSS 2.1 §10.8.1). The value pre-parser had `line-height` in its generic
+/// length group, so `line-height: 1.375` pre-parsed to 1.375 **pixels** while
+/// the string path read it as `1.375em`. The two cascade paths therefore
+/// disagreed: fr.wikipedia rendered normally and then, on the first hover,
+/// every heading lost its leading and `#firstHeading` collapsed to one pixel
+/// tall — its text vanished.
+#[test]
+fn line_height_number_is_a_multiple_not_pixels() {
+    for (input, expect) in [
+        ("1.375", crate::types::CssLength::Em(1.375)),
+        ("2",     crate::types::CssLength::Em(2.0)),
+        ("normal", crate::types::CssLength::Em(1.2)),
+    ] {
+        // The string path.
+        let mut s = crate::types::ComputedStyle::default();
+        crate::css::apply_property(&mut s, "line-height", input);
+        assert_eq!(s.line_height, expect, "string path for {input:?}");
+
+        // The pre-parsed path, which is what the cascade normally takes.
+        let id = crate::css::properties::PropertyId::LineHeight;
+        let pre = crate::css::rule::pre_parse_value(id, input);
+        let mut p = crate::types::ComputedStyle::default();
+        crate::css::apply_css_value(&mut p, id, &pre);
+        assert_eq!(p.line_height, expect, "pre-parsed path for {input:?} (pre-parsed as {pre:?})");
+    }
+}
+
+/// A `line-height` written with a unit keeps that unit.
+#[test]
+fn line_height_with_a_unit_stays_a_length() {
+    for input in ["20px", "1.5em", "150%", "2rem"] {
+        let mut s = crate::types::ComputedStyle::default();
+        crate::css::apply_property(&mut s, "line-height", input);
+        let id = crate::css::properties::PropertyId::LineHeight;
+        let pre = crate::css::rule::pre_parse_value(id, input);
+        let mut p = crate::types::ComputedStyle::default();
+        crate::css::apply_css_value(&mut p, id, &pre);
+        assert_eq!(s.line_height, p.line_height,
+            "the two value paths disagree about {input:?}");
+    }
+}
+
+// ── background-image url() forms ─────────────────────────────────────────────
+
+/// **A protocol-relative, unquoted `url()` is a URL.** fr.wikipedia's main
+/// banner is `background-image:url(//upload.wikimedia.org/...svg)`; the rule
+/// applies (its `display:flex` reaches the box) but the image never painted.
+#[test]
+fn background_image_url_forms_all_parse() {
+    for input in [
+        "url(//upload.wikimedia.org/wikipedia/commons/a/aa/Wikipedia-logo-v2-o50.svg)",
+        "url('//upload.wikimedia.org/wikipedia/commons/a/aa/Wikipedia-logo-v2-o50.svg')",
+        "url(\"//upload.wikimedia.org/wikipedia/commons/a/aa/Wikipedia-logo-v2-o50.svg\")",
+    ] {
+        let mut s = crate::types::ComputedStyle::default();
+        crate::css::apply_property(&mut s, "background-image", input);
+        assert_eq!(s.background_image_url,
+            "//upload.wikimedia.org/wikipedia/commons/a/aa/Wikipedia-logo-v2-o50.svg",
+            "background-image did not parse: {input}");
+    }
+}
+
+/// And it must resolve against the document origin, keeping the scheme.
+#[test]
+fn protocol_relative_url_takes_the_base_scheme() {
+    let got = crate::html::images::resolve_url(
+        "//upload.wikimedia.org/a.svg", "https://fr.wikipedia.org/wiki/Foo");
+    assert_eq!(got, "https://upload.wikimedia.org/a.svg");
+}
+
+// ── Colour keywords and accent-color ────────────────────────────────────────
+
+/// **Colour keywords are ASCII case-insensitive.** Legacy presentational HTML
+/// still ships `bgcolor="White"` and `color="Red"`; matching the keyword table
+/// byte-exactly dropped the declaration and left the element at its default.
+#[test]
+fn colour_keywords_are_case_insensitive() {
+    for (input, expect) in [("White", (255u8, 255u8, 255u8)), ("RED", (255, 0, 0)),
+                            ("Blue", (0, 0, 255)), ("white", (255, 255, 255))] {
+        let mut s = crate::types::ComputedStyle::default();
+        crate::css::apply_property(&mut s, "background-color", input);
+        let c = s.background_color;
+        assert_eq!((c.r, c.g, c.b), expect, "background-color: {input}");
+    }
+}
+
+/// **`accent-color` must not touch `background-color`.** With no accent field
+/// of its own it was assigned straight into `background_color`, so it painted a
+/// solid block and fought a real `background-color` in the same rule. Until the
+/// accent is actually plumbed through to control painting, doing nothing is the
+/// correct behaviour — doing damage is not.
+#[test]
+fn accent_color_does_not_overwrite_the_background() {
+    let mut s = crate::types::ComputedStyle::default();
+    crate::css::apply_property(&mut s, "background-color", "white");
+    crate::css::apply_property(&mut s, "accent-color", "red");
+    let c = s.background_color;
+    assert_eq!((c.r, c.g, c.b), (255, 255, 255),
+        "accent-color clobbered background-color: got {},{},{}", c.r, c.g, c.b);
+}
+
+/// `font-size: xxx-large` is a real absolute-size keyword; falling through to
+/// the length parser made it `auto`, which resolves to **0** and the text
+/// disappears.
+#[test]
+fn font_size_xxx_large_is_not_zero() {
+    let mut s = crate::types::ComputedStyle::default();
+    crate::css::apply_property(&mut s, "font-size", "xxx-large");
+    let px = s.font_size.resolve(16.0, 0.0, 16.0);
+    assert!(px > 30.0, "xxx-large should be larger than xx-large, got {px}");
+}

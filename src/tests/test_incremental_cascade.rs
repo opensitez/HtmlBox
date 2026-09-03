@@ -244,3 +244,418 @@ fn incremental_cascade_handles_hover_transition() {
     assert!(chain_a.contains(&a));
     assert!(chain_b.contains(&b));
 }
+
+// ── Re-running layout must not change the result ─────────────────────────────
+
+/// One line per box: tag, display and geometry — enough to catch a box that
+/// appeared, vanished or changed size between two passes.
+fn dump_boxes(node: &crate::types::WebCore, depth: usize, out: &mut String) {
+    out.push_str(&format!(
+        "{:indent$}{} [{:?}] {}x{}\n",
+        "", node.tag, node.style.display,
+        node.layout.margin_rect.w, node.layout.margin_rect.h,
+        indent = depth * 2,
+    ));
+    for ch in &node.children { dump_boxes(ch, depth + 1, out); }
+}
+
+/// **A second `layout()` on the same document must produce the same boxes.**
+/// Hovering re-runs the whole cascade, so any pass-to-pass drift shows up as
+/// the page jumping the moment the pointer moves. Creating a `::before` box for
+/// a flex parent used to clear `before_content` on that parent, so the next
+/// cascade saw an empty content and deleted the box it had just built.
+#[test]
+fn cascade_layout_is_idempotent_for_flex_pseudo_elements() {
+    let html = r#"<style>
+        * { margin: 0; padding: 0 }
+        .bar { display: flex }
+        .bar::before { content: "" ; width: 12px; height: 4px }
+        .bar::after { content: "" ; width: 8px; height: 4px }
+        .label { display: flex }
+        .label::before { content: "x" }
+        </style>
+        <div class="bar"><span class="label">Menu</span><span>Other</span></div>"#;
+    let mut renderer = crate::renderer::Renderer::new();
+    let mut doc = renderer.load_html(html, 400.0);
+    let mut first = String::new();
+    dump_boxes(&doc.root, 0, &mut first);
+
+    renderer.layout_engine().layout(&mut doc, 400.0);
+    let mut second = String::new();
+    dump_boxes(&doc.root, 0, &mut second);
+
+    assert!(first.contains("::before"), "the flex ::before box exists on the first pass:\n{first}");
+    assert_eq!(first, second, "second layout differs\n--- first ---\n{first}\n--- second ---\n{second}");
+}
+
+/// The same guarantee for a third pass — a drift that alternates between two
+/// shapes would satisfy a single repeat.
+#[test]
+fn cascade_layout_is_stable_across_repeats() {
+    let html = r#"<style>
+        * { margin: 0; padding: 0 }
+        .grid { display: grid }
+        .grid::before { content: "a" }
+        .flex { display: flex }
+        .flex::after { content: "b" }
+        </style>
+        <div class="grid"><div class="flex">Hi</div></div>"#;
+    let mut renderer = crate::renderer::Renderer::new();
+    let mut doc = renderer.load_html(html, 400.0);
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        let mut s = String::new();
+        dump_boxes(&doc.root, 0, &mut s);
+        shapes.push(s);
+        renderer.layout_engine().layout(&mut doc, 400.0);
+    }
+    assert_eq!(shapes[0], shapes[1], "pass 2 differs from pass 1");
+    assert_eq!(shapes[1], shapes[2], "pass 3 differs from pass 2");
+}
+
+// ── Sibling combinators in the parallel cascade ──────────────────────────────
+
+/// A document whose sheet is large enough to take the parallel cascade path
+/// (`rules.len() > 1000`), plus the rule under test.
+fn big_sheet_doc(rule: &str, body: &str) -> crate::Document {
+    let mut css = String::new();
+    for i in 0..1100 { css.push_str(&format!(".filler{i} {{ color: #010101 }}\n")); }
+    css.push_str(rule);
+    let html = format!("<style>* {{ margin:0; padding:0 }}\n{css}</style>{body}");
+    let mut doc = crate::parse_html(&html);
+    let mut eng = crate::layout::LayoutEngine::new();
+    eng.viewport_h = 900.0;
+    eng.layout(&mut doc, 800.0);
+    doc
+}
+
+fn by_id<'a>(node: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
+    if node.attributes.get("id").map(String::as_str) == Some(id) { return Some(node); }
+    for c in &node.children { if let Some(n) = by_id(c, id) { return Some(n); } }
+    None
+}
+
+/// **`+` and `~` must match in the parallel cascade too.** It handed the
+/// matcher an empty previous-sibling list for every element, so every sibling
+/// combinator silently failed on first render and then started matching the
+/// moment anything triggered the serial re-cascade.
+#[test]
+fn parallel_cascade_matches_the_adjacent_sibling_combinator() {
+    let doc = big_sheet_doc(
+        "span + span { position: absolute; width: 1px; height: 1px }",
+        "<div><span id=first>A</span>\n\n<span id=second>B</span></div>",
+    );
+    let second = by_id(&doc.root, "second").unwrap();
+    assert_eq!(second.style.position, crate::types::Position::Absolute,
+        "span + span must match the second span");
+    // Blockified because it is out of flow (CSS Display 3 §2.7).
+    assert_eq!(second.style.display, crate::types::Display::Block);
+    let first = by_id(&doc.root, "first").unwrap();
+    assert_eq!(first.style.position, crate::types::Position::Static,
+        "and must not match the first");
+}
+
+/// The general sibling combinator, and a text node between the elements — an
+/// element sibling is what counts, not a DOM sibling.
+#[test]
+fn parallel_cascade_matches_the_general_sibling_combinator() {
+    let doc = big_sheet_doc(
+        "#a ~ span { position: absolute }",
+        "<div><span id=a>A</span> text <em>x</em> <span id=b>B</span><span id=c>C</span></div>",
+    );
+    for id in ["b", "c"] {
+        assert_eq!(by_id(&doc.root, id).unwrap().style.position,
+            crate::types::Position::Absolute, "#a ~ span must match #{id}");
+    }
+    assert_eq!(by_id(&doc.root, "a").unwrap().style.position,
+        crate::types::Position::Static, "and not the subject itself");
+}
+
+/// A descendant selector in front of the combinator — the shape the real page
+/// used (`.cdx-button.cdx-button--icon-only span + span`).
+#[test]
+fn parallel_cascade_matches_a_sibling_under_a_descendant() {
+    let doc = big_sheet_doc(
+        ".btn.icon-only span + span { position: absolute; width: 1px }",
+        "<label class='btn icon-only'><span id=icon></span>\n<span id=label>Menu</span></label>",
+    );
+    assert_eq!(by_id(&doc.root, "label").unwrap().style.position,
+        crate::types::Position::Absolute);
+    assert_eq!(by_id(&doc.root, "icon").unwrap().style.position,
+        crate::types::Position::Static);
+}
+
+
+// ── The two cascades must agree ──────────────────────────────────────────────
+//
+// `apply_cascade_vp_hover` picks the parallel implementation when the sheet has
+// more than 1000 rules. Every incremental re-cascade takes the serial one, so a
+// large page that renders one way on load and another way after the first hover
+// is exactly the two implementations disagreeing. These tests cascade the SAME
+// markup down both paths and require the computed styles to be identical.
+
+/// 1100 rules that match nothing — enough to push `apply_cascade_vp_hover` over
+/// its parallel threshold without changing a single computed value.
+fn filler_rules() -> String {
+    let mut s = String::new();
+    for i in 0..1100 { s.push_str(&format!(".vfill{i} {{ color: #010101 }}\n")); }
+    s
+}
+
+/// Cascade `body` twice against `rule`: once with a small sheet (serial path)
+/// and once with `rule` plus 1100 never-matching rules (parallel path).
+fn cascade_serial_and_parallel(rule: &str, body: &str, focus_id: Option<&str>)
+    -> (crate::Document, crate::Document)
+{
+    let mut small = crate::parse_html(&format!("<style>{rule}</style>{body}"));
+    let mut big = crate::parse_html(&format!("<style>{}{rule}</style>{body}", filler_rules()));
+    assert!(small.stylesheet.rules.len() <= 1000,
+        "the small sheet must take the serial path ({} rules)", small.stylesheet.rules.len());
+    assert!(big.stylesheet.rules.len() > 1000,
+        "the big sheet must take the parallel path ({} rules)", big.stylesheet.rules.len());
+    let empty = HashSet::new();
+    for doc in [&mut small, &mut big] {
+        let focus = focus_id.and_then(|id| doc.get_element_by_id(id)).unwrap_or(0);
+        doc.stylesheet.rebuild_index();
+        apply_cascade_vp_hover(
+            &mut doc.root, &doc.stylesheet, None, 16.0,
+            800.0, 600.0, focus, false, &empty,
+        );
+    }
+    (small, big)
+}
+
+/// The first node where two cascaded trees differ, as a human-readable report.
+///
+/// `ComputedStyle` has no `PartialEq`, and the tree's own serializer emits only
+/// a subset of properties — so the comparison is on the derived `Debug`, which
+/// prints every field.
+fn first_style_difference(a: &crate::types::WebCore, b: &crate::types::WebCore, path: &str)
+    -> Option<String>
+{
+    let here = format!("{path}/{}{}", a.tag,
+        a.attributes.get("id").map(|i| format!("#{i}")).unwrap_or_default());
+    if a.tag != b.tag {
+        return Some(format!("{here}: tag {} vs {}", a.tag, b.tag));
+    }
+    let (sa, sb) = (format!("{:?}", *a.style), format!("{:?}", *b.style));
+    if sa != sb {
+        // Report only the fields that actually differ — a whole ComputedStyle
+        // dump buries the one property under two thousand characters.
+        let diffs: Vec<String> = sa.split(", ").zip(sb.split(", "))
+            .filter(|(x, y)| x != y)
+            .map(|(x, y)| format!("{x} != {y}"))
+            .take(6).collect();
+        let detail = if diffs.is_empty() { format!("{sa}\n  vs\n{sb}") } else { diffs.join("; ") };
+        return Some(format!("{here}: {detail}"));
+    }
+    if a.children.len() != b.children.len() {
+        return Some(format!("{here}: {} children vs {}", a.children.len(), b.children.len()));
+    }
+    for (ca, cb) in a.children.iter().zip(b.children.iter()) {
+        if let Some(d) = first_style_difference(ca, cb, &here) { return Some(d); }
+    }
+    match (&a.shadow_root, &b.shadow_root) {
+        (Some(x), Some(y)) => {
+            if x.children.len() != y.children.len() {
+                return Some(format!("{here}: shadow {} children vs {}",
+                    x.children.len(), y.children.len()));
+            }
+            for (ca, cb) in x.children.iter().zip(y.children.iter()) {
+                if let Some(d) = first_style_difference(ca, cb, &format!("{here}::shadow")) {
+                    return Some(d);
+                }
+            }
+        }
+        (None, None) => {}
+        _ => return Some(format!("{here}: one tree has a shadow root and the other does not")),
+    }
+    None
+}
+
+/// Assert the serial and parallel cascades compute the same styles for `body`.
+fn assert_cascades_agree(what: &str, rule: &str, body: &str) {
+    let (small, big) = cascade_serial_and_parallel(rule, body, None);
+    if let Some(d) = first_style_difference(&small.root, &big.root, "") {
+        panic!("{what}: serial and parallel cascades disagree at {d}");
+    }
+}
+
+#[test]
+fn both_cascades_honour_layer_order() {
+    // CSS Cascade 5 §6.4.4: a later `@layer` wins over an earlier one no matter
+    // how specific the earlier rule is.
+    assert_cascades_agree("@layer order",
+        "@layer base, theme;\n\
+         @layer theme { #t { color: rgb(0, 0, 255) } }\n\
+         @layer base  { #t.c { color: rgb(255, 0, 0) } }",
+        "<p id=t class=c>x</p>");
+}
+
+#[test]
+fn both_cascades_read_the_size_attribute_per_element() {
+    // `size` means three different things: `<font size>` is a font size,
+    // `<select size>` a row count, `<input size>` a width in characters.
+    assert_cascades_agree("size attribute",
+        "p { color: black }",
+        "<select id=s size=4><option>a</option></select><input id=i size=20>\
+         <font id=f size=5>t</font>");
+}
+
+#[test]
+fn both_cascades_give_select_multiple_its_default_height() {
+    assert_cascades_agree("select multiple",
+        "p { color: black }",
+        "<select id=s multiple><option>a</option></select>");
+}
+
+#[test]
+fn both_cascades_evaluate_has() {
+    assert_cascades_agree(":has()",
+        ".card:has(img) { color: rgb(1, 2, 3) }",
+        "<div class=card id=c><img src=x></div><div class=card id=d>t</div>");
+}
+
+#[test]
+fn both_cascades_evaluate_empty() {
+    assert_cascades_agree(":empty",
+        "p:empty { color: rgb(4, 5, 6) }",
+        "<p id=e></p><p id=n>t</p>");
+}
+
+#[test]
+fn both_cascades_evaluate_focus_pseudo_classes() {
+    let body = "<div id=wrap><input id=f></div>";
+    let rule = "#wrap:focus-within { color: rgb(7, 8, 9) } input:focus { color: rgb(9, 8, 7) }";
+    let (small, big) = cascade_serial_and_parallel(rule, body, Some("f"));
+    if let Some(d) = first_style_difference(&small.root, &big.root, "") {
+        panic!(":focus/:focus-within: serial and parallel cascades disagree at {d}");
+    }
+}
+
+#[test]
+fn both_cascades_put_important_into_the_hover_base_style() {
+    // The `hover_style` is a clone of the element's own computed style with the
+    // hover declarations overlaid, so an `!important` on the element must
+    // already be in it.
+    assert_cascades_agree("!important in the hover base",
+        "#h { color: rgb(9, 9, 9) !important } #h:hover { background: rgb(1, 1, 1) }",
+        "<a id=h href=#>x</a>");
+}
+
+#[test]
+fn both_cascades_order_inherit_against_important_the_same_way() {
+    assert_cascades_agree("inherit vs !important",
+        "#p { color: rgb(3, 30, 3) } .a { color: inherit } #i { color: rgb(7, 7, 7) !important }",
+        "<div id=p><span id=i class=a>x</span></div>");
+}
+
+#[test]
+fn a_generated_pseudo_box_does_not_shift_its_siblings_results() {
+    // The parallel pass records a node PATH during a walk of the tree as it
+    // stands, then `build_pseudo_element_boxes` inserts a `::before` child at
+    // index 0 during the apply walk — every later sibling then looks its result
+    // up at the wrong path and gets no rules at all.
+    let rule = "#f { display: flex } #f::before { content: 'x' } \
+                #s { color: rgb(2, 4, 6) } #t { color: rgb(6, 4, 2) }";
+    let body = "<div id=f><span id=s>a</span><span id=t>b</span></div>";
+    let (small, big) = cascade_serial_and_parallel(rule, body, None);
+    for (name, doc) in [("serial", &small), ("parallel", &big)] {
+        let f = by_id(&doc.root, "f").unwrap();
+        assert_eq!(f.children.first().map(|c| c.tag.as_str()), Some("::before"),
+            "{name}: the ::before box must exist, or this test proves nothing");
+        assert_eq!(by_id(&doc.root, "s").unwrap().style.color,
+            crate::types::Color { r: 2, g: 4, b: 6, a: 255 }, "{name}: #s");
+        assert_eq!(by_id(&doc.root, "t").unwrap().style.color,
+            crate::types::Color { r: 6, g: 4, b: 2, a: 255 }, "{name}: #t");
+    }
+    if let Some(d) = first_style_difference(&small.root, &big.root, "") {
+        panic!("::before insertion: serial and parallel cascades disagree at {d}");
+    }
+}
+
+#[test]
+fn both_cascades_apply_host_rules_in_a_shadow_tree() {
+    assert_cascades_agree(":host",
+        "p { color: black }",
+        "<div id=host><template shadowrootmode=open>\
+         <style>:host { color: rgb(5, 5, 5) } p { color: rgb(6, 6, 6) }</style>\
+         <p>s</p></template><span>l</span></div>");
+}
+
+#[test]
+fn a_custom_property_on_a_shadow_host_reaches_its_light_children() {
+    assert_cascades_agree("custom property across a shadow host",
+        "#host { --tint: rgb(3, 3, 3) } #light { color: var(--tint) }",
+        "<div id=host><template shadowrootmode=open><slot></slot></template>\
+         <span id=light>l</span></div>");
+}
+
+#[test]
+fn both_cascades_agree_on_a_mixed_document() {
+    // One document exercising several features at once — a regression net for
+    // divergences nobody has named yet.
+    assert_cascades_agree("mixed document",
+        "@layer a, b;\n\
+         @layer b { li { color: rgb(1, 1, 1) } }\n\
+         @layer a { li.x { color: rgb(2, 2, 2) } }\n\
+         ol { counter-reset: n } li::before { content: counter(n) '. '; display: block }\n\
+         li { counter-increment: n }\n\
+         td { padding: 2px } input:checked { color: rgb(4, 4, 4) }\n\
+         .g { display: grid } .g::after { content: '' }\n\
+         p + p { color: rgb(5, 5, 5) } p ~ span { color: rgb(6, 6, 6) }",
+        "<ol><li class=x>a</li><li>b</li></ol>\
+         <table border=1 cellspacing=0><tr><td>c</td></tr></table>\
+         <input type=checkbox checked><div class=g><b>g</b></div>\
+         <p>1</p><p>2</p><span>s</span><select size=3><option>o</option></select>");
+}
+
+/// **The bug as the user sees it**: a large page renders on the parallel path,
+/// and the first hover re-cascades the affected subtree on the serial one. If
+/// the two disagree, the page changes under the pointer.
+#[test]
+fn a_re_cascade_does_not_change_a_page_that_loaded_on_the_parallel_path() {
+    let rule = "@layer a, b;\n\
+                @layer b { #t { color: rgb(0, 0, 255) } }\n\
+                @layer a { #t.c { color: rgb(255, 0, 0) } }\n\
+                #f { display: flex } #f::before { content: 'x' }\n\
+                #s { color: rgb(2, 4, 6) } .card:has(img) { color: rgb(1, 2, 3) }\n\
+                #hov:hover { background: rgb(8, 8, 8) }";
+    let body = "<p id=t class=c>x</p>\
+                <div id=f><span id=s>a</span><span id=t2>b</span></div>\
+                <div class=card id=c><img src=x></div>\
+                <select id=sel size=4><option>o</option></select>\
+                <a id=hov href=#>h</a>";
+    let mut doc = crate::parse_html(&format!("<style>{}{rule}</style>{body}", filler_rules()));
+    doc.stylesheet.rebuild_index();
+    let empty = HashSet::new();
+    apply_cascade_vp_hover(
+        &mut doc.root, &doc.stylesheet, None, 16.0, 800.0, 600.0, 0, false, &empty,
+    );
+    clear_cascade_dirty(&mut doc.root);
+    let before = doc.clone();
+
+    // Hover the link: the same route `layout()` takes — mark the chain dirty,
+    // then run the incremental (serial) cascade.
+    let hov = doc.get_element_by_id("hov").unwrap();
+    let chain = build_hover_chain(&doc.root, hov);
+    mark_hover_dirty(&mut doc.root, &empty, &chain, true, &HashSet::new());
+    apply_cascade_incremental(
+        &mut doc.root, &doc.stylesheet, None, 16.0, 800.0, 600.0, 0, false, &chain,
+    );
+    clear_cascade_dirty(&mut doc.root);
+
+    // Everything OUTSIDE the hover chain must be untouched by the re-cascade.
+    fn compare(a: &crate::types::WebCore, b: &crate::types::WebCore,
+               chain: &HashSet<u32>, path: &str) -> Option<String> {
+        if chain.contains(&a.node_id) { return None; }
+        first_style_difference(a, b, path)
+    }
+    for id in ["t", "s", "t2", "c", "sel"] {
+        let a = by_id(&before.root, id).expect(id);
+        let b = by_id(&doc.root, id).expect(id);
+        if let Some(d) = compare(a, b, &chain, id) {
+            panic!("re-cascade changed #{id}, which is not in the hover chain: {d}");
+        }
+    }
+}

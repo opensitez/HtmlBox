@@ -262,6 +262,18 @@ fn parse_html_full(
     }
     stylesheet.raw_sources.extend(parser.stylesheet.raw_sources);
     stylesheet.keyframes.extend(parser.stylesheet.keyframes);
+    // ⛔ `@font-face` and `@layer` travel with the rest. This merge carried
+    // rules, variables, sources and keyframes and dropped these two, so a web
+    // font declared in an inline `<style>` was parsed, stored on the parser's
+    // sheet, and then thrown away — the document loaded no font and every
+    // string was measured in the fallback face. Layer order went the same way,
+    // which decides which layered rule wins.
+    stylesheet.font_faces.extend(parser.stylesheet.font_faces);
+    for name in parser.stylesheet.layer_order {
+        if !stylesheet.layer_order.iter().any(|n| *n == name) {
+            stylesheet.layer_order.push(name);
+        }
+    }
 
     let title = parser.title.clone();
     let linked_stylesheets = parser.linked_stylesheets.clone();
@@ -356,7 +368,8 @@ fn parse_html_full(
         let url = resolve_url(href, base_url);
         if !url.starts_with("http://") && !url.starts_with("https://") && !url.is_empty() {
             if let Ok(css_text) = std::fs::read_to_string(&url) {
-                doc.stylesheet.parse_and_add(&css_text);
+                // A local `<link>` is still an AUTHOR sheet.
+                doc.stylesheet.parse_and_add_with_base(&css_text, &url);
             }
         }
     }

@@ -776,3 +776,326 @@ fn layout_flex_column_center_shrinks_child_to_intrinsic_width() {
         h2.layout.margin_rect.x, col.layout.content_rect.x);
 }
 
+
+// ── linear-gradient geometry (css-images-3 §3.4.1) ───────────────────────────
+
+/// **The gradient line runs corner to corner, through the centre of the box.**
+/// Its length is `|W·sin A| + |H·cos A|` and its midpoint is the box centre, so
+/// a hard 50% stop paints as the line through the centre perpendicular to the
+/// gradient direction. For `45deg` — up and to the right — that boundary has
+/// slope +1 in screen coordinates, with the first colour below-left of it.
+#[test]
+fn render_linear_gradient_45deg_line_crosses_the_centre() {
+    let pm = render_html(r#"
+        <style>* { margin:0; padding:0 }
+        body { background: white }
+        .bar { width: 200px; height: 40px;
+               background: linear-gradient(45deg, #ff0000 0%, #ff0000 50%,
+                                                  #0000ff 50%, #0000ff 100%); }
+        </style><div class="bar"></div>
+    "#, 200, 40);
+    let is_red = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); r > 200 && g < 60 && b < 60 };
+    let is_blue = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); b > 200 && r < 60 && g < 60 };
+    // Centre (100, 20); boundary points (75,-5)…(135,55). Sampled well clear of it.
+    assert!(is_red(75, 10),   "(75,10) is below-left of the boundary");
+    assert!(is_blue(115, 10), "(115,10) is above-right of the boundary");
+    assert!(is_red(105, 30),  "(105,30) is below-left of the boundary");
+    assert!(is_blue(135, 30), "(135,30) is above-right of the boundary");
+}
+
+/// The same box at 135deg — down and to the right — mirrors it.
+#[test]
+fn render_linear_gradient_135deg_line_crosses_the_centre() {
+    let pm = render_html(r#"
+        <style>* { margin:0; padding:0 }
+        body { background: white }
+        .bar { width: 200px; height: 40px;
+               background: linear-gradient(135deg, #ff0000 0%, #ff0000 50%,
+                                                   #0000ff 50%, #0000ff 100%); }
+        </style><div class="bar"></div>
+    "#, 200, 40);
+    let is_red = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); r > 200 && g < 60 && b < 60 };
+    let is_blue = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); b > 200 && r < 60 && g < 60 };
+    assert!(is_red(75, 30),   "(75,30) is above-left of the boundary");
+    assert!(is_blue(115, 30), "(115,30) is below-right of the boundary");
+    assert!(is_red(105, 10),  "(105,10) is above-left of the boundary");
+    assert!(is_blue(135, 10), "(135,10) is below-right of the boundary");
+}
+
+/// Axis-aligned gradients, which already worked, must keep working.
+#[test]
+fn render_linear_gradient_axis_aligned_still_spans_the_box() {
+    let pm = render_html(r#"
+        <style>* { margin:0; padding:0 }
+        body { background: white }
+        .bar { width: 200px; height: 40px;
+               background: linear-gradient(90deg, #ff0000 0%, #ff0000 50%,
+                                                  #0000ff 50%, #0000ff 100%); }
+        </style><div class="bar"></div>
+    "#, 200, 40);
+    let (r, _, b, _) = pixel(&pm, 20, 20);
+    assert!(r > 200 && b < 60, "left half is the first colour");
+    let (r2, _, b2, _) = pixel(&pm, 180, 20);
+    assert!(b2 > 200 && r2 < 60, "right half is the last colour");
+}
+
+/// **With no direction the gradient goes to the bottom and keeps every stop.**
+/// The first component was read as a direction unconditionally, so
+/// `linear-gradient(red, blue)` lost `red` and painted a flat blue.
+#[test]
+fn render_linear_gradient_without_a_direction_keeps_the_first_stop() {
+    let pm = render_html(r#"
+        <style>* { margin:0; padding:0 }
+        body { background: white }
+        .bar { width: 200px; height: 40px; background: linear-gradient(#ff0000, #0000ff); }
+        </style><div class="bar"></div>
+    "#, 200, 40);
+    let (r, _, b, _) = pixel(&pm, 100, 2);
+    assert!(r > 180 && b < 80, "top is red, got #{r:02x}..{b:02x}");
+    let (r2, _, b2, _) = pixel(&pm, 100, 37);
+    assert!(b2 > 180 && r2 < 80, "bottom is blue, got #{r2:02x}..{b2:02x}");
+}
+
+/// A stop written as `rgb(…)` carries commas of its own; splitting the stop list
+/// on every comma tore it into fragments that parsed as nothing.
+#[test]
+fn render_linear_gradient_accepts_functional_colour_stops() {
+    let pm = render_html(r#"
+        <style>* { margin:0; padding:0 }
+        body { background: white }
+        .bar { width: 200px; height: 40px;
+               background: linear-gradient(90deg, rgb(255, 0, 0) 0%, rgb(255, 0, 0) 50%,
+                                                  rgb(0, 0, 255) 50%, rgb(0, 0, 255) 100%); }
+        </style><div class="bar"></div>
+    "#, 200, 40);
+    let (r, _, b, _) = pixel(&pm, 20, 20);
+    assert!(r > 200 && b < 60, "left half is red");
+    let (r2, _, b2, _) = pixel(&pm, 180, 20);
+    assert!(b2 > 200 && r2 < 60, "right half is blue");
+}
+
+// ── Intrinsic text width must agree with line breaking ───────────────────────
+
+/// **A box sized to its own max-content must not wrap.** The two measurements
+/// have to be the same number: `max_content_width` measures the text, and the
+/// line breaker then decides where it fits. On fr.wikipedia the header links
+/// came out ~8px narrower than the line they had to hold, so every one of them
+/// broke onto a second line and pushed the page down.
+#[test]
+fn a_flex_item_sized_to_max_content_does_not_wrap_its_text() {
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(r#"
+        <style>* { margin: 0; padding: 0 }
+        .row { display: flex; width: 600px }
+        #b { white-space: nowrap }
+        </style>
+        <div class="row"><div id="a">Faire un don</div></div>
+        <div class="row"><div id="b">Faire un don</div></div>
+    "#, 800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 200).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap().layout.margin_rect
+    };
+    let (a, b) = (find("a"), find("b"));
+    assert_eq!(a.h, b.h, "the auto-width item wrapped: {}x{} vs nowrap {}x{}", a.w, a.h, b.w, b.h);
+    assert!((a.w - b.w).abs() < 0.5, "max-content width {} != single-line width {}", a.w, b.w);
+}
+
+/// **Collapsible white space at the end of a block generates no line box.**
+/// CSS Text 3 §4.1.3 removes a collapsible space that ends a line, and CSS 2.1
+/// §9.4.2 treats a line box holding nothing else as not existing. The markup
+/// `<li><a>…</a>\n</li>` is everywhere — fr.wikipedia's header links are
+/// exactly that — and the stray newline gave every one of them a second, empty
+/// line, doubling its height and pushing the page down.
+#[test]
+fn trailing_collapsible_whitespace_adds_no_line_box() {
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(
+        "<style>* { margin: 0; padding: 0 } ul { list-style: none }</style>\
+         <ul><li id=\"li_ws\"><a><span>Faire un don</span></a>\n</li>\
+             <li id=\"li_no\"><a><span>Faire un don</span></a></li></ul>\
+         <div id=\"div_ws\"><a><span>Faire un don</span></a>\n</div>\
+         <div id=\"div_no\"><a><span>Faire un don</span></a></div>",
+        800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 300).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
+        if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+        for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+        None
+    }
+    let h = |id: &str| walk(&doc.root, id).unwrap().layout.margin_rect.h;
+    assert_eq!(h("li_ws"), h("li_no"),
+        "the newline gave the list item a second line: {} vs {}", h("li_ws"), h("li_no"));
+    assert_eq!(h("div_ws"), h("div_no"),
+        "the newline gave the block a second line: {} vs {}", h("div_ws"), h("div_no"));
+}
+
+/// **A border with no style occupies no space** (CSS Backgrounds §4.3: a
+/// `border-style: none` border has a used width of 0). `border-width` computes
+/// to `medium` — 3px — by default, and the inline-box decoration read that
+/// width without consulting the style, so every nested inline box added 3px to
+/// its first line and 3px to its last. fr.wikipedia's header links
+/// ("Faire un don", "Créer un compte") were pushed past their own flex base
+/// and broke onto a second line.
+#[test]
+fn a_nested_inline_box_adds_no_phantom_border_to_its_line() {
+    let mut renderer = Renderer::new();
+    let mut doc = renderer.load_html(
+        "<style>* { margin: 0; padding: 0 } \
+         .list { display: flex; list-style: none; font-size: 14px; font-family: sans-serif } \
+         .list li { display: list-item }</style>\
+         <ul class=\"list\">\
+           <li id=\"nested\"><a><span>Faire un don</span></a></li>\
+           <li id=\"bare\">Faire un don</li>\
+         </ul>",
+        1280.0);
+    let mut pm = tiny_skia::Pixmap::new(1280, 200).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
+        if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+        for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+        None
+    }
+    let line_w = |id: &str| walk(&doc.root, id).unwrap()
+        .layout.line_cache.iter().map(|l| l.width).fold(0.0f32, f32::max);
+    let boxes = |id: &str| walk(&doc.root, id).unwrap().layout.line_cache.len();
+    let (nested, bare) = (walk(&doc.root, "nested").unwrap(), walk(&doc.root, "bare").unwrap());
+
+    assert_eq!(boxes("bare"), 1, "the bare text fits on one line");
+    assert_eq!(boxes("nested"), 1,
+        "wrapping the same text in <a><span> broke it onto {} lines (widths {:?}, box {})",
+        boxes("nested"),
+        nested.layout.line_cache.iter().map(|l| l.width).collect::<Vec<_>>(),
+        nested.layout.content_rect.w);
+    assert!((line_w("nested") - line_w("bare")).abs() < 0.5,
+        "the nested line is {} wide, the bare one {}", line_w("nested"), line_w("bare"));
+    assert!((nested.layout.margin_rect.w - bare.layout.margin_rect.w).abs() < 0.5,
+        "flex bases differ: nested {} vs bare {}",
+        nested.layout.margin_rect.w, bare.layout.margin_rect.w);
+}
+
+/// **Measuring a string whole must agree with measuring its words and the
+/// spaces between them.** The line breaker sums per-word advances plus a
+/// measured `" "`, while `max_content_width` shapes the collapsed string in one
+/// call. When the two disagree, a box built from one is the wrong size for the
+/// line built by the other.
+#[test]
+fn whole_string_and_word_by_word_measurement_agree() {
+    let mut renderer = Renderer::new();
+    let _doc = renderer.load_html("<div>x</div>", 800.0);
+    let engine = renderer.layout_engine();
+    let w = |t: &str| engine.measure_text_cached(
+        t, 14.0, crate::types::FontWeight::Normal, crate::types::FontStyle::Normal, "sans-serif");
+    let space = w(" ");
+    let parts = w("Faire") + space + w("un") + space + w("don");
+    let whole = w("Faire un don");
+    assert!(space > 0.5, "a space has a width: {space}");
+    assert!((parts - whole).abs() < 0.5,
+        "word-by-word {parts} != whole-string {whole} (space={space}, \
+         Faire={}, un={}, don={})", w("Faire"), w("un"), w("don"));
+}
+
+/// **The measuring and painting font resolvers must agree on generic family
+/// names.** Sizing goes through `resolve_css_family`, painting through the
+/// cheaper `css_family_to_cosmic`. They disagreed about `system-ui`: the first
+/// maps it to the sans-serif generic, the second passed it through as a face
+/// NAME, so a box was measured with one font and painted with another.
+#[test]
+fn the_two_font_resolvers_agree_on_generic_families() {
+    use cosmic_text::Family;
+    let same = |a: &Family, b: &Family| format!("{a:?}") == format!("{b:?}");
+    let renderer = Renderer::new();
+    let fs = &renderer.font_system;
+    for stack in ["system-ui", "sans-serif", "serif", "monospace", "cursive", "fantasy",
+                  "system-ui, sans-serif"] {
+        let painted = crate::layout::inline_layout::css_family_to_cosmic(stack);
+        let resolved = crate::layout::inline_layout::resolve_css_family(fs, stack);
+        let measured = resolved.as_family();
+        assert!(same(&painted, &measured),
+            "{stack:?}: painting picks {painted:?}, measuring picks {measured:?}");
+    }
+}
+
+
+// ── word-spacing and letter-spacing are MEASURED, not just painted ───────────
+//
+// css-text-3 §8.1 (word-spacing) and §8.2 (letter-spacing): the extra spacing
+// is part of the text's advance width. Layout sums the inline items to get a
+// shrink-to-fit width and to choose wrap points, so spacing that is missing
+// from the item advances sizes the box for narrower text than gets painted —
+// which clips the last character inside `overflow: hidden`.
+
+#[test]
+fn word_spacing_widens_the_shrink_to_fit_box() {
+    use super::harness::find_box;
+    let doc = parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; }
+        span { display: inline-block; font-size: 16px; }
+        .ws { word-spacing: 10px; }
+        </style>
+        <div><span id="plain">a b c</span><span id="ws" class="ws">a b c</span></div>
+    "#, 800.0);
+    let w = |id: &str| find_box(&doc.root, &|n| {
+        n.attributes.get("id").map(|c| c == id).unwrap_or(false)
+    }).unwrap_or_else(|| panic!("#{id} not found")).layout.content_rect.w;
+    let (plain, ws) = (w("plain"), w("ws"));
+    // Two word separators in "a b c" → exactly two extra 10px gaps.
+    assert!((ws - plain - 20.0).abs() < 0.5,
+        "word-spacing:10px over two separators must widen the box by 20px; \
+         plain={plain} word-spaced={ws}");
+}
+
+#[test]
+fn letter_spacing_widens_the_shrink_to_fit_box() {
+    use super::harness::find_box;
+    let doc = parse_and_layout(r#"
+        <style>
+        * { margin: 0; padding: 0; }
+        span { display: inline-block; font-size: 16px; }
+        .ls { letter-spacing: 4px; }
+        </style>
+        <div><span id="plain">abcde</span><span id="ls" class="ls">abcde</span></div>
+    "#, 800.0);
+    let w = |id: &str| find_box(&doc.root, &|n| {
+        n.attributes.get("id").map(|c| c == id).unwrap_or(false)
+    }).unwrap_or_else(|| panic!("#{id} not found")).layout.content_rect.w;
+    let (plain, ls) = (w("plain"), w("ls"));
+    // Tracking follows every one of the five letters, the last included.
+    assert!((ls - plain - 20.0).abs() < 0.5,
+        "letter-spacing:4px over five letters must widen the box by 20px; \
+         plain={plain} tracked={ls}");
+}
+
+#[test]
+fn letter_spacing_moves_the_wrap_point() {
+    use super::harness::find_box;
+    // Same text, same box width: without tracking both words share one line,
+    // with tracking the second no longer fits. A spacing that never reached
+    // the item advances could not change the break.
+    let html = |ls: &str| format!(r#"
+        <style>
+        * {{ margin: 0; padding: 0; }}
+        .b {{ width: 120px; font-size: 16px; letter-spacing: {ls}; }}
+        </style>
+        <div class="b">aaaaa bbbbb</div>
+    "#);
+    let lines = |src: &str| {
+        let doc = parse_and_layout(src, 400.0);
+        find_box(&doc.root, &|n| n.attributes.get("class").map(|c| c == "b").unwrap_or(false))
+            .expect(".b not found").layout.line_cache.len()
+    };
+    let tight = lines(&html("0"));
+    let tracked = lines(&html("6px"));
+    assert_eq!(tight, 1, "without tracking the two words fit on one line, got {tight}");
+    assert_eq!(tracked, 2,
+        "letter-spacing:6px over 11 characters adds 66px and must force a second line, got {tracked}");
+}
+

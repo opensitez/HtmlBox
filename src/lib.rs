@@ -42,6 +42,7 @@ pub mod types;
 pub mod css;
 pub mod html;
 pub mod layout;
+pub mod woff2;
 pub mod renderer;
 /// HTML §4.12.5 — the `<canvas>` element's 2D rendering context.
 ///
@@ -308,7 +309,38 @@ fn build_http_client(accept_invalid_certs: bool) -> reqwest::blocking::Client {
         .expect("failed to build HTTP client")
 }
 
+/// Fetch a document, returning its text and the URL it actually came FROM.
+///
+/// ⛔ The second value is the point. A redirect is the normal case on the web
+/// — bare domain to `www`, `http` to `https`, one domain to another — and the
+/// document's base URL is the FINAL url, not the requested one (HTML §2.4.1,
+/// "document base URL"). Resolving relative `<link>` and `<img>` against the
+/// requested URL sends every subresource to the old host, where they redirect
+/// to that site's homepage: the "stylesheet" that comes back is HTML, and the
+/// page renders with no author CSS at all.
+pub fn fetch_document(url: &str) -> Result<(String, String), String> {
+    if let Some(path) = url.strip_prefix("file://") {
+        let path = path.split('?').next().unwrap_or(path);
+        let path = path.split('#').next().unwrap_or(path);
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        return Ok((text, url.to_string()));
+    }
+    let resp = http_client().get(url).send().map_err(|e| e.to_string())?;
+    let final_url = resp.url().to_string();
+    let text = resp.text().map_err(|e| e.to_string())?;
+    Ok((text, final_url))
+}
+
 fn fetch_text(url: &str) -> Result<String, String> {
+    // ⛔ `file://` is read from disk, not sent to the HTTP client. A document
+    // opened from the filesystem loads its stylesheets the same way a browser
+    // does; handing the URL to reqwest failed silently and the page rendered
+    // with no author CSS at all.
+    if let Some(path) = url.strip_prefix("file://") {
+        let path = path.split('?').next().unwrap_or(path);
+        let path = path.split('#').next().unwrap_or(path);
+        return std::fs::read_to_string(path).map_err(|e| e.to_string());
+    }
     let do_fetch = |client: &reqwest::blocking::Client| -> Result<Vec<u8>, String> {
         let resp = client.get(url)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")

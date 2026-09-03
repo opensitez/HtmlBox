@@ -17,6 +17,16 @@ fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
 }
 
 /// Simulate hovering over element with given id: set hovered_box, mark changed, re-layout.
+fn find_by_class<'a>(node: &'a WebCore, class: &str) -> Option<&'a WebCore> {
+    if node.attributes.get("class").map_or(false, |c| c.split_whitespace().any(|w| w == class)) {
+        return Some(node);
+    }
+    for ch in &node.children {
+        if let Some(f) = find_by_class(ch, class) { return Some(f); }
+    }
+    None
+}
+
 fn recascade_with_hover(doc: &mut Document, hovered_id: &str) {
     let hovered_id_val = find_by_id(&doc.root, hovered_id)
         .map(|n| n.node_id)
@@ -337,4 +347,157 @@ fn hover_reverts_on_hover_out() {
     recascade_with_hover(&mut doc, "other");
     let btn = find_by_id(&doc.root, "btn").unwrap();
     assert_eq!(btn.style.color, Color::rgb(0, 0, 0), "after hover-out: should revert to black");
+}
+
+// ── A pseudo-element exists only when `content` says so ──────────────────────
+
+/// **`content` decides whether a pseudo-element exists** (css-pseudo-4 §2.1):
+/// with no `content` declaration it computes to `none` and nothing is generated.
+/// The re-cascade that a hover triggers used to generate a `::before` box for
+/// every flex or grid element that merely had a `::before` RULE, so moving the
+/// pointer anywhere on a page filled its headers with empty flex items and
+/// pushed everything below them down.
+#[test]
+fn hover_recascade_does_not_invent_pseudo_elements() {
+    let mut doc = layout_html(r#"
+        <style>
+            * { margin: 0; padding: 0 }
+            .bar { display: flex }
+            /* Styling only — no `content`, so no pseudo-element. */
+            .bar::before { color: red; width: 40px }
+            .bar::after  { color: blue; width: 40px }
+            #btn:hover { color: green }
+        </style>
+        <div class="bar"><span id="btn">Menu</span><span>Other</span></div>
+    "#, 800.0);
+
+    let bar_h = find_by_class(&doc.root, "bar").unwrap().layout.margin_rect.h;
+    let pseudo_count = |d: &Document| {
+        let bar = find_by_class(&d.root, "bar").unwrap();
+        bar.children.iter().filter(|c| c.tag == "::before" || c.tag == "::after").count()
+    };
+    assert_eq!(pseudo_count(&doc), 0, "no pseudo-element before hover");
+
+    recascade_with_hover(&mut doc, "btn");
+    assert_eq!(pseudo_count(&doc), 0, "a hover must not generate one either");
+    assert_eq!(find_by_class(&doc.root, "bar").unwrap().layout.margin_rect.h, bar_h,
+        "the flex row must not grow on hover");
+}
+
+/// `content: ""` is a real, empty pseudo-element — the icon idiom — and both
+/// passes must keep it.
+#[test]
+fn hover_recascade_keeps_an_empty_content_pseudo_element() {
+    let mut doc = layout_html(r#"
+        <style>
+            * { margin: 0; padding: 0 }
+            .bar { display: flex }
+            .bar::before { content: ""; width: 40px; height: 10px }
+            #btn:hover { color: green }
+        </style>
+        <div class="bar"><span id="btn">Menu</span></div>
+    "#, 800.0);
+    let count = |d: &Document| find_by_class(&d.root, "bar").unwrap()
+        .children.iter().filter(|c| c.tag == "::before").count();
+    assert_eq!(count(&doc), 1, "content:\"\" generates a ::before box");
+    recascade_with_hover(&mut doc, "btn");
+    assert_eq!(count(&doc), 1, "and the hover re-cascade keeps exactly one");
+}
+
+/// **Blockification is a computed-value transform, not a side effect of the
+/// `float` declaration** (CSS Display 3 §2.7). Applying it inside `float`'s
+/// own applier made it depend on declaration order, so a later `display`
+/// undid it — and the two cascade implementations, which order rules
+/// differently, disagreed about the same element.
+#[test]
+fn float_blockifies_whatever_the_declaration_order() {
+    let doc = layout_html(r#"
+        <style>
+            #a { float: left; display: inline }
+            #b { display: inline; float: left }
+        </style>
+        <span id="a">A</span><span id="b">B</span>
+    "#, 800.0);
+    assert_eq!(find_by_id(&doc.root, "a").unwrap().style.display, Display::Block);
+    assert_eq!(find_by_id(&doc.root, "b").unwrap().style.display, Display::Block);
+}
+
+/// An absolutely positioned box is blockified the same way.
+#[test]
+fn absolute_position_blockifies_display() {
+    let doc = layout_html(r#"
+        <style>
+            #a { position: absolute; display: inline }
+            #b { position: fixed; display: inline-block }
+            #c { position: absolute; display: inline-flex }
+            #d { position: static; display: inline }
+        </style>
+        <span id="a">A</span><span id="b">B</span><span id="c">C</span><span id="d">D</span>
+    "#, 800.0);
+    assert_eq!(find_by_id(&doc.root, "a").unwrap().style.display, Display::Block);
+    assert_eq!(find_by_id(&doc.root, "b").unwrap().style.display, Display::Block);
+    assert_eq!(find_by_id(&doc.root, "c").unwrap().style.display, Display::Flex);
+    assert_eq!(find_by_id(&doc.root, "d").unwrap().style.display, Display::Inline,
+        "an in-flow box keeps its inline display");
+}
+
+/// The whole point: the hover re-cascade must agree with the first pass.
+#[test]
+fn hover_recascade_agrees_about_blockified_display() {
+    let mut doc = layout_html(r#"
+        <style>
+            .logo { float: left; max-width: 120px }
+            .clip { position: absolute; width: 1px; height: 1px }
+            #btn:hover { color: green }
+        </style>
+        <div><span class="logo">L</span><span class="clip">C</span><span id="btn">B</span></div>
+    "#, 800.0);
+    let read = |d: &Document| (
+        find_by_class(&d.root, "logo").unwrap().style.display,
+        find_by_class(&d.root, "clip").unwrap().style.display,
+    );
+    let first = read(&doc);
+    assert_eq!(first, (Display::Block, Display::Block));
+    recascade_with_hover(&mut doc, "btn");
+    assert_eq!(read(&doc), first, "the hover pass disagreed with the first pass");
+}
+
+/// **A hover anywhere must not collapse an unrelated heading.** On
+/// fr.wikipedia, hovering the article text left `#firstHeading` one pixel tall
+/// — its text vanished — and a later full relayout restored it, so the fault is
+/// in the layout the hover pass produces, not in the styles it computes.
+#[test]
+fn hover_does_not_collapse_a_flow_root_flex_item() {
+    let mut doc = layout_html(r#"
+        <style>
+            * { margin: 0; padding: 0 }
+            #content { display: grid }
+            .titlebar { display: flex }
+            .titlebar::after { content: ""; height: 1px; width: 1px }
+            h1 { display: flow-root; font-size: 28.8px }
+            #btn:hover { color: green }
+            /* A descendant hover rule: this is what sets
+               `has_hover_descendant_rules`, and it changes which nodes the
+               hover invalidation marks. */
+            .menu:hover .panel { display: block }
+            .panel { display: none }
+        </style>
+        <main id="content">
+          <header class="titlebar">
+            <h1 id="h">Bienvenue sur Wikipédia</h1>
+            <div id="lang">Langues</div>
+          </header>
+          <div class="menu">m<div class="panel">p</div></div>
+          <p id="btn">body text</p>
+        </main>
+    "#, 1280.0);
+
+    let before = find_by_id(&doc.root, "h").unwrap().layout.margin_rect;
+    assert!(before.h > 20.0, "the heading starts with a real height: {}", before.h);
+
+    recascade_with_hover(&mut doc, "btn");
+    let after = find_by_id(&doc.root, "h").unwrap().layout.margin_rect;
+    assert_eq!(after.h, before.h,
+        "hovering elsewhere collapsed the heading: {}x{} -> {}x{}",
+        before.w, before.h, after.w, after.h);
 }

@@ -44,10 +44,12 @@ pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, va
     use crate::types::CssValue;
     match value {
         CssValue::Inherit => return,
+        // `unset` behaves as `inherit` on an inherited property (the style
+        // already carries the parent's value, so leaving it alone IS
+        // inheriting) and as `initial` on every other. CSS Cascade 5 §7.3.
+        CssValue::Unset if properties::is_inherited(id) => return,
         CssValue::Initial | CssValue::Unset => {
-            // Reset property to its initial (default) value
-            let default_style = ComputedStyle::default();
-            (property_defs::get(id).copy)(style, &default_style);
+            reset_to_initial(style, id);
             return;
         }
         CssValue::Length(l) => {
@@ -117,14 +119,32 @@ pub fn apply_css_value(style: &mut ComputedStyle, id: properties::PropertyId, va
 pub fn apply_property_by_id_str(style: &mut ComputedStyle, id: properties::PropertyId, value: &str) {
     let v = value.trim();
     if v == "inherit" { return; }
-    if matches!(v, "revert" | "revert-layer") { return; }
-    if matches!(v, "initial" | "unset") {
-        // Reset the property to its initial (default) value
-        let default_style = ComputedStyle::default();
-        (property_defs::get(id).copy)(style, &default_style);
+    // Same rule as the typed path above — see `apply_css_value`.
+    if v == "unset" && properties::is_inherited(id) { return; }
+    if matches!(v, "initial" | "unset" | "revert" | "revert-layer") {
+        reset_to_initial(style, id);
         return;
     }
     (property_defs::get(id).apply)(style, v);
+}
+
+/// Reset a property to its initial value, descending into a SHORTHAND's
+/// longhands.
+///
+/// ⛔ A shorthand owns no storage, so its `copy` is a no-op — resetting it
+/// through `copy` silently did NOTHING. `flex: initial` left the item's grow,
+/// shrink and basis exactly as they were instead of returning them to
+/// `0 1 auto`. Only the longhands hold the values, so only they can be reset.
+fn reset_to_initial(style: &mut ComputedStyle, id: properties::PropertyId) {
+    let def = property_defs::get(id);
+    if !def.longhands.is_empty() {
+        for &lh in def.longhands {
+            reset_to_initial(style, lh);
+        }
+        return;
+    }
+    let default_style = ComputedStyle::default();
+    (def.copy)(style, &default_style);
 }
 
 /// Backward-compat wrapper — accepts &str directly.
@@ -524,7 +544,9 @@ pub fn apply_border_shorthand(style: &mut ComputedStyle, v: &str) {
             style.border_left_color   = c;
         } else {
             let w = parse_length(part);
-            if !matches!(w, CssLength::Auto) {
+            // `parse_length` reports an unrecognised token as `auto`; the
+            // intrinsic keywords are equally not border widths.
+            if !w.is_auto() {
                 style.border_top_width    = w.clone();
                 style.border_right_width  = w.clone();
                 style.border_bottom_width = w.clone();
@@ -548,7 +570,9 @@ pub fn apply_border_side_shorthand(
             *color = c;
         } else {
             let w = parse_length(part);
-            if !matches!(w, CssLength::Auto) {
+            // `parse_length` reports an unrecognised token as `auto`; the
+            // intrinsic keywords are equally not border widths.
+            if !w.is_auto() {
                 *width = w;
             }
         }
@@ -674,76 +698,230 @@ pub fn find_split_space(v: &str) -> Option<usize> {
     None
 }
 
-pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
-    let lower = v.to_lowercase();
-    if lower.contains("linear-gradient") {
-        style.gradient_type = GradientType::Linear;
-        // Parse angle from "to bottom" or degrees
-        if let Some(paren) = v.find('(') {
-            let inner = &v[paren + 1..];
-            let inner = inner.trim_end_matches(')');
-            let first_comma = inner.find(',').unwrap_or(inner.len());
-            let dir = inner[..first_comma].trim();
-            if dir.ends_with("deg") {
-                style.gradient_angle = dir[..dir.len()-3].parse().unwrap_or(180.0);
-            } else if dir == "to bottom" || dir == "to top" {
-                style.gradient_angle = if dir == "to bottom" { 180.0 } else { 0.0 };
-            } else if dir == "to right" {
-                style.gradient_angle = 90.0;
-            } else if dir == "to left" {
-                style.gradient_angle = 270.0;
-            }
-            // Parse color stops
-            let stops_str = if first_comma < inner.len() { &inner[first_comma + 1..] } else { "" };
-            style.rare_mut().gradient_stops.clear();
-            let n_stops = stops_str.split(',').count().max(1) as f32;
-            for (i, stop) in stops_str.split(',').enumerate() {
-                let stop = stop.trim();
-                // Each stop may be "color position%"
-                let mut parts = stop.splitn(2, ' ');
-                let color_str = parts.next().unwrap_or(stop);
-                if let Some(c) = parse_color(color_str) {
-                    let pos = parts.next()
-                        .and_then(|p| p.trim_end_matches('%').parse::<f32>().ok())
-                        .map(|p| p / 100.0)
-                        .unwrap_or(i as f32 / (n_stops - 1.0).max(1.0));
-                    style.rare_mut().gradient_stops.push(GradientStop { color: c, position: pos });
-                }
-            }
+/// Split on the commas that separate a function's arguments, leaving the ones
+/// inside a nested function — `rgb(255, 0, 0)` — alone.
+fn split_top_level_commas(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            ',' if depth == 0 => { out.push(s[start..i].to_string()); start = i + 1; }
+            _ => {}
         }
-    } else if lower.contains("radial-gradient") {
-        style.gradient_type = GradientType::Radial;
-        if let Some(paren) = v.find('(') {
-            let inner = &v[paren + 1..];
-            let inner = inner.trim_end_matches(')');
-            style.rare_mut().gradient_stops.clear();
-            // Skip the optional shape/size/position descriptor before the first comma
-            // (e.g. "circle at 50% 50%", "ellipse farthest-corner", "closest-side").
-            // If the first comma-delimited segment doesn't parse as a color, treat it as a descriptor.
-            let first_comma = inner.find(',').unwrap_or(inner.len());
-            let first_token = inner[..first_comma].trim();
-            let stops_str = if parse_color(first_token).is_none() && first_comma < inner.len() {
-                &inner[first_comma + 1..]
-            } else {
-                inner
-            };
-            let stops: Vec<&str> = stops_str.split(',').collect();
-            let n_stops = stops.len() as f32;
-            for (i, stop) in stops.iter().enumerate() {
-                let stop = stop.trim();
-                // Each stop is "color" or "color position%"
-                let mut parts = stop.splitn(2, ' ');
-                let color_str = parts.next().unwrap_or(stop);
-                if let Some(c) = parse_color(color_str) {
-                    let pos = parts.next()
-                        .and_then(|p| p.trim().trim_end_matches('%').parse::<f32>().ok())
-                        .map(|p| p / 100.0)
-                        .unwrap_or(i as f32 / (n_stops - 1.0).max(1.0));
-                    style.rare_mut().gradient_stops.push(GradientStop { color: c, position: pos });
-                }
+    }
+    out.push(s[start..].to_string());
+    out
+}
+
+/// Byte index of the first space outside any parentheses, which is where a
+/// colour stop's position begins.
+fn find_top_level_space(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => { if depth > 0 { depth -= 1; } }
+            c if c.is_whitespace() && depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The `<angle>` or `to <side>` that may open a `linear-gradient()`, in degrees
+/// clockwise from "up". `None` when the component is not a direction at all —
+/// the gradient then runs to the bottom and this component is a colour stop.
+fn parse_gradient_direction(dir: &str) -> Option<f32> {
+    let dir = dir.trim().to_ascii_lowercase();
+    for (unit, per_turn) in [("deg", 360.0f32), ("grad", 400.0), ("rad", std::f32::consts::TAU), ("turn", 1.0)] {
+        if let Some(num) = dir.strip_suffix(unit) {
+            if let Ok(n) = num.trim().parse::<f32>() {
+                return Some(n * 360.0 / per_turn);
             }
         }
     }
+    let sides = dir.strip_prefix("to ")?;
+    // Side keywords may be written in either order.
+    let mut top = false; let mut bottom = false; let mut left = false; let mut right = false;
+    for word in sides.split_whitespace() {
+        match word {
+            "top" => top = true,
+            "bottom" => bottom = true,
+            "left" => left = true,
+            "right" => right = true,
+            _ => return None,
+        }
+    }
+    match (top, bottom, left, right) {
+        (true, false, false, false) => Some(0.0),
+        (false, false, false, true) => Some(90.0),
+        (false, true, false, false) => Some(180.0),
+        (false, false, true, false) => Some(270.0),
+        // Corner keywords aim at a corner, which for a non-square box is not a
+        // fixed angle; the box diagonal is the closest fixed answer available
+        // until the used size reaches here.
+        (true, false, false, true) => Some(45.0),
+        (false, true, false, true) => Some(135.0),
+        (false, true, true, false) => Some(225.0),
+        (true, false, true, false) => Some(315.0),
+        _ => None,
+    }
+}
+
+/// The body of a function starting at `open` — the byte index of its `(` —
+/// without the parentheses.
+///
+/// Trimming a trailing `)` instead would swallow the closing paren of a nested
+/// `rgb(...)`, so the matching paren is counted.
+fn function_body(s: &str, open: usize) -> &str {
+    let mut depth = 0usize;
+    for (i, ch) in s[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 { return &s[open + 1..open + i]; }
+            }
+            _ => {}
+        }
+    }
+    &s[open + 1..]
+}
+
+/// A colour stop as authored. `pos` is `None` when the position was omitted —
+/// the fixup rules (css-images-3 §4.3.1) assign it.
+struct RawStop {
+    color: Color,
+    pos: Option<f32>,
+}
+
+/// A stop position as a fraction of the gradient line.
+///
+/// Only `<percentage>` resolves here: a `<length>` is measured along the
+/// gradient line, whose used length is a layout result that the cascade has
+/// not reached yet, so the stop is left unpositioned and spaced by fixup.
+fn parse_stop_position(p: &str) -> Option<f32> {
+    p.trim().strip_suffix('%')?.trim().parse::<f32>().ok().map(|n| n / 100.0)
+}
+
+/// Parse one `<linear-color-stop>` = `<color> <length-percentage>{0,2}`,
+/// appending the stops it yields.
+///
+/// The two-position shorthand is the same colour twice: `red 10% 20%` is a
+/// solid red band from 10% to 20%.
+fn push_color_stop(component: &str, out: &mut Vec<RawStop>) {
+    let c = component.trim();
+    if c.is_empty() { return; }
+    // The colour may itself be a function, so its end is the first space
+    // OUTSIDE any parentheses.
+    let split = find_top_level_space(c).unwrap_or(c.len());
+    let color = match parse_color(&c[..split]) { Some(c) => c, None => return };
+    let rest = c.get(split..).map(str::trim).unwrap_or("");
+    if rest.is_empty() {
+        out.push(RawStop { color, pos: None });
+        return;
+    }
+    for tok in rest.split_whitespace().take(2) {
+        out.push(RawStop { color, pos: parse_stop_position(tok) });
+    }
+}
+
+/// Resolve every stop position, in the four ordered steps of css-images-3
+/// §4.3.1 "Color Stop Fixup". Afterwards every stop has a definite position
+/// and the list is in ascending order.
+fn fixup_color_stops(stops: &mut [RawStop]) {
+    if stops.is_empty() { return; }
+    // 1 & 2: the outermost stops anchor the ends of the gradient line.
+    if stops[0].pos.is_none() { stops[0].pos = Some(0.0); }
+    let last = stops.len() - 1;
+    if stops[last].pos.is_none() { stops[last].pos = Some(1.0); }
+    // 3: a stop may not precede one declared before it — clamp it up to the
+    // largest position seen so far.
+    let mut running = f32::NEG_INFINITY;
+    for s in stops.iter_mut() {
+        if let Some(p) = s.pos {
+            if p < running { s.pos = Some(running); } else { running = p; }
+        }
+    }
+    // 4: each run of unpositioned stops spreads evenly between the positioned
+    // stops around it — not evenly across the whole list.
+    let mut i = 0;
+    while i < stops.len() {
+        if stops[i].pos.is_some() { i += 1; continue; }
+        let start = i;
+        let mut end = start;
+        while end < stops.len() && stops[end].pos.is_none() { end += 1; }
+        // Steps 1 and 2 positioned both ends, so a run always has a positioned
+        // neighbour on each side.
+        let before = stops[start - 1].pos.unwrap_or(0.0);
+        let after = stops.get(end).and_then(|s| s.pos).unwrap_or(1.0);
+        let gaps = (end - start + 1) as f32;
+        for (k, idx) in (start..end).enumerate() {
+            stops[idx].pos = Some(before + (after - before) * (k as f32 + 1.0) / gaps);
+        }
+        i = end;
+    }
+}
+
+pub fn apply_gradient(style: &mut ComputedStyle, v: &str) {
+    // `background` and `background-image` take a comma-separated list of
+    // LAYERS, and only one gradient fits in `ComputedStyle`, so the first layer
+    // carrying one wins. The later layers must stay out of it: their stops are
+    // not part of this gradient's colour stop list.
+    let layers = split_top_level_commas(v);
+    let layer = match layers.iter().find(|l| l.to_ascii_lowercase().contains("gradient")) {
+        Some(l) => l.clone(),
+        None => return,
+    };
+    // `to_ascii_lowercase` keeps byte offsets, so an index found in it indexes
+    // the original.
+    let lower = layer.to_ascii_lowercase();
+    let (kind, name_at) = if let Some(i) = lower.find("linear-gradient") {
+        (GradientType::Linear, i)
+    } else if let Some(i) = lower.find("radial-gradient") {
+        (GradientType::Radial, i)
+    } else {
+        return;
+    };
+    let open = match layer[name_at..].find('(') { Some(i) => name_at + i, None => return };
+    let inner = function_body(&layer, open);
+    let mut args = split_top_level_commas(inner);
+    if args.is_empty() { return; }
+
+    style.gradient_type = kind;
+    match kind {
+        GradientType::Linear => {
+            // **The direction is OPTIONAL** (css-images-3 §3.4.1). Only consume
+            // the first component when it really is one; otherwise it is a
+            // colour stop and belongs to the stop list.
+            let angle = parse_gradient_direction(args[0].trim());
+            if angle.is_some() { args.remove(0); }
+            style.gradient_angle = angle.unwrap_or(180.0);
+        }
+        GradientType::Radial => {
+            // The first component is the optional
+            // `[<shape> || <size>] [at <position>]` descriptor exactly when it
+            // is not a colour stop. The test is on the component's COLOUR part,
+            // since a positioned first stop (`red 10%`) is not a `<color>` on
+            // its own and would otherwise be eaten as a descriptor.
+            let first = args[0].trim();
+            let split = find_top_level_space(first).unwrap_or(first.len());
+            if parse_color(&first[..split]).is_none() { args.remove(0); }
+        }
+        GradientType::None => {}
+    }
+
+    let mut raw: Vec<RawStop> = Vec::with_capacity(args.len());
+    for component in &args {
+        push_color_stop(component, &mut raw);
+    }
+    fixup_color_stops(&mut raw);
+    let stops = &mut style.rare_mut().gradient_stops;
+    stops.clear();
+    stops.extend(raw.iter().map(|s| GradientStop { color: s.color, position: s.pos.unwrap_or(0.0) }));
 }
 
 /// Return true if a token looks like a font-size value (keyword or length unit).

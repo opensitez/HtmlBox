@@ -149,7 +149,12 @@ thead { display: table-header-group; }
 tbody { display: table-row-group; }
 tfoot { display: table-footer-group; }
 tr    { display: table-row; }
-td, th { display: table-cell; padding: 1px; }
+td, th { display: table-cell; padding: 1px; vertical-align: middle; }
+/* ⛔ ON THE CELL, not only on the row. Browsers write `vertical-align:
+   middle` on `tr` and `vertical-align: inherit` on the cell, but
+   `vertical-align` is NOT an inherited property, so a rule on the row
+   alone never reaches `td`/`th` and every cell in a row taller than its
+   own content sat flush to the top. */
 th { font-weight: bold; text-align: center; }
 thead, tbody, tfoot, tr { vertical-align: middle; }
 /* A `<form>` that the tree builder left sitting between table rows is not

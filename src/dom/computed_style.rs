@@ -222,10 +222,16 @@ impl Document {
             "padding-right" => len(&s.padding_right),
             "padding-bottom" => len(&s.padding_bottom),
             "padding-left" => len(&s.padding_left),
-            "border-top-width" => len(&s.border_top_width),
-            "border-right-width" => len(&s.border_right_width),
-            "border-bottom-width" => len(&s.border_bottom_width),
-            "border-left-width" => len(&s.border_left_width),
+            // ⛔ The USED width, which is 0 whenever the matching style is
+            // `none` — CSSOM resolves border-width to the used value, and the
+            // initial COMPUTED width is `medium` (3px), not 0. Answering the
+            // computed value here reported 3px for every element that had
+            // never mentioned a border. Measured in Chrome: a bare `<div>` is
+            // `0px`/`none`, a `<div style="border-style:solid">` is `3px`.
+            "border-top-width" => len(&used_border(&s.border_top_width, s.border_top_style)),
+            "border-right-width" => len(&used_border(&s.border_right_width, s.border_right_style)),
+            "border-bottom-width" => len(&used_border(&s.border_bottom_width, s.border_bottom_style)),
+            "border-left-width" => len(&used_border(&s.border_left_width, s.border_left_style)),
             "border-top-style" => serialize_border_style(s.border_top_style),
             "border-right-style" => serialize_border_style(s.border_right_style),
             "border-bottom-style" => serialize_border_style(s.border_bottom_style),
@@ -264,6 +270,32 @@ impl Document {
             "max-width" => len(&s.max_width),
             "max-height" => len(&s.max_height),
             "opacity" => format!("{}", s.opacity),
+            // `transform` serializes as the resolved 2D matrix, never as the
+            // author's function list — CSSOM. `none` when there is no
+            // transform, which is what Chrome answers for an untransformed
+            // element. This returned the empty string for everything, so a
+            // page could not read back a transform it had set.
+            "transform" => {
+                if s.transform.is_empty() {
+                    "none".to_string()
+                } else {
+                    // ⛔ A ZERO rect, deliberately. `compute_transform_matrix`
+                    // composes translate(origin) * M * translate(-origin) for
+                    // painting; CSSOM serializes M ITSELF, with no origin baked
+                    // in — Chrome answers `matrix(1, 0, 0, 1, 32, 0)` for
+                    // `translateX(2rem)` however the origin is set. A zero rect
+                    // makes the origin terms vanish, which is exactly right.
+                    //
+                    // The cost is that a PERCENTAGE translation cannot resolve
+                    // here — it needs the border box, which this path has not
+                    // got. Those serialize as 0.
+                    let m = crate::renderer::display_list_builder::compute_transform_matrix(
+                        &s, &crate::types::Rect::new(0.0, 0.0, 0.0, 0.0));
+                    format!("matrix({}, {}, {}, {}, {}, {})",
+                        trim_f32(m[0]), trim_f32(m[1]), trim_f32(m[2]),
+                        trim_f32(m[3]), trim_f32(m[4]), trim_f32(m[5]))
+                }
+            }
             // ⛔ `z_index` is a bare `i32` with no `auto`. Chrome answers
             // `"auto"` when it is unset and the number when it is set, and the
             // cascade stores `0` for both — so a declared `z-index: 0` reads
@@ -360,4 +392,26 @@ impl Document {
             _ => true,
         }
     }
+}
+
+
+/// The used value of a border width: zero when the side draws nothing.
+///
+/// CSS Backgrounds 3 §4.3 — a border whose style is `none` or `hidden` has a
+/// used width of zero however wide it computes.
+fn used_border(
+    w: &crate::types::CssLength,
+    style: crate::types::BorderStyle,
+) -> crate::types::CssLength {
+    use crate::types::BorderStyle;
+    match style {
+        BorderStyle::None | BorderStyle::Hidden => crate::types::CssLength::Px(0.0),
+        _ => w.clone(),
+    }
+}
+
+
+/// A float as CSS serializes it — no trailing `.0`.
+fn trim_f32(v: f32) -> String {
+    if (v - v.round()).abs() < 1e-6 { format!("{}", v.round() as i64) } else { format!("{v}") }
 }

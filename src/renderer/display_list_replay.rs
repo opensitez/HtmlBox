@@ -360,7 +360,7 @@ fn replay_inner(
             PaintCmd::BeginStackingContext { .. } => {}
             PaintCmd::EndStackingContext => {}
 
-            PaintCmd::Gradient { rect, gradient_type, angle, stops, radii, opacity: grad_opacity, blend_mode: _ } => {
+            PaintCmd::Gradient { rect, clip, repeat_x, repeat_y, gradient_type, angle, stops, radii, opacity: grad_opacity, blend_mode: _ } => {
                 use tiny_skia::{
                     LinearGradient, RadialGradient,
                     GradientStop as SkStop, SpreadMode, Point as SkPoint,
@@ -368,9 +368,10 @@ fn replay_inner(
                 if stops.len() < 2 { continue; }
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let combined_opacity = a2 * grad_opacity;
+                // `pw`/`ph` name the pixmap here; keep them before the gradient
+                // box shadows them for a mask.
+                let (mask_w, mask_h) = (pw, ph);
 
-                let px = rect.x;
-                let py = rect.y;
                 let pw = rect.w;
                 let ph = rect.h;
                 if pw <= 0.0 || ph <= 0.0 { continue; }
@@ -382,62 +383,111 @@ fn replay_inner(
                     })
                     .collect();
 
-                let mut paint = Paint::default();
-                paint.anti_alias = true;
+                // The gradient image is the size of the POSITIONING area
+                // (`background-origin`) and is drawn once per tile, so its
+                // geometry is measured from each tile's own origin.
+                let shader_for = |px: f32, py: f32| -> Option<tiny_skia::Shader<'static>> {
+                    match gradient_type {
+                        1 => {
+                            // The gradient line (css-images-3 §3.4.1): it runs through
+                            // the centre of the box in the direction of `angle` — 0deg
+                            // points up, angles turn clockwise — and is long enough that
+                            // its perpendicular endpoints touch the two opposite corners.
+                            let rad = angle * std::f32::consts::PI / 180.0;
+                            let dx = rad.sin();
+                            let dy = -rad.cos();
+                            let half = ((pw * dx).abs() + (ph * dy).abs()) / 2.0;
+                            if half <= 0.0 { return None; }
+                            let cx = px + pw / 2.0;
+                            let cy = py + ph / 2.0;
 
-                let shader = match gradient_type {
-                    1 => {
-                        // Linear gradient
-                        let rad = angle * std::f32::consts::PI / 180.0;
-                        let dx = rad.sin();
-                        let dy = -rad.cos();
-                        let corners = [0.0f32, dx, dy, dx + dy];
-                        let t_min = corners.iter().cloned().fold(f32::MAX, f32::min);
-                        let t_max = corners.iter().cloned().fold(f32::MIN, f32::max);
-                        let t_range = (t_max - t_min).max(0.001);
-
-                        let start_nx = if dx >= 0.0 { 0.0 } else { 1.0 };
-                        let start_ny = if dy >= 0.0 { 0.0 } else { 1.0 };
-                        let sx = px + start_nx * pw;
-                        let sy = py + start_ny * ph;
-
-                        let denom = dx * dx * ph * ph + dy * dy * pw * pw;
-                        let (ex, ey) = if denom > 1e-6 {
-                            (sx + dx * pw * ph * ph * t_range / denom,
-                             sy + dy * ph * pw * pw * t_range / denom)
-                        } else {
-                            (sx + pw, sy)
-                        };
-
-                        LinearGradient::new(
-                            SkPoint::from_xy(sx, sy), SkPoint::from_xy(ex, ey),
-                            sk_stops, SpreadMode::Pad, Transform::identity(),
-                        )
+                            LinearGradient::new(
+                                SkPoint::from_xy(cx - dx * half, cy - dy * half),
+                                SkPoint::from_xy(cx + dx * half, cy + dy * half),
+                                sk_stops.clone(), SpreadMode::Pad, Transform::identity(),
+                            )
+                        }
+                        2 => {
+                            // Radial gradient
+                            let cx = px + pw / 2.0;
+                            let cy = py + ph / 2.0;
+                            let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
+                            let center = SkPoint::from_xy(cx, cy);
+                            RadialGradient::new(center, 0.0, center, r,
+                                sk_stops.clone(), SpreadMode::Pad, Transform::identity())
+                        }
+                        _ => None,
                     }
-                    2 => {
-                        // Radial gradient
-                        let cx = px + pw / 2.0;
-                        let cy = py + ph / 2.0;
-                        let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
-                        let center = SkPoint::from_xy(cx, cy);
-                        RadialGradient::new(center, 0.0, center, r,
-                            sk_stops, SpreadMode::Pad, Transform::identity())
-                    }
-                    _ => None,
                 };
 
-                if let Some(shader) = shader {
-                    paint.shader = shader;
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    let [r_tl, r_tr, r_br, r_bl] = radii;
-                    let max_r = (*r_tl).max(*r_tr).max(*r_br).max(*r_bl);
-                    if max_r > 0.0 {
-                        if let Some(path) = rounded_rect_path_corners(px, py, pw, ph, *r_tl, *r_tr, *r_br, *r_bl) {
-                            target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                // Like any background image, the gradient TILES across the
+                // PAINTING area (`background-clip`) when `background-repeat`
+                // allows it (css-backgrounds-3 §3.5): the strip under a
+                // transparent border shows the next repetition, not a gap.
+                // Without repetition only the positioning area is painted, and
+                // either way nothing is drawn outside the painting area.
+                let (first_x, end_x) = if *repeat_x && clip.x < rect.x {
+                    (rect.x + ((clip.x - rect.x) / pw).floor() * pw, clip.right())
+                } else if *repeat_x {
+                    (rect.x, clip.right())
+                } else {
+                    (rect.x, rect.right())
+                };
+                let (first_y, end_y) = if *repeat_y && clip.y < rect.y {
+                    (rect.y + ((clip.y - rect.y) / ph).floor() * ph, clip.bottom())
+                } else if *repeat_y {
+                    (rect.y, clip.bottom())
+                } else {
+                    (rect.y, rect.bottom())
+                };
+                let tiles_x = ((end_x - first_x) / pw).ceil().max(1.0);
+                let tiles_y = ((end_y - first_y) / ph).ceil().max(1.0);
+                let tiled = tiles_x > 1.0 || tiles_y > 1.0;
+
+                let [r_tl, r_tr, r_br, r_bl] = radii;
+                let max_r = (*r_tl).max(*r_tr).max(*r_br).max(*r_bl);
+                // One tile keeps the corner rounding in the fill path, which is
+                // exact. Several tiles share one mask instead: a per-tile path
+                // would round every internal tile edge as well.
+                let tile_mask = if tiled && max_r > 0.0 {
+                    build_clip_mask(clip, radii, mask_w, mask_h, scale)
+                } else {
+                    None
+                };
+                let tile_mask_ref = tile_mask.as_ref().or(clip_mask);
+
+                // A degenerate positioning area next to a large painting area
+                // would spin here, so the tile count is capped.
+                const MAX_TILES: f32 = 4096.0;
+                if tiles_x * tiles_y > MAX_TILES { continue; }
+
+                let mut ty = first_y;
+                while ty < end_y {
+                    let mut tx = first_x;
+                    while tx < end_x {
+                        // Only the part of the tile inside the painting area is drawn.
+                        let fx = tx.max(clip.x);
+                        let fy = ty.max(clip.y);
+                        let fw = (tx + pw).min(clip.right()) - fx;
+                        let fh = (ty + ph).min(clip.bottom()) - fy;
+                        if fw > 0.0 && fh > 0.0 {
+                            if let Some(shader) = shader_for(tx, ty) {
+                                let mut paint = Paint::default();
+                                paint.anti_alias = true;
+                                paint.shader = shader;
+                                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                                if max_r > 0.0 && !tiled {
+                                    if let Some(path) = rounded_rect_path_corners(fx, fy, fw, fh, *r_tl, *r_tr, *r_br, *r_bl) {
+                                        target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                                    }
+                                } else if let Some(r) = SkRect::from_xywh(fx, fy, fw, fh) {
+                                    target.fill_rect(r, &paint, ts, tile_mask_ref);
+                                }
+                            }
                         }
-                    } else if let Some(r) = SkRect::from_xywh(px, py, pw, ph) {
-                        target.fill_rect(r, &paint, ts, clip_mask);
+                        tx += pw;
                     }
+                    ty += ph;
                 }
             }
 
@@ -981,41 +1031,40 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::BackgroundImage { container, data, size_mode: _, draw_w, draw_h, pos_x, pos_y, repeat_x, repeat_y, radii } => {
-                // Draw background image, clipped to the container rect
+            PaintCmd::BackgroundImage { container: _, clip, data, size_mode: _, draw_w, draw_h, pos_x, pos_y, repeat_x, repeat_y, radii } => {
+                // Draw the background image, positioned in `container` and
+                // clipped to `clip`.
                 let (rgba, iw, ih) = match data {
                     ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
                     ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
                 };
                 if iw == 0 || ih == 0 || *draw_w <= 0.0 || *draw_h <= 0.0 { continue; }
-                // Build a clip mask for the container so background doesn't bleed out
-                // (essential for CSS sprites where background-position is negative)
-                let bg_clip = build_clip_mask(container, radii, pw, ph, scale);
+                // The mask keeps the image from bleeding out of the painting
+                // area — essential for CSS sprites, whose background-position is
+                // negative. Nothing is painted outside the PAINTING area
+                // (`background-clip`); the tile grid below is still anchored in
+                // the POSITIONING area (css-backgrounds-3 §3.6, §3.7).
+                let bg_clip = build_clip_mask(clip, radii, pw, ph, scale);
                 let bg_clip_ref = bg_clip.as_ref().or(clip_mask);
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
                     let sx_img = draw_w / iw as f32;
                     let sy_img = draw_h / ih as f32;
                     let paint = tiny_skia::PixmapPaint::default();
-                    let cx = container.x;
-                    let cy = container.y;
-                    let cw = container.w;
-                    let ch = container.h;
-
                     if *repeat_x || *repeat_y {
-                        // Tile the image across the container
-                        let _start_x = if *repeat_x { cx } else { *pos_x };
-                        let end_x   = if *repeat_x { cx + cw } else { *pos_x + *draw_w };
-                        let _start_y = if *repeat_y { cy } else { *pos_y };
-                        let end_y   = if *repeat_y { cy + ch } else { *pos_y + *draw_h };
+                        // Tiles fill the whole PAINTING area — a repeating
+                        // background covers the border box even though its
+                        // positioning area is the padding box.
+                        let end_x   = if *repeat_x { clip.right() } else { *pos_x + *draw_w };
+                        let end_y   = if *repeat_y { clip.bottom() } else { *pos_y + *draw_h };
 
                         // Align to tile grid from pos_x/pos_y
                         let first_tx = if *repeat_x {
-                            let offset = ((*pos_x - cx) % draw_w + draw_w) % draw_w;
-                            cx - (draw_w - offset) % draw_w
+                            let offset = ((*pos_x - clip.x) % draw_w + draw_w) % draw_w;
+                            clip.x - (draw_w - offset) % draw_w
                         } else { *pos_x };
                         let first_ty = if *repeat_y {
-                            let offset = ((*pos_y - cy) % draw_h + draw_h) % draw_h;
-                            cy - (draw_h - offset) % draw_h
+                            let offset = ((*pos_y - clip.y) % draw_h + draw_h) % draw_h;
+                            clip.y - (draw_h - offset) % draw_h
                         } else { *pos_y };
 
                         let mut ty = first_ty;

@@ -427,3 +427,297 @@ fn layout_pruning_still_active_on_width_only_resize() {
         assert!((card.layout.border_rect.h - 200.0).abs() < 2.0, "after width resize: card still 200px");
     }
 }
+
+// ── Replaced-element intrinsic contribution (CSS2.1 §10.4) ────────────────────
+
+/// Give every `<img>` under `node` the same natural dimensions; returns how
+/// many were found.
+fn set_natural_size(node: &mut WebCore, w: u32, h: u32) -> usize {
+    let mut n = 0;
+    if node.tag == "img" {
+        node.image_width = w;
+        node.image_height = h;
+        n += 1;
+    }
+    for ch in &mut node.children {
+        n += set_natural_size(ch, w, h);
+    }
+    n
+}
+
+/// **An image with a definite height contributes `height × ratio`, not its
+/// natural width.** The intrinsic walk used to early-return the natural width,
+/// so a 1024×1024 photo shown at `height=150` made its container 1024px wide
+/// while the image itself laid out at 150×150.
+#[test]
+fn layoutadv_replaced_intrinsic_width_follows_definite_height() {
+    let mut doc = parse(
+        "<div id=card><a><img height='150' src='x.png'></a></div>"
+    );
+    assert_eq!(set_natural_size(&mut doc.root, 1024, 1024), 1);
+    let engine = LayoutEngine::new();
+    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    assert_eq!(engine.max_content_width(card, 16.0, 16.0), 150.0);
+    assert_eq!(engine.min_content_width(card, 16.0, 16.0), 150.0);
+}
+
+/// A non-square ratio, so the assertion cannot pass by accident.
+#[test]
+fn layoutadv_replaced_intrinsic_width_uses_the_ratio() {
+    let mut doc = parse("<div id=card><img height='100' src='x.png'></div>");
+    assert_eq!(set_natural_size(&mut doc.root, 800, 200), 1);
+    let engine = LayoutEngine::new();
+    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    assert_eq!(engine.max_content_width(card, 16.0, 16.0), 400.0);
+}
+
+/// With both dimensions auto the natural width is still the answer.
+#[test]
+fn layoutadv_replaced_intrinsic_width_defaults_to_natural() {
+    let mut doc = parse("<div id=card><img src='x.png'></div>");
+    assert_eq!(set_natural_size(&mut doc.root, 640, 480), 1);
+    let engine = LayoutEngine::new();
+    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    assert_eq!(engine.max_content_width(card, 16.0, 16.0), 640.0);
+}
+
+/// The end-to-end shape of the tikshbila.com gallery: wrapping flex items whose
+/// only sizeable content is a photo shown at a fixed height.
+#[test]
+fn layoutadv_flex_items_size_to_the_displayed_image_not_the_photo() {
+    let mut doc = parse(
+        "<style>.row{display:flex;flex-wrap:wrap}</style>\
+         <div class=row><div id=a><img height='150' src='1.png'></div>\
+         <div id=b><img height='150' src='2.png'></div></div>"
+    );
+    assert_eq!(set_natural_size(&mut doc.root, 1024, 1024), 2, "both images present");
+    let mut engine = LayoutEngine::new();
+    engine.layout(&mut doc, 1256.0);
+    let a = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("a")).expect("a");
+    let b = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("b")).expect("b");
+    assert_eq!(a.layout.margin_rect.w, 150.0, "item a");
+    assert_eq!(b.layout.margin_rect.w, 150.0, "item b");
+    assert_eq!(b.layout.margin_rect.y, a.layout.margin_rect.y, "same flex line");
+}
+
+/// **Inline nesting must not lose the spaces between words.** The max-content
+/// width of `<a><span>Faire un don</span></a>` has to equal that of the bare
+/// text; fr.wikipedia's header links were sized ~7px short — two space widths —
+/// so each one broke onto a second line inside a box built for one.
+#[test]
+fn layoutadv_max_content_width_survives_inline_nesting() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let doc = renderer.load_html(
+        "<div id=plain>Faire un don</div>\
+         <div id=nested><a><span>Faire un don</span></a></div>",
+        800.0);
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap()
+    };
+    let engine = renderer.layout_engine();
+    let plain = engine.max_content_width(find("plain"), 16.0, 16.0);
+    let nested = engine.max_content_width(find("nested"), 16.0, 16.0);
+    assert!(plain > 40.0, "the text was measured at all: {plain}");
+    assert!((plain - nested).abs() < 0.5,
+        "nesting changed the max-content width: plain {plain} vs nested {nested}");
+}
+
+/// **The intrinsic measurement must count the spaces between words.** A
+/// max-content width that measures `"Faire un don"` as if it were
+/// `"Faireundon"` is two space widths short of the line the breaker then
+/// builds, so the text wraps inside a box sized for exactly one line.
+#[test]
+fn layoutadv_max_content_width_counts_inter_word_spaces() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let doc = renderer.load_html(
+        "<div id=spaced>Faire un don</div><div id=joined>Faireundon</div>",
+        800.0);
+    let engine = renderer.layout_engine();
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap()
+    };
+    let spaced = engine.max_content_width(find("spaced"), 16.0, 16.0);
+    let joined = engine.max_content_width(find("joined"), 16.0, 16.0);
+    assert!(spaced > joined + 4.0,
+        "the two spaces were not measured: 'Faire un don' {spaced} vs 'Faireundon' {joined}");
+}
+
+// ── Multi-column: a wrapper must not collapse every column into one ──────────
+
+/// Column positions of the leaf items, left to right.
+fn column_xs(root: &WebCore, class: &str) -> Vec<f32> {
+    let mut xs = Vec::new();
+    fn walk(n: &WebCore, class: &str, xs: &mut Vec<f32>) {
+        if n.attributes.get("class").map_or(false, |c| c.split_whitespace().any(|w| w == class)) {
+            xs.push(n.layout.margin_rect.x);
+        }
+        for c in &n.children { walk(c, class, xs); }
+    }
+    walk(root, class, &mut xs);
+    xs
+}
+
+/// **Multi-column is a fragmentation container, not a round-robin over direct
+/// children.** fr.wikipedia wraps both of its multicol blocks in a single
+/// `<div>` — `column-count:3` over the community links and `column-count:5`
+/// over the sister projects — so distributing the container's own children put
+/// everything in column 1 and the lists rendered one item per line.
+#[test]
+fn layoutadv_multicol_distributes_through_a_wrapper() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let mut doc = renderer.load_html(
+        "<style>* { margin:0; padding:0 } .cols { column-count: 3; column-gap: 10px; width: 600px }\
+         .item { height: 20px }</style>\
+         <div class=cols><div class=wrap>\
+           <div class=item>a</div><div class=item>b</div><div class=item>c</div>\
+           <div class=item>d</div><div class=item>e</div><div class=item>f</div>\
+         </div></div>",
+        800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 300).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    let xs = column_xs(&doc.root, "item");
+    assert_eq!(xs.len(), 6, "all six items are present");
+    let mut distinct: Vec<f32> = xs.clone();
+    distinct.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    distinct.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert_eq!(distinct.len(), 3,
+        "items should occupy 3 column positions, got {distinct:?} from {xs:?}");
+}
+
+/// The direct-children case must keep working.
+#[test]
+fn layoutadv_multicol_still_distributes_direct_children() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let mut doc = renderer.load_html(
+        "<style>* { margin:0; padding:0 } .cols { column-count: 3; column-gap: 10px; width: 600px }\
+         .item { height: 20px }</style>\
+         <div class=cols>\
+           <div class=item>a</div><div class=item>b</div><div class=item>c</div>\
+           <div class=item>d</div><div class=item>e</div><div class=item>f</div>\
+         </div>",
+        800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 300).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    let xs = column_xs(&doc.root, "item");
+    let mut distinct = xs.clone();
+    distinct.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    distinct.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert_eq!(distinct.len(), 3, "got {distinct:?} from {xs:?}");
+}
+
+/// **`column-gap: normal` computes to 1em in a multi-column container**
+/// (css-multicol-1 §4.2). Our initial value was `Zero`, indistinguishable from
+/// an author writing `column-gap: 0`, so every multicol block that did not set
+/// a gap rendered with its columns touching.
+#[test]
+fn layoutadv_multicol_default_gap_is_one_em() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let mut doc = renderer.load_html(
+        "<style>* { margin:0; padding:0 } \
+         .cols { column-count: 3; width: 600px; font-size: 16px } .item { height: 20px }</style>\
+         <div class=cols>\
+           <div class=item>a</div><div class=item>b</div><div class=item>c</div>\
+         </div>",
+        800.0);
+    let mut pm = tiny_skia::Pixmap::new(800, 200).unwrap();
+    renderer.render(&mut doc, &mut pm, 1.0);
+    let xs = {
+        let mut v = column_xs(&doc.root, "item");
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+        v
+    };
+    assert_eq!(xs.len(), 3, "three columns, got {xs:?}");
+    // col_w = (600 - 2*16) / 3 = 189.33; column starts 0, 205.33, 410.67.
+    let step = xs[1] - xs[0];
+    assert!((step - 205.33).abs() < 1.0,
+        "a 1em gap gives a 205.33px column pitch, got {step} from {xs:?}");
+}
+
+/// **max-content is the content laid out with no soft wrap taken**
+/// (css-sizing-3 §5.1), so inline-level siblings that share a line are SUMMED.
+/// Taking the MAX over a block's children measured `Hello <b>World</b>` as the
+/// wider single word, and any shrink-to-fit box sized from it then wrapped.
+#[test]
+fn layoutadv_max_content_sums_inline_siblings() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let doc = renderer.load_html(
+        "<div id=split>Hello <span>World</span></div><div id=whole>Hello World</div>",
+        800.0);
+    let engine = renderer.layout_engine();
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap()
+    };
+    let split = engine.max_content_width(find("split"), 16.0, 16.0);
+    let whole = engine.max_content_width(find("whole"), 16.0, 16.0);
+    assert!(whole > 40.0, "the control measured something: {whole}");
+    // Within one space width: the text node's own max-content collapses its
+    // trailing space, which is a separate (known) gap in cross-node whitespace.
+    assert!(split > whole - 6.0 && split <= whole + 1.0,
+        "inline siblings must sum on one line: split={split} vs whole={whole}");
+}
+
+/// A block-level child still starts a new line, so it is MAXed, not summed.
+#[test]
+fn layoutadv_max_content_maxes_block_siblings() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let doc = renderer.load_html(
+        "<div id=blocks><div>Hello</div><div>World</div></div><div id=one>Hello</div>",
+        800.0);
+    let engine = renderer.layout_engine();
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap()
+    };
+    let blocks = engine.max_content_width(find("blocks"), 16.0, 16.0);
+    let one = engine.max_content_width(find("one"), 16.0, 16.0);
+    assert!((blocks - one).abs() < 6.0,
+        "two block children stack, so max-content is the wider one: {blocks} vs {one}");
+}
+
+/// **`box-sizing: border-box` means the specified width ALREADY includes
+/// padding and border** (css-sizing-3 §6.2). The intrinsic walk returned the
+/// raw `width` and its caller then added the child's padding/border on top, so
+/// a border-box child made its shrink-to-fit parent that much too wide. With
+/// `* { box-sizing: border-box }` in nearly every real stylesheet, this hit
+/// almost every float, inline-block and fit-content box.
+#[test]
+fn layoutadv_border_box_width_is_not_double_counted() {
+    let mut renderer = crate::renderer::Renderer::new();
+    let doc = renderer.load_html(
+        "<div id=bb><div style='box-sizing:border-box;width:200px;padding:20px'>x</div></div>\
+         <div id=cb><div style='box-sizing:content-box;width:160px;padding:20px'>x</div></div>",
+        800.0);
+    let engine = renderer.layout_engine();
+    let find = |id: &str| {
+        fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
+            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
+            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            None
+        }
+        walk(&doc.root, id).unwrap()
+    };
+    let bb = engine.max_content_width(find("bb"), 16.0, 16.0);
+    let cb = engine.max_content_width(find("cb"), 16.0, 16.0);
+    assert_eq!(bb, 200.0, "border-box: the 200px already includes the 40px padding");
+    assert_eq!(cb, 200.0, "content-box: 160 + 40 padding = 200 (the control)");
+}

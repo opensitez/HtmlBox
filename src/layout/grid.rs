@@ -124,7 +124,7 @@ pub fn layout_grid_subgrid(
         let n = tracks.len().max(1);
         let dummy_widths = vec![0.0f32; n];
         let px = resolve_to_pixels(&tracks, &node.style.grid_auto_columns,
-                                   cw, gap, n, font_px, root_font_px, &dummy_widths);
+                                   cw, gap, n, font_px, root_font_px, &dummy_widths, &dummy_widths);
         let x_offsets: Vec<f32> = {
             let mut xs = Vec::with_capacity(px.len());
             let mut cx = 0.0f32;
@@ -676,27 +676,61 @@ pub fn layout_grid(
 
     // ── Resolve column pixel widths ──────────────────────────────────────────
 
-    // Measure items for Auto track sizing
-    let mut col_content_widths = vec![0.0f32; n_explicit_cols.max(max_col)];
+    // Measure items for intrinsic track sizing (CSS Grid §12.5).
+    // A track needs BOTH contributions: `min-content` and the min side of a
+    // `minmax()` size from the min-content widths, `max-content`/`auto` from
+    // the max-content widths. Using max-content for both made `min-content` a
+    // synonym for `max-content`.
+    let n_measured_cols = n_explicit_cols.max(max_col);
+    let mut col_content_widths = vec![0.0f32; n_measured_cols];
+    let mut col_min_widths     = vec![0.0f32; n_measured_cols];
+    // (col_start, col_end, min-content, max-content) per item.
+    let mut col_spans: Vec<(usize, usize, f32, f32)> = Vec::with_capacity(item_indices.len());
     for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, _rs, _re) = placements[ii];
         let child = grid_child_ref(node, path);
-        let child_font = child.style.font_size_px(font_px, root_font_px);
-        // Use intrinsic_sizes (unified) instead of layout_box(10000) to avoid leaking dummy widths
-        let intrinsic_w = engine.intrinsic_sizes(child, font_px, root_font_px).max_content;
-        let _ = child_font; // suppress warning
-        let span = (ce - cs).max(1);
-        let w_per_col = intrinsic_w / span as f32;
-        for c in cs..ce {
-            if c < col_content_widths.len() {
-                if w_per_col > col_content_widths[c] { col_content_widths[c] = w_per_col; }
-            }
+        // intrinsic_sizes (unified) rather than layout_box(10000), which would
+        // leak the dummy width into the child's cached layout.
+        let sz = engine.intrinsic_sizes(child, font_px, root_font_px);
+        col_spans.push((cs.min(n_measured_cols), ce.min(n_measured_cols), sz.min_content, sz.max_content));
+    }
+    // ⛔ TWO PHASES, in this order (CSS Grid §12.5) — the same shape the row
+    // axis uses. Tracks are sized from single-span items first; a spanning item
+    // then contributes only the EXCESS over the tracks it already spans, shared
+    // among them, never its whole size divided by its span and used as a floor.
+    // The floor inflated a narrow column and squeezed a wide one: `auto auto`
+    // holding a 100px and a 40px item plus a 300px item across both gave
+    // 150/150 where Chrome gives 180/120.
+    for &(cs, ce, mn, mx) in &col_spans {
+        if ce.saturating_sub(cs) == 1 && cs < n_measured_cols {
+            if mx > col_content_widths[cs] { col_content_widths[cs] = mx; }
+            if mn > col_min_widths[cs]     { col_min_widths[cs]     = mn; }
         }
+    }
+    let mut col_spanning: Vec<(usize, usize, f32, f32)> = col_spans.iter()
+        .copied().filter(|(cs, ce, _, _)| ce.saturating_sub(*cs) > 1).collect();
+    // Smallest spans first, as the spec requires.
+    col_spanning.sort_by_key(|(cs, ce, _, _)| ce - cs);
+    for (cs, ce, mn, mx) in col_spanning {
+        if ce <= cs { continue; }
+        let n = ce - cs;
+        let gaps = col_gap * n.saturating_sub(1) as f32;
+        for (widths, want) in [(&mut col_content_widths, mx), (&mut col_min_widths, mn)] {
+            let already: f32 = widths[cs..ce].iter().sum::<f32>() + gaps;
+            let extra = want - already;
+            if extra <= 0.0 { continue; }
+            let share = extra / n as f32;
+            for c in cs..ce { widths[c] += share; }
+        }
+    }
+    // A track's min-content contribution can never exceed its max-content one.
+    for c in 0..n_measured_cols {
+        if col_min_widths[c] > col_content_widths[c] { col_content_widths[c] = col_min_widths[c]; }
     }
 
     let col_px = resolve_to_pixels(&col_tracks, &node.style.grid_auto_columns,
                                    content_w, col_gap, n_explicit_cols.max(max_col),
-                                   font_px, root_font_px, &col_content_widths);
+                                   font_px, root_font_px, &col_content_widths, &col_min_widths);
     let n_cols_actual = col_px.len();
     // justify-content: compute extra horizontal space distribution
     let grid_total_w: f32 = col_px.iter().sum::<f32>()
@@ -734,6 +768,12 @@ pub fn layout_grid(
     // ── First pass: layout all items to get row heights ──────────────────────
 
     let mut row_heights: Vec<f32> = vec![0.0; n_rows];
+    // (row_start, row_end, outer height) per item — applied in two phases below.
+    let mut row_spans: Vec<(usize, usize, f32)> = Vec::new();
+    let node_align_items = node.style.align_items;
+    // Distance from an item's margin edge to its first baseline, per item, for
+    // the items that take part in baseline alignment (Box Alignment §9).
+    let mut item_ascent: Vec<Option<f32>> = Vec::with_capacity(item_indices.len());
 
     for (ii, path) in item_indices.iter().enumerate() {
         let (cs, ce, rs, re) = placements[ii];
@@ -741,7 +781,11 @@ pub fn layout_grid(
         let ce = ce.min(n_cols_actual).max(cs + 1);
 
         // Compute span width
-        let span_w = span_width(&col_px, &col_x, cs, ce, col_gap, content_w);
+        // ⛔ A grid AREA spans the gutters between its tracks, INCLUDING the
+        // extra a content-distribution value put there. Passing the bare
+        // `col_gap` left a spanning item short by `extra_gap_col * (span-1)`
+        // in a `justify-content: space-*` grid.
+        let span_w = span_width(&col_px, &col_x, cs, ce, col_gap + extra_gap_col, content_w);
 
         let child = grid_child_mut(node, path);
         let child_font = child.style.font_size_px(font_px, root_font_px);
@@ -771,13 +815,76 @@ pub fn layout_grid(
         }
 
         let h = child.layout.border_rect.h + crbox.margin_top + crbox.margin_bottom;
-        // Distribute height across spanned rows
-        let row_span = (re - rs).max(1);
-        let h_per_row = h / row_span as f32;
-        for r in rs..re.min(n_rows) {
-            if h_per_row > row_heights[r] { row_heights[r] = h_per_row; }
+        row_spans.push((rs, re.min(n_rows), h));
+        // A baseline-aligned item is never stretched, so the height and
+        // baseline it has here are the ones it keeps.
+        item_ascent.push(
+            if matches!(effective_align_self_grid(child, node_align_items),
+                        AlignItems::Baseline | AlignItems::LastBaseline)
+                && re.saturating_sub(rs) == 1 {
+                Some(child.layout.baseline - child.layout.margin_rect.y)
+            } else { None });
+    }
+
+    // ⛔ TWO PHASES, in this order (CSS Grid §12.5). Tracks are sized from
+    // single-span items first; only then does a spanning item contribute, and
+    // what it contributes is the EXCESS over the tracks it already spans,
+    // shared among them — never its whole size divided by its span and used as
+    // a floor. That floor let one tall spanning item inflate every short track
+    // it crossed: a 6810px sidebar pushed two ~40px rows to 1811px each.
+    //
+    // Growth limits are not modelled, so the excess is shared equally rather
+    // than freezing tracks as they reach a limit.
+    for &(rs, re, h) in &row_spans {
+        if re.saturating_sub(rs) <= 1 {
+            if rs < n_rows && h > row_heights[rs] { row_heights[rs] = h; }
         }
     }
+    let mut spanning: Vec<(usize, usize, f32)> = row_spans.iter()
+        .copied().filter(|(rs, re, _)| re.saturating_sub(*rs) > 1).collect();
+    // Smallest spans first, as the spec requires.
+    spanning.sort_by_key(|(rs, re, _)| re - rs);
+    for (rs, re, h) in spanning {
+        if re <= rs { continue; }
+        let n = re - rs;
+        let already: f32 = row_heights[rs..re].iter().sum::<f32>()
+            + row_gap * n.saturating_sub(1) as f32;
+        let extra = h - already;
+        if extra <= 0.0 { continue; }
+        let share = extra / n as f32;
+        for r in rs..re { row_heights[r] += share; }
+    }
+
+    // ── Baseline alignment groups (Box Alignment §9) ────────────────────────
+    // The items whose row START is row R and whose `align-self` is a baseline
+    // value share a baseline: each is pushed down by the group's largest ascent
+    // minus its own. The row must then be tall enough for the shifted group,
+    // which is max-ascent + max-descent — larger than the tallest item whenever
+    // two items lean opposite ways.
+    let mut row_baseline: Vec<Option<f32>> = vec![None; n_rows];
+    {
+        let mut descent: Vec<f32> = vec![0.0; n_rows];
+        for (ii, &(rs, _re, h)) in row_spans.iter().enumerate() {
+            if rs >= n_rows { continue; }
+            if let Some(a) = item_ascent[ii] {
+                if row_baseline[rs].map_or(true, |m| a > m) { row_baseline[rs] = Some(a); }
+                if h - a > descent[rs] { descent[rs] = h - a; }
+            }
+        }
+        for r in 0..n_rows {
+            if let Some(a) = row_baseline[r] {
+                let need = a + descent[r];
+                if need > row_heights[r] { row_heights[r] = need; }
+            }
+        }
+    }
+
+    // ⛔ A ROW track's percentage resolves against the grid's HEIGHT, never its
+    // width (CSS Grid §7.2.3). When that height is indefinite the percentage
+    // contributes NOTHING and the track behaves as `auto`, which a 0 basis
+    // gives exactly. Passing the width here made `grid-template-rows: 50%` in
+    // an auto-height grid a fraction of the COLUMN measure.
+    let row_pct_basis = rbox.content_height.unwrap_or(0.0);
 
     // Apply explicit row track sizes where specified (with MinMax clamping)
     for (ri, track) in row_tracks.iter().enumerate() {
@@ -786,19 +893,27 @@ pub fn layout_grid(
                 GridTrackKind::MinMax => {
                     let min_h = track_to_px(
                         &GridTrackSize { kind: track.min_kind, value: track.min_value, ..Default::default() },
-                        containing_w, font_px, root_font_px,
+                        row_pct_basis, font_px, root_font_px,
                     );
                     let max_h = track_to_px(
                         &GridTrackSize { kind: track.max_kind, value: track.max_value, ..Default::default() },
-                        containing_w, font_px, root_font_px,
+                        row_pct_basis, font_px, root_font_px,
                     );
                     let mut h = row_heights[ri].max(min_h);
                     if max_h > 0.0 { h = h.min(max_h); }
                     h = h.max(min_h);
                     row_heights[ri] = h;
                 }
+                // ⛔ `fit-content(X)` is a CEILING, never a floor — and on the
+                // block axis it cannot cut into the content either, because the
+                // track's MIN sizing function is `auto`. Its min-content height
+                // is never below its max-content height, so the clamp has
+                // nothing left to bite: the row is its content height.
+                // `track_to_px` hands back X, and feeding that into the branch
+                // below FORCED a 50px row to `fit-content(200px)`.
+                GridTrackKind::FitContent => {}
                 _ => {
-                    let px = track_to_px(track, containing_w, font_px, root_font_px);
+                    let px = track_to_px(track, row_pct_basis, font_px, root_font_px);
                     if px > 0.0 {
                         // Fixed/percent tracks set exact height; fr/auto use content
                         match track.kind {
@@ -823,19 +938,23 @@ pub fn layout_grid(
             // minmax(min, max): enforce min as floor, max as ceiling
             let min_h = track_to_px(
                 &GridTrackSize { kind: ar.min_kind, value: ar.min_value, ..Default::default() },
-                containing_w, font_px, root_font_px,
+                row_pct_basis, font_px, root_font_px,
             );
             let max_h = track_to_px(
                 &GridTrackSize { kind: ar.max_kind, value: ar.max_value, ..Default::default() },
-                containing_w, font_px, root_font_px,
+                row_pct_basis, font_px, root_font_px,
             );
             for r in n_explicit_rows..n_rows {
                 let mut h = row_heights[r].max(min_h);
                 if max_h > 0.0 { h = h.min(max_h); }
                 row_heights[r] = h.max(min_h);
             }
+        } else if ar.kind == GridTrackKind::FitContent {
+            // `fit-content(X)` is a ceiling, not a floor — see the explicit
+            // row tracks above. `track_to_px` returns X, which would have
+            // forced every implicit row up to the limit.
         } else {
-            let auto_h = track_to_px(ar, containing_w, font_px, root_font_px);
+            let auto_h = track_to_px(ar, row_pct_basis, font_px, root_font_px);
             if auto_h > 0.0 {
                 for r in n_explicit_rows..n_rows {
                     if auto_h > row_heights[r] { row_heights[r] = auto_h; }
@@ -875,6 +994,48 @@ pub fn layout_grid(
         }
     }
 
+    // CSS Grid §11.1 steps 2-3: the grid container's size is found first, with
+    // cyclic percentages treated as `auto`; the tracks are then sized again
+    // with the percentages resolved against that size. The container keeps the
+    // size step 2 gave it, so a percentage row may overflow it — that is what
+    // Chrome does with `grid-template-rows: 50% auto` in an auto-height grid.
+    let cyclic_pct_h = if rbox.content_height.is_none()
+        && row_tracks.iter().take(n_rows).any(|t| t.kind == GridTrackKind::Percent) {
+        Some(row_heights.iter().sum::<f32>() + row_gap * n_rows.saturating_sub(1) as f32)
+    } else { None };
+    if let Some(basis) = cyclic_pct_h {
+        for (ri, track) in row_tracks.iter().enumerate() {
+            if ri < row_heights.len() && track.kind == GridTrackKind::Percent {
+                row_heights[ri] = (track.value / 100.0 * basis).max(0.0);
+            }
+        }
+    }
+
+    // ── §12.7 Stretch auto Tracks, block axis ────────────────────────────────
+    // With `align-content: normal | stretch` the leftover definite free space
+    // is divided EQUALLY among the rows whose MAX sizing function is `auto`.
+    // `stretch` is the initial value, so this is what every grid does by
+    // default: without it a `height:400px` grid with two auto rows left them at
+    // content height and wasted the rest of the box.
+    if node.style.align_content == AlignContent::Stretch {
+        if let Some(container_h) = rbox.content_height {
+            let n_explicit_rows = row_tracks.len();
+            let auto_rows: Vec<usize> = (0..n_rows).filter(|&r| {
+                let t = if r < n_explicit_rows { &row_tracks[r] } else { &node.style.grid_auto_rows };
+                track_max_is_auto(t)
+            }).collect();
+            if !auto_rows.is_empty() {
+                let used: f32 = row_heights.iter().take(n_rows).sum::<f32>()
+                    + row_gap * n_rows.saturating_sub(1) as f32;
+                let leftover = container_h - used;
+                if leftover > 0.01 {
+                    let share = leftover / auto_rows.len() as f32;
+                    for r in auto_rows { row_heights[r] += share; }
+                }
+            }
+        }
+    }
+
     // align-content: compute extra vertical space distribution
     let grid_total_h: f32 = row_heights.iter().sum::<f32>()
         + row_gap * n_rows.saturating_sub(1) as f32;
@@ -905,9 +1066,9 @@ pub fn layout_grid(
         let rs = rs.min(n_rows.saturating_sub(1));
         let re = re.min(n_rows).max(rs + 1);
 
-        let span_w = span_width(&col_px, &col_x, cs, ce, col_gap, content_w);
+        let span_w = span_width(&col_px, &col_x, cs, ce, col_gap + extra_gap_col, content_w);
         let cell_h = row_heights[rs..re].iter().sum::<f32>()
-            + row_gap * (re - rs).saturating_sub(1) as f32;
+            + (row_gap + extra_gap_row) * (re - rs).saturating_sub(1) as f32;
 
         // In RTL grids, col_x is reversed so col_x[cs] may be > col_x[ce-1].
         // Use the minimum x across the span as the left edge.
@@ -990,14 +1151,28 @@ pub fn layout_grid(
             AlignItems::FlexEnd   => cell_w - child.layout.border_rect.w - crbox.margin_left - crbox.margin_right,
             AlignItems::Center    => (cell_w - child.layout.border_rect.w - crbox.margin_left - crbox.margin_right) / 2.0,
             AlignItems::Stretch   => 0.0,
-            AlignItems::Baseline  => 0.0,
+            // The INLINE-axis baseline group is not modelled — there is one
+            // baseline per box and it is a block-axis one — so an inline-axis
+            // baseline value falls back to `start`, as the spec allows when a
+            // box has no baseline in that axis.
+            AlignItems::Baseline | AlignItems::LastBaseline => 0.0,
         };
         let dy_align = match eff_align {
             AlignItems::FlexStart => 0.0,
             AlignItems::FlexEnd   => cell_h - child.layout.border_rect.h - crbox.margin_top - crbox.margin_bottom,
             AlignItems::Center    => (cell_h - child.layout.border_rect.h - crbox.margin_top - crbox.margin_bottom) / 2.0,
             AlignItems::Stretch   => 0.0,
-            AlignItems::Baseline  => 0.0,
+            // Box Alignment §9: shift the item down by the row group's largest
+            // ascent minus its own, so every member's baseline lands on the
+            // same line. `last baseline` uses the same recorded baseline —
+            // only one baseline per box is tracked.
+            AlignItems::Baseline | AlignItems::LastBaseline => {
+                match (row_baseline.get(rs).copied().flatten(),
+                       item_ascent.get(ii).copied().flatten()) {
+                    (Some(group), Some(own)) => (group - own).max(0.0),
+                    _ => 0.0,
+                }
+            }
         };
 
         // Target border_rect position
@@ -1017,7 +1192,7 @@ pub fn layout_grid(
     let total_h = row_y.last().copied().unwrap_or(0.0)
         + row_heights.last().copied().unwrap_or(0.0);
 
-    let ch = rbox.content_height.unwrap_or(total_h);
+    let ch = rbox.content_height.unwrap_or(cyclic_pct_h.unwrap_or(total_h));
 
     // Save restored heights
     for path in &item_indices {
@@ -1331,8 +1506,15 @@ pub fn track_to_px(track: &GridTrackSize, container: f32, font_px: f32, root_fon
     }
 }
 
-/// Resolve track list to pixel widths (distributing fr units).
-/// Mirrors C++ column-width resolution in LayoutGrid.
+/// Resolve a track list to pixel sizes, running the CSS Grid track sizing
+/// algorithm in the order the spec gives it: initialize base sizes and growth
+/// limits (§12.4/§12.5), Maximize Tracks (§12.6), Expand Flexible Tracks
+/// (§12.8), Stretch auto Tracks (§12.7).
+///
+/// `content_widths` is the MAX-content contribution per track, `min_widths` the
+/// MIN-content one. A track needs both: they are the two ends of its base size
+/// and growth limit, and using max-content for both makes `min-content` a
+/// synonym for `max-content`.
 fn resolve_to_pixels(
     tracks: &[GridTrackSize],
     auto_cols: &GridTrackSize,
@@ -1342,17 +1524,30 @@ fn resolve_to_pixels(
     font_px: f32,
     root_font_px: f32,
     content_widths: &[f32],
+    min_widths: &[f32],
 ) -> Vec<f32> {
     let effective_n = tracks.len().max(n_cols);
-    let mut sizes: Vec<f32> = vec![0.0; effective_n];
-    let mut fr_indices: Vec<usize> = Vec::new();
-    let mut fr_values:  Vec<f32>   = Vec::new();
-    let mut used = 0.0f32;
-    let mut flexible_cols = 0usize;
     let total_gap = gap * effective_n.saturating_sub(1) as f32;
 
-    // First pass: resolve fixed/percent/minmax-min sizes; tally fr and flexible
+    // Per-track sizing state.
+    let mut base     = vec![0.0f32; effective_n];
+    let mut limit    = vec![0.0f32; effective_n];
+    let mut is_fr    = vec![false;  effective_n];
+    let mut fr_value = vec![0.0f32; effective_n];
+    // A track only takes part in §12.7 "Stretch auto Tracks" when its MAX
+    // sizing function is `auto` — a `min-content` or `max-content` track
+    // freezes at its content size and leaves the leftover space unused.
+    let mut max_is_auto = vec![false; effective_n];
+    // Tracks Maximize (§12.6) may grow: everything whose growth limit exceeds
+    // its base and that is not flexible (a flexible track's growth limit IS
+    // its base size, so it is frozen from the start).
+    let mut growable = vec![false; effective_n];
+
+    let pct = |v: f32| v / 100.0 * container;
+
     for i in 0..effective_n {
+        let mn = min_widths.get(i).copied().unwrap_or(0.0);
+        let mx = content_widths.get(i).copied().unwrap_or(0.0).max(mn);
         let track = if i < tracks.len() {
             Some(&tracks[i])
         } else if auto_cols.kind != GridTrackKind::Auto {
@@ -1360,148 +1555,119 @@ fn resolve_to_pixels(
         } else {
             None
         };
-
-        let track = match track {
+        let t = match track {
             Some(t) => t,
-            None => { flexible_cols += 1; continue; }
+            // Implicit track with `grid-auto-columns: auto`.
+            None => { base[i] = mn; limit[i] = mx; max_is_auto[i] = true; growable[i] = true; continue; }
         };
-
-        match track.kind {
-            GridTrackKind::Fixed => {
-                sizes[i] = track.value;
-                used += track.value;
+        match t.kind {
+            GridTrackKind::Fixed   => { base[i] = t.value;  limit[i] = t.value; }
+            GridTrackKind::Percent => { base[i] = pct(t.value); limit[i] = base[i]; }
+            GridTrackKind::Calc    => {
+                let px = t.calc_length.as_ref().map(|l| l.resolve(font_px, container, root_font_px)).unwrap_or(0.0);
+                base[i] = px; limit[i] = px;
             }
-            GridTrackKind::Percent => {
-                let px = track.value / 100.0 * container;
-                sizes[i] = px;
-                used += px;
+            // `<flex>` is shorthand for `minmax(auto, <flex>)`: the base comes
+            // from the content, the growth limit equals the base.
+            GridTrackKind::Fractional => { is_fr[i] = true; fr_value[i] = t.value; base[i] = mn; limit[i] = mn; }
+            GridTrackKind::Auto | GridTrackKind::Subgrid => {
+                base[i] = mn; limit[i] = mx; max_is_auto[i] = true; growable[i] = true;
             }
-            GridTrackKind::Fractional => {
-                fr_indices.push(i);
-                fr_values.push(track.value);
-                flexible_cols += 1;
+            GridTrackKind::MinContent => { base[i] = mn; limit[i] = mn; }
+            GridTrackKind::MaxContent => { base[i] = mx; limit[i] = mx; }
+            GridTrackKind::FitContent => {
+                // fit-content(x) = minmax(auto, max-content) clamped by x. Its
+                // max sizing function is not `auto`, so §12.7 skips it.
+                let clamp = if t.max_kind == GridTrackKind::Percent { pct(t.max_value) } else { t.value };
+                base[i] = mn; limit[i] = mx.min(clamp.max(mn)); growable[i] = true;
             }
             GridTrackKind::MinMax => {
-                let min_px = track_to_px(
-                    &GridTrackSize { kind: track.min_kind, value: track.min_value, ..Default::default() },
-                    container, font_px, root_font_px,
-                );
-                if track.max_kind == GridTrackKind::Fractional {
-                    sizes[i] = min_px;
-                    used += min_px;
-                    fr_indices.push(i);
-                    fr_values.push(track.max_value);
-                } else if matches!(track.max_kind, GridTrackKind::Auto | GridTrackKind::MaxContent | GridTrackKind::MinContent) {
-                    // minmax(min, auto/max-content): use content width, clamped to min
-                    let cw = content_widths.get(i).copied().unwrap_or(0.0);
-                    sizes[i] = cw.max(min_px);
-                    used += sizes[i];
-                    flexible_cols += 1;
+                base[i] = match t.min_kind {
+                    GridTrackKind::Fixed      => t.min_value,
+                    GridTrackKind::Percent    => pct(t.min_value),
+                    GridTrackKind::MaxContent => mx,
+                    _                         => mn,   // auto / min-content
+                };
+                if t.max_kind == GridTrackKind::Fractional {
+                    is_fr[i] = true; fr_value[i] = t.max_value; limit[i] = base[i];
                 } else {
-                    // minmax(min, fixed/percent): use the max
-                    let max_px = track_to_px(
-                        &GridTrackSize { kind: track.max_kind, value: track.max_value, ..Default::default() },
-                        container, font_px, root_font_px,
-                    );
-                    sizes[i] = max_px.max(min_px);
-                    used += sizes[i];
+                    limit[i] = match t.max_kind {
+                        GridTrackKind::Fixed      => t.max_value,
+                        GridTrackKind::Percent    => pct(t.max_value),
+                        GridTrackKind::MinContent => mn,
+                        _                         => mx,   // auto / max-content
+                    };
+                    if t.max_kind == GridTrackKind::Auto { max_is_auto[i] = true; }
+                    growable[i] = true;
                 }
             }
-            GridTrackKind::Auto | GridTrackKind::MinContent | GridTrackKind::MaxContent => {
-                let cw = content_widths.get(i).copied().unwrap_or(0.0);
-                sizes[i] = cw;
-                used += cw;
-                flexible_cols += 1;
+        }
+        if limit[i] < base[i] { limit[i] = base[i]; }
+        if base[i] < 0.0 { base[i] = 0.0; }
+    }
+
+    // ── §12.6 Maximize Tracks ────────────────────────────────────────────────
+    // Distribute the free space equally to the base sizes, FREEZING each track
+    // as it reaches its growth limit and continuing to grow the rest. One flat
+    // share per track stretched a small `auto` column past its max-content
+    // while a large sibling still needed room.
+    let mut free = container - total_gap - base.iter().sum::<f32>();
+    let mut open: Vec<usize> = (0..effective_n)
+        .filter(|&i| growable[i] && !is_fr[i] && limit[i] > base[i]).collect();
+    while free > 0.01 && !open.is_empty() {
+        let share = free / open.len() as f32;
+        let mut still_open = Vec::with_capacity(open.len());
+        let mut used = 0.0f32;
+        for &i in &open {
+            let room = limit[i] - base[i];
+            if room <= share {
+                base[i] = limit[i];
+                used += room;
+            } else {
+                base[i] += share;
+                used += share;
+                still_open.push(i);
             }
-            GridTrackKind::FitContent => {
-                let cw = content_widths.get(i).copied().unwrap_or(0.0);
-                sizes[i] = cw;
-                used += cw;
-                flexible_cols += 1;
-            }
-            GridTrackKind::Calc => {
-                let px = if let Some(ref len) = track.calc_length {
-                    len.resolve(font_px, container, root_font_px)
-                } else { 0.0 };
-                sizes[i] = px;
-                used += px;
-            }
-            GridTrackKind::Subgrid => {
-                // Subgrid sentinels should not appear in resolved track lists;
-                // treat as auto if encountered.
-                flexible_cols += 1;
+        }
+        free -= used;
+        if still_open.len() == open.len() { break; }   // everyone took a full share
+        open = still_open;
+    }
+
+    // ── §12.8 Expand Flexible Tracks ─────────────────────────────────────────
+    // ⛔ The leftover space for `fr` excludes the base sizes of the FLEXIBLE
+    // tracks themselves. Counting a `minmax(50px, 1fr)` base against it charged
+    // that track twice — once as free space and again as an fr share — so
+    // `minmax(50px,1fr) 1fr` in a 300px grid gave 125 where Chrome gives 150,
+    // and `repeat(auto-fill, minmax(80px,1fr))` never grew past 80.
+    let total_fr: f32 = (0..effective_n).filter(|&i| is_fr[i]).map(|i| fr_value[i]).sum();
+    if total_fr > 0.0 {
+        let non_flex: f32 = (0..effective_n).filter(|&i| !is_fr[i]).map(|i| base[i]).sum();
+        let leftover = (container - total_gap - non_flex).max(0.0);
+        for i in 0..effective_n {
+            if is_fr[i] {
+                let fr_w = leftover * fr_value[i] / total_fr;
+                if fr_w > base[i] { base[i] = fr_w; }
             }
         }
     }
 
-    let free_space = (container - used - total_gap).max(0.0);
-    let total_fr: f32 = fr_values.iter().sum();
-
-    // Auto share: when no fr tracks, flexible cols share free space equally
-    let auto_share = if flexible_cols > 0 && total_fr <= 0.0 {
-        free_space / flexible_cols as f32
-    } else {
-        0.0
-    };
-
-    // Second pass: resolve fr, auto, content-based, and minmax max values
-    for i in 0..effective_n {
-        let track = if i < tracks.len() {
-            Some(&tracks[i])
-        } else if auto_cols.kind != GridTrackKind::Auto {
-            Some(auto_cols)
-        } else {
-            None
-        };
-
-        let track = match track {
-            Some(t) => t,
-            None => {
-                // Implicit auto column
-                sizes[i] = if total_fr > 0.0 { 0.0 } else { auto_share };
-                continue;
-            }
-        };
-
-        match track.kind {
-            GridTrackKind::Fractional => {
-                if total_fr > 0.0 {
-                    sizes[i] = free_space * track.value / total_fr;
-                }
-            }
-            GridTrackKind::MinMax => {
-                let min_w = sizes[i]; // already set in first pass
-                if track.max_kind == GridTrackKind::Fractional && total_fr > 0.0 {
-                    let fr_w = free_space * track.max_value / total_fr;
-                    sizes[i] = min_w.max(fr_w);
-                } else if track.max_kind == GridTrackKind::Fixed {
-                    sizes[i] = min_w.max(track.max_value);
-                } else if track.max_kind == GridTrackKind::Percent {
-                    let max_w = track.max_value / 100.0 * container;
-                    sizes[i] = min_w.max(max_w);
-                } else {
-                    // auto/min-content/max-content max: use free space share
-                    sizes[i] = min_w.max(if total_fr > 0.0 { 0.0 } else { auto_share });
-                }
-            }
-            GridTrackKind::Auto | GridTrackKind::MinContent | GridTrackKind::MaxContent => {
-                sizes[i] += if total_fr > 0.0 { 0.0 } else { auto_share };
-            }
-            GridTrackKind::FitContent => {
-                sizes[i] += if total_fr > 0.0 { 0.0 } else { auto_share };
-                // Clamp to fit-content limit
-                if track.max_kind == GridTrackKind::Fixed {
-                    sizes[i] = sizes[i].min(track.value);
-                } else if track.max_kind == GridTrackKind::Percent {
-                    sizes[i] = sizes[i].min(track.value / 100.0 * container);
-                }
-            }
-            _ => {} // Fixed/Percent already handled
+    // ── §12.7 Stretch auto Tracks ────────────────────────────────────────────
+    // The remaining definite free space is divided equally among the tracks
+    // whose MAX sizing function is `auto`. `justify-content: normal` is the
+    // condition the spec names; the JustifyContent enum has no `normal`, so the
+    // inline axis always stretches, which is right for the initial value.
+    let stretch: Vec<usize> = (0..effective_n).filter(|&i| max_is_auto[i]).collect();
+    if !stretch.is_empty() {
+        let leftover = container - total_gap - base.iter().sum::<f32>();
+        if leftover > 0.01 {
+            let share = leftover / stretch.len() as f32;
+            for i in stretch { base[i] += share; }
         }
-        if sizes[i] < 0.0 { sizes[i] = 0.0; }
     }
 
-    sizes
+    for v in base.iter_mut() { if *v < 0.0 { *v = 0.0; } }
+    base
 }
 
 fn span_width(col_px: &[f32], _col_x: &[f32], cs: usize, ce: usize, col_gap: f32, fallback: f32) -> f32 {
@@ -1515,6 +1681,17 @@ fn span_width(col_px: &[f32], _col_x: &[f32], cs: usize, ce: usize, col_gap: f32
 
 // ─── Alignment helpers ────────────────────────────────────────────────────────
 
+/// A track takes part in §12.7 "Stretch auto Tracks" only when its MAX sizing
+/// function is `auto`. A `min-content` / `max-content` / fixed / `fr` track
+/// freezes at the size it was given and leaves the leftover space unused.
+fn track_max_is_auto(t: &GridTrackSize) -> bool {
+    match t.kind {
+        GridTrackKind::Auto   => true,
+        GridTrackKind::MinMax => t.max_kind == GridTrackKind::Auto,
+        _                     => false,
+    }
+}
+
 fn effective_justify_self(child: &WebCore, parent: AlignItems) -> AlignItems {
     match child.style.justify_self {
         AlignSelf::Auto      => parent,
@@ -1523,6 +1700,7 @@ fn effective_justify_self(child: &WebCore, parent: AlignItems) -> AlignItems {
         AlignSelf::FlexEnd   => AlignItems::FlexEnd,
         AlignSelf::Center    => AlignItems::Center,
         AlignSelf::Baseline  => AlignItems::Baseline,
+        AlignSelf::LastBaseline => AlignItems::LastBaseline,
     }
 }
 
@@ -1534,6 +1712,7 @@ fn effective_align_self_grid(child: &WebCore, parent: AlignItems) -> AlignItems 
         AlignSelf::FlexEnd   => AlignItems::FlexEnd,
         AlignSelf::Center    => AlignItems::Center,
         AlignSelf::Baseline  => AlignItems::Baseline,
+        AlignSelf::LastBaseline => AlignItems::LastBaseline,
     }
 }
 
@@ -1606,7 +1785,7 @@ fn compute_justify_content(jc: JustifyContent, extra: f32, n: usize) -> (f32, f3
     if n == 0 || extra <= 0.0 { return (0.0, 0.0); }
     match jc {
         JustifyContent::Center      => (extra / 2.0, 0.0),
-        JustifyContent::FlexEnd     => (extra, 0.0),
+        JustifyContent::FlexEnd | JustifyContent::Right => (extra, 0.0),
         JustifyContent::SpaceBetween =>
             if n > 1 { (0.0, extra / (n - 1) as f32) } else { (0.0, 0.0) },
         JustifyContent::SpaceAround => {
@@ -1617,7 +1796,7 @@ fn compute_justify_content(jc: JustifyContent, extra: f32, n: usize) -> (f32, f3
             let g = extra / (n + 1) as f32;
             (g, g)
         }
-        JustifyContent::FlexStart => (0.0, 0.0),
+        JustifyContent::FlexStart | JustifyContent::Left => (0.0, 0.0),
     }
 }
 

@@ -39,6 +39,9 @@ pub enum AlignItems {
     FlexEnd,
     Center,
     Baseline,
+    /// `last baseline` — aligns the items' LAST baselines and packs the group
+    /// against the cross-END edge (Box Alignment §4.1).
+    LastBaseline,
 }
 
 impl Default for AlignItems {
@@ -53,6 +56,8 @@ pub enum AlignSelf {
     FlexEnd,
     Center,
     Baseline,
+    /// `last baseline` — see `AlignItems::LastBaseline`.
+    LastBaseline,
 }
 
 impl Default for AlignSelf {
@@ -67,6 +72,11 @@ pub enum JustifyContent {
     SpaceBetween,
     SpaceAround,
     SpaceEvenly,
+    /// `left` / `right` are PHYSICAL (Box Alignment §5). They do not swap with
+    /// `row-reverse` the way `flex-start` / `flex-end` do, so they need their
+    /// own variants rather than mapping onto the flex-relative pair.
+    Left,
+    Right,
 }
 
 impl Default for JustifyContent {

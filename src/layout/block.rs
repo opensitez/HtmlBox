@@ -72,10 +72,20 @@ fn is_empty_block(node: &WebCore, rbox: &ResolvedBox) -> bool {
     // tree and all its content in the shadow root. Asking `children` said
     // "empty block", so the host collapsed to zero height and its shadow
     // content was never laid out at all — shadow DOM rendered nothing.
+    // ⛔ A float is not in-flow, so it normally cannot stop a box being
+    // self-collapsing — but a box that ESTABLISHES a BFC is stretched to
+    // contain its floats (§10.6.3), so its used height is not zero and §8.3.1
+    // does not apply. Skipping floats unconditionally made a float-only
+    // `overflow: hidden` container collapse its own top and bottom margins
+    // together, which pushed its PARENT down by the container's bottom margin.
+    let bfc = establishes_bfc(&node.style);
     for child in node.effective_children() {
         if matches!(child.style.display, Display::None) { continue; }
         if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
-        if !matches!(child.style.float, Float::None) { continue; }
+        if !matches!(child.style.float, Float::None) {
+            if bfc { return false; } // the float gives this box height
+            continue;
+        }
         return false; // has in-flow child
     }
     true
@@ -364,6 +374,28 @@ pub fn layout_block_with_fc(
         None => (containing_w - rbox.h_space()).max(0.0),
     };
 
+    // CSS Sizing §5: an intrinsic keyword sizes the box from its own content.
+    // These read as `auto` everywhere that cannot measure content, so the
+    // fallback above filled the containing block — a `width: min-content` box
+    // came out full width. Here the node IS in hand, so they resolve.
+    // Only when nothing definite was resolved: a forced size — the main size
+    // flex hands its items — outranks the item's own intrinsic keyword.
+    let raw_w = match node.style.width.intrinsic().filter(|_| rbox.content_width.is_none()) {
+        Some(kind) => {
+            let avail = raw_w;
+            let mn = engine.min_content_width_of_content(node, font_px, root_font_px);
+            let mx = engine.max_content_width_of_content(node, font_px, root_font_px);
+            match kind {
+                CssLength::MinContent => mn,
+                CssLength::MaxContent => mx,
+                // `fit-content` is max-content clamped to what is available,
+                // floored by min-content.
+                _ => mx.min(avail).max(mn),
+            }
+        }
+        None => raw_w,
+    };
+
     // Apply min/max-width constraints, converting from border-box to content-box when needed.
     // CSS: with box-sizing:border-box, min/max-width refer to the border box, not the content box.
     let bb_extra = if node.style.box_sizing == crate::types::BoxSizing::BorderBox {
@@ -495,6 +527,10 @@ pub fn layout_block_with_fc(
     // Inline flow state for anonymous inline formatting contexts
     let mut inline_x = 0.0f32;
     let mut inline_line_h = 0.0f32;
+    /// Where the current line's inline run starts, and which children are on
+    /// it — a left float placed mid-line has to move them aside.
+    let mut inline_line_start_x = 0.0f32;
+    let mut inline_line_paths: Vec<Vec<usize>> = Vec::new();
 
     // Track static y positions for absolute children (indexed by eff_children position)
     let mut abs_static_y: HashMap<usize, f32> = HashMap::new();
@@ -527,12 +563,20 @@ pub fn layout_block_with_fc(
             }
         }
 
-        // Flush any pending inline line before a block or float child
-        if (grid_child_ref(node, path).style.is_block_level() || !matches!(child_float, Float::None))
+        // Flush any pending inline line before a BLOCK child.
+        //
+        // ⛔ A float does not flush it. CSS 2.1 §9.5.1: a float's top may not be
+        // higher than the top of the current line box — it sits ON that line,
+        // and the inline content moves aside for it. Flushing here dropped the
+        // float onto the next line whenever any inline content preceded it.
+        if grid_child_ref(node, path).style.is_block_level()
+            && matches!(child_float, Float::None)
             && inline_line_h > 0.0
         {
             child_y += inline_line_h;
             inline_x = 0.0;
+            inline_line_start_x = 0.0;
+            inline_line_paths.clear();
             inline_line_h = 0.0;
         }
 
@@ -565,9 +609,31 @@ pub fn layout_block_with_fc(
             let side = if child_float == Float::Left { FloatSide::Left } else { FloatSide::Right };
             let placed = fc.place_float(content_y + child_y - fc.origin_y, float_w, float_h, child_content_w, side);
             let ch = grid_child_ref(node, path);
+            // ⛔ Back into document space through the CONTEXT's origin, which is
+            // where `placed` is measured from — not through this block's own
+            // content top. The two are the same only while a block owns its
+            // context; once it shares a parent's they differ by exactly the
+            // offset between them, and every float in a shared context landed
+            // that far down the page.
             let dx = content_x + placed.x - ch.layout.margin_rect.x;
-            let dy = content_y + placed.y - ch.layout.margin_rect.y;
+            let dy = fc.origin_y + placed.y - ch.layout.margin_rect.y;
             shift_rects(grid_child_mut(node, path), dx, dy);
+
+            // A LEFT float takes the near edge of the line it lands on, so any
+            // inline content already placed there slides right by as much as
+            // the float occupies. A right float takes the far edge and moves
+            // nothing.
+            if child_float == Float::Left && !inline_line_paths.is_empty() {
+                let new_start = placed.x + float_w;
+                let dx = new_start - inline_line_start_x;
+                if dx > 0.01 {
+                    for p in &inline_line_paths {
+                        shift_rects(grid_child_mut(node, p), dx, 0.0);
+                    }
+                    inline_x += dx;
+                    inline_line_start_x = new_start;
+                }
+            }
 
             if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
                 let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
@@ -608,7 +674,14 @@ pub fn layout_block_with_fc(
                 }
             } else {
                 let child_is_bfc_pre = establishes_bfc(&grid_child_ref(node, path).style);
-                if child_is_bfc_pre || !seen_float {
+                // A child that does NOT establish a BFC shares this one, and
+                // that matters before any float has been seen: the floats
+                // INSIDE it belong to our context, so later siblings avoid them
+                // too. Gating on `seen_float` meant the first such child built
+                // its own context and its floats vanished from the parent's
+                // list — a float overflowing an `overflow: visible` block
+                // stopped affecting everything after it.
+                if child_is_bfc_pre {
                     engine.layout_box(
                         grid_child_mut(node, path), &child_c(child_content_w, content_x, content_y + child_y)
                     );
@@ -718,8 +791,11 @@ pub fn layout_block_with_fc(
                 if inline_x > 0.0 && inline_x + child_mw > child_content_w {
                     child_y += inline_line_h;
                     inline_x = 0.0;
+                    inline_line_start_x = 0.0;
+                    inline_line_paths.clear();
                     inline_line_h = 0.0;
                 }
+                if inline_x < inline_line_start_x { inline_x = inline_line_start_x; }
 
                 let ch = grid_child_ref(node, path);
                 let dx = content_x + inline_x - ch.layout.margin_rect.x;
@@ -729,7 +805,15 @@ pub fn layout_block_with_fc(
                 }
 
                 inline_x += child_mw;
-                if child_mh > inline_line_h { inline_line_h = child_mh; }
+                inline_line_paths.push(path.clone());
+                // CSS 2.1 §10.8: this anonymous line has a strut too. An
+                // atomic inline sits ON the baseline, so the line must still
+                // reserve the strut's descent below it — without that the line
+                // was exactly as tall as the box and everything after it rode
+                // a few pixels high.
+                let line_min = crate::layout::inline_layout::strut_line_height(
+                    engine, node, font_px, root_font_px, child_mh);
+                if line_min > inline_line_h { inline_line_h = line_min; }
 
                 if matches!(grid_child_ref(node, path).style.position, Position::Relative | Position::Sticky) {
                     let rel_font_px = grid_child_ref(node, path).style.font_size_px(font_px, root_font_px);
@@ -764,17 +848,16 @@ pub fn layout_block_with_fc(
     //   without this, containers collapse and subsequent siblings overlap).
     //   Only use own-float expansion for auto-height containers to avoid
     //   breaking elements with explicit heights.
+    // ⛔ Only a block that ESTABLISHES a BFC is stretched to contain its floats
+    // (CSS 2.1 §10.6.3). Everywhere else the float overflows and the parent's
+    // auto height is computed as if it were not there — which is the whole
+    // reason `overflow: hidden` and `display: flow-root` are used as clearfix.
+    // Growing every container made `overflow: visible` behave like `hidden`: a
+    // 60px float gave its parent 60px where a browser gives 0, and the overflow
+    // that following content should flow around disappeared.
     let float_bottom = if is_bfc {
         // BFC: fc.origin_y == content_y since we created our own FC
         fc.floats.iter().map(|f| f.clear).fold(0.0f32, f32::max)
-    } else if has_own_floats && rbox.content_height.is_none() {
-        // Include floats placed by THIS container, converted to local height.
-        // f.clear is relative to fc.origin_y; convert to relative to content_y.
-        let offset = content_y - fc.origin_y;
-        fc.floats.iter()
-            .map(|f| f.clear - offset)
-            .fold(0.0f32, f32::max)
-            .max(0.0)
     } else {
         0.0
     };
@@ -899,6 +982,53 @@ pub fn establishes_column_context(style: &ComputedStyle) -> bool {
     style.column_count.is_some() || !style.column_width.is_auto()
 }
 
+/// A child that takes part in column flow.
+fn in_column_flow(c: &WebCore) -> bool {
+    !matches!(c.style.display, Display::None)
+        && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+        && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace()))
+}
+
+/// Path from a multi-column container down to the box whose children are the
+/// ones that actually get distributed.
+///
+/// ⛔ Multi-column is a FRAGMENTATION container (css-multicol-1 §3): the column
+/// boxes carry the container's CONTENT, which is not the same as its direct
+/// children. A single wrapper block in between — which is how MediaWiki writes
+/// every one of its `colonnes` blocks — used to put the whole list in column 1.
+/// Seeing through plain wrappers is not full fragmentation (a single tall child
+/// still cannot be split), but it is what the common markup needs.
+fn distribution_path(node: &WebCore) -> Vec<usize> {
+    let mut path = Vec::new();
+    let mut cur = node;
+    while path.len() < 8 {
+        let mut inflow = cur.children.iter().enumerate().filter(|(_, c)| in_column_flow(c));
+        let (i, child) = match inflow.next() {
+            Some(first) if inflow.next().is_none() => first,
+            _ => return path,
+        };
+        // Only see through a plain, auto-sized block that has content of its own.
+        if child.children.is_empty() { return path; }
+        if !matches!(child.style.display, Display::Block | Display::FlowRoot | Display::ListItem) {
+            return path;
+        }
+        if !child.style.width.is_auto() || !child.style.height.is_auto() { return path; }
+        if child.style.column_span_all { return path; }
+        path.push(i);
+        cur = child;
+    }
+    path
+}
+
+fn child_at_mut<'a>(node: &'a mut WebCore, path: &[usize]) -> &'a mut WebCore {
+    let mut cur = node;
+    for &i in path {
+        let tmp = cur;
+        cur = &mut tmp.children[i];
+    }
+    cur
+}
+
 /// Lay out node's children in a multi-column arrangement.
 /// Returns the total content height.
 pub fn layout_columns(
@@ -941,12 +1071,16 @@ pub fn layout_columns(
     let col_w = ((content_w - total_gaps) / n_cols as f32).max(1.0);
 
     // 4. First-pass layout to get child heights (with span-all flag)
+    let path = distribution_path(node);
     let mut child_heights: Vec<(f32, bool)> = Vec::new(); // (height, is_span_all)
-    for child in node.children.iter_mut() {
-        if matches!(child.style.display, Display::None) { continue; }
-        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
-        let h = engine.layout_box(child, &Constraints::new(col_w, content_x, content_y, font_px, root_font_px));
-        child_heights.push((h, child.style.column_span_all));
+    {
+        let target = child_at_mut(node, &path);
+        for child in target.children.iter_mut() {
+            if matches!(child.style.display, Display::None) { continue; }
+            if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+            let h = engine.layout_box(child, &Constraints::new(col_w, content_x, content_y, font_px, root_font_px));
+            child_heights.push((h, child.style.column_span_all));
+        }
     }
 
     // 5. Distribute children into columns
@@ -965,20 +1099,21 @@ pub fn layout_columns(
     // Tracks the y-offset added by column-span:all elements
     let mut span_all_y_offset = 0.0f32;
 
-    for i in 0..node.children.len() {
-        if matches!(node.children[i].style.display, Display::None) { continue; }
-        if matches!(node.children[i].style.position, Position::Absolute | Position::Fixed) { continue; }
+    let target = child_at_mut(node, &path);
+    for i in 0..target.children.len() {
+        if matches!(target.children[i].style.display, Display::None) { continue; }
+        if matches!(target.children[i].style.position, Position::Absolute | Position::Fixed) { continue; }
 
         let (child_h, _) = child_heights[in_flow_idx];
         in_flow_idx += 1;
 
         // column-span: all — lay out across full width, then resume all columns below it
-        if node.children[i].style.column_span_all {
+        if target.children[i].style.column_span_all {
             let max_col_y = col_cursor.iter().cloned().fold(0.0f32, f32::max);
             let span_y = content_y + span_all_y_offset + max_col_y;
             // Re-layout at full content_w to get correct height (first pass used col_w)
             let actual_span_h = engine.layout_box(
-                &mut node.children[i], &Constraints::new(content_w, content_x, span_y, font_px, root_font_px)
+                &mut target.children[i], &Constraints::new(content_w, content_x, span_y, font_px, root_font_px)
             );
             span_all_y_offset += max_col_y + actual_span_h;
             col_cursor = vec![0.0; n_cols as usize];
@@ -999,7 +1134,7 @@ pub fn layout_columns(
 
         // Re-layout child at its column position
         engine.layout_box(
-            &mut node.children[i], &Constraints::new(col_w, col_x, col_y, font_px, root_font_px)
+            &mut target.children[i], &Constraints::new(col_w, col_x, col_y, font_px, root_font_px)
         );
 
         col_cursor[col_idx] += child_h;
@@ -1010,6 +1145,21 @@ pub fn layout_columns(
     }
 
     let max_col_y = col_cursor.iter().cloned().fold(0.0f32, f32::max);
-    span_all_y_offset + max_col_y
+    let total_h = span_all_y_offset + max_col_y;
+
+    // The wrappers this saw through are still real boxes. Give each the
+    // container's content area so painting and hit-testing do not read the
+    // stale single-column geometry from the first pass.
+    let span = Rect::new(content_x, content_y, content_w, total_h);
+    let mut cur: &mut WebCore = node;
+    for &i in &path {
+        let tmp = cur;
+        cur = &mut tmp.children[i];
+        cur.layout.content_rect = span;
+        cur.layout.padding_rect = span;
+        cur.layout.border_rect  = span;
+        cur.layout.margin_rect  = span;
+    }
+    total_h
 }
 

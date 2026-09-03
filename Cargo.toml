@@ -81,4 +81,7 @@ encoding_rs = "0.8"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["blocking", "gzip", "brotli", "deflate"] }
 flate2 = "1"
+# WOFF2 is Brotli-compressed. Already in the tree via reqwest's content
+# encoding, so this only makes the existing dependency direct.
+brotli = "8"
 rayon = "1.10"

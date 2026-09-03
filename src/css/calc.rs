@@ -281,19 +281,35 @@ fn calc_parse_atom(b: &[u8], pos: &mut usize) -> Coeffs {
     if *pos < b.len() && b[*pos] == b'%' { *pos += 1; }
     let unit = std::str::from_utf8(&b[unit_start..*pos]).unwrap_or("");
 
+    // ⛔ ONE unit table, not two. This had its own — `%`, `px`, `em`, `rem`,
+    // `vw`, `vh`, `pt`, plus `vmin`/`vmax` mapped to the `vw` slot and
+    // commented "approximate", and a catch-all `_ => px`. That catch-all is
+    // the dangerous part: `calc(1in + 2px)` silently answered **3px** instead
+    // of 98px, because `in` was unknown and taken as pixels. Every unit added
+    // to `parse_length` would have had to be added here too, and any that was
+    // not became a silent wrong answer rather than a parse failure.
+    //
+    // `parse_length` is the single definition; this projects its result onto
+    // the coefficient slots.
     let mut c = ZERO_COEFFS;
-    match unit {
-        "%"    => c[0] = num,
-        "px"   => c[1] = num,
-        "em"   => c[2] = num,
-        "rem"  => c[3] = num,
-        "vw"   => c[4] = num,
-        "vh"   => c[5] = num,
-        "vmin" => c[4] = num, // approximate
-        "vmax" => c[4] = num, // approximate
-        "pt"   => c[1] = num * 4.0 / 3.0,
-        ""     => c[1] = num, // unitless → px
-        _      => c[1] = num, // unknown unit → px
+    if unit == "%" {
+        c[0] = num;
+        return c;
+    }
+    match crate::css::value_parse::parse_length(&format!("{num}{unit}")) {
+        CssLength::Px(v)      => c[1] = v,
+        CssLength::Em(v)      => c[2] = v,
+        CssLength::Rem(v)     => c[3] = v,
+        CssLength::Vw(v)      => c[4] = v,
+        CssLength::Vh(v)      => c[5] = v,
+        CssLength::Percent(v) => c[0] = v,
+        // ⛔ The coefficient form has no vmin/vmax slot, so it cannot carry
+        // them. Answering with the WRONG AXIS (what the old table did) is
+        // worse than dropping the term, but both are wrong — `calc()` mixing
+        // vmin/vmax needs the tree path, which is the next step here.
+        CssLength::Vmin(v) | CssLength::Vmax(v) => c[4] = v,
+        CssLength::Zero       => {}
+        _                     => c[1] = num,
     }
     c
 }

@@ -98,7 +98,18 @@ pub enum PaintCmd {
 
     /// Draw a linear or radial gradient.
     Gradient {
+        /// The background POSITIONING area — `background-origin`, initially the
+        /// padding box. The gradient's geometry is derived from this rect.
         rect: Rect,
+        /// The background PAINTING area — `background-clip`, initially the
+        /// border box. Only the part of the gradient inside this rect is drawn,
+        /// which is a different box from `rect` whenever the two properties
+        /// disagree (css-backgrounds-3 §3.6, §3.7).
+        clip: Rect,
+        /// `background-repeat`, resolved per axis. A repeating gradient tiles
+        /// its positioning area across the painting area.
+        repeat_x: bool,
+        repeat_y: bool,
         gradient_type: u8,  // 1=linear, 2=radial
         angle: f32,
         stops: Vec<(Color, f32)>,  // (color, position 0..1)
@@ -196,7 +207,15 @@ pub enum PaintCmd {
 
     /// Background image with positioning/sizing metadata.
     BackgroundImage {
-        container: Rect,        // padding rect
+        /// The background POSITIONING area — `background-origin`, initially the
+        /// padding box. The builder has already resolved `pos_x`/`pos_y` and
+        /// `draw_w`/`draw_h` against it, so the painter reads it only for
+        /// diagnostics.
+        container: Rect,
+        /// The background PAINTING area — `background-clip`, initially the
+        /// border box. Tiles fill it and nothing is drawn outside it
+        /// (css-backgrounds-3 §3.6, §3.7).
+        clip: Rect,
         data: ImageRef,
         size_mode: u8,          // 0=auto, 1=cover, 2=contain, 3=explicit
         draw_w: f32,

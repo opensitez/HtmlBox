@@ -504,3 +504,427 @@ fn aol_trending_layout_pattern() {
     assert!(art1.layout.content_rect.w > 100.0,
         "art1 span-3 in nested subgrid too narrow: {}", art1.layout.content_rect.w);
 }
+
+// ── Spanning items must not inflate the tracks they cross ───────────────────
+
+/// **CSS Grid §12.5 — a spanning item contributes its EXCESS, not its size
+/// divided by its span.** Tracks are sized from single-span items first; a
+/// spanning item then adds only what the tracks it crosses do not already
+/// provide, shared among them. The old code divided the item's whole size by
+/// its span and used that as a FLOOR on every crossed track, so one tall item
+/// inflated unrelated short rows — on fr.wikipedia a 6810px sidebar pushed two
+/// ~40px rows to 1811px each and shoved the page below the fold.
+///
+/// Numbers checked against Chrome on this exact fixture: head/tool 106,
+/// body 300, grid 600. The old floor gave head/tool 200 and a 700px grid.
+#[test]
+fn grid_a_tall_spanning_item_does_not_inflate_short_rows() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin: 0; padding: 0 }
+          .g { display: grid; grid-template-columns: 800px 200px; }
+          #head { grid-column: 1; grid-row: 1 }
+          #tool { grid-column: 1; grid-row: 2 }
+          #rail { grid-column: 2; grid-row: 1 / span 3; height: 600px }
+          #body { grid-column: 1; grid-row: 3; height: 300px }
+        </style>
+        <div class="g">
+          <div id="head">h</div>
+          <div id="tool">t</div>
+          <div id="rail">rail</div>
+          <div id="body">b</div>
+        </div>
+    "#, 1000.0);
+    let h = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.h;
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((h("head") - h("tool")).abs() < 0.5,
+        "the two auto rows share the excess equally: {} vs {}", h("head"), h("tool"));
+    assert!(h("head") < 150.0,
+        "row 1 must not take span-height/3 as a floor, got {}", h("head"));
+    assert!((h("head") - 106.0).abs() < 2.0, "Chrome gives 106, got {}", h("head"));
+    assert_eq!(h("body"), 300.0, "row 3 keeps its explicit height");
+    assert!((y("body") - 212.0).abs() < 2.0, "Chrome puts row 3 at y=212, got {}", y("body"));
+    assert_eq!(h("rail"), 600.0, "the spanning item keeps its height");
+}
+
+/// The spanning item still gets the room it needs: the grid as a whole must be
+/// tall enough for it.
+#[test]
+fn grid_a_spanning_item_still_gets_its_height() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin: 0; padding: 0 }
+          .g { display: grid; grid-template-columns: 100px 100px; }
+          #a { grid-column: 1; grid-row: 1 }
+          #b { grid-column: 1; grid-row: 2 }
+          #tall { grid-column: 2; grid-row: 1 / span 2; height: 400px }
+        </style>
+        <div class="g"><div id=a>a</div><div id=b>b</div><div id=tall>t</div></div>
+    "#, 400.0);
+    let g = find_box(&doc.root, &|b: &WebCore| b.attributes.get("class")
+        .map(|c| c.split_whitespace().any(|w| w == "g")).unwrap_or(false))
+        .unwrap().layout.margin_rect.h;
+    assert!(g >= 400.0, "the grid must be tall enough for the spanning item, got {g}");
+}
+
+// ── Column-axis track sizing (CSS Grid §12.5-12.7) ───────────────────────────
+
+/// **§12.5 — a spanning item contributes its EXCESS on the COLUMN axis too.**
+/// The row axis already did this; columns divided the item's max-content width
+/// by its span and used the quotient as a FLOOR on every spanned track, which
+/// inflated a narrow column and squeezed a wide one.
+/// Chrome on this fixture: 180px / 120px. The floor gave 150 / 150.
+#[test]
+fn grid_a_spanning_item_contributes_only_its_column_excess() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns: auto auto; width:300px }
+        </style>
+        <div class="g">
+          <div id="a1" style="width:100px;height:10px;grid-column:1"></div>
+          <div id="a2" style="width:40px;height:10px;grid-column:2"></div>
+          <div id="a3" style="width:300px;height:10px;grid-column:1/3"></div>
+        </div>
+    "#, 1000.0);
+    let x = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.x;
+    // Column 1 is 180 wide, so column 2 starts at x=180 (Chrome: 180 / 120).
+    assert!((x("a2") - 180.0).abs() < 0.5,
+        "column 1 must be 180 (100 + half the 160px excess), got col2 x={}", x("a2"));
+}
+
+/// **§12.5 — a `min-content` track uses the MIN-content contribution.**
+/// Both track kinds used the item's max-content width, so `min-content` was a
+/// synonym for `max-content`. Chrome on this fixture: 50px / 60px.
+#[test]
+fn grid_min_content_track_uses_the_min_content_contribution() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns: min-content max-content; width:400px }
+          .s { display:inline-block; height:10px }
+        </style>
+        <div class="g">
+          <div id="b1" style="height:10px"><span class="s" style="width:50px"></span><span class="s" style="width:50px"></span></div>
+          <div id="b2" style="height:10px"><span class="s" style="width:30px"></span><span class="s" style="width:30px"></span></div>
+        </div>
+    "#, 1000.0);
+    let w = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.w;
+    let x = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.x;
+    assert!((w("b1") - 50.0).abs() < 0.5,
+        "min-content track = the widest unbreakable piece (50), got {}", w("b1"));
+    assert!((x("b2") - 50.0).abs() < 0.5, "column 2 starts after a 50px column 1, got {}", x("b2"));
+    assert!((w("b2") - 60.0).abs() < 0.5,
+        "max-content track = 60, and §12.7 stretches only `auto` tracks, got {}", w("b2"));
+}
+
+/// **§12.6/§12.7 — a `max-content` track freezes at its growth limit; only
+/// `auto` tracks take the leftover space.** Every intrinsic track used to get
+/// an equal share of the free space unconditionally.
+/// Chrome on this fixture: 100px / 300px. The equal share gave 230 / 170.
+#[test]
+fn grid_only_auto_tracks_take_the_leftover_space() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns: max-content auto; width:400px }
+        </style>
+        <div class="g">
+          <div id="c1" style="width:100px;height:10px;grid-column:1;grid-row:1"></div>
+          <div id="c2" style="width:40px;height:10px;grid-column:2;grid-row:1"></div>
+          <div id="c3" style="grid-column:2;grid-row:2;height:10px"></div>
+        </div>
+    "#, 1000.0);
+    let w = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.w;
+    let x = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.x;
+    assert!((x("c2") - 100.0).abs() < 0.5,
+        "the max-content track stays at 100, got column 2 x={}", x("c2"));
+    // c3 has no width of its own, so it stretches to the track and reports it.
+    assert!((w("c3") - 300.0).abs() < 0.5,
+        "the auto track takes all 300 of the leftover space, got {}", w("c3"));
+}
+
+// ── Row-axis track sizing ────────────────────────────────────────────────────
+
+/// **§12.7 "Stretch auto Tracks" applies to the BLOCK axis too.**
+/// `align-content`'s initial value IS `stretch`, so a grid with a definite
+/// height and `auto` rows must divide the leftover space equally among them.
+/// It never did: the rows stayed at content height and the rest of the box was
+/// wasted. Chrome on this fixture: rows 190 / 210 (30+160 and 50+160).
+#[test]
+fn grid_align_content_stretch_grows_auto_rows() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: auto auto; height:400px; width:200px }
+        </style>
+        <div class="g">
+          <div id="d1" style="height:30px"></div>
+          <div id="d2" style="height:50px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("d2") - 190.0).abs() < 0.5,
+        "row 1 stretches from 30 to 190, so row 2 starts at y=190, got {}", y("d2"));
+}
+
+/// The same stretch with no `grid-template-rows` at all — the implicit rows
+/// take `grid-auto-rows: auto`, whose max sizing function is `auto`.
+#[test]
+fn grid_align_content_stretch_grows_implicit_auto_rows() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; height:400px; width:200px }
+        </style>
+        <div class="g">
+          <div id="e1" style="height:30px"></div>
+          <div id="e2" style="height:50px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("e2") - 190.0).abs() < 0.5, "Chrome puts row 2 at y=190, got {}", y("e2"));
+}
+
+/// A fixed row does not stretch; the single `auto` row absorbs everything.
+/// Chrome on this fixture: rows 100 / 300.
+#[test]
+fn grid_stretch_skips_a_fixed_row() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: 100px auto; height:400px; width:200px }
+        </style>
+        <div class="g"><div id="i1"></div><div id="i2" style="height:50px"></div></div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    let h = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.h;
+    assert!((y("i2") - 100.0).abs() < 0.5, "the fixed row stays 100 tall, got y={}", y("i2"));
+    assert!((h("i1") - 100.0).abs() < 0.5, "i1 stretches to the 100px row, got {}", h("i1"));
+}
+
+/// **`align-content: center` must NOT stretch** — §12.7 runs only for
+/// `normal`/`stretch`. Chrome: rows stay 30/50 and the pair is centred in 400.
+#[test]
+fn grid_align_content_center_does_not_stretch() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: auto auto; height:400px; width:200px;
+               align-content: center }
+        </style>
+        <div class="g">
+          <div id="h1" style="height:30px"></div>
+          <div id="h2" style="height:50px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    let h = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.h;
+    assert!((h("h1") - 30.0).abs() < 0.5, "centred content keeps its row height, got {}", h("h1"));
+    assert!((y("h2") - y("h1") - 30.0).abs() < 0.5, "rows stay adjacent, got {} {}", y("h1"), y("h2"));
+    assert!((y("h1") - 160.0).abs() < 0.5, "the 80px of rows is centred in 400, got y={}", y("h1"));
+}
+
+/// **§7.2.3 — a percentage ROW resolves against the grid's HEIGHT, never its
+/// width.** The code passed the column measure, so `grid-template-rows: 50%` in
+/// an auto-height grid became half the grid's WIDTH. With an indefinite height
+/// the percentage contributes nothing to the container size (§11.1 step 2), so
+/// Chrome's grid here is 80 tall — 30 + 50 — not 30 + half of 200.
+#[test]
+fn grid_percentage_row_resolves_against_height_not_width() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: 50% auto; width:200px }
+        </style>
+        <div class="g">
+          <div id="f1" style="height:30px"></div>
+          <div id="f2" style="height:50px"></div>
+        </div>
+    "#, 1000.0);
+    let g = find_box(&doc.root, &|b: &WebCore| b.attributes.get("class")
+        .map(|c| c.split_whitespace().any(|w| w == "g")).unwrap_or(false)).unwrap();
+    assert!((g.layout.border_rect.h - 80.0).abs() < 0.5,
+        "the percentage row contributes nothing to an indefinite height: Chrome gives 80, got {}",
+        g.layout.border_rect.h);
+    // Step 3 then resolves the percentage against that 80: row 1 becomes 40.
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("f2") - 40.0).abs() < 0.5, "Chrome puts row 2 at y=40, got {}", y("f2"));
+}
+
+/// **A grid area spans the gutters between its tracks, including the extra a
+/// `justify-content: space-*` value puts there.** The span width used the bare
+/// `column-gap`, so a spanning item came up short by `extra_gap * (span-1)`.
+/// Chrome on this fixture: the span-2 item is 175 wide (50 + 75 + 50).
+#[test]
+fn grid_a_spanning_item_covers_the_distributed_gap() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns: 50px 50px 50px; width:300px;
+               justify-content: space-between }
+        </style>
+        <div class="g">
+          <div id="j1" style="grid-column:1/3; height:10px"></div>
+          <div id="j2" style="grid-column:3; height:10px"></div>
+        </div>
+    "#, 1000.0);
+    let w = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.w;
+    let x = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.x;
+    assert!((w("j1") - 175.0).abs() < 0.5,
+        "the span-2 area covers 50 + 75 of distributed gap + 50, got {}", w("j1"));
+    assert!((x("j2") - 250.0).abs() < 0.5, "the last column is flush right, got {}", x("j2"));
+}
+
+// ── Baseline alignment (CSS Box Alignment §9) ────────────────────────────────
+
+/// **`align-items: baseline` must actually align baselines.** It was parsed and
+/// then mapped to `0.0`, silently equivalent to `start`. Two items in one row
+/// share a baseline: each is pushed down by the group's largest ascent minus
+/// its own. Chrome on this fixture: the un-padded item sits 20px lower, exactly
+/// the padding that lifted its neighbour's text.
+#[test]
+fn grid_align_items_baseline_aligns_the_baselines() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns:auto auto; align-items:baseline;
+               width:400px; font:16px/20px monospace }
+        </style>
+        <div class="g">
+          <div id="k1" style="padding-top:20px">x</div>
+          <div id="k2">x</div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("k2") - y("k1") - 20.0).abs() < 0.5,
+        "the unpadded item drops by its neighbour's 20px padding, got {} vs {}", y("k2"), y("k1"));
+}
+
+/// The row grows to hold the whole baseline group: max-ascent + max-descent,
+/// which is taller than either item when they lean opposite ways.
+/// Chrome on this fixture: the grid is 60 tall, not 40.
+#[test]
+fn grid_a_baseline_group_makes_its_row_tall_enough() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns:auto auto; align-items:baseline;
+               width:400px; font:16px/20px monospace }
+        </style>
+        <div class="g">
+          <div id="l1" style="padding-top:20px">x</div>
+          <div id="l2" style="padding-bottom:20px">x</div>
+        </div>
+    "#, 1000.0);
+    let g = find_box(&doc.root, &|b: &WebCore| b.attributes.get("class")
+        .map(|c| c.split_whitespace().any(|w| w == "g")).unwrap_or(false)).unwrap();
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("l2") - y("l1") - 20.0).abs() < 0.5,
+        "l2 drops 20px onto l1's baseline, got {} vs {}", y("l2"), y("l1"));
+    assert!((g.layout.border_rect.h - 60.0).abs() < 0.5,
+        "the row is max-ascent + max-descent = 60, got {}", g.layout.border_rect.h);
+}
+
+/// `align-self: baseline` on the items reaches the same code path.
+#[test]
+fn grid_align_self_baseline_aligns_one_item() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns:auto auto; width:400px; font:16px/20px monospace }
+        </style>
+        <div class="g">
+          <div id="m1" style="align-self:baseline; padding-top:20px">x</div>
+          <div id="m2" style="align-self:baseline">x</div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("m2") - y("m1") - 20.0).abs() < 0.5,
+        "align-self:baseline drops m2 by 20, got {} vs {}", y("m2"), y("m1"));
+}
+
+/// **`fit-content(X)` is a CEILING on a track, never a floor.** On the row axis
+/// the clamp was fed through `track_to_px` into the "raise the row to this"
+/// branch, so `fit-content(200px)` FORCED a 50px row to 200px.
+/// Chrome on this fixture: rows 50 / 30, grid 80 tall.
+#[test]
+fn grid_fit_content_row_does_not_raise_the_row() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: fit-content(200px) auto; width:200px }
+        </style>
+        <div class="g">
+          <div id="n1" style="height:50px"></div>
+          <div id="n2" style="height:30px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    let g = find_box(&doc.root, &|b: &WebCore| b.attributes.get("class")
+        .map(|c| c.split_whitespace().any(|w| w == "g")).unwrap_or(false)).unwrap();
+    assert!((y("n2") - 50.0).abs() < 0.5,
+        "the fit-content row keeps its 50px of content, got row 2 at y={}", y("n2"));
+    assert!((g.layout.border_rect.h - 80.0).abs() < 0.5,
+        "Chrome gives an 80px grid, got {}", g.layout.border_rect.h);
+}
+
+/// …and it does not clamp a track below the content either: an item taller than
+/// the limit keeps its height, because the track's MIN sizing function is
+/// `auto`. Chrome on this fixture: rows 100 / 30.
+#[test]
+fn grid_fit_content_row_does_not_cut_off_taller_content() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-rows: fit-content(40px) auto; width:200px }
+        </style>
+        <div class="g">
+          <div id="o1" style="height:100px"></div>
+          <div id="o2" style="height:30px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("o2") - 100.0).abs() < 0.5,
+        "the 100px item sets the row, the 40px limit cannot cut it, got y={}", y("o2"));
+}
+
+/// `fit-content()` on a COLUMN: the track is the content width clamped by the
+/// limit, and it takes no part in §12.7 stretch — the `auto` sibling takes all
+/// the leftover. Chrome on this fixture: 50px / 350px.
+#[test]
+fn grid_fit_content_column_does_not_stretch() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-template-columns: fit-content(200px) auto; width:400px }
+        </style>
+        <div class="g">
+          <div id="p1" style="width:50px;height:10px"></div>
+          <div id="p2" style="height:10px"></div>
+        </div>
+    "#, 1000.0);
+    let w = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.w;
+    let x = |id: &str| find_by_id(&doc.root, id).unwrap().layout.border_rect.x;
+    assert!((x("p2") - 50.0).abs() < 0.5, "the fit-content column stays 50 wide, got {}", x("p2"));
+    assert!((w("p2") - 350.0).abs() < 0.5, "the auto column takes the other 350, got {}", w("p2"));
+}
+
+/// The same ceiling rule for `grid-auto-rows: fit-content(X)` on the implicit
+/// rows. Chrome on this fixture: rows 50 / 30, grid 80 tall.
+#[test]
+fn grid_auto_rows_fit_content_does_not_raise_the_rows() {
+    let doc = parse_and_layout(r#"
+        <style>
+          * { margin:0; padding:0 }
+          .g { display:grid; grid-auto-rows: fit-content(200px); width:200px }
+        </style>
+        <div class="g">
+          <div id="q1" style="height:50px"></div>
+          <div id="q2" style="height:30px"></div>
+        </div>
+    "#, 1000.0);
+    let y = |id: &str| find_by_id(&doc.root, id).unwrap().layout.margin_rect.y;
+    assert!((y("q2") - 50.0).abs() < 0.5,
+        "the implicit fit-content rows keep their content heights, got y={}", y("q2"));
+}

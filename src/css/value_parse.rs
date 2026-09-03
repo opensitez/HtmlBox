@@ -16,6 +16,12 @@ static LENGTH_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<String, CssLen
 pub fn parse_length(v: &str) -> CssLength {
     let v = v.trim();
     if v == "auto"       { return CssLength::Auto; }
+    // CSS Sizing §5 — intrinsic sizing keywords. They are not lengths; a
+    // consumer that cannot measure content reads them as `auto` (see
+    // `CssLength::is_auto`), and the flex algorithm matches them directly.
+    if v == "min-content" { return CssLength::MinContent; }
+    if v == "max-content" { return CssLength::MaxContent; }
+    if v == "fit-content" { return CssLength::FitContent; }
     if v == "0"          { return CssLength::Zero; }
     // Check cache for previously parsed values
     if let Ok(cache) = LENGTH_CACHE.lock() {
@@ -67,18 +73,88 @@ fn parse_length_inner(v: &str) -> CssLength {
         // Fallback: treat as calc
         return parse_length(inner);
     }
-    if v.ends_with("px") { return CssLength::Px(v[..v.len()-2].parse().unwrap_or(0.0)); }
-    if v.ends_with("rem") { return CssLength::Rem(v[..v.len()-3].parse().unwrap_or(0.0)); }
-    if v.ends_with("em") { return CssLength::Em(v[..v.len()-2].parse().unwrap_or(0.0)); }
-    if v.ends_with('%')  { return CssLength::Percent(v[..v.len()-1].parse().unwrap_or(0.0)); }
-    if v.ends_with("pt") { return CssLength::Px(v[..v.len()-2].parse::<f32>().unwrap_or(0.0) * 4.0 / 3.0); }
-    if v.ends_with("vw") { return CssLength::Vw(v[..v.len()-2].parse().unwrap_or(0.0)); }
-    if v.ends_with("vh") { return CssLength::Vh(v[..v.len()-2].parse().unwrap_or(0.0)); }
-    if v.ends_with("vmin") { let n = v[..v.len()-4].parse::<f32>().unwrap_or(0.0); return CssLength::Vw(n); } // approx
-    if v.ends_with("vmax") { let n = v[..v.len()-4].parse::<f32>().unwrap_or(0.0); return CssLength::Vw(n); } // approx
-    // Unitless number (treat as px for simplicity)
-    if let Ok(n) = v.parse::<f32>() { return CssLength::Px(n); }
-    CssLength::Auto
+    // ⛔ Split the NUMBER from the UNIT, then match the unit exactly. A chain of
+    // `ends_with` cannot do this safely, because unit names nest: `in` is a
+    // suffix of `vmin`, so testing `in` before `vmin` parses `3vmin` as three
+    // INCHES. The old chain got away with it only by not supporting `in`.
+    //
+    // Units are ASCII case-insensitive (CSS Values 4 §3.1), which the old
+    // chain also did not honour — `10PX` fell through to `auto`.
+    // `e` is exponent syntax only when a digit follows it — `3em` must not eat it.
+    let split = {
+        let mut i = 0usize;
+        let b = v.as_bytes();
+        let mut seen_digit = false;
+        while i < b.len() {
+            let c = b[i] as char;
+            if c.is_ascii_digit() { seen_digit = true; i += 1; }
+            else if c == '.' || ((c == '-' || c == '+') && i == 0) { i += 1; }
+            else if (c == 'e' || c == 'E') && seen_digit
+                && i + 1 < b.len()
+                && ((b[i+1] as char).is_ascii_digit()
+                    || ((b[i+1] == b'-' || b[i+1] == b'+') && i + 2 < b.len()
+                        && (b[i+2] as char).is_ascii_digit())) { i += 2; }
+            else { break; }
+        }
+        i
+    };
+    let (num, unit) = v.split_at(split);
+    let n: f32 = match num.parse() { Ok(n) => n, Err(_) => return CssLength::Auto };
+    let unit_lower = unit.to_ascii_lowercase();
+    return match unit_lower.as_str() {
+        "" => CssLength::Px(n),        // unitless — treated as px, as before
+        "%" => CssLength::Percent(n),
+        "px" => CssLength::Px(n),
+        "em" => CssLength::Em(n),
+        "rem" => CssLength::Rem(n),
+        "vw" => CssLength::Vw(n),
+        "vh" => CssLength::Vh(n),
+        // ── Absolute units, CSS Values 4 §6.2. Exact, not approximations:
+        //    1in = 96px, 1cm = 96px/2.54, 1mm = cm/10, 1Q = cm/40,
+        //    1pc = in/6, 1pt = in/72.
+        "in" => CssLength::Px(n * 96.0),
+        "cm" => CssLength::Px(n * 96.0 / 2.54),
+        "mm" => CssLength::Px(n * 96.0 / 25.4),
+        "q"  => CssLength::Px(n * 96.0 / 101.6),
+        "pc" => CssLength::Px(n * 16.0),
+        "pt" => CssLength::Px(n * 96.0 / 72.0),
+        "vmin" => CssLength::Vmin(n),
+        "vmax" => CssLength::Vmax(n),
+        // ── Font-relative units, CSS Values 4 §6.1.1 ──
+        //
+        // The spec provides these fallbacks itself, for the case where the
+        // real font metric is "impossible or impractical to determine", and
+        // says they MUST be assumed then. They are conforming values, not
+        // guesses — but they are the fallbacks, not measurements: `ex` and
+        // `ch` should come from the first available font's x-height and its
+        // "0" advance, which needs font metrics the length resolver is not
+        // given. Chrome, which does measure, answers 8.9px for `1ex` at 16px
+        // where the fallback gives 8px.
+        "ex" => CssLength::Em(n * 0.5),   // "a value of 0.5em must be assumed"
+        "ch" => CssLength::Em(n * 0.5),   // "falls back to 0.5em in the general case"
+        "ic" => CssLength::Em(n),         // "must be assumed to be 1em"
+        "cap" => CssLength::Em(n),
+        // Root-relative counterparts resolve against the ROOT font size.
+        "rex" => CssLength::Rem(n * 0.5),
+        "rch" => CssLength::Rem(n * 0.5),
+        "ric" => CssLength::Rem(n),
+        "rcap" => CssLength::Rem(n),
+        // ── Viewport variants, CSS Values 4 §6.1.2 ──
+        //
+        // The small, large and dynamic viewports coincide on a UA that shows
+        // no dynamically-retracting toolbars, which is this one — so `svh`,
+        // `lvh` and `dvh` are all `vh` here, and that is conforming rather
+        // than an approximation.
+        "svh" | "lvh" | "dvh" => CssLength::Vh(n),
+        "svw" | "lvw" | "dvw" => CssLength::Vw(n),
+        "svmin" | "lvmin" | "dvmin" => CssLength::Vmin(n),
+        "svmax" | "lvmax" | "dvmax" => CssLength::Vmax(n),
+        // Logical viewport axes. webcore lays out horizontal-tb, in which the
+        // inline axis is the width and the block axis the height.
+        "vi" => CssLength::Vw(n),
+        "vb" => CssLength::Vh(n),
+        _ => CssLength::Auto,
+    };
 }
 
 
@@ -152,6 +228,7 @@ pub fn parse_font_size(v: &str) -> CssLength {
         "large"    => CssLength::Px(18.0),
         "x-large"  => CssLength::Px(24.0),
         "xx-large" => CssLength::Px(32.0),
+        "xxx-large" => CssLength::Px(48.0),
         "smaller"  => CssLength::Em(0.83),
         "larger"   => CssLength::Em(1.17),
         _          => parse_length(v),
@@ -204,6 +281,11 @@ pub(crate) fn try_parse_border_style(v: &str) -> Option<BorderStyle> {
 
 /// Parse a CSS color value into a `Color`.
 pub fn parse_color(v: &str) -> Option<Color> {
+    // ⛔ Keywords are ASCII case-insensitive (css-values-4 §3.1). Matching the
+    // table byte-exactly dropped `bgcolor="White"` and `color="Red"`, which
+    // legacy presentational HTML still ships, leaving the element at its default.
+    let lowered = v.trim().to_ascii_lowercase();
+    let v = lowered.as_str();
     let v = v.trim();
 
     // light-dark(light, dark) — use light value (we render in light mode)
@@ -392,24 +474,20 @@ pub fn parse_color(v: &str) -> Option<Color> {
     if v.starts_with("rgb") {
         let inner = v.trim_start_matches("rgba").trim_start_matches("rgb")
             .trim_start_matches('(').trim_end_matches(')');
-        let parts: Vec<&str> = inner.split(',').collect();
+        let parts = split_color_components(inner);
         if parts.len() >= 3 {
             let parse_channel = |s: &str| -> u8 {
                 let s = s.trim();
                 if s.ends_with('%') {
-                    (s[..s.len()-1].parse::<f32>().unwrap_or(0.0) / 100.0 * 255.0) as u8
+                    (s[..s.len()-1].parse::<f32>().unwrap_or(0.0) / 100.0 * 255.0).round() as u8
                 } else {
                     s.parse::<f32>().unwrap_or(0.0).round() as u8
                 }
             };
-            let r = parse_channel(parts[0]);
-            let g = parse_channel(parts[1]);
-            let b = parse_channel(parts[2]);
-            let a = if parts.len() >= 4 {
-                (parts[3].trim().parse::<f32>().unwrap_or(1.0) * 255.0) as u8
-            } else {
-                255
-            };
+            let r = parse_channel(&parts[0]);
+            let g = parse_channel(&parts[1]);
+            let b = parse_channel(&parts[2]);
+            let a = if parts.len() >= 4 { parse_alpha(&parts[3]) } else { 255 };
             return Some(Color::rgba(r, g, b, a));
         }
     }
@@ -418,18 +496,22 @@ pub fn parse_color(v: &str) -> Option<Color> {
     if v.starts_with("hsl") {
         let inner = v.trim_start_matches("hsla").trim_start_matches("hsl")
             .trim_start_matches('(').trim_end_matches(')');
-        let parts: Vec<&str> = inner.split(',').collect();
+        let parts = split_color_components(inner);
         if parts.len() >= 3 {
-            let h = parts[0].trim().parse::<f32>().unwrap_or(0.0) / 360.0;
+            // The hue may carry an angle unit — `hsl(120deg …)`.
+            let h = parse_hue_deg(&parts[0]) / 360.0;
             let s = parts[1].trim().trim_end_matches('%').parse::<f32>().unwrap_or(0.0) / 100.0;
             let l = parts[2].trim().trim_end_matches('%').parse::<f32>().unwrap_or(0.0) / 100.0;
-            let a = if parts.len() >= 4 {
-                (parts[3].trim().parse::<f32>().unwrap_or(1.0) * 255.0) as u8
-            } else {
-                255
-            };
+            let a = if parts.len() >= 4 { parse_alpha(&parts[3]) } else { 255 };
             let (r, g, b) = hsl_to_rgb(h, s, l);
-            return Some(Color::rgba((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, a));
+            // ⛔ ROUND, do not truncate. `as u8` floors, so `hsl(120 50% 50%)`
+            // came out `rgb(63, 191, 63)` where every browser says
+            // `rgb(64, 191, 64)` — the channel is 63.75.
+            return Some(Color::rgba(
+                (r * 255.0).round() as u8,
+                (g * 255.0).round() as u8,
+                (b * 255.0).round() as u8,
+                a));
         }
     }
 
@@ -453,4 +535,56 @@ fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
     if t < 1.0 / 2.0 { return q; }
     if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
     p
+}
+
+
+/// Split the inside of `rgb()`/`hsl()` into components.
+///
+/// ⛔ Handles BOTH the legacy comma form and the modern space-separated one
+/// with a `/` before the alpha — CSS Color 4 §4. Only the comma form was
+/// understood, so `rgb(1 2 3)` and `hsl(120 50% 50%)` — what every current
+/// design system emits — produced ONE component, failed the `len() >= 3`
+/// check, and silently became black.
+fn split_color_components(inner: &str) -> Vec<String> {
+    let inner = inner.trim();
+    if inner.contains(',') {
+        return inner.split(',').map(|s| s.trim().to_string()).collect();
+    }
+    // Modern: `R G B` or `R G B / A`.
+    let (rgb_part, alpha_part) = match inner.split_once('/') {
+        Some((a, b)) => (a, Some(b)),
+        None => (inner, None),
+    };
+    let mut out: Vec<String> = rgb_part
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    if let Some(a) = alpha_part {
+        let a = a.trim();
+        if !a.is_empty() { out.push(a.to_string()); }
+    }
+    out
+}
+
+/// An alpha component: a number, or a percentage.
+fn parse_alpha(s: &str) -> u8 {
+    let s = s.trim();
+    let v = if let Some(p) = s.strip_suffix('%') {
+        p.parse::<f32>().unwrap_or(100.0) / 100.0
+    } else {
+        s.parse::<f32>().unwrap_or(1.0)
+    };
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// A hue in degrees, accepting the angle units CSS Values 4 §7.1 defines.
+fn parse_hue_deg(s: &str) -> f32 {
+    let s = s.trim().to_ascii_lowercase();
+    if let Some(v) = s.strip_suffix("turn") { return v.parse::<f32>().unwrap_or(0.0) * 360.0; }
+    if let Some(v) = s.strip_suffix("grad") { return v.parse::<f32>().unwrap_or(0.0) * 0.9; }
+    if let Some(v) = s.strip_suffix("rad")  {
+        return v.parse::<f32>().unwrap_or(0.0) * 180.0 / std::f32::consts::PI;
+    }
+    if let Some(v) = s.strip_suffix("deg")  { return v.parse::<f32>().unwrap_or(0.0); }
+    s.parse::<f32>().unwrap_or(0.0)
 }

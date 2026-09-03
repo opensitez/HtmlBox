@@ -117,6 +117,18 @@ pub struct CssRule {
     /// Pre-resolved important declarations.
     pub compiled_important:  Vec<(properties::PropertyId, crate::types::CssValue)>,
     pub specificity:         u32,     // max of all selectors
+    /// The `@layer` this rule was declared in — empty when unlayered.
+    ///
+    /// ⛔ Layers sort ABOVE specificity (CSS Cascade 5 §6.4.4) and unlayered
+    /// normal declarations beat every layered one, so this cannot be folded
+    /// into `specificity`.
+    pub layer:               String,
+    /// Where `layer` sorts, resolved once when the stylesheet index is built.
+    ///
+    /// `u32::MAX` for unlayered, which is what makes an unlayered normal
+    /// declaration beat every layered one. Kept on the rule so the cascade's
+    /// sort is a field read rather than a name lookup per comparison.
+    pub layer_rank:          u32,
     pub media_condition:     String,  // non-empty if inside @media
     pub container_condition: String,  // non-empty if inside @container
     pub container_name:      String,  // optional container name (empty = unnamed)
@@ -130,6 +142,8 @@ pub struct CssRule {
 impl Default for CssRule {
     fn default() -> Self {
         Self {
+            layer: String::new(),
+            layer_rank: u32::MAX,
             selectors:           Vec::new(),
             declarations:        Declarations::new(),
             important_declarations: Declarations::new(),
@@ -173,7 +187,7 @@ impl CssRule {
 
 /// Try to pre-parse a CSS value into a typed CssValue at stylesheet compilation time.
 /// Falls back to CssValue::Raw for values that can't be pre-parsed (var(), complex shorthands, etc.)
-fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssValue {
+pub(crate) fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssValue {
     use properties::PropertyId::*;
     use crate::types::CssValue;
     let v = val.trim();
@@ -189,7 +203,19 @@ fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssVa
     // Global keywords
     match v {
         "inherit" => return CssValue::Inherit,
-        "initial" | "revert" | "unset" | "revert-layer" => return CssValue::Initial,
+        // ⛔ `unset` is NOT `initial`. CSS Cascade 5 §7.3: it "acts as either
+        // `inherit` or `initial`, depending on whether the property is
+        // inherited or not". Collapsing it here destroyed that distinction
+        // before the cascade could act on it — `CssValue::Unset` existed and
+        // was never produced — so `color: unset` on a child reset to black
+        // instead of inheriting its parent's colour.
+        "unset" => return CssValue::Unset,
+        // ⛔ `revert` rolls back to the previous cascade ORIGIN (§7.4), which
+        // needs origin tracking the cascade does not keep. `initial` is the
+        // closest available answer for an author-origin declaration, which is
+        // the common case. Both value paths agree on it now; they used to
+        // disagree — the string path left the value untouched.
+        "initial" | "revert" | "revert-layer" => return CssValue::Initial,
         _ => {}
     }
 
@@ -201,13 +227,27 @@ fn pre_parse_value(id: properties::PropertyId, val: &str) -> crate::types::CssVa
         PaddingTop | PaddingRight | PaddingBottom | PaddingLeft |
         BorderTopWidth | BorderRightWidth | BorderBottomWidth | BorderLeftWidth |
         Top | Right | Bottom | Left |
-        FlexBasis | LineHeight | LetterSpacing | WordSpacing |
+        FlexBasis | LetterSpacing | WordSpacing |
         TextIndent | Gap | RowGap | ColumnGap |
         TextDecorationThickness | TextUnderlineOffset |
         InlineSize | BlockSize |
         BorderTopLeftRadius | BorderTopRightRadius |
         BorderBottomLeftRadius | BorderBottomRightRadius |
         InsetBlockStart | InsetBlockEnd | InsetInlineStart | InsetInlineEnd => {
+            if let Some(l) = try_parse_length(v) {
+                return CssValue::Length(l);
+            }
+        }
+
+        // ⛔ `line-height` is NOT a plain length. A unitless number is a
+        // MULTIPLE of the font size and `normal` is its own value (CSS 2.1
+        // §10.8.1), so reading it as a length made `line-height: 1.375` mean
+        // 1.375 PIXELS — and only on this path, which left the two value paths
+        // disagreeing about the same declaration.
+        LineHeight => {
+            if v == "normal" || v.parse::<f32>().is_ok() {
+                return CssValue::Length(super::parse_line_height(v));
+            }
             if let Some(l) = try_parse_length(v) {
                 return CssValue::Length(l);
             }

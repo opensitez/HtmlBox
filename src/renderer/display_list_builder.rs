@@ -4,7 +4,7 @@
 //! Faithfully ports the render_box logic from mod.rs into PaintCmd recording.
 
 use crate::types::{
-    BackgroundRepeat, BackgroundSize, Color, ComputedStyle, Display,
+    BackgroundClip, BackgroundRepeat, BackgroundSize, Color, ComputedStyle, Display,
     FontStyle, GradientType, ListStylePosition, ListStyleType,
     MixBlendMode, Overflow, Position, TextDecorationStyle,
     TextTransform,
@@ -164,36 +164,19 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     let ph = pr.h;
     let font_px = node.style.font_size_px(16.0, 16.0);
 
-    // ── Border radii (exact same resolution as render_box) ───────────────────
-    let r_shorthand = node.style.border_radius.resolve(font_px, pr.w, 16.0);
-    let r_tl = if r_shorthand > 0.0 {
-        r_shorthand
-    } else {
-        node.style
-            .border_top_left_radius
-            .resolve(font_px, pr.w, 16.0)
-    };
-    let r_tr = if r_shorthand > 0.0 {
-        r_shorthand
-    } else {
-        node.style
-            .border_top_right_radius
-            .resolve(font_px, pr.w, 16.0)
-    };
-    let r_br = if r_shorthand > 0.0 {
-        r_shorthand
-    } else {
-        node.style
-            .border_bottom_right_radius
-            .resolve(font_px, pr.w, 16.0)
-    };
-    let r_bl = if r_shorthand > 0.0 {
-        r_shorthand
-    } else {
-        node.style
-            .border_bottom_left_radius
-            .resolve(font_px, pr.w, 16.0)
-    };
+    // ── Border radii, per corner ─────────────────────────────────────────────
+    //
+    // ⛔ THE FOUR LONGHANDS, always. `border_radius` is not a "the shorthand was
+    // used" flag — it is a mirror of the top-left longhand, which both the
+    // shorthand and `border-top-left-radius` write. Preferring it whenever it
+    // was non-zero stamped the top-left value onto all four corners, so
+    // `border-radius: 16px 16px 0 0` — the top-rounded card — came out rounded
+    // all round, and the same corrupted array feeds the border stroke and the
+    // overflow clip.
+    let r_tl = node.style.border_top_left_radius.resolve(font_px, pr.w, 16.0);
+    let r_tr = node.style.border_top_right_radius.resolve(font_px, pr.w, 16.0);
+    let r_br = node.style.border_bottom_right_radius.resolve(font_px, pr.w, 16.0);
+    let r_bl = node.style.border_bottom_left_radius.resolve(font_px, pr.w, 16.0);
     let radii_arr = [r_tl, r_tr, r_br, r_bl];
 
     // ── Hover / active / visited check ───────────────────────────────────────
@@ -348,6 +331,42 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     // The FormElement command only draws the control CONTENT (value text,
     // placeholder, checkbox mark, radio dot, etc.) — not the box decoration.
 
+    // ── Background painting and positioning areas ────────────────────────────
+    // `background-clip` bounds what is PAINTED — initially the border box, so a
+    // background bleeds under a transparent or gapped border instead of stopping
+    // at the padding edge. `background-origin` is the area an image or gradient
+    // is POSITIONED and sized in — initially the padding box. The two are
+    // different boxes and must be resolved separately (css-backgrounds-3 §3.6,
+    // §3.7).
+    let background_box = |which: BackgroundClip| -> Rect {
+        match which {
+            BackgroundClip::ContentBox => {
+                let c = node.layout.content_rect;
+                Rect::new(c.x - eff_sx, c.y - eff_sy, c.w, c.h)
+            }
+            // `text` clips to the glyphs themselves, which needs a glyph mask
+            // the painter does not build. The padding box is the smallest area
+            // that always lies inside the intended one, so an unsupported
+            // `text` clip paints no more than it does without the property.
+            BackgroundClip::PaddingBox | BackgroundClip::Text => Rect::new(px, py, pw, ph),
+            BackgroundClip::BorderBox => {
+                Rect::new(br.x - eff_sx, br.y - eff_sy, br.w, br.h)
+            }
+        }
+    };
+    let bg_clip_rect = background_box(eff_style.background_clip);
+    let bg_origin_rect = background_box(eff_style.background_origin);
+    // `background-repeat` decides, per axis, whether the image (or gradient)
+    // tiles out of the positioning area to cover the painting area.
+    let bg_repeat_x = matches!(
+        node.style.background_repeat,
+        BackgroundRepeat::Repeat | BackgroundRepeat::RepeatX
+    );
+    let bg_repeat_y = matches!(
+        node.style.background_repeat,
+        BackgroundRepeat::Repeat | BackgroundRepeat::RepeatY
+    );
+
     // ── (b) Background color (opacity applied to alpha) ──────────────────────
     {
         let raw_bg = eff_style.background_color;
@@ -357,7 +376,9 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
             let alpha = ((raw_bg.a as f32) * opacity) as u8;
             let bg = Color::rgba(raw_bg.r, raw_bg.g, raw_bg.b, alpha);
             list.push(PaintCmd::FillRect {
-                rect: Rect::new(px, py, pw, ph),
+                // A colour has no image to position, so `background-origin`
+                // does not apply to it — only the painting area does.
+                rect: bg_clip_rect,
                 color: bg,
                 radius: radii_arr,
             });
@@ -415,7 +436,10 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
             })
             .collect();
         list.push(PaintCmd::Gradient {
-            rect: Rect::new(px, py, pw, ph),
+            rect: bg_origin_rect,
+            clip: bg_clip_rect,
+            repeat_x: bg_repeat_x,
+            repeat_y: bg_repeat_y,
             gradient_type: grad_type_u8,
             angle: node.style.gradient_angle,
             stops,
@@ -430,52 +454,47 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         if node.bg_image_width > 0 && node.bg_image_height > 0 {
             let iw = node.bg_image_width as f32;
             let ih = node.bg_image_height as f32;
+            // An image is sized and placed in the POSITIONING area
+            // (`background-origin`), then clipped to the painting area.
+            let ow = bg_origin_rect.w;
+            let oh = bg_origin_rect.h;
 
             // Compute drawn image dimensions based on background-size
             let (draw_w, draw_h) = match node.style.background_size {
                 BackgroundSize::Cover => {
-                    let scale = (pw / iw).max(ph / ih);
+                    let scale = (ow / iw).max(oh / ih);
                     (iw * scale, ih * scale)
                 }
                 BackgroundSize::Contain => {
-                    let scale = (pw / iw).min(ph / ih);
+                    let scale = (ow / iw).min(oh / ih);
                     (iw * scale, ih * scale)
                 }
                 BackgroundSize::Explicit => {
                     let w = if node.style.background_size_w.is_auto() {
                         iw
                     } else {
-                        node.style.background_size_w.resolve(font_px, pw, 16.0)
+                        node.style.background_size_w.resolve(font_px, ow, 16.0)
                     };
                     let h = if node.style.background_size_h.is_auto() {
                         ih
                     } else {
-                        node.style.background_size_h.resolve(font_px, ph, 16.0)
+                        node.style.background_size_h.resolve(font_px, oh, 16.0)
                     };
                     (w, h)
                 }
                 BackgroundSize::Auto => (iw, ih),
             };
 
-            let pos_x = px
+            let pos_x = bg_origin_rect.x
                 + node
                     .style
                     .background_position_x
-                    .resolve(font_px, pw - draw_w, 16.0);
-            let pos_y = py
+                    .resolve(font_px, ow - draw_w, 16.0);
+            let pos_y = bg_origin_rect.y
                 + node
                     .style
                     .background_position_y
-                    .resolve(font_px, ph - draw_h, 16.0);
-
-            let repeat_x = matches!(
-                node.style.background_repeat,
-                BackgroundRepeat::Repeat | BackgroundRepeat::RepeatX
-            );
-            let repeat_y = matches!(
-                node.style.background_repeat,
-                BackgroundRepeat::Repeat | BackgroundRepeat::RepeatY
-            );
+                    .resolve(font_px, oh - draw_h, 16.0);
 
             let size_mode = match node.style.background_size {
                 BackgroundSize::Auto => 0u8,
@@ -485,7 +504,8 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
             };
 
             list.push(PaintCmd::BackgroundImage {
-                container: Rect::new(px, py, pw, ph),
+                container: bg_origin_rect,
+                clip: bg_clip_rect,
                 data: ImageRef::Owned(
                     bg_data.clone(),
                     node.bg_image_width,
@@ -496,8 +516,8 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
                 draw_h,
                 pos_x,
                 pos_y,
-                repeat_x,
-                repeat_y,
+                repeat_x: bg_repeat_x,
+                repeat_y: bg_repeat_y,
                 radii: radii_arr,
             });
         }
@@ -724,10 +744,22 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         if let Some(ref data) = node.image_data {
             if node.image_width > 0 && node.image_height > 0 {
                 let cr = node.layout.content_rect;
+                let (dst, clip) = object_fit_rect(
+                    &node.style, cr,
+                    node.image_width as f32, node.image_height as f32,
+                    font_px, 16.0,
+                );
+                if clip {
+                    list.push(PaintCmd::PushClip {
+                        rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
+                        radius: [0.0; 4],
+                    });
+                }
                 list.push(PaintCmd::Image {
-                    rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
+                    rect: Rect::new(dst.x - eff_sx, dst.y - eff_sy, dst.w, dst.h),
                     data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
                 });
+                if clip { list.push(PaintCmd::PopClip); }
             }
         } else if node.tag == "svg" || (node.is_image_element() && node.svg_markup.is_some()) {
             // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
@@ -1577,7 +1609,11 @@ fn blend_mode_to_u8(m: MixBlendMode) -> u8 {
     }
 }
 
-fn compute_transform_matrix(style: &ComputedStyle, rect: &Rect) -> [f32; 6] {
+/// The 2D affine matrix a `transform` resolves to, as `[a, b, c, d, e, f]`.
+///
+/// Public because CSSOM asks the same question: `getComputedStyle().transform`
+/// serializes exactly this matrix.
+pub fn compute_transform_matrix(style: &ComputedStyle, rect: &Rect) -> [f32; 6] {
     use crate::types::TransformOp;
     let ox = rect.x + rect.w * style.transform_origin_x;
     let oy = rect.y + rect.h * style.transform_origin_y;
@@ -1740,4 +1776,47 @@ fn collect_fixed_elements(node: &WebCore, out: &mut Vec<u32>) {
     for child in &node.children {
         collect_fixed_elements(child, out);
     }
+}
+
+/// The concrete object rect for a replaced element (css-images-3 §5.5):
+/// `object-fit` chooses the drawn size from the natural size and the content
+/// box, `object-position` places it inside that box. Returns the destination
+/// rect and whether it overflows the box (so the caller clips).
+///
+/// ⛔ Both properties were parsed into `ComputedStyle` and read by nobody, so
+/// every replaced element painted stretched to its content box — the `fill`
+/// behaviour — whatever the author asked for.
+fn object_fit_rect(
+    style: &crate::types::ComputedStyle,
+    cr: Rect, iw: f32, ih: f32, font_px: f32, root_font_px: f32,
+) -> (Rect, bool) {
+    use crate::types::ObjectFit;
+    if iw <= 0.0 || ih <= 0.0 || cr.w <= 0.0 || cr.h <= 0.0 {
+        return (cr, false);
+    }
+    let contain = (cr.w / iw).min(cr.h / ih);
+    let cover   = (cr.w / iw).max(cr.h / ih);
+    let (ow, oh) = match style.object_fit {
+        ObjectFit::Fill    => (cr.w, cr.h),
+        ObjectFit::Contain => (iw * contain, ih * contain),
+        ObjectFit::Cover   => (iw * cover,   ih * cover),
+        ObjectFit::None    => (iw, ih),
+        // `scale-down` is the SMALLER of `none` and `contain`.
+        ObjectFit::ScaleDown => {
+            if contain >= 1.0 { (iw, ih) } else { (iw * contain, ih * contain) }
+        }
+    };
+    // A percentage aligns that fraction of the object with the same fraction of
+    // the box, so it distributes the free space — which is negative when the
+    // object is larger, and correctly shifts it left/up.
+    let place = |len: &crate::types::CssLength, free: f32, extent: f32| -> f32 {
+        match len {
+            crate::types::CssLength::Percent(p) => free * (p / 100.0),
+            other => other.resolve(font_px, extent, root_font_px),
+        }
+    };
+    let x = cr.x + place(&style.object_position_x, cr.w - ow, cr.w);
+    let y = cr.y + place(&style.object_position_y, cr.h - oh, cr.h);
+    let overflows = ow > cr.w + 0.01 || oh > cr.h + 0.01;
+    (Rect::new(x, y, ow, oh), overflows)
 }
