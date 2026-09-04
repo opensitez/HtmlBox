@@ -39,7 +39,9 @@ impl Document {
     /// parsed `<canvas>`; an element from `createElement("canvas")` has never
     /// been through it, and gets its bitmap here.
     fn ensure_canvas_bitmap(&mut self, id: u32) -> bool {
-        let Some(node) = self.find_webcore_mut(id) else { return false };
+        let Some(node) = self.find_webcore_mut(id) else {
+            return false;
+        };
         if node.tag != "canvas" {
             return false;
         }
@@ -78,11 +80,7 @@ impl Document {
         // is never copied to be drawn on.
         let (mut pixels, w, h) = {
             let node = self.find_webcore_mut(id)?;
-            (
-                node.image_data.take()?,
-                node.image_width,
-                node.image_height,
-            )
+            (node.image_data.take()?, node.image_width, node.image_height)
         };
         let out = self.canvas_surfaces.with_context(id, &mut pixels, w, h, f);
         if let Some(node) = self.find_webcore_mut(id) {
@@ -100,7 +98,9 @@ impl Document {
     /// is the documented way a page clears a canvas, and an implementation
     /// that kept the pixels would break it silently.
     pub fn set_canvas_size(&mut self, id: u32, width: u32, height: u32) {
-        let Some(node) = self.find_webcore_mut(id) else { return };
+        let Some(node) = self.find_webcore_mut(id) else {
+            return;
+        };
         if node.tag != "canvas" {
             return;
         }

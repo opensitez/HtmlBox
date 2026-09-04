@@ -4,15 +4,15 @@
 //! tiny_skia Pixmap, handling fills, borders, text, images, clips,
 //! opacity, and transforms.
 
-use tiny_skia::{
-    FillRule, Paint, PathBuilder, Pixmap, Rect as SkRect, Transform, Color as SkColor,
-};
+use super::display_list::{DisplayList, ImageRef, PaintCmd};
+use crate::types::{Color, Rect};
 use cosmic_text::{
-    Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, SwashCache,
-    Style as CTextStyle, Weight as CTextWeight,
+    Attrs, Buffer, Color as CTextColor, FontSystem, Metrics, Shaping, Style as CTextStyle,
+    SwashCache, Weight as CTextWeight,
 };
-use crate::types::{Rect, Color};
-use super::display_list::{DisplayList, PaintCmd, ImageRef};
+use tiny_skia::{
+    Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect as SkRect, Transform,
+};
 
 /// Replay a display list onto a pixmap (no text — use replay_with_text for full rendering).
 pub fn replay(list: &DisplayList, pixmap: &mut Pixmap, scale: f32) {
@@ -43,7 +43,12 @@ fn cmd_y_range(cmd: &PaintCmd) -> Option<(f32, f32)> {
         | PaintCmd::Image { rect, .. }
         | PaintCmd::Gradient { rect, .. }
         | PaintCmd::Outline { rect, .. } => Some((rect.y, rect.y + rect.h)),
-        PaintCmd::Text { y, font_size, line_height, .. } => {
+        PaintCmd::Text {
+            y,
+            font_size,
+            line_height,
+            ..
+        } => {
             let pad = font_size.max(*line_height) * 2.0;
             Some((y - pad, y + pad))
         }
@@ -58,7 +63,14 @@ pub fn replay_with_text(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
 ) {
-    replay_inner(list, pixmap, scale, Some((font_system, swash_cache)), 0.0, 0.0);
+    replay_inner(
+        list,
+        pixmap,
+        scale,
+        Some((font_system, swash_cache)),
+        0.0,
+        0.0,
+    );
 }
 
 /// Replay with a scroll offset — the display list is in document coordinates,
@@ -72,7 +84,14 @@ pub fn replay_with_scroll(
     scroll_x: f32,
     scroll_y: f32,
 ) {
-    replay_inner(list, pixmap, scale, Some((font_system, swash_cache)), scroll_x, scroll_y);
+    replay_inner(
+        list,
+        pixmap,
+        scale,
+        Some((font_system, swash_cache)),
+        scroll_x,
+        scroll_y,
+    );
 }
 
 /// Layer for blend mode / opacity compositing.
@@ -91,10 +110,9 @@ fn replay_inner(
 ) {
     // Start with scale + scroll translation. Display list is in document
     // coordinates; the scroll offset maps to screen coordinates.
-    let mut ts = Transform::from_scale(scale, scale)
-        .pre_translate(-scroll_x, -scroll_y);
+    let mut ts = Transform::from_scale(scale, scale).pre_translate(-scroll_x, -scroll_y);
     let mut transform_stack: Vec<Transform> = Vec::new();
-    let mut filter_stack: Vec<Vec<(u8, f32, crate::types::Color)>> = Vec::new();
+    let mut filter_stack: Vec<Vec<(u8, f32, f32, f32, crate::types::Color)>> = Vec::new();
     let mut clip_stack: Vec<Rect> = Vec::new();
     let mut clip_mask_stack: Vec<Option<tiny_skia::Mask>> = Vec::new();
     let mut opacity_stack: Vec<f32> = Vec::new();
@@ -121,7 +139,7 @@ fn replay_inner(
     for cmd in &list.commands {
         match cmd {
             PaintCmd::PushTransform { .. } => transform_depth += 1,
-            PaintCmd::PopTransform      => transform_depth -= 1,
+            PaintCmd::PopTransform => transform_depth -= 1,
             _ => {}
         }
         // ⛔ Also never while a LAYER is active. `PushOpacity`, `PushFilter`
@@ -130,19 +148,28 @@ fn replay_inner(
         // the document band the way an ordinary command can.
         if transform_depth == 0 && layer_stack.is_empty() {
             if let Some((top, bot)) = cmd_y_range(cmd) {
-                if bot < vis_top || top > vis_bot { continue; }
+                if bot < vis_top || top > vis_bot {
+                    continue;
+                }
             }
         }
         // Get the current clip mask (topmost on the stack)
         let clip_mask = clip_mask_stack.last().and_then(|m| m.as_ref());
 
         match cmd {
-            PaintCmd::FillRect { rect, color, radius } => {
+            PaintCmd::FillRect {
+                rect,
+                color,
+                radius,
+            } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 let c = apply_opacity(color, alpha);
                 let mut paint = Paint::default();
                 paint.set_color(to_sk_color(&c));
-                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                let target = layer_stack
+                    .last_mut()
+                    .map(|l| &mut l.pixmap)
+                    .unwrap_or(pixmap);
                 let max_r = radius[0].max(radius[1]).max(radius[2]).max(radius[3]);
                 if max_r > 0.5 {
                     if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, max_r) {
@@ -153,22 +180,35 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::Border { rect, widths, colors, styles: _, radii } => {
+            PaintCmd::Border {
+                rect,
+                widths,
+                colors,
+                styles: _,
+                radii,
+            } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
-                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                let target = layer_stack
+                    .last_mut()
+                    .map(|l| &mut l.pixmap)
+                    .unwrap_or(pixmap);
                 let max_r = radii[0].max(radii[1]).max(radii[2]).max(radii[3]);
 
                 // Uniform border with border-radius → use stroked rounded rect
-                let uniform_width = widths[0] == widths[1] && widths[1] == widths[2] && widths[2] == widths[3];
-                let uniform_color = colors[0] == colors[1] && colors[1] == colors[2] && colors[2] == colors[3];
+                let uniform_width =
+                    widths[0] == widths[1] && widths[1] == widths[2] && widths[2] == widths[3];
+                let uniform_color =
+                    colors[0] == colors[1] && colors[1] == colors[2] && colors[2] == colors[3];
 
                 if max_r > 0.5 && uniform_width && uniform_color && widths[0] > 0.0 {
                     let bw = widths[0];
                     let half = bw / 2.0;
                     // Inset the path by half the border width so the stroke straddles the edge
                     if let Some(path) = rounded_rect_path_corners(
-                        rect.x + half, rect.y + half,
-                        rect.w - bw, rect.h - bw,
+                        rect.x + half,
+                        rect.y + half,
+                        rect.w - bw,
+                        rect.h - bw,
                         (radii[0] - half).max(0.0),
                         (radii[1] - half).max(0.0),
                         (radii[2] - half).max(0.0),
@@ -192,7 +232,12 @@ fn replay_inner(
                     }
                     if widths[2] > 0.0 {
                         paint.set_color(to_sk_color(&apply_opacity(&colors[2], alpha)));
-                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y + rect.h - widths[2], rect.w, widths[2]) {
+                        if let Some(r) = SkRect::from_xywh(
+                            rect.x,
+                            rect.y + rect.h - widths[2],
+                            rect.w,
+                            widths[2],
+                        ) {
                             target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
@@ -204,7 +249,12 @@ fn replay_inner(
                     }
                     if widths[1] > 0.0 {
                         paint.set_color(to_sk_color(&apply_opacity(&colors[1], alpha)));
-                        if let Some(r) = SkRect::from_xywh(rect.x + rect.w - widths[1], rect.y, widths[1], rect.h) {
+                        if let Some(r) = SkRect::from_xywh(
+                            rect.x + rect.w - widths[1],
+                            rect.y,
+                            widths[1],
+                            rect.h,
+                        ) {
                             target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
@@ -216,13 +266,20 @@ fn replay_inner(
                     ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
                     ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
                 };
-                if iw == 0 || ih == 0 || rect.w <= 0.0 || rect.h <= 0.0 { continue; }
+                if iw == 0 || ih == 0 || rect.w <= 0.0 || rect.h <= 0.0 {
+                    continue;
+                }
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
                     let sx = rect.w / iw as f32;
                     let sy = rect.h / ih as f32;
                     let img_ts = ts.pre_translate(rect.x, rect.y).pre_scale(sx, sy);
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    target.draw_pixmap(0, 0,
+                    let target = layer_stack
+                        .last_mut()
+                        .map(|l| &mut l.pixmap)
+                        .unwrap_or(pixmap);
+                    target.draw_pixmap(
+                        0,
+                        0,
                         img_pixmap,
                         &tiny_skia::PixmapPaint::default(),
                         img_ts,
@@ -231,20 +288,39 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::Text { x, y, text, font_family, font_size, font_weight,
-                             font_style, font_stretch, line_height, color,
-                             letter_spacing, small_caps, decoration } => {
+            PaintCmd::Text {
+                x,
+                y,
+                text,
+                font_family,
+                font_size,
+                font_weight,
+                font_style,
+                font_stretch,
+                line_height,
+                color,
+                letter_spacing,
+                word_spacing,
+                small_caps,
+                decoration,
+            } => {
                 // Skip text that's entirely outside the current clip region
                 // (handles text-indent:-9999px with overflow:hidden)
                 if let Some(clip) = clip_stack.last() {
-                    if *x + 1000.0 < clip.x || *x > clip.right()
-                        || *y + *line_height < clip.y || *y > clip.bottom() {
+                    if *x + 1000.0 < clip.x
+                        || *x > clip.right()
+                        || *y + *line_height < clip.y
+                        || *y > clip.bottom()
+                    {
                         continue;
                     }
                 }
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    let target = layer_stack
+                        .last_mut()
+                        .map(|l| &mut l.pixmap)
+                        .unwrap_or(pixmap);
                     // Apply the current transform to text position and scale.
                     // Extract effective scale factor from the transform matrix.
                     let eff_sx = (ts.sx * ts.sx + ts.ky * ts.ky).sqrt();
@@ -259,11 +335,24 @@ fn replay_inner(
                     let text_x = phys_x / eff_scale;
                     let text_y = phys_y / eff_scale;
                     draw_text_cmd(
-                        target, *fs, *sc, eff_scale,
-                        text_x, text_y, text, font_family, *font_size, *font_weight,
-                        *font_style, *font_stretch, *line_height,
-                        &apply_opacity(color, alpha), decoration,
-                        *letter_spacing, *small_caps,
+                        target,
+                        *fs,
+                        *sc,
+                        eff_scale,
+                        text_x,
+                        text_y,
+                        text,
+                        font_family,
+                        *font_size,
+                        *font_weight,
+                        *font_style,
+                        *font_stretch,
+                        *line_height,
+                        &apply_opacity(color, alpha),
+                        decoration,
+                        *letter_spacing,
+                        *word_spacing,
+                        *small_caps,
                     );
                 }
             }
@@ -307,7 +396,10 @@ fn replay_inner(
                     // Store filter ops encoded in the blend_mode field won't work,
                     // so we store them separately via a filter_stack
                     filter_stack.push(filters.clone());
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: 254 });
+                    layer_stack.push(Layer {
+                        pixmap: layer_pixmap,
+                        blend_mode: 254,
+                    });
                 }
             }
             PaintCmd::PopFilter => {
@@ -315,19 +407,34 @@ fn replay_inner(
                 if let Some(layer) = layer_stack.pop() {
                     let mut pm = layer.pixmap;
                     // Apply each filter to the layer pixels
-                    for (filter_type, value, _color) in &filters {
-                        apply_pixel_filter(&mut pm, *filter_type, *value);
+                    for (filter_type, value, dx, dy, color) in &filters {
+                        if *filter_type == 9 {
+                            crate::canvas::effects::drop_shadow(&mut pm, *dx, *dy, *value, *color);
+                        } else {
+                            apply_pixel_filter(&mut pm, *filter_type, *value);
+                        }
                     }
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                    target.draw_pixmap(0, 0, pm.as_ref(),
+                    let target = layer_stack
+                        .last_mut()
+                        .map(|l| &mut l.pixmap)
+                        .unwrap_or(pixmap);
+                    target.draw_pixmap(
+                        0,
+                        0,
+                        pm.as_ref(),
                         &tiny_skia::PixmapPaint::default(),
-                        Transform::identity(), None);
+                        Transform::identity(),
+                        None,
+                    );
                 }
             }
             PaintCmd::PushBlendMode { mode } => {
                 // Create a temporary layer for blend compositing
                 if let Some(layer_pixmap) = Pixmap::new(pw, ph) {
-                    layer_stack.push(Layer { pixmap: layer_pixmap, blend_mode: *mode });
+                    layer_stack.push(Layer {
+                        pixmap: layer_pixmap,
+                        blend_mode: *mode,
+                    });
                 }
             }
             PaintCmd::PopBlendMode => {
@@ -337,7 +444,16 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::BoxShadow { rect, color, offset_x, offset_y, blur: _, spread, inset, radii: _ } => {
+            PaintCmd::BoxShadow {
+                rect,
+                color,
+                offset_x,
+                offset_y,
+                blur: _,
+                spread,
+                inset,
+                radii: _,
+            } => {
                 let alpha = opacity_stack.iter().product::<f32>().min(1.0);
                 if !inset {
                     let sr = Rect::new(
@@ -360,12 +476,25 @@ fn replay_inner(
             PaintCmd::BeginStackingContext { .. } => {}
             PaintCmd::EndStackingContext => {}
 
-            PaintCmd::Gradient { rect, clip, repeat_x, repeat_y, gradient_type, angle, stops, radii, opacity: grad_opacity, blend_mode: _ } => {
+            PaintCmd::Gradient {
+                rect,
+                clip,
+                repeat_x,
+                repeat_y,
+                gradient_type,
+                angle,
+                stops,
+                radii,
+                opacity: grad_opacity,
+                blend_mode: _,
+            } => {
                 use tiny_skia::{
-                    LinearGradient, RadialGradient,
-                    GradientStop as SkStop, SpreadMode, Point as SkPoint,
+                    GradientStop as SkStop, LinearGradient, Point as SkPoint, RadialGradient,
+                    SpreadMode,
                 };
-                if stops.len() < 2 { continue; }
+                if stops.len() < 2 {
+                    continue;
+                }
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let combined_opacity = a2 * grad_opacity;
                 // `pw`/`ph` name the pixmap here; keep them before the gradient
@@ -374,12 +503,18 @@ fn replay_inner(
 
                 let pw = rect.w;
                 let ph = rect.h;
-                if pw <= 0.0 || ph <= 0.0 { continue; }
+                if pw <= 0.0 || ph <= 0.0 {
+                    continue;
+                }
 
-                let sk_stops: Vec<SkStop> = stops.iter()
+                let sk_stops: Vec<SkStop> = stops
+                    .iter()
                     .map(|(color, pos)| {
                         let a = ((color.a as f32) * combined_opacity) as u8;
-                        SkStop::new(*pos, tiny_skia::Color::from_rgba8(color.r, color.g, color.b, a))
+                        SkStop::new(
+                            *pos,
+                            tiny_skia::Color::from_rgba8(color.r, color.g, color.b, a),
+                        )
                     })
                     .collect();
 
@@ -397,14 +532,18 @@ fn replay_inner(
                             let dx = rad.sin();
                             let dy = -rad.cos();
                             let half = ((pw * dx).abs() + (ph * dy).abs()) / 2.0;
-                            if half <= 0.0 { return None; }
+                            if half <= 0.0 {
+                                return None;
+                            }
                             let cx = px + pw / 2.0;
                             let cy = py + ph / 2.0;
 
                             LinearGradient::new(
                                 SkPoint::from_xy(cx - dx * half, cy - dy * half),
                                 SkPoint::from_xy(cx + dx * half, cy + dy * half),
-                                sk_stops.clone(), SpreadMode::Pad, Transform::identity(),
+                                sk_stops.clone(),
+                                SpreadMode::Pad,
+                                Transform::identity(),
                             )
                         }
                         2 => {
@@ -413,8 +552,15 @@ fn replay_inner(
                             let cy = py + ph / 2.0;
                             let r = ((pw / 2.0).powi(2) + (ph / 2.0).powi(2)).sqrt().max(1.0);
                             let center = SkPoint::from_xy(cx, cy);
-                            RadialGradient::new(center, 0.0, center, r,
-                                sk_stops.clone(), SpreadMode::Pad, Transform::identity())
+                            RadialGradient::new(
+                                center,
+                                0.0,
+                                center,
+                                r,
+                                sk_stops.clone(),
+                                SpreadMode::Pad,
+                                Transform::identity(),
+                            )
                         }
                         _ => None,
                     }
@@ -434,7 +580,10 @@ fn replay_inner(
                     (rect.x, rect.right())
                 };
                 let (first_y, end_y) = if *repeat_y && clip.y < rect.y {
-                    (rect.y + ((clip.y - rect.y) / ph).floor() * ph, clip.bottom())
+                    (
+                        rect.y + ((clip.y - rect.y) / ph).floor() * ph,
+                        clip.bottom(),
+                    )
                 } else if *repeat_y {
                     (rect.y, clip.bottom())
                 } else {
@@ -459,7 +608,9 @@ fn replay_inner(
                 // A degenerate positioning area next to a large painting area
                 // would spin here, so the tile count is capped.
                 const MAX_TILES: f32 = 4096.0;
-                if tiles_x * tiles_y > MAX_TILES { continue; }
+                if tiles_x * tiles_y > MAX_TILES {
+                    continue;
+                }
 
                 let mut ty = first_y;
                 while ty < end_y {
@@ -475,10 +626,21 @@ fn replay_inner(
                                 let mut paint = Paint::default();
                                 paint.anti_alias = true;
                                 paint.shader = shader;
-                                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                                let target = layer_stack
+                                    .last_mut()
+                                    .map(|l| &mut l.pixmap)
+                                    .unwrap_or(pixmap);
                                 if max_r > 0.0 && !tiled {
-                                    if let Some(path) = rounded_rect_path_corners(fx, fy, fw, fh, *r_tl, *r_tr, *r_br, *r_bl) {
-                                        target.fill_path(&path, &paint, FillRule::Winding, ts, clip_mask);
+                                    if let Some(path) = rounded_rect_path_corners(
+                                        fx, fy, fw, fh, *r_tl, *r_tr, *r_br, *r_bl,
+                                    ) {
+                                        target.fill_path(
+                                            &path,
+                                            &paint,
+                                            FillRule::Winding,
+                                            ts,
+                                            clip_mask,
+                                        );
                                     }
                                 } else if let Some(r) = SkRect::from_xywh(fx, fy, fw, fh) {
                                     target.fill_rect(r, &paint, ts, tile_mask_ref);
@@ -491,7 +653,13 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::Outline { rect, width, color, style: _, offset: _ } => {
+            PaintCmd::Outline {
+                rect,
+                width,
+                color,
+                style: _,
+                offset: _,
+            } => {
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let mut paint = Paint::default();
                 paint.set_color(to_sk_color(&apply_opacity(color, a2)));
@@ -499,7 +667,10 @@ fn replay_inner(
                 let mut stroke = tiny_skia::Stroke::default();
                 stroke.width = *width;
                 if let Some(path) = rounded_rect_path(rect.x, rect.y, rect.w, rect.h, 0.0) {
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    let target = layer_stack
+                        .last_mut()
+                        .map(|l| &mut l.pixmap)
+                        .unwrap_or(pixmap);
                     target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                 }
             }
@@ -513,21 +684,41 @@ fn replay_inner(
                 pb.move_to(*x1, *y1);
                 pb.line_to(*x2, *y1);
                 if let Some(path) = pb.finish() {
-                    let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                    let target = layer_stack
+                        .last_mut()
+                        .map(|l| &mut l.pixmap)
+                        .unwrap_or(pixmap);
                     target.stroke_path(&path, &paint, &stroke, ts, clip_mask);
                 }
             }
 
-            PaintCmd::ListMarker { marker_type, x, y, size, color, text, font_family, font_size, font_weight, font_style, line_height } => {
+            PaintCmd::ListMarker {
+                marker_type,
+                x,
+                y,
+                size,
+                color,
+                text,
+                font_family,
+                font_size,
+                font_weight,
+                font_style,
+                line_height,
+            } => {
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                 let c = apply_opacity(color, a2);
-                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
+                let target = layer_stack
+                    .last_mut()
+                    .map(|l| &mut l.pixmap)
+                    .unwrap_or(pixmap);
                 match marker_type {
                     0 => {
                         // disc
                         let mut paint = Paint::default();
                         paint.set_color(to_sk_color(&c));
-                        if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
+                        if let Some(r) =
+                            SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0)
+                        {
                             target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
@@ -535,7 +726,9 @@ fn replay_inner(
                         // circle (filled as fallback)
                         let mut paint = Paint::default();
                         paint.set_color(to_sk_color(&c));
-                        if let Some(r) = SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0) {
+                        if let Some(r) =
+                            SkRect::from_xywh(x - size, y - size, size * 2.0, size * 2.0)
+                        {
                             target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
@@ -552,27 +745,84 @@ fn replay_inner(
                         // text marker
                         if let Some((ref mut fs, ref mut sc)) = text_ctx {
                             draw_text_cmd(
-                                target, *fs, *sc, scale,
-                                *x, *y, text, font_family, *font_size, *font_weight,
-                                *font_style, 100.0, *line_height,
-                                &c, &super::display_list::TextDecoration::default(),
-                                0.0, false,
+                                target,
+                                *fs,
+                                *sc,
+                                scale,
+                                *x,
+                                *y,
+                                text,
+                                font_family,
+                                *font_size,
+                                *font_weight,
+                                *font_style,
+                                100.0,
+                                *line_height,
+                                &c,
+                                &super::display_list::TextDecoration::default(),
+                                0.0,
+                                0.0,
+                                false,
                             );
+                        }
+                    }
+                    4 => {
+                        // Image marker placeholder. The display list preserves
+                        // the URL; real image decoding/loading happens above
+                        // replay and can replace this with an image command.
+                        let mut paint = Paint::default();
+                        paint.set_color(to_sk_color(&c));
+                        let side = (*size).max(*font_size * 0.75);
+                        if let Some(r) = SkRect::from_xywh(*x, *y, side, side) {
+                            target.fill_rect(r, &paint, ts, clip_mask);
                         }
                     }
                     _ => {}
                 }
             }
 
-            PaintCmd::FormElement { tag, input_type, rect, node_id, attributes, font_size, font_weight, font_family, color, checked, value, placeholder, input_cursor, vertical, options, selected, selected_all } => {
+            PaintCmd::FormElement {
+                tag,
+                input_type,
+                rect,
+                node_id,
+                attributes,
+                font_size,
+                font_weight,
+                font_family,
+                color,
+                placeholder_color,
+                checked,
+                value,
+                placeholder,
+                input_cursor,
+                appearance_none,
+                vertical,
+                options,
+                selected,
+                selected_all,
+            } => {
                 // CSS background/border/padding are drawn by the normal pipeline.
                 // FormElement only draws the CONTENT: value text, check marks, radio dots, etc.
                 let a2 = opacity_stack.iter().product::<f32>().min(1.0);
-                let target = layer_stack.last_mut().map(|l| &mut l.pixmap).unwrap_or(pixmap);
-                let _ = (node_id, attributes, input_cursor, &options, selected, &selected_all); // suppress warnings
+                let target = layer_stack
+                    .last_mut()
+                    .map(|l| &mut l.pixmap)
+                    .unwrap_or(pixmap);
+                let _ = (
+                    node_id,
+                    attributes,
+                    input_cursor,
+                    &options,
+                    selected,
+                    &selected_all,
+                ); // suppress warnings
 
                 match (tag.as_str(), input_type.as_str()) {
                     ("input", "checkbox") => {
+                        if *appearance_none {
+                            continue;
+                        }
                         // Use Checkbox widget
                         let sz = rect.w.min(rect.h);
                         let bx = rect.x + (rect.w - sz) / 2.0;
@@ -583,6 +833,9 @@ fn replay_inner(
                         cb.paint(target, bx, by, scale);
                     }
                     ("input", "radio") => {
+                        if *appearance_none {
+                            continue;
+                        }
                         // Use Radio widget
                         let sz = rect.w.min(rect.h);
                         let bx = rect.x + (rect.w - sz) / 2.0;
@@ -659,18 +912,24 @@ fn replay_inner(
                             .iter()
                             .find(|(k, _)| k == "size")
                             .and_then(|(_, v)| crate::html::forms::parse_non_negative_integer(v))
-                            .unwrap_or(if attributes.iter().any(|(k, _)| k == "multiple") { 4 } else { 1 })
+                            .unwrap_or(if attributes.iter().any(|(k, _)| k == "multiple") {
+                                4
+                            } else {
+                                1
+                            })
                             > 1 =>
                     {
-                        // The box itself: the UA sheet gives a `<select>` a
-                        // white field and a grey border, and a list box is the
-                        // same field with rows in it.
                         let ts = Transform::from_scale(scale, scale);
-                        let mut fill = Paint::default();
-                        fill.anti_alias = true;
-                        fill.set_color_rgba8(255, 255, 255, 255);
-                        if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
-                            target.fill_rect(r, &fill, ts, None);
+                        if !*appearance_none {
+                            // The box itself: the UA sheet gives a `<select>` a
+                            // white field and a grey border, and a list box is the
+                            // same field with rows in it.
+                            let mut fill = Paint::default();
+                            fill.anti_alias = true;
+                            fill.set_color_rgba8(255, 255, 255, 255);
+                            if let Some(r) = SkRect::from_xywh(rect.x, rect.y, rect.w, rect.h) {
+                                target.fill_rect(r, &fill, ts, None);
+                            }
                         }
 
                         // Shared with the hit test, so a click cannot land on a
@@ -707,21 +966,36 @@ fn replay_inner(
                             }
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    rect.x + 4.0, row_y, label, font_family,
-                                    *font_size, *font_weight, 0, rect.w - 8.0, line_h,
-                                    &text_color, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    rect.x + 4.0,
+                                    row_y,
+                                    label,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    rect.w - 8.0,
+                                    line_h,
+                                    &text_color,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
                     }
                     ("select", _) => {
-                        // Use Select widget for the arrow
-                        let mut sel = crate::widgets::Select::new(vec![]);
-                        sel.width = rect.w;
-                        sel.height = rect.h;
-                        sel.paint(target, rect.x, rect.y, scale);
+                        if !*appearance_none {
+                            // Use Select widget for the arrow
+                            let mut sel = crate::widgets::Select::new(vec![]);
+                            sel.width = rect.w;
+                            sel.height = rect.h;
+                            sel.paint(target, rect.x, rect.y, scale);
+                        }
                         // Draw selected value text
                         let display_text = if value.is_empty() { placeholder } else { value };
                         if !display_text.is_empty() {
@@ -730,11 +1004,24 @@ fn replay_inner(
                                 let line_h = *font_size * 1.2;
                                 let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    rect.x + 2.0, text_y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, line_h,
-                                    &c, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    rect.x + 2.0,
+                                    text_y,
+                                    display_text,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    100.0,
+                                    line_h,
+                                    &c,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
@@ -765,11 +1052,24 @@ fn replay_inner(
                                 let line_h = *font_size * 1.2;
                                 let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    rect.x + 2.0, text_y, alt, font_family,
-                                    *font_size, *font_weight, 0, rect.w, line_h,
-                                    &c, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    rect.x + 2.0,
+                                    text_y,
+                                    alt,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    rect.w,
+                                    line_h,
+                                    &c,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
@@ -785,20 +1085,33 @@ fn replay_inner(
                         // own word in a large font.
                         let label_w =
                             crate::widgets::CHOOSE.chars().count() as f32 * *font_size * 0.55;
-                        let button_w =
-                            crate::widgets::FileButton::width_for(label_w).min(rect.w);
-                        let mut button =
-                            crate::widgets::FileButton::new(button_w, rect.h);
-                        button.disabled = attributes.iter().any(|(k, _)| k == "disabled");
-                        button.paint(target, rect.x, rect.y, scale);
+                        let button_w = crate::widgets::FileButton::width_for(label_w).min(rect.w);
+                        if !*appearance_none {
+                            let mut button = crate::widgets::FileButton::new(button_w, rect.h);
+                            button.disabled = attributes.iter().any(|(k, _)| k == "disabled");
+                            button.paint(target, rect.x, rect.y, scale);
+                        }
                         if let Some((ref mut fs, ref mut sc)) = text_ctx {
                             let c = apply_opacity(color, a2);
                             draw_text_cmd(
-                                target, *fs, *sc, scale,
-                                rect.x + 8.0, text_y, crate::widgets::CHOOSE, font_family,
-                                *font_size, *font_weight, 0, button_w, line_h,
-                                &c, &super::display_list::TextDecoration::default(),
-                                0.0, false,
+                                target,
+                                *fs,
+                                *sc,
+                                scale,
+                                rect.x + 8.0,
+                                text_y,
+                                crate::widgets::CHOOSE,
+                                font_family,
+                                *font_size,
+                                *font_weight,
+                                0,
+                                button_w,
+                                line_h,
+                                &c,
+                                &super::display_list::TextDecoration::default(),
+                                0.0,
+                                0.0,
+                                false,
                             );
                             // ⛔ The empty case is a LABEL, not the value: a
                             // file control with nothing chosen has `value ==
@@ -810,12 +1123,24 @@ fn replay_inner(
                                 value
                             };
                             draw_text_cmd(
-                                target, *fs, *sc, scale,
-                                rect.x + button_w + 8.0, text_y, name, font_family,
-                                *font_size, *font_weight, 0,
-                                (rect.w - button_w - 8.0).max(0.0), line_h,
-                                &c, &super::display_list::TextDecoration::default(),
-                                0.0, false,
+                                target,
+                                *fs,
+                                *sc,
+                                scale,
+                                rect.x + button_w + 8.0,
+                                text_y,
+                                name,
+                                font_family,
+                                *font_size,
+                                *font_weight,
+                                0,
+                                (rect.w - button_w - 8.0).max(0.0),
+                                line_h,
+                                &c,
+                                &super::display_list::TextDecoration::default(),
+                                0.0,
+                                0.0,
+                                false,
                             );
                         }
                     }
@@ -843,16 +1168,28 @@ fn replay_inner(
                             };
                             let line_h = *font_size * 1.2;
                             let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
-                            let room = (rect.w
-                                - crate::widgets::DateField::glyph_width(rect.h)
-                                - 4.0)
-                                .max(0.0);
+                            let room =
+                                (rect.w - crate::widgets::DateField::glyph_width(rect.h) - 4.0)
+                                    .max(0.0);
                             draw_text_cmd(
-                                target, *fs, *sc, scale,
-                                rect.x + 4.0, text_y, shown, font_family,
-                                *font_size, *font_weight, 0, room, line_h,
-                                &c, &super::display_list::TextDecoration::default(),
-                                0.0, false,
+                                target,
+                                *fs,
+                                *sc,
+                                scale,
+                                rect.x + 4.0,
+                                text_y,
+                                shown,
+                                font_family,
+                                *font_size,
+                                *font_weight,
+                                0,
+                                room,
+                                line_h,
+                                &c,
+                                &super::display_list::TextDecoration::default(),
+                                0.0,
+                                0.0,
+                                false,
                             );
                         }
                     }
@@ -867,9 +1204,14 @@ fn replay_inner(
                         swatch.height = rect.h;
                         swatch.paint(target, rect.x, rect.y, scale);
                     }
-                    ("input", "text") | ("input", "tel") | ("input", "email") |
-                    ("input", "password") | ("input", "search") | ("input", "url") |
-                    ("input", "number") | ("textarea", _) => {
+                    ("input", "text")
+                    | ("input", "tel")
+                    | ("input", "email")
+                    | ("input", "password")
+                    | ("input", "search")
+                    | ("input", "url")
+                    | ("input", "number")
+                    | ("textarea", _) => {
                         // Draw value or placeholder text.
                         //
                         // ⛔ **A password field must not draw what it holds.**
@@ -894,10 +1236,7 @@ fn replay_inner(
                         if !display_text.is_empty() {
                             if let Some((ref mut fs, ref mut sc)) = text_ctx {
                                 let c = if value.is_empty() {
-                                    // Placeholder: use a dimmed version of the color
-                                    let mut pc = apply_opacity(color, a2);
-                                    pc.a = (pc.a as f32 * 0.5) as u8;
-                                    pc
+                                    apply_opacity(placeholder_color, a2)
                                 } else {
                                     apply_opacity(color, a2)
                                 };
@@ -905,11 +1244,24 @@ fn replay_inner(
                                 let line_h = *font_size * 1.2;
                                 let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    rect.x + 2.0, text_y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, line_h,
-                                    &c, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    rect.x + 2.0,
+                                    text_y,
+                                    display_text,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    100.0,
+                                    line_h,
+                                    &c,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
@@ -947,7 +1299,13 @@ fn replay_inner(
                         // state's default rather than a bare 50.
                         let val: f32 = crate::html::forms::parse_floating_point(value)
                             .map(|n| n as f32)
-                            .unwrap_or_else(|| if max < min { min } else { min + (max - min) / 2.0 });
+                            .unwrap_or_else(|| {
+                                if max < min {
+                                    min
+                                } else {
+                                    min + (max - min) / 2.0
+                                }
+                            });
                         let mut slider = crate::widgets::Slider::new(min, max, val);
                         slider.width = rect.w;
                         slider.height = rect.h;
@@ -985,11 +1343,24 @@ fn replay_inner(
                                 let text_w = label.chars().count() as f32 * *font_size * 0.5;
                                 let text_x = rect.x + (rect.w - text_w).max(0.0) / 2.0;
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    text_x, text_y, label, font_family,
-                                    *font_size, *font_weight, 0, rect.w, line_h,
-                                    &c, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    text_x,
+                                    text_y,
+                                    label,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    rect.w,
+                                    line_h,
+                                    &c,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
@@ -1004,11 +1375,24 @@ fn replay_inner(
                                 let line_h = *font_size * 1.2;
                                 let text_y = rect.y + (rect.h - line_h).max(0.0) / 2.0;
                                 draw_text_cmd(
-                                    target, *fs, *sc, scale,
-                                    rect.x + 2.0, text_y, display_text, font_family,
-                                    *font_size, *font_weight, 0, 100.0, line_h,
-                                    &c, &super::display_list::TextDecoration::default(),
-                                    0.0, false,
+                                    target,
+                                    *fs,
+                                    *sc,
+                                    scale,
+                                    rect.x + 2.0,
+                                    text_y,
+                                    display_text,
+                                    font_family,
+                                    *font_size,
+                                    *font_weight,
+                                    0,
+                                    100.0,
+                                    line_h,
+                                    &c,
+                                    &super::display_list::TextDecoration::default(),
+                                    0.0,
+                                    0.0,
+                                    false,
                                 );
                             }
                         }
@@ -1016,29 +1400,68 @@ fn replay_inner(
                 }
             }
 
-            PaintCmd::TextShadow { x, y, text, font_family, font_size, font_weight, font_style, font_stretch, line_height, color, blur: _ } => {
+            PaintCmd::TextShadow {
+                x,
+                y,
+                text,
+                font_family,
+                font_size,
+                font_weight,
+                font_style,
+                font_stretch,
+                line_height,
+                color,
+                blur: _,
+            } => {
                 // Draw text shadow (simplified — no blur convolution)
                 if let Some((ref mut fs, ref mut sc)) = text_ctx {
                     let a2 = opacity_stack.iter().product::<f32>().min(1.0);
                     let c = apply_opacity(color, a2);
                     draw_text_cmd(
-                        pixmap, *fs, *sc, scale,
-                        *x, *y, text, font_family, *font_size, *font_weight,
-                        *font_style, *font_stretch, *line_height,
-                        &c, &super::display_list::TextDecoration::default(),
-                        0.0, false,
+                        pixmap,
+                        *fs,
+                        *sc,
+                        scale,
+                        *x,
+                        *y,
+                        text,
+                        font_family,
+                        *font_size,
+                        *font_weight,
+                        *font_style,
+                        *font_stretch,
+                        *line_height,
+                        &c,
+                        &super::display_list::TextDecoration::default(),
+                        0.0,
+                        0.0,
+                        false,
                     );
                 }
             }
 
-            PaintCmd::BackgroundImage { container: _, clip, data, size_mode: _, draw_w, draw_h, pos_x, pos_y, repeat_x, repeat_y, radii } => {
+            PaintCmd::BackgroundImage {
+                container: _,
+                clip,
+                data,
+                size_mode: _,
+                draw_w,
+                draw_h,
+                pos_x,
+                pos_y,
+                repeat_x_mode,
+                repeat_y_mode,
+                radii,
+            } => {
                 // Draw the background image, positioned in `container` and
                 // clipped to `clip`.
                 let (rgba, iw, ih) = match data {
                     ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
                     ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
                 };
-                if iw == 0 || ih == 0 || *draw_w <= 0.0 || *draw_h <= 0.0 { continue; }
+                if iw == 0 || ih == 0 || *draw_w <= 0.0 || *draw_h <= 0.0 {
+                    continue;
+                }
                 // The mask keeps the image from bleeding out of the painting
                 // area — essential for CSS sprites, whose background-position is
                 // negative. Nothing is painted outside the PAINTING area
@@ -1047,39 +1470,61 @@ fn replay_inner(
                 let bg_clip = build_clip_mask(clip, radii, pw, ph, scale);
                 let bg_clip_ref = bg_clip.as_ref().or(clip_mask);
                 if let Some(img_pixmap) = tiny_skia::PixmapRef::from_bytes(rgba, iw, ih) {
-                    let sx_img = draw_w / iw as f32;
-                    let sy_img = draw_h / ih as f32;
-                    let paint = tiny_skia::PixmapPaint::default();
-                    if *repeat_x || *repeat_y {
-                        // Tiles fill the whole PAINTING area — a repeating
-                        // background covers the border box even though its
-                        // positioning area is the padding box.
-                        let end_x   = if *repeat_x { clip.right() } else { *pos_x + *draw_w };
-                        let end_y   = if *repeat_y { clip.bottom() } else { *pos_y + *draw_h };
-
-                        // Align to tile grid from pos_x/pos_y
-                        let first_tx = if *repeat_x {
-                            let offset = ((*pos_x - clip.x) % draw_w + draw_w) % draw_w;
-                            clip.x - (draw_w - offset) % draw_w
-                        } else { *pos_x };
-                        let first_ty = if *repeat_y {
-                            let offset = ((*pos_y - clip.y) % draw_h + draw_h) % draw_h;
-                            clip.y - (draw_h - offset) % draw_h
-                        } else { *pos_y };
-
-                        let mut ty = first_ty;
-                        while ty < end_y {
-                            let mut tx = first_tx;
-                            while tx < end_x {
-                                let tile_ts = ts.pre_translate(tx, ty).pre_scale(sx_img, sy_img);
-                                pixmap.draw_pixmap(0, 0, img_pixmap, &paint, tile_ts, bg_clip_ref);
-                                tx += draw_w;
-                                if !*repeat_x { break; }
+                    let axis_tiles =
+                        |mode: u8, pos: f32, tile: f32, start: f32, len: f32| -> Vec<(f32, f32)> {
+                            let area_end = start + len;
+                            match mode {
+                                1 => {
+                                    let offset = ((pos - start) % tile + tile) % tile;
+                                    let first = start - (tile - offset) % tile;
+                                    let mut out = Vec::new();
+                                    let mut cursor = first;
+                                    while cursor < area_end {
+                                        out.push((cursor, tile));
+                                        cursor += tile;
+                                    }
+                                    out
+                                }
+                                2 => {
+                                    if tile >= len {
+                                        return vec![(start + (len - tile) / 2.0, tile)];
+                                    }
+                                    let count = (len / tile).floor().max(1.0) as usize;
+                                    if count <= 1 {
+                                        return vec![(start + (len - tile) / 2.0, tile)];
+                                    }
+                                    let gap = (len - tile * count as f32) / (count - 1) as f32;
+                                    (0..count)
+                                        .map(|i| (start + i as f32 * (tile + gap), tile))
+                                        .collect()
+                                }
+                                3 => {
+                                    let count = (len / tile).round().max(1.0) as usize;
+                                    let rounded = len / count as f32;
+                                    (0..count)
+                                        .map(|i| (start + i as f32 * rounded, rounded))
+                                        .collect()
+                                }
+                                _ => vec![(pos, tile)],
                             }
-                            ty += draw_h;
-                            if !*repeat_y { break; }
+                        };
+                    let paint = tiny_skia::PixmapPaint::default();
+                    if *repeat_x_mode != 0 || *repeat_y_mode != 0 {
+                        let xs =
+                            axis_tiles(*repeat_x_mode, *pos_x, *draw_w, clip.x, clip.w.max(0.0));
+                        let ys =
+                            axis_tiles(*repeat_y_mode, *pos_y, *draw_h, clip.y, clip.h.max(0.0));
+                        for (ty, tile_h) in ys {
+                            for (tx, tile_w) in &xs {
+                                let tile_ts = ts
+                                    .pre_translate(*tx, ty)
+                                    .pre_scale(*tile_w / iw as f32, tile_h / ih as f32);
+                                pixmap.draw_pixmap(0, 0, img_pixmap, &paint, tile_ts, bg_clip_ref);
+                            }
                         }
                     } else {
+                        let sx_img = draw_w / iw as f32;
+                        let sy_img = draw_h / ih as f32;
                         let img_ts = ts.pre_translate(*pos_x, *pos_y).pre_scale(sx_img, sy_img);
                         pixmap.draw_pixmap(0, 0, img_pixmap, &paint, img_ts, bg_clip_ref);
                     }
@@ -1096,7 +1541,9 @@ fn to_sk_color(c: &Color) -> SkColor {
 }
 
 fn apply_opacity(c: &Color, alpha: f32) -> Color {
-    if alpha >= 1.0 { return *c; }
+    if alpha >= 1.0 {
+        return *c;
+    }
     Color::rgba(c.r, c.g, c.b, (c.a as f32 * alpha) as u8)
 }
 
@@ -1116,11 +1563,28 @@ pub(crate) fn blit_shaped_buffer(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
     buf: &mut Buffer,
+    text: &str,
     phys_x: f32,
     phys_y: f32,
+    letter_spacing: f32,
+    word_spacing: f32,
     color: CTextColor,
 ) {
     let color_a = color.a() as u32;
+    let tracking = letter_spacing;
+    let word_offsets: Vec<f32> = {
+        let mut offset = 0.0;
+        let mut out = Vec::new();
+        for ch in text.chars() {
+            if ch.is_whitespace() {
+                offset += word_spacing;
+            } else {
+                out.push(offset);
+            }
+        }
+        out
+    };
+    let mut glyph_index = 0usize;
 
     let pix_w = pixmap.width() as i32;
     let pix_h = pixmap.height() as i32;
@@ -1128,11 +1592,18 @@ pub(crate) fn blit_shaped_buffer(
     let pixels = pixmap.pixels_mut();
 
     buf.draw(font_system, swash_cache, color, |gx, gy, gw, gh, gc| {
+        let word_offset = word_offsets.get(glyph_index).copied().unwrap_or(0.0);
+        let tracked_x = gx + (glyph_index as f32 * tracking + word_offset).round() as i32;
+        glyph_index += 1;
         let ga = gc.a();
-        if ga == 0 { return; }
+        if ga == 0 {
+            return;
+        }
         let eff_a = ga as u32 * color_a / 255;
-        if eff_a == 0 { return; }
-        let bx = phys_x as i32 + gx;
+        if eff_a == 0 {
+            return;
+        }
+        let bx = phys_x as i32 + tracked_x;
         let by = phys_y as i32 + gy;
         let sa = eff_a;
         let ia = 255 - sa;
@@ -1141,15 +1612,19 @@ pub(crate) fn blit_shaped_buffer(
         let pb = gc.b() as u32 * sa / 255;
         for dy in 0..gh as i32 {
             let py = by + dy;
-            if py < 0 || py >= pix_h { continue; }
+            if py < 0 || py >= pix_h {
+                continue;
+            }
             let row = py as usize * stride;
             for dx in 0..gw as i32 {
                 let px_x = bx + dx;
-                if px_x < 0 || px_x >= pix_w { continue; }
+                if px_x < 0 || px_x >= pix_w {
+                    continue;
+                }
                 let dst = &mut pixels[row + px_x as usize];
-                let r = (pr + dst.red()   as u32 * ia / 255) as u8;
+                let r = (pr + dst.red() as u32 * ia / 255) as u8;
                 let g = (pg + dst.green() as u32 * ia / 255) as u8;
-                let b = (pb + dst.blue()  as u32 * ia / 255) as u8;
+                let b = (pb + dst.blue() as u32 * ia / 255) as u8;
                 let a = (sa + dst.alpha() as u32 * ia / 255) as u8;
                 if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
                     *dst = p;
@@ -1164,7 +1639,8 @@ fn draw_text_cmd(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
     scale: f32,
-    x: f32, y: f32,
+    x: f32,
+    y: f32,
     text: &str,
     font_family: &str,
     font_size: f32,
@@ -1175,12 +1651,81 @@ fn draw_text_cmd(
     color: &Color,
     decoration: &super::display_list::TextDecoration,
     _letter_spacing: f32,
+    word_spacing: f32,
     _small_caps: bool,
 ) {
-    if text.is_empty() { return; }
+    if text.is_empty() {
+        return;
+    }
+    if word_spacing != 0.0 && text.chars().any(char::is_whitespace) {
+        let mut cursor_x = x;
+        let mut segment = String::new();
+        let flush_segment = |segment: &mut String,
+                             cursor_x: &mut f32,
+                             pixmap: &mut Pixmap,
+                             font_system: &mut FontSystem,
+                             swash_cache: &mut SwashCache| {
+            if segment.is_empty() {
+                return;
+            }
+            let advance =
+                crate::layout::inline_layout::measure_text_width(segment, font_size, None)
+                    + _letter_spacing * segment.chars().count() as f32;
+            draw_text_cmd(
+                pixmap,
+                font_system,
+                swash_cache,
+                scale,
+                *cursor_x,
+                y,
+                segment,
+                font_family,
+                font_size,
+                font_weight,
+                font_style,
+                _font_stretch,
+                line_height,
+                color,
+                decoration,
+                _letter_spacing,
+                0.0,
+                _small_caps,
+            );
+            *cursor_x += advance;
+            segment.clear();
+        };
+
+        for ch in text.chars() {
+            if ch.is_whitespace() {
+                flush_segment(
+                    &mut segment,
+                    &mut cursor_x,
+                    pixmap,
+                    font_system,
+                    swash_cache,
+                );
+                cursor_x += crate::layout::inline_layout::measure_text_width(
+                    &ch.to_string(),
+                    font_size,
+                    None,
+                ) + _letter_spacing
+                    + word_spacing;
+            } else {
+                segment.push(ch);
+            }
+        }
+        flush_segment(
+            &mut segment,
+            &mut cursor_x,
+            pixmap,
+            font_system,
+            swash_cache,
+        );
+        return;
+    }
     let sc = scale;
     let phys_px = (font_size * sc).max(1.0);
-    let phys_lh = (line_height * sc).max(1.0);  // cosmic-text panics on 0
+    let phys_lh = (line_height * sc).max(1.0); // cosmic-text panics on 0
     let metrics = Metrics::new(phys_px, phys_lh);
 
     // Convert font family
@@ -1218,6 +1763,7 @@ fn draw_text_cmd(
         // are a property of the run, and the day they reach the shaper a stale
         // buffer would be a silent wrong-glyph-positions bug.
         _letter_spacing.to_bits().hash(&mut h);
+        word_spacing.to_bits().hash(&mut h);
         _small_caps.hash(&mut h);
         h.finish()
     };
@@ -1227,9 +1773,14 @@ fn draw_text_cmd(
         // A font load changes what any string shapes to, so the whole cache
         // goes when the face count moves.
         let faces = font_system.db().len();
-        if map.0 != faces { map.1.clear(); map.0 = faces; }
+        if map.0 != faces {
+            map.1.clear();
+            map.0 = faces;
+        }
         // Bounded: a long session on many pages should not grow for ever.
-        if map.1.len() > 8192 { map.1.clear(); }
+        if map.1.len() > 8192 {
+            map.1.clear();
+        }
 
         if !map.1.contains_key(&key) {
             let mut buf = Buffer::new(font_system, metrics);
@@ -1239,7 +1790,18 @@ fn draw_text_cmd(
             map.1.insert(key, buf);
         }
         let buf = map.1.get_mut(&key).expect("just inserted");
-        blit_shaped_buffer(pixmap, font_system, swash_cache, buf, phys_x, phys_y, ct_color);
+        blit_shaped_buffer(
+            pixmap,
+            font_system,
+            swash_cache,
+            buf,
+            text,
+            phys_x,
+            phys_y,
+            _letter_spacing * sc,
+            word_spacing * sc,
+            ct_color,
+        );
         buf.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0)
     });
 
@@ -1247,7 +1809,10 @@ fn draw_text_cmd(
     let thickness = (decoration.thickness * sc).max(1.0);
     let mut paint = Paint::default();
     paint.set_color(to_sk_color(&Color::rgba(
-        decoration.color.r, decoration.color.g, decoration.color.b, decoration.color.a,
+        decoration.color.r,
+        decoration.color.g,
+        decoration.color.b,
+        decoration.color.a,
     )));
     paint.anti_alias = true;
 
@@ -1264,7 +1829,12 @@ fn draw_text_cmd(
                 if let Some(r) = SkRect::from_xywh(phys_x, y, line_w, 1.0f32.max(thickness * 0.4)) {
                     pixmap.fill_rect(r, &paint, Transform::identity(), None);
                 }
-                if let Some(r) = SkRect::from_xywh(phys_x, y + thickness * 1.5, line_w, 1.0f32.max(thickness * 0.4)) {
+                if let Some(r) = SkRect::from_xywh(
+                    phys_x,
+                    y + thickness * 1.5,
+                    line_w,
+                    1.0f32.max(thickness * 0.4),
+                ) {
                     pixmap.fill_rect(r, &paint, Transform::identity(), None);
                 }
             }
@@ -1272,7 +1842,8 @@ fn draw_text_cmd(
                 // dotted
                 let mut stroke = tiny_skia::Stroke::default();
                 stroke.width = thickness;
-                stroke.dash = tiny_skia::StrokeDash::new(vec![thickness * 1.5, thickness * 2.0], 0.0);
+                stroke.dash =
+                    tiny_skia::StrokeDash::new(vec![thickness * 1.5, thickness * 2.0], 0.0);
                 let mut pb = PathBuilder::new();
                 pb.move_to(phys_x, y + thickness / 2.0);
                 pb.line_to(phys_x + line_w, y + thickness / 2.0);
@@ -1284,7 +1855,8 @@ fn draw_text_cmd(
                 // dashed
                 let mut stroke = tiny_skia::Stroke::default();
                 stroke.width = thickness;
-                stroke.dash = tiny_skia::StrokeDash::new(vec![thickness * 4.0, thickness * 3.0], 0.0);
+                stroke.dash =
+                    tiny_skia::StrokeDash::new(vec![thickness * 4.0, thickness * 3.0], 0.0);
                 let mut pb = PathBuilder::new();
                 pb.move_to(phys_x, y + thickness / 2.0);
                 pb.line_to(phys_x + line_w, y + thickness / 2.0);
@@ -1323,7 +1895,11 @@ fn draw_text_cmd(
         // Position underline below the baseline (baseline ≈ 80% of em)
         // plus text-underline-offset
         let baseline_y = phys_y + phys_px * 0.82;
-        let offset = thickness * 2.0; // approximate text-underline-offset
+        let offset = if decoration.underline_offset > 0.0 {
+            decoration.underline_offset
+        } else {
+            thickness * 2.0
+        };
         let uy = baseline_y + offset;
         draw_deco_line(pixmap, uy, decoration.style);
     }
@@ -1342,64 +1918,121 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
     let dst_pixels = dst.pixels_mut();
     let src_pixels = src.pixels();
     for (d, s) in dst_pixels.iter_mut().zip(src_pixels.iter()) {
-        if s.alpha() == 0 { continue; }
-        let (sr, sg, sb, sa) = (s.red() as u32, s.green() as u32, s.blue() as u32, s.alpha() as u32);
-        let (dr, dg, db, _da) = (d.red() as u32, d.green() as u32, d.blue() as u32, d.alpha() as u32);
+        if s.alpha() == 0 {
+            continue;
+        }
+        let (sr, sg, sb, sa) = (
+            s.red() as u32,
+            s.green() as u32,
+            s.blue() as u32,
+            s.alpha() as u32,
+        );
+        let (dr, dg, db, _da) = (
+            d.red() as u32,
+            d.green() as u32,
+            d.blue() as u32,
+            d.alpha() as u32,
+        );
 
         // Unpremultiply for blending
-        let (sr_n, sg_n, sb_n) = if sa > 0 { (sr * 255 / sa, sg * 255 / sa, sb * 255 / sa) } else { (0,0,0) };
+        let (sr_n, sg_n, sb_n) = if sa > 0 {
+            (sr * 255 / sa, sg * 255 / sa, sb * 255 / sa)
+        } else {
+            (0, 0, 0)
+        };
         let (dr_n, dg_n, db_n) = (dr.min(255), dg.min(255), db.min(255));
 
         let (br, bg, bb) = match mode {
-            1 => { // multiply
+            1 => {
+                // multiply
                 (dr_n * sr_n / 255, dg_n * sg_n / 255, db_n * sb_n / 255)
             }
-            2 => { // screen
-                (dr_n + sr_n - dr_n * sr_n / 255,
-                 dg_n + sg_n - dg_n * sg_n / 255,
-                 db_n + sb_n - db_n * sb_n / 255)
+            2 => {
+                // screen
+                (
+                    dr_n + sr_n - dr_n * sr_n / 255,
+                    dg_n + sg_n - dg_n * sg_n / 255,
+                    db_n + sb_n - db_n * sb_n / 255,
+                )
             }
-            3 => { // overlay
+            3 => {
+                // overlay
                 let blend = |d: u32, s: u32| -> u32 {
-                    if d < 128 { 2 * d * s / 255 } else { 255 - 2 * (255 - d) * (255 - s) / 255 }
+                    if d < 128 {
+                        2 * d * s / 255
+                    } else {
+                        255 - 2 * (255 - d) * (255 - s) / 255
+                    }
                 };
                 (blend(dr_n, sr_n), blend(dg_n, sg_n), blend(db_n, sb_n))
             }
             4 => (dr_n.min(sr_n), dg_n.min(sg_n), db_n.min(sb_n)), // darken
             5 => (dr_n.max(sr_n), dg_n.max(sg_n), db_n.max(sb_n)), // lighten
-            6 => { // color-dodge
-                let dodge = |d: u32, s: u32| -> u32 { if s >= 255 { 255 } else { (d * 255 / (255 - s)).min(255) } };
+            6 => {
+                // color-dodge
+                let dodge = |d: u32, s: u32| -> u32 {
+                    if s >= 255 {
+                        255
+                    } else {
+                        (d * 255 / (255 - s)).min(255)
+                    }
+                };
                 (dodge(dr_n, sr_n), dodge(dg_n, sg_n), dodge(db_n, sb_n))
             }
-            7 => { // color-burn
-                let burn = |d: u32, s: u32| -> u32 { if s == 0 { 0 } else { 255 - ((255 - d) * 255 / s).min(255) } };
+            7 => {
+                // color-burn
+                let burn = |d: u32, s: u32| -> u32 {
+                    if s == 0 {
+                        0
+                    } else {
+                        255 - ((255 - d) * 255 / s).min(255)
+                    }
+                };
                 (burn(dr_n, sr_n), burn(dg_n, sg_n), burn(db_n, sb_n))
             }
-            8 => { // hard-light (like overlay but src/dst swapped)
+            8 => {
+                // hard-light (like overlay but src/dst swapped)
                 let blend = |d: u32, s: u32| -> u32 {
-                    if s < 128 { 2 * d * s / 255 } else { 255 - 2 * (255 - d) * (255 - s) / 255 }
+                    if s < 128 {
+                        2 * d * s / 255
+                    } else {
+                        255 - 2 * (255 - d) * (255 - s) / 255
+                    }
                 };
                 (blend(dr_n, sr_n), blend(dg_n, sg_n), blend(db_n, sb_n))
             }
-            9 => { // soft-light
+            9 => {
+                // soft-light
                 let soft = |d: u32, s: u32| -> u32 {
                     let df = d as f32 / 255.0;
                     let sf = s as f32 / 255.0;
                     let r = if sf <= 0.5 {
                         df - (1.0 - 2.0 * sf) * df * (1.0 - df)
                     } else {
-                        let g = if df <= 0.25 { ((16.0 * df - 12.0) * df + 4.0) * df } else { df.sqrt() };
+                        let g = if df <= 0.25 {
+                            ((16.0 * df - 12.0) * df + 4.0) * df
+                        } else {
+                            df.sqrt()
+                        };
                         df + (2.0 * sf - 1.0) * (g - df)
                     };
                     (r * 255.0).round().clamp(0.0, 255.0) as u32
                 };
                 (soft(dr_n, sr_n), soft(dg_n, sg_n), soft(db_n, sb_n))
             }
-            10 => { // difference
-                let diff = |a: u32, b: u32| -> u32 { if a > b { a - b } else { b - a } };
+            10 => {
+                // difference
+                let diff = |a: u32, b: u32| -> u32 {
+                    if a > b {
+                        a - b
+                    } else {
+                        b - a
+                    }
+                };
                 (diff(dr_n, sr_n), diff(dg_n, sg_n), diff(db_n, sb_n))
             }
-            11 => { // exclusion
+            11 => {
+                // exclusion
                 let excl = |a: u32, b: u32| -> u32 { a + b - 2 * a * b / 255 };
                 (excl(dr_n, sr_n), excl(dg_n, sg_n), excl(db_n, sb_n))
             }
@@ -1422,17 +2055,22 @@ fn blend_composite(dst: &mut Pixmap, src: &Pixmap, mode: u8) {
 /// filter_type: 0=blur,1=brightness,2=contrast,3=grayscale,4=hue-rotate,5=invert,6=opacity,7=saturate,8=sepia
 ///
 /// `pub(crate)` so `canvas::effects` can reach the colour maths instead of
-/// keeping a second copy of it. Blur is still `0 => {}` here; the canvas side
-/// now has a real one (`canvas::effects::blur_pixmap`) and dispatches to it
-/// before ever reaching this function, so the two are not in disagreement —
-/// this one is simply not the caller that can do it yet.
+/// keeping a second copy of it.
 pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
+    if filter_type == 0 {
+        crate::canvas::blur_pixmap(pm, value);
+        return;
+    }
+
     let pixels = pm.pixels_mut();
 
     // Helper: un-premultiply, apply transform, re-premultiply
-    let process = |px: &mut tiny_skia::PremultipliedColorU8, f: &dyn Fn(f32, f32, f32) -> (f32, f32, f32)| {
+    let process = |px: &mut tiny_skia::PremultipliedColorU8,
+                   f: &dyn Fn(f32, f32, f32) -> (f32, f32, f32)| {
         let a = px.alpha();
-        if a == 0 { return; }
+        if a == 0 {
+            return;
+        }
         // Un-premultiply
         let af = a as f32 / 255.0;
         let r = px.red() as f32 / af;
@@ -1449,15 +2087,17 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
     };
 
     match filter_type {
-        0 => {} // blur — needs convolution, skipped
+        0 => unreachable!(),
         1 => {
             // brightness
             for px in pixels.iter_mut() {
-                process(px, &|r, g, b| (
-                    (r * value).min(255.0),
-                    (g * value).min(255.0),
-                    (b * value).min(255.0),
-                ));
+                process(px, &|r, g, b| {
+                    (
+                        (r * value).min(255.0),
+                        (g * value).min(255.0),
+                        (b * value).min(255.0),
+                    )
+                });
             }
         }
         2 => {
@@ -1465,7 +2105,11 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
             for px in pixels.iter_mut() {
                 process(px, &|r, g, b| {
                     let adj = |c: f32| ((c / 255.0 - 0.5) * value + 0.5) * 255.0;
-                    (adj(r).clamp(0.0, 255.0), adj(g).clamp(0.0, 255.0), adj(b).clamp(0.0, 255.0))
+                    (
+                        adj(r).clamp(0.0, 255.0),
+                        adj(g).clamp(0.0, 255.0),
+                        adj(b).clamp(0.0, 255.0),
+                    )
                 });
             }
         }
@@ -1487,10 +2131,23 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
             for px in pixels.iter_mut() {
                 process(px, &|r, g, b| {
                     let (rf, gf, bf) = (r / 255.0, g / 255.0, b / 255.0);
-                    let r2 = ((0.213 + 0.787*cos - 0.213*sin)*rf + (0.715 - 0.715*cos - 0.715*sin)*gf + (0.072 - 0.072*cos + 0.928*sin)*bf) * 255.0;
-                    let g2 = ((0.213 - 0.213*cos + 0.143*sin)*rf + (0.715 + 0.285*cos + 0.140*sin)*gf + (0.072 - 0.072*cos - 0.283*sin)*bf) * 255.0;
-                    let b2 = ((0.213 - 0.213*cos - 0.787*sin)*rf + (0.715 - 0.715*cos + 0.715*sin)*gf + (0.072 + 0.928*cos + 0.072*sin)*bf) * 255.0;
-                    (r2.clamp(0.0, 255.0), g2.clamp(0.0, 255.0), b2.clamp(0.0, 255.0))
+                    let r2 = ((0.213 + 0.787 * cos - 0.213 * sin) * rf
+                        + (0.715 - 0.715 * cos - 0.715 * sin) * gf
+                        + (0.072 - 0.072 * cos + 0.928 * sin) * bf)
+                        * 255.0;
+                    let g2 = ((0.213 - 0.213 * cos + 0.143 * sin) * rf
+                        + (0.715 + 0.285 * cos + 0.140 * sin) * gf
+                        + (0.072 - 0.072 * cos - 0.283 * sin) * bf)
+                        * 255.0;
+                    let b2 = ((0.213 - 0.213 * cos - 0.787 * sin) * rf
+                        + (0.715 - 0.715 * cos + 0.715 * sin) * gf
+                        + (0.072 + 0.928 * cos + 0.072 * sin) * bf)
+                        * 255.0;
+                    (
+                        r2.clamp(0.0, 255.0),
+                        g2.clamp(0.0, 255.0),
+                        b2.clamp(0.0, 255.0),
+                    )
                 });
             }
         }
@@ -1507,7 +2164,9 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
             // opacity — operates on premultiplied alpha directly
             for px in pixels.iter_mut() {
                 let a = px.alpha();
-                if a == 0 { continue; }
+                if a == 0 {
+                    continue;
+                }
                 let new_a = (a as f32 * value).round().clamp(0.0, 255.0) as u8;
                 let scale_factor = if a > 0 { new_a as f32 / a as f32 } else { 0.0 };
                 let pr = (px.red() as f32 * scale_factor).round().clamp(0.0, 255.0) as u8;
@@ -1544,18 +2203,22 @@ pub(crate) fn apply_pixel_filter(pm: &mut Pixmap, filter_type: u8, value: f32) {
     }
 }
 
-
-
-fn build_clip_mask(rect: &Rect, radius: &[f32; 4], pw: u32, ph: u32, scale: f32) -> Option<tiny_skia::Mask> {
+fn build_clip_mask(
+    rect: &Rect,
+    radius: &[f32; 4],
+    pw: u32,
+    ph: u32,
+    scale: f32,
+) -> Option<tiny_skia::Mask> {
     let mut mask = tiny_skia::Mask::new(pw, ph)?;
     let ts = Transform::from_scale(scale, scale);
     let mut paint = Paint::default();
     paint.set_color_rgba8(255, 255, 255, 255);
     let max_r = radius[0].max(radius[1]).max(radius[2]).max(radius[3]);
     if max_r > 0.5 {
-        if let Some(path) = rounded_rect_path_corners(rect.x, rect.y, rect.w, rect.h,
-            radius[0], radius[1], radius[2], radius[3])
-        {
+        if let Some(path) = rounded_rect_path_corners(
+            rect.x, rect.y, rect.w, rect.h, radius[0], radius[1], radius[2], radius[3],
+        ) {
             mask.fill_path(&path, FillRule::Winding, true, ts);
         }
     } else {
@@ -1573,8 +2236,19 @@ fn build_clip_mask(rect: &Rect, radius: &[f32; 4], pw: u32, ph: u32, scale: f32)
     Some(mask)
 }
 
-fn rounded_rect_path_corners(x: f32, y: f32, w: f32, h: f32, r_tl: f32, r_tr: f32, r_br: f32, r_bl: f32) -> Option<tiny_skia::Path> {
-    if w <= 0.0 || h <= 0.0 { return None; }
+fn rounded_rect_path_corners(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r_tl: f32,
+    r_tr: f32,
+    r_br: f32,
+    r_bl: f32,
+) -> Option<tiny_skia::Path> {
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
     let half = (w / 2.0).min(h / 2.0);
     let tl = r_tl.min(half);
     let tr = r_tr.min(half);
@@ -1595,7 +2269,9 @@ fn rounded_rect_path_corners(x: f32, y: f32, w: f32, h: f32, r_tl: f32, r_tr: f3
 }
 
 fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
-    if w <= 0.0 || h <= 0.0 { return None; }
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
     let r = r.min(w / 2.0).min(h / 2.0);
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);

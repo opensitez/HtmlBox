@@ -345,9 +345,7 @@ impl RecordingCanvas {
                 DrawCmd::ClearRect { x, y, w, h } => target.clear_rect(*x, *y, *w, *h),
                 DrawCmd::FillText { text, x, y } => target.fill_text(text, *x, *y),
                 DrawCmd::StrokeText { text, x, y } => target.stroke_text(text, *x, *y),
-                DrawCmd::PutImageData { image, dx, dy } => {
-                    target.put_image_data(image, *dx, *dy)
-                }
+                DrawCmd::PutImageData { image, dx, dy } => target.put_image_data(image, *dx, *dy),
                 DrawCmd::DrawImage { image, x, y, w, h } => {
                     target.draw_image(image, *x, *y, *w, *h)
                 }
@@ -468,8 +466,9 @@ impl RecordingCanvas {
         for command in self.commands.iter().rev() {
             match command {
                 DrawCmd::MoveTo(x, y) | DrawCmd::LineTo(x, y) => return Some((*x, *y)),
-                DrawCmd::QuadraticCurveTo { x, y, .. }
-                | DrawCmd::BezierCurveTo { x, y, .. } => return Some((*x, *y)),
+                DrawCmd::QuadraticCurveTo { x, y, .. } | DrawCmd::BezierCurveTo { x, y, .. } => {
+                    return Some((*x, *y))
+                }
                 // An arc ends where its sweep does.
                 DrawCmd::Arc { x, y, r, end, .. } => {
                     return Some((x + r * end.cos(), y + r * end.sin()));
@@ -834,8 +833,7 @@ impl Canvas for RecordingCanvas {
 
     fn set_global_composite_operation(&mut self, op: super::CompositeOp) {
         self.state.attrs.composite = op;
-        self.commands
-            .push(DrawCmd::SetGlobalCompositeOperation(op));
+        self.commands.push(DrawCmd::SetGlobalCompositeOperation(op));
     }
     fn set_image_smoothing_quality(&mut self, quality: super::SmoothingQuality) {
         self.state.attrs.smoothing_quality = quality;
@@ -993,7 +991,11 @@ mod tests {
             pixmap.pixel(20, 20).expect("centre pixel").alpha()
         };
 
-        assert_eq!(paint_with(FillRule::NonZero), 255, "nonzero fills the centre");
+        assert_eq!(
+            paint_with(FillRule::NonZero),
+            255,
+            "nonzero fills the centre"
+        );
         assert_eq!(paint_with(FillRule::EvenOdd), 0, "evenodd punches a hole");
     }
 
@@ -1022,9 +1024,15 @@ mod tests {
             let mut c = RecordingCanvas::new();
             c.move_to(0.0, 0.0);
             c.arc_to(10.0, 0.0, 10.0, 10.0, radius);
-            assert_eq!(end_of(&c), Some((10.0, 0.0)), "{label} is a line to (x1,y1)");
+            assert_eq!(
+                end_of(&c),
+                Some((10.0, 0.0)),
+                "{label} is a line to (x1,y1)"
+            );
             assert!(
-                !c.commands.iter().any(|cmd| matches!(cmd, DrawCmd::Arc { .. })),
+                !c.commands
+                    .iter()
+                    .any(|cmd| matches!(cmd, DrawCmd::Arc { .. })),
                 "{label} must not add an arc"
             );
         }
@@ -1032,7 +1040,10 @@ mod tests {
         let mut c = RecordingCanvas::new();
         c.move_to(0.0, 0.0);
         c.arc_to(10.0, 0.0, 20.0, 0.0, 5.0);
-        assert!(!c.commands.iter().any(|cmd| matches!(cmd, DrawCmd::Arc { .. })));
+        assert!(!c
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, DrawCmd::Arc { .. })));
         // With no subpath at all, the spec says start one at (x1, y1).
         let mut c = RecordingCanvas::new();
         c.arc_to(7.0, 8.0, 20.0, 20.0, 5.0);
@@ -1062,7 +1073,10 @@ mod tests {
                 _ => None,
             })
             .expect("an arc rounds the corner");
-        assert!((arc.0 - 6.0).abs() < 0.01 && (arc.1 - 4.0).abs() < 0.01, "centre at (6, 4), got {arc:?}");
+        assert!(
+            (arc.0 - 6.0).abs() < 0.01 && (arc.1 - 4.0).abs() < 0.01,
+            "centre at (6, 4), got {arc:?}"
+        );
         assert!((arc.2 - 4.0).abs() < 0.01);
     }
 
@@ -1092,10 +1106,15 @@ mod tests {
         let mut c = RecordingCanvas::new();
         c.round_rect(0.0, 0.0, 20.0, 10.0, 0.0);
         assert!(
-            !c.commands.iter().any(|cmd| matches!(cmd, DrawCmd::Arc { .. })),
+            !c.commands
+                .iter()
+                .any(|cmd| matches!(cmd, DrawCmd::Arc { .. })),
             "no corner to round"
         );
-        assert!(c.commands.iter().any(|cmd| matches!(cmd, DrawCmd::ClosePath)));
+        assert!(c
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, DrawCmd::ClosePath)));
     }
 
     #[test]
@@ -1209,11 +1228,22 @@ mod put_image_data_tests {
     #[test]
     fn surrounding_state_is_untouched_by_the_raw_write() {
         let mut rec = RecordingCanvas::new();
-        rec.set_fill_color(Color { r: 1, g: 2, b: 3, a: 4 });
+        rec.set_fill_color(Color {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 4,
+        });
         rec.put_image_data(&red_pixel(), 0.0, 0.0);
         rec.fill_rect(0.0, 0.0, 10.0, 10.0);
-        assert!(matches!(rec.commands.first(), Some(DrawCmd::SetFillColor(_))));
-        assert!(matches!(rec.commands.last(), Some(DrawCmd::FillRect { .. })));
+        assert!(matches!(
+            rec.commands.first(),
+            Some(DrawCmd::SetFillColor(_))
+        ));
+        assert!(matches!(
+            rec.commands.last(),
+            Some(DrawCmd::FillRect { .. })
+        ));
     }
 
     // ─── setLineDash / getLineDash ──────────────────────────────────────
@@ -1245,7 +1275,11 @@ mod put_image_data_tests {
         let mut c = RecordingCanvas::new();
         c.set_line_dash(&[4.0, 2.0]);
         c.set_line_dash(&[1.0, -1.0]);
-        assert_eq!(c.get_line_dash(), vec![4.0, 2.0], "the bad list did nothing");
+        assert_eq!(
+            c.get_line_dash(),
+            vec![4.0, 2.0],
+            "the bad list did nothing"
+        );
     }
 
     #[test]
@@ -1399,7 +1433,10 @@ mod put_image_data_tests {
         inner.line_to(2.0, 2.0);
 
         let mut outer = super::super::Path2D::new();
-        outer.add_path(&inner, super::super::Matrix::new(10.0, 0.0, 0.0, 10.0, 0.0, 0.0));
+        outer.add_path(
+            &inner,
+            super::super::Matrix::new(10.0, 0.0, 0.0, 10.0, 0.0, 0.0),
+        );
 
         assert_eq!(
             outer.ops,
@@ -1418,7 +1455,10 @@ mod put_image_data_tests {
         inner.arc(0.0, 0.0, 1.0, 0.0, std::f32::consts::TAU, false);
 
         let mut outer = super::super::Path2D::new();
-        outer.add_path(&inner, super::super::Matrix::new(4.0, 0.0, 0.0, 1.0, 0.0, 0.0));
+        outer.add_path(
+            &inner,
+            super::super::Matrix::new(4.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+        );
 
         match outer.ops.first() {
             Some(super::super::PathOp::Ellipse { rx, ry, .. }) => {
@@ -1435,11 +1475,32 @@ mod put_image_data_tests {
         // All 26, by construction: if `parse` and `as_str` ever disagree about
         // one, this catches it without anyone remembering to add a case.
         for keyword in [
-            "source-over", "source-in", "source-out", "source-atop",
-            "destination-over", "destination-in", "destination-out", "destination-atop",
-            "lighter", "copy", "xor", "multiply", "screen", "overlay", "darken", "lighten",
-            "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion",
-            "hue", "saturation", "color", "luminosity",
+            "source-over",
+            "source-in",
+            "source-out",
+            "source-atop",
+            "destination-over",
+            "destination-in",
+            "destination-out",
+            "destination-atop",
+            "lighter",
+            "copy",
+            "xor",
+            "multiply",
+            "screen",
+            "overlay",
+            "darken",
+            "lighten",
+            "color-dodge",
+            "color-burn",
+            "hard-light",
+            "soft-light",
+            "difference",
+            "exclusion",
+            "hue",
+            "saturation",
+            "color",
+            "luminosity",
         ] {
             let parsed = super::super::CompositeOp::parse(keyword)
                 .unwrap_or_else(|| panic!("{keyword} is a spec keyword"));
@@ -1495,12 +1556,8 @@ mod put_image_data_tests {
         // `dirtyWidth` is a `long` in the IDL and the spec normalises a
         // negative one before clipping. Left un-normalised the clipped
         // rectangle inverts and the write silently does nothing at all.
-        let source = super::super::ImageData::from_rgba(
-            4,
-            4,
-            vec![255u8; 4 * 4 * 4],
-        )
-        .expect("a 4x4 buffer");
+        let source =
+            super::super::ImageData::from_rgba(4, 4, vec![255u8; 4 * 4 * 4]).expect("a 4x4 buffer");
 
         let mut c = RecordingCanvas::new();
         // (3,3) with extent -2 is the same rectangle as (1,1) with extent 2.
@@ -1517,8 +1574,7 @@ mod put_image_data_tests {
 
     #[test]
     fn an_empty_dirty_rectangle_writes_nothing() {
-        let source =
-            super::super::ImageData::from_rgba(4, 4, vec![255u8; 4 * 4 * 4]).expect("4x4");
+        let source = super::super::ImageData::from_rgba(4, 4, vec![255u8; 4 * 4 * 4]).expect("4x4");
         let mut c = RecordingCanvas::new();
         c.put_image_data_dirty(&source, 0.0, 0.0, 0, 0, 0, 0);
         assert!(c.commands.is_empty());

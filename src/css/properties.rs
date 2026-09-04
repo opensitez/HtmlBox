@@ -1,133 +1,409 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyId {
     // Display & Layout
-    Display, Position, Float, Clear, BoxSizing, Overflow, OverflowX, OverflowY, Visibility, Opacity, ZIndex,
+    Display,
+    Position,
+    Float,
+    Clear,
+    BoxSizing,
+    Overflow,
+    OverflowX,
+    OverflowY,
+    Visibility,
+    Opacity,
+    ZIndex,
 
     // Sizing
-    Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight,
+    Width,
+    Height,
+    MinWidth,
+    MinHeight,
+    MaxWidth,
+    MaxHeight,
 
     // Margin
-    Margin, MarginTop, MarginRight, MarginBottom, MarginLeft,
+    Margin,
+    MarginTop,
+    MarginRight,
+    MarginBottom,
+    MarginLeft,
 
     // Padding
-    Padding, PaddingTop, PaddingRight, PaddingBottom, PaddingLeft,
+    Padding,
+    PaddingTop,
+    PaddingRight,
+    PaddingBottom,
+    PaddingLeft,
 
     // Border width/style/color
-    Border, BorderTop, BorderRight, BorderBottom, BorderLeft,
-    BorderWidth, BorderStyle, BorderColor,
-    BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
-    BorderTopStyle, BorderRightStyle, BorderBottomStyle, BorderLeftStyle,
-    BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
-    BorderRadius, BorderTopLeftRadius, BorderTopRightRadius, BorderBottomLeftRadius, BorderBottomRightRadius,
-    BorderCollapse, BorderSpacing,
+    Border,
+    BorderTop,
+    BorderRight,
+    BorderBottom,
+    BorderLeft,
+    BorderWidth,
+    BorderStyle,
+    BorderColor,
+    BorderTopWidth,
+    BorderRightWidth,
+    BorderBottomWidth,
+    BorderLeftWidth,
+    BorderTopStyle,
+    BorderRightStyle,
+    BorderBottomStyle,
+    BorderLeftStyle,
+    BorderTopColor,
+    BorderRightColor,
+    BorderBottomColor,
+    BorderLeftColor,
+    BorderRadius,
+    BorderTopLeftRadius,
+    BorderTopRightRadius,
+    BorderBottomLeftRadius,
+    BorderBottomRightRadius,
+    BorderCollapse,
+    BorderSpacing,
+    BorderImage,
+    BorderImageSource,
+    BorderImageSlice,
+    BorderImageWidth,
+    BorderImageOutset,
+    BorderImageRepeat,
 
     // Position offsets
-    Top, Right, Bottom, Left,
+    Top,
+    Right,
+    Bottom,
+    Left,
 
     // Color & Background
     Color,
-    Background, BackgroundColor, BackgroundImage, BackgroundSize, BackgroundRepeat, BackgroundPosition, BackgroundAttachment, BackgroundOrigin, BackgroundClip,
+    Background,
+    BackgroundColor,
+    BackgroundImage,
+    BackgroundSize,
+    BackgroundRepeat,
+    BackgroundPosition,
+    BackgroundAttachment,
+    BackgroundOrigin,
+    BackgroundClip,
+    BackgroundBlendMode,
+    Mask,
     MaskImage,
+    MaskMode,
+    MaskRepeat,
+    MaskPosition,
+    MaskSize,
+    MaskClip,
+    MaskOrigin,
+    MaskComposite,
 
     // Font
-    Font, FontFamily, FontSize, FontWeight, FontStyle, FontStretch, FontVariant, FontFeatureSettings, FontVariationSettings,
+    Font,
+    FontFamily,
+    FontSize,
+    FontWeight,
+    FontStyle,
+    FontStretch,
+    FontVariant,
+    FontVariantAlternates,
+    FontVariantCaps,
+    FontVariantEastAsian,
+    FontVariantEmoji,
+    FontVariantLigatures,
+    FontVariantNumeric,
+    FontVariantPosition,
+    FontFeatureSettings,
+    FontVariationSettings,
+    FontSynthesis,
+    FontSynthesisWeight,
+    FontSynthesisStyle,
+    FontSynthesisSmallCaps,
+    FontSynthesisPosition,
 
     // Text
-    LineHeight, LetterSpacing, WordSpacing, TextAlign, TextDecoration, TextDecorationLine, TextDecorationStyle, TextDecorationColor, TextDecorationThickness, TextTransform, TextIndent, TextOverflow, TextShadow, TextUnderlineOffset,
+    LineHeight,
+    LetterSpacing,
+    WordSpacing,
+    TextAlign,
+    TextDecoration,
+    TextDecorationLine,
+    TextDecorationStyle,
+    TextDecorationColor,
+    TextDecorationThickness,
+    TextDecorationSkipInk,
+    TextEmphasis,
+    TextEmphasisStyle,
+    TextEmphasisColor,
+    TextEmphasisPosition,
+    TextTransform,
+    TextIndent,
+    TextOverflow,
+    TextShadow,
+    TextUnderlineOffset,
+    TextUnderlinePosition,
+    TextWrap,
 
     // Whitespace & word handling
-    WhiteSpace, WordBreak, WordWrap, OverflowWrap, Hyphens,
+    WhiteSpace,
+    WordBreak,
+    WordWrap,
+    OverflowWrap,
+    Hyphens,
 
     // Inline layout
-    VerticalAlign, Direction, UnicodeBidi, WritingMode,
+    VerticalAlign,
+    Direction,
+    UnicodeBidi,
+    WritingMode,
+    TextOrientation,
+    TextCombineUpright,
 
     // List
-    ListStyleType, ListStylePosition, ListStyleImage, ListStyle,
+    ListStyleType,
+    ListStylePosition,
+    ListStyleImage,
+    ListStyle,
 
     // Flexbox
-    Flex, FlexFlow, FlexDirection, FlexWrap, FlexGrow, FlexShrink, FlexBasis,
-    AlignItems, AlignSelf, AlignContent, JustifyContent, JustifyItems, JustifySelf, Order,
-    Gap, RowGap, ColumnGap,
+    Flex,
+    FlexFlow,
+    FlexDirection,
+    FlexWrap,
+    FlexGrow,
+    FlexShrink,
+    FlexBasis,
+    AlignItems,
+    AlignSelf,
+    AlignContent,
+    JustifyContent,
+    JustifyItems,
+    JustifySelf,
+    Order,
+    Gap,
+    RowGap,
+    ColumnGap,
 
     // Grid
-    GridTemplateColumns, GridTemplateRows, GridTemplateAreas,
-    GridAutoColumns, GridAutoRows, GridAutoFlow,
-    GridColumn, GridColumnStart, GridColumnEnd,
-    GridRow, GridRowStart, GridRowEnd,
-    GridArea, GridTemplate,
+    GridTemplateColumns,
+    GridTemplateRows,
+    GridTemplateAreas,
+    GridAutoColumns,
+    GridAutoRows,
+    GridAutoFlow,
+    GridColumn,
+    GridColumnStart,
+    GridColumnEnd,
+    GridRow,
+    GridRowStart,
+    GridRowEnd,
+    GridArea,
+    GridTemplate,
 
     // Table
-    TableLayout, CaptionSide, EmptyCells,
+    TableLayout,
+    CaptionSide,
+    EmptyCells,
 
     // Interaction
-    Cursor, PointerEvents, UserSelect, TouchAction, Resize,
+    Cursor,
+    PointerEvents,
+    UserSelect,
+    TouchAction,
+    Resize,
 
     // Transform
-    Transform, TransformOrigin, TransformStyle, Perspective, PerspectiveOrigin, BackfaceVisibility,
+    Transform,
+    TransformBox,
+    TransformOrigin,
+    TransformStyle,
+    Perspective,
+    PerspectiveOrigin,
+    BackfaceVisibility,
 
     // Transition
-    Transition, TransitionProperty, TransitionDuration, TransitionTimingFunction, TransitionDelay,
+    Transition,
+    TransitionProperty,
+    TransitionDuration,
+    TransitionTimingFunction,
+    TransitionDelay,
+    TransitionBehavior,
 
     // Animation
-    Animation, AnimationName, AnimationDuration, AnimationTimingFunction, AnimationDelay,
-    AnimationIterationCount, AnimationDirection, AnimationFillMode, AnimationPlayState,
+    Animation,
+    AnimationName,
+    AnimationDuration,
+    AnimationTimingFunction,
+    AnimationDelay,
+    AnimationIterationCount,
+    AnimationDirection,
+    AnimationFillMode,
+    AnimationPlayState,
+    AnimationComposition,
 
     // Filters & compositing
-    Filter, BackdropFilter, MixBlendMode, Isolation, Contain, ContentVisibility, WillChange,
+    Filter,
+    BackdropFilter,
+    MixBlendMode,
+    Isolation,
+    Contain,
+    ContentVisibility,
+    ContainIntrinsicSize,
+    WillChange,
 
     // Outline
-    Outline, OutlineColor, OutlineStyle, OutlineWidth, OutlineOffset,
+    Outline,
+    OutlineColor,
+    OutlineStyle,
+    OutlineWidth,
+    OutlineOffset,
 
     // Effects
-    BoxShadow, ClipPath, Clip,
+    BoxShadow,
+    ClipPath,
+    Clip,
+    ShapeOutside,
+    ShapeMargin,
 
     // Generated content
-    Content, Quotes, CounterIncrement, CounterReset, CounterSet,
+    Content,
+    Quotes,
+    CounterIncrement,
+    CounterReset,
+    CounterSet,
 
     // Object/image
-    ObjectFit, ObjectPosition, AspectRatio, ImageOrientation, ImageRendering,
+    ObjectFit,
+    ObjectPosition,
+    AspectRatio,
+    ImageOrientation,
+    ImageRendering,
 
     // Multi-column
-    ColumnCount, ColumnWidth, Columns, ColumnSpan,
-    ColumnRuleColor, ColumnRuleStyle, ColumnRuleWidth, ColumnRule, ColumnFill,
+    ColumnCount,
+    ColumnWidth,
+    Columns,
+    ColumnSpan,
+    ColumnRuleColor,
+    ColumnRuleStyle,
+    ColumnRuleWidth,
+    ColumnRule,
+    ColumnFill,
 
     // Page/break
-    PageBreakBefore, PageBreakAfter, PageBreakInside,
-    BreakBefore, BreakAfter, BreakInside,
-    Orphans, Widows,
+    PageBreakBefore,
+    PageBreakAfter,
+    PageBreakInside,
+    BreakBefore,
+    BreakAfter,
+    BreakInside,
+    LineClamp,
+    Orphans,
+    Widows,
 
     // Scroll
-    ScrollBehavior, ScrollSnapType, ScrollSnapAlign, ScrollSnapStop,
-    ScrollPadding, ScrollPaddingTop, ScrollPaddingRight, ScrollPaddingBottom, ScrollPaddingLeft,
-    ScrollMargin, ScrollMarginTop, ScrollMarginRight, ScrollMarginBottom, ScrollMarginLeft,
+    ScrollBehavior,
+    ScrollSnapType,
+    ScrollSnapAlign,
+    ScrollSnapStop,
+    OverflowAnchor,
+    OverflowClipMargin,
+    ScrollPadding,
+    ScrollPaddingTop,
+    ScrollPaddingRight,
+    ScrollPaddingBottom,
+    ScrollPaddingLeft,
+    ScrollMargin,
+    ScrollMarginTop,
+    ScrollMarginRight,
+    ScrollMarginBottom,
+    ScrollMarginLeft,
 
     // Overscroll
-    OverscrollBehavior, OverscrollBehaviorX, OverscrollBehaviorY, ScrollbarColor,
+    OverscrollBehavior,
+    OverscrollBehaviorX,
+    OverscrollBehaviorY,
+    ScrollbarColor,
+    ScrollbarWidth,
+    ScrollbarGutter,
 
     // UI
-    AccentColor, CaretColor, ColorScheme, ForcedColorAdjust, Appearance,
+    AccentColor,
+    CaretColor,
+    ColorScheme,
+    ForcedColorAdjust,
+    Appearance,
+    FieldSizing,
 
     // Container queries
-    ContainerType, ContainerName, Container,
+    ContainerType,
+    ContainerName,
+    Container,
 
     // Logical sizing
-    InlineSize, BlockSize,
+    InlineSize,
+    BlockSize,
 
     // Logical inset
-    InsetBlockStart, InsetBlockEnd, InsetInlineStart, InsetInlineEnd, Inset, InsetBlock, InsetInline,
+    InsetBlockStart,
+    InsetBlockEnd,
+    InsetInlineStart,
+    InsetInlineEnd,
+    Inset,
+    InsetBlock,
+    InsetInline,
+    MinInlineSize,
+    MinBlockSize,
+    MaxInlineSize,
+    MaxBlockSize,
 
     // Logical margin
-    MarginBlockStart, MarginBlockEnd, MarginInlineStart, MarginInlineEnd, MarginBlock, MarginInline,
+    MarginBlockStart,
+    MarginBlockEnd,
+    MarginInlineStart,
+    MarginInlineEnd,
+    MarginBlock,
+    MarginInline,
 
     // Logical padding
-    PaddingBlockStart, PaddingBlockEnd, PaddingInlineStart, PaddingInlineEnd, PaddingBlock, PaddingInline,
+    PaddingBlockStart,
+    PaddingBlockEnd,
+    PaddingInlineStart,
+    PaddingInlineEnd,
+    PaddingBlock,
+    PaddingInline,
+    BorderBlock,
+    BorderBlockStart,
+    BorderBlockEnd,
+    BorderInline,
+    BorderInlineStart,
+    BorderInlineEnd,
+    BorderBlockStartWidth,
+    BorderBlockEndWidth,
+    BorderInlineStartWidth,
+    BorderInlineEndWidth,
+    BorderBlockStartStyle,
+    BorderBlockEndStyle,
+    BorderInlineStartStyle,
+    BorderInlineEndStyle,
+    BorderBlockStartColor,
+    BorderBlockEndColor,
+    BorderInlineStartColor,
+    BorderInlineEndColor,
 
     // Place shorthands
-    PlaceContent, PlaceItems, PlaceSelf,
+    PlaceContent,
+    PlaceItems,
+    PlaceSelf,
 
     // Misc
     ColorInterpolation,
-    TabSize, Rotate, Scale, Translate,
+    InterpolateSize,
+    MarginTrim,
+    TabSize,
+    Rotate,
+    Scale,
+    Translate,
 
     Unknown,
 }
@@ -213,6 +489,12 @@ pub fn resolve(name: &str) -> PropertyId {
         "border-bottom-right-radius" => PropertyId::BorderBottomRightRadius,
         "border-collapse" => PropertyId::BorderCollapse,
         "border-spacing" => PropertyId::BorderSpacing,
+        "border-image" => PropertyId::BorderImage,
+        "border-image-source" => PropertyId::BorderImageSource,
+        "border-image-slice" => PropertyId::BorderImageSlice,
+        "border-image-width" => PropertyId::BorderImageWidth,
+        "border-image-outset" => PropertyId::BorderImageOutset,
+        "border-image-repeat" => PropertyId::BorderImageRepeat,
 
         // Position offsets
         "top" => PropertyId::Top,
@@ -225,13 +507,22 @@ pub fn resolve(name: &str) -> PropertyId {
         "background" => PropertyId::Background,
         "background-color" => PropertyId::BackgroundColor,
         "background-image" => PropertyId::BackgroundImage,
+        "mask" => PropertyId::Mask,
         "mask-image" => PropertyId::MaskImage,
+        "mask-mode" => PropertyId::MaskMode,
+        "mask-repeat" => PropertyId::MaskRepeat,
+        "mask-position" => PropertyId::MaskPosition,
+        "mask-size" => PropertyId::MaskSize,
+        "mask-clip" => PropertyId::MaskClip,
+        "mask-origin" => PropertyId::MaskOrigin,
+        "mask-composite" => PropertyId::MaskComposite,
         "background-size" => PropertyId::BackgroundSize,
         "background-repeat" => PropertyId::BackgroundRepeat,
         "background-position" => PropertyId::BackgroundPosition,
         "background-attachment" => PropertyId::BackgroundAttachment,
         "background-origin" => PropertyId::BackgroundOrigin,
         "background-clip" => PropertyId::BackgroundClip,
+        "background-blend-mode" => PropertyId::BackgroundBlendMode,
 
         // Font
         "font" => PropertyId::Font,
@@ -240,7 +531,19 @@ pub fn resolve(name: &str) -> PropertyId {
         "font-weight" => PropertyId::FontWeight,
         "font-style" => PropertyId::FontStyle,
         "font-stretch" => PropertyId::FontStretch,
+        "font-synthesis" => PropertyId::FontSynthesis,
+        "font-synthesis-weight" => PropertyId::FontSynthesisWeight,
+        "font-synthesis-style" => PropertyId::FontSynthesisStyle,
+        "font-synthesis-small-caps" => PropertyId::FontSynthesisSmallCaps,
+        "font-synthesis-position" => PropertyId::FontSynthesisPosition,
         "font-variant" => PropertyId::FontVariant,
+        "font-variant-alternates" => PropertyId::FontVariantAlternates,
+        "font-variant-caps" => PropertyId::FontVariantCaps,
+        "font-variant-east-asian" => PropertyId::FontVariantEastAsian,
+        "font-variant-emoji" => PropertyId::FontVariantEmoji,
+        "font-variant-ligatures" => PropertyId::FontVariantLigatures,
+        "font-variant-numeric" => PropertyId::FontVariantNumeric,
+        "font-variant-position" => PropertyId::FontVariantPosition,
         "font-feature-settings" => PropertyId::FontFeatureSettings,
         "font-variation-settings" => PropertyId::FontVariationSettings,
 
@@ -254,11 +557,18 @@ pub fn resolve(name: &str) -> PropertyId {
         "text-decoration-style" => PropertyId::TextDecorationStyle,
         "text-decoration-color" => PropertyId::TextDecorationColor,
         "text-decoration-thickness" => PropertyId::TextDecorationThickness,
+        "text-decoration-skip-ink" => PropertyId::TextDecorationSkipInk,
+        "text-emphasis" => PropertyId::TextEmphasis,
+        "text-emphasis-style" => PropertyId::TextEmphasisStyle,
+        "text-emphasis-color" => PropertyId::TextEmphasisColor,
+        "text-emphasis-position" => PropertyId::TextEmphasisPosition,
         "text-transform" => PropertyId::TextTransform,
         "text-indent" => PropertyId::TextIndent,
         "text-overflow" => PropertyId::TextOverflow,
         "text-shadow" => PropertyId::TextShadow,
         "text-underline-offset" => PropertyId::TextUnderlineOffset,
+        "text-underline-position" => PropertyId::TextUnderlinePosition,
+        "text-wrap" => PropertyId::TextWrap,
 
         // Whitespace
         "white-space" => PropertyId::WhiteSpace,
@@ -272,6 +582,8 @@ pub fn resolve(name: &str) -> PropertyId {
         "direction" => PropertyId::Direction,
         "unicode-bidi" => PropertyId::UnicodeBidi,
         "writing-mode" => PropertyId::WritingMode,
+        "text-orientation" => PropertyId::TextOrientation,
+        "text-combine-upright" => PropertyId::TextCombineUpright,
 
         // List
         "list-style-type" => PropertyId::ListStyleType,
@@ -328,6 +640,7 @@ pub fn resolve(name: &str) -> PropertyId {
 
         // Transform
         "transform" => PropertyId::Transform,
+        "transform-box" => PropertyId::TransformBox,
         "transform-origin" => PropertyId::TransformOrigin,
         "transform-style" => PropertyId::TransformStyle,
         "perspective" => PropertyId::Perspective,
@@ -340,6 +653,7 @@ pub fn resolve(name: &str) -> PropertyId {
         "transition-duration" => PropertyId::TransitionDuration,
         "transition-timing-function" => PropertyId::TransitionTimingFunction,
         "transition-delay" => PropertyId::TransitionDelay,
+        "transition-behavior" => PropertyId::TransitionBehavior,
 
         // Animation
         "animation" => PropertyId::Animation,
@@ -351,6 +665,7 @@ pub fn resolve(name: &str) -> PropertyId {
         "animation-direction" => PropertyId::AnimationDirection,
         "animation-fill-mode" => PropertyId::AnimationFillMode,
         "animation-play-state" => PropertyId::AnimationPlayState,
+        "animation-composition" => PropertyId::AnimationComposition,
 
         // Filters & compositing
         "filter" => PropertyId::Filter,
@@ -359,6 +674,7 @@ pub fn resolve(name: &str) -> PropertyId {
         "isolation" => PropertyId::Isolation,
         "contain" => PropertyId::Contain,
         "content-visibility" => PropertyId::ContentVisibility,
+        "contain-intrinsic-size" => PropertyId::ContainIntrinsicSize,
         "will-change" => PropertyId::WillChange,
 
         // Outline
@@ -372,6 +688,8 @@ pub fn resolve(name: &str) -> PropertyId {
         "box-shadow" => PropertyId::BoxShadow,
         "clip-path" => PropertyId::ClipPath,
         "clip" => PropertyId::Clip,
+        "shape-outside" => PropertyId::ShapeOutside,
+        "shape-margin" => PropertyId::ShapeMargin,
 
         // Generated content
         "content" => PropertyId::Content,
@@ -405,6 +723,8 @@ pub fn resolve(name: &str) -> PropertyId {
         "break-before" => PropertyId::BreakBefore,
         "break-after" => PropertyId::BreakAfter,
         "break-inside" => PropertyId::BreakInside,
+        "line-clamp" => PropertyId::LineClamp,
+        "-webkit-line-clamp" => PropertyId::LineClamp,
         "orphans" => PropertyId::Orphans,
         "widows" => PropertyId::Widows,
 
@@ -413,6 +733,8 @@ pub fn resolve(name: &str) -> PropertyId {
         "scroll-snap-type" => PropertyId::ScrollSnapType,
         "scroll-snap-align" => PropertyId::ScrollSnapAlign,
         "scroll-snap-stop" => PropertyId::ScrollSnapStop,
+        "overflow-anchor" => PropertyId::OverflowAnchor,
+        "overflow-clip-margin" => PropertyId::OverflowClipMargin,
         "scroll-padding" => PropertyId::ScrollPadding,
         "scroll-padding-top" => PropertyId::ScrollPaddingTop,
         "scroll-padding-right" => PropertyId::ScrollPaddingRight,
@@ -429,6 +751,8 @@ pub fn resolve(name: &str) -> PropertyId {
         "overscroll-behavior-x" => PropertyId::OverscrollBehaviorX,
         "overscroll-behavior-y" => PropertyId::OverscrollBehaviorY,
         "scrollbar-color" => PropertyId::ScrollbarColor,
+        "scrollbar-width" => PropertyId::ScrollbarWidth,
+        "scrollbar-gutter" => PropertyId::ScrollbarGutter,
 
         // UI
         "accent-color" => PropertyId::AccentColor,
@@ -436,6 +760,7 @@ pub fn resolve(name: &str) -> PropertyId {
         "color-scheme" => PropertyId::ColorScheme,
         "forced-color-adjust" => PropertyId::ForcedColorAdjust,
         "appearance" => PropertyId::Appearance,
+        "field-sizing" => PropertyId::FieldSizing,
 
         // Container queries
         "container-type" => PropertyId::ContainerType,
@@ -445,6 +770,10 @@ pub fn resolve(name: &str) -> PropertyId {
         // Logical sizing
         "inline-size" => PropertyId::InlineSize,
         "block-size" => PropertyId::BlockSize,
+        "min-inline-size" => PropertyId::MinInlineSize,
+        "min-block-size" => PropertyId::MinBlockSize,
+        "max-inline-size" => PropertyId::MaxInlineSize,
+        "max-block-size" => PropertyId::MaxBlockSize,
 
         // Logical inset
         "inset-block-start" => PropertyId::InsetBlockStart,
@@ -471,6 +800,26 @@ pub fn resolve(name: &str) -> PropertyId {
         "padding-block" => PropertyId::PaddingBlock,
         "padding-inline" => PropertyId::PaddingInline,
 
+        // Logical borders
+        "border-block" => PropertyId::BorderBlock,
+        "border-block-start" => PropertyId::BorderBlockStart,
+        "border-block-end" => PropertyId::BorderBlockEnd,
+        "border-inline" => PropertyId::BorderInline,
+        "border-inline-start" => PropertyId::BorderInlineStart,
+        "border-inline-end" => PropertyId::BorderInlineEnd,
+        "border-block-start-width" => PropertyId::BorderBlockStartWidth,
+        "border-block-end-width" => PropertyId::BorderBlockEndWidth,
+        "border-inline-start-width" => PropertyId::BorderInlineStartWidth,
+        "border-inline-end-width" => PropertyId::BorderInlineEndWidth,
+        "border-block-start-style" => PropertyId::BorderBlockStartStyle,
+        "border-block-end-style" => PropertyId::BorderBlockEndStyle,
+        "border-inline-start-style" => PropertyId::BorderInlineStartStyle,
+        "border-inline-end-style" => PropertyId::BorderInlineEndStyle,
+        "border-block-start-color" => PropertyId::BorderBlockStartColor,
+        "border-block-end-color" => PropertyId::BorderBlockEndColor,
+        "border-inline-start-color" => PropertyId::BorderInlineStartColor,
+        "border-inline-end-color" => PropertyId::BorderInlineEndColor,
+
         // Place shorthands
         "place-content" => PropertyId::PlaceContent,
         "place-items" => PropertyId::PlaceItems,
@@ -478,6 +827,8 @@ pub fn resolve(name: &str) -> PropertyId {
 
         // Misc
         "color-interpolation" => PropertyId::ColorInterpolation,
+        "interpolate-size" => PropertyId::InterpolateSize,
+        "margin-trim" => PropertyId::MarginTrim,
         "tab-size" => PropertyId::TabSize,
         "rotate" => PropertyId::Rotate,
         "scale" => PropertyId::Scale,
@@ -493,98 +844,123 @@ pub fn resolve(name: &str) -> PropertyId {
 
 /// Returns true if the property is inherited by default per the CSS spec.
 pub fn is_inherited(id: PropertyId) -> bool {
-    matches!(id,
+    matches!(
+        id,
         PropertyId::Color
-        | PropertyId::FontFamily
-        | PropertyId::FontSize
-        | PropertyId::FontWeight
-        | PropertyId::FontStyle
-        | PropertyId::FontStretch
-        | PropertyId::FontVariant
-        | PropertyId::FontFeatureSettings
-        | PropertyId::FontVariationSettings
-        | PropertyId::Font
-        | PropertyId::LineHeight
-        | PropertyId::LetterSpacing
-        | PropertyId::WordSpacing
-        | PropertyId::TextAlign
-        | PropertyId::TextIndent
-        | PropertyId::TextTransform
-        | PropertyId::TextDecoration
-        | PropertyId::TextDecorationLine
-        | PropertyId::TextDecorationStyle
-        | PropertyId::TextDecorationColor
-        | PropertyId::TextDecorationThickness
-        | PropertyId::TextUnderlineOffset
-        | PropertyId::TextShadow
-        | PropertyId::WhiteSpace
-        | PropertyId::WordBreak
-        | PropertyId::WordWrap
-        | PropertyId::OverflowWrap
-        | PropertyId::Hyphens
-        | PropertyId::Direction
-        | PropertyId::WritingMode
-        | PropertyId::Visibility
-        | PropertyId::Cursor
-        | PropertyId::ListStyleType
-        | PropertyId::ListStylePosition
-        | PropertyId::ListStyleImage
-        | PropertyId::ListStyle
-        | PropertyId::Quotes
-        | PropertyId::Orphans
-        | PropertyId::Widows
-        | PropertyId::TabSize
-        | PropertyId::BorderCollapse
-        | PropertyId::BorderSpacing
-        | PropertyId::CaptionSide
-        | PropertyId::EmptyCells
+            | PropertyId::FontFamily
+            | PropertyId::FontSize
+            | PropertyId::FontWeight
+            | PropertyId::FontStyle
+            | PropertyId::FontStretch
+            | PropertyId::FontVariant
+            | PropertyId::FontVariantAlternates
+            | PropertyId::FontVariantCaps
+            | PropertyId::FontVariantEastAsian
+            | PropertyId::FontVariantEmoji
+            | PropertyId::FontVariantLigatures
+            | PropertyId::FontVariantNumeric
+            | PropertyId::FontVariantPosition
+            | PropertyId::FontFeatureSettings
+            | PropertyId::FontVariationSettings
+            | PropertyId::FontSynthesis
+            | PropertyId::FontSynthesisWeight
+            | PropertyId::FontSynthesisStyle
+            | PropertyId::FontSynthesisSmallCaps
+            | PropertyId::FontSynthesisPosition
+            | PropertyId::Font
+            | PropertyId::LineHeight
+            | PropertyId::LetterSpacing
+            | PropertyId::WordSpacing
+            | PropertyId::TextAlign
+            | PropertyId::TextIndent
+            | PropertyId::TextTransform
+            | PropertyId::TextDecoration
+            | PropertyId::TextDecorationLine
+            | PropertyId::TextDecorationStyle
+            | PropertyId::TextDecorationColor
+            | PropertyId::TextDecorationThickness
+            | PropertyId::TextDecorationSkipInk
+            | PropertyId::TextEmphasis
+            | PropertyId::TextEmphasisStyle
+            | PropertyId::TextEmphasisColor
+            | PropertyId::TextEmphasisPosition
+            | PropertyId::TextUnderlineOffset
+            | PropertyId::TextUnderlinePosition
+            | PropertyId::TextShadow
+            | PropertyId::TextWrap
+            | PropertyId::WhiteSpace
+            | PropertyId::WordBreak
+            | PropertyId::WordWrap
+            | PropertyId::OverflowWrap
+            | PropertyId::Hyphens
+            | PropertyId::Direction
+            | PropertyId::WritingMode
+            | PropertyId::TextOrientation
+            | PropertyId::TextCombineUpright
+            | PropertyId::InterpolateSize
+            | PropertyId::Visibility
+            | PropertyId::Cursor
+            | PropertyId::ListStyleType
+            | PropertyId::ListStylePosition
+            | PropertyId::ListStyleImage
+            | PropertyId::ListStyle
+            | PropertyId::Quotes
+            | PropertyId::Orphans
+            | PropertyId::Widows
+            | PropertyId::TabSize
+            | PropertyId::BorderCollapse
+            | PropertyId::BorderSpacing
+            | PropertyId::CaptionSide
+            | PropertyId::EmptyCells
+            | PropertyId::ColorScheme
     )
 }
 
 /// Returns true if the property is a shorthand that expands into longhands.
 pub fn is_shorthand(id: PropertyId) -> bool {
-    matches!(id,
+    matches!(
+        id,
         PropertyId::Margin
-        | PropertyId::Padding
-        | PropertyId::Border
-        | PropertyId::BorderTop
-        | PropertyId::BorderRight
-        | PropertyId::BorderBottom
-        | PropertyId::BorderLeft
-        | PropertyId::BorderWidth
-        | PropertyId::BorderStyle
-        | PropertyId::BorderColor
-        | PropertyId::BorderRadius
-        | PropertyId::Background
-        | PropertyId::Font
-        | PropertyId::Flex
-        | PropertyId::FlexFlow
-        | PropertyId::ListStyle
-        | PropertyId::TextDecoration
-        | PropertyId::Outline
-        | PropertyId::Transition
-        | PropertyId::Animation
-        | PropertyId::GridTemplate
-        | PropertyId::GridArea
-        | PropertyId::GridColumn
-        | PropertyId::GridRow
-        | PropertyId::Gap
-        | PropertyId::Columns
-        | PropertyId::ColumnRule
-        | PropertyId::PlaceContent
-        | PropertyId::PlaceItems
-        | PropertyId::PlaceSelf
-        | PropertyId::Inset
-        | PropertyId::InsetBlock
-        | PropertyId::InsetInline
-        | PropertyId::MarginBlock
-        | PropertyId::MarginInline
-        | PropertyId::PaddingBlock
-        | PropertyId::PaddingInline
-        | PropertyId::ScrollPadding
-        | PropertyId::ScrollMargin
-        | PropertyId::OverscrollBehavior
-        | PropertyId::Overflow
-        | PropertyId::Container
+            | PropertyId::Padding
+            | PropertyId::Border
+            | PropertyId::BorderTop
+            | PropertyId::BorderRight
+            | PropertyId::BorderBottom
+            | PropertyId::BorderLeft
+            | PropertyId::BorderWidth
+            | PropertyId::BorderStyle
+            | PropertyId::BorderColor
+            | PropertyId::BorderRadius
+            | PropertyId::Background
+            | PropertyId::Font
+            | PropertyId::Flex
+            | PropertyId::FlexFlow
+            | PropertyId::ListStyle
+            | PropertyId::TextDecoration
+            | PropertyId::Outline
+            | PropertyId::Transition
+            | PropertyId::Animation
+            | PropertyId::GridTemplate
+            | PropertyId::GridArea
+            | PropertyId::GridColumn
+            | PropertyId::GridRow
+            | PropertyId::Gap
+            | PropertyId::Columns
+            | PropertyId::ColumnRule
+            | PropertyId::PlaceContent
+            | PropertyId::PlaceItems
+            | PropertyId::PlaceSelf
+            | PropertyId::Inset
+            | PropertyId::InsetBlock
+            | PropertyId::InsetInline
+            | PropertyId::MarginBlock
+            | PropertyId::MarginInline
+            | PropertyId::PaddingBlock
+            | PropertyId::PaddingInline
+            | PropertyId::ScrollPadding
+            | PropertyId::ScrollMargin
+            | PropertyId::OverscrollBehavior
+            | PropertyId::Overflow
+            | PropertyId::Container
     )
 }

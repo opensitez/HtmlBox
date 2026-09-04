@@ -97,9 +97,8 @@ impl DateField {
                 let top = cy - size / 2.0;
                 let mut pb = PathBuilder::new();
                 pb.push_rect(
-                    tiny_skia::Rect::from_xywh(left, top, size, size).unwrap_or(
-                        tiny_skia::Rect::from_xywh(0.0, 0.0, 1.0, 1.0).unwrap(),
-                    ),
+                    tiny_skia::Rect::from_xywh(left, top, size, size)
+                        .unwrap_or(tiny_skia::Rect::from_xywh(0.0, 0.0, 1.0, 1.0).unwrap()),
                 );
                 pb.move_to(left, top + size * 0.32);
                 pb.line_to(left + size, top + size * 0.32);
@@ -247,7 +246,7 @@ mod tests {
 
     #[test]
     fn the_month_grid_is_arithmetic_not_a_guess() {
-        use super::{Calendar, days_in_month, first_weekday, parse_date, to_date_value};
+        use super::{days_in_month, first_weekday, parse_date, to_date_value, Calendar};
         // Known anchors: 2026-08-01 is a Saturday, 2000-02-01 a Tuesday.
         assert_eq!(first_weekday(2026, 8), 5, "Saturday, counting from Monday");
         assert_eq!(first_weekday(2000, 2), 1, "Tuesday");
@@ -260,9 +259,16 @@ mod tests {
         let first = first_weekday(2026, 8);
         let days = days_in_month(2026, 8);
         let cell = Calendar::CELL;
-        assert_eq!(Calendar::day_at((cell * 0.5, Calendar::HEADER + 2.0), first, days), None);
         assert_eq!(
-            Calendar::day_at((cell * (first as f32 + 0.5), Calendar::HEADER + 2.0), first, days),
+            Calendar::day_at((cell * 0.5, Calendar::HEADER + 2.0), first, days),
+            None
+        );
+        assert_eq!(
+            Calendar::day_at(
+                (cell * (first as f32 + 0.5), Calendar::HEADER + 2.0),
+                first,
+                days
+            ),
             Some(1)
         );
         // Nor are the ones after the month's end.

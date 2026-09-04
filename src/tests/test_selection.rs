@@ -36,8 +36,12 @@ line2</textarea>
 <div id=div>not a control</div>
 </form>"#;
 
-fn form() -> Document { parse_html(FORM) }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn form() -> Document {
+    parse_html(FORM)
+}
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 /// Fresh single input, so a test that rewrites the value cannot disturb another.
 fn one(markup: &str) -> (Document, u32) {
@@ -55,7 +59,11 @@ fn the_api_applies_to_the_five_text_states_and_textarea() {
     for id in ["t", "pw", "se", "url", "tel", "plain", "weird", "ta"] {
         let e = el(&d, id);
         assert_eq!(d.selection_start(e), Some(0), "{id}.selectionStart");
-        assert_eq!(d.selection_direction(e), Some("none"), "{id}.selectionDirection");
+        assert_eq!(
+            d.selection_direction(e),
+            Some("none"),
+            "{id}.selectionDirection"
+        );
     }
 }
 
@@ -78,11 +86,20 @@ fn the_setters_throw_where_the_getters_answer_null() {
     let mut d = form();
     for id in ["em", "num", "cb", "dt", "file", "hid", "div"] {
         let e = el(&d, id);
-        assert!(!d.set_selection_range(e, 0, 1, None), "{id}.setSelectionRange");
+        assert!(
+            !d.set_selection_range(e, 0, 1, None),
+            "{id}.setSelectionRange"
+        );
         assert!(!d.set_selection_start(e, 1), "{id}.selectionStart=");
         assert!(!d.set_selection_end(e, 1), "{id}.selectionEnd=");
-        assert!(!d.set_selection_direction(e, "forward"), "{id}.selectionDirection=");
-        assert!(!d.set_range_text(e, "Q", Some((0, 1)), "preserve"), "{id}.setRangeText");
+        assert!(
+            !d.set_selection_direction(e, "forward"),
+            "{id}.selectionDirection="
+        );
+        assert!(
+            !d.set_range_text(e, "Q", Some((0, 1)), "preserve"),
+            "{id}.setRangeText"
+        );
     }
 }
 
@@ -113,7 +130,9 @@ fn select_on_a_control_without_selectable_text_fires_nothing() {
     d.add_event_listener(
         cb,
         "select",
-        Box::new(move |_, _| { *counter.lock().unwrap() += 1; }),
+        Box::new(move |_, _| {
+            *counter.lock().unwrap() += 1;
+        }),
         Default::default(),
     );
     d.select(cb);
@@ -130,7 +149,11 @@ fn select_covers_the_whole_value_and_clears_the_direction() {
     assert_eq!(d.selection_direction(t), Some("backward"));
     d.select(t);
     assert_eq!(
-        (d.selection_start(t), d.selection_end(t), d.selection_direction(t)),
+        (
+            d.selection_start(t),
+            d.selection_end(t),
+            d.selection_direction(t)
+        ),
         (Some(0), Some(11), Some("none")),
         "Chrome: [0,11,\"none\"] — select() resets the direction it found"
     );
@@ -142,7 +165,10 @@ fn a_backwards_range_collapses_onto_its_end_not_its_start() {
     let t = el(&d, "t");
     // Chrome: `setSelectionRange(3,1)` → [1,1]. The spec sets START to end.
     assert!(d.set_selection_range(t, 3, 1, None));
-    assert_eq!((d.selection_start(t), d.selection_end(t)), (Some(1), Some(1)));
+    assert_eq!(
+        (d.selection_start(t), d.selection_end(t)),
+        (Some(1), Some(1))
+    );
 }
 
 #[test]
@@ -150,7 +176,10 @@ fn offsets_past_the_value_clamp_to_its_length() {
     let mut d = form();
     let t = el(&d, "t");
     assert!(d.set_selection_range(t, 99, 99, None));
-    assert_eq!((d.selection_start(t), d.selection_end(t)), (Some(11), Some(11)));
+    assert_eq!(
+        (d.selection_start(t), d.selection_end(t)),
+        (Some(11), Some(11))
+    );
 }
 
 #[test]
@@ -174,12 +203,20 @@ fn a_two_argument_range_resets_the_direction_and_the_start_setter_keeps_it() {
     // ⛔ The one place these two paths must NOT share an implementation.
     assert!(d.set_selection_range(t, 2, 5, Some("backward")));
     assert!(d.set_selection_range(t, 1, 3, None));
-    assert_eq!(d.selection_direction(t), Some("none"), "the 2-arg call clears it");
+    assert_eq!(
+        d.selection_direction(t),
+        Some("none"),
+        "the 2-arg call clears it"
+    );
 
     assert!(d.set_selection_range(t, 2, 5, Some("backward")));
     assert!(d.set_selection_start(t, 1));
     assert_eq!(
-        (d.selection_start(t), d.selection_end(t), d.selection_direction(t)),
+        (
+            d.selection_start(t),
+            d.selection_end(t),
+            d.selection_direction(t)
+        ),
         (Some(1), Some(5), Some("backward")),
         "Chrome: [1,5,\"backward\"] — the start setter leaves the direction alone"
     );
@@ -191,11 +228,17 @@ fn a_start_past_the_end_drags_the_end_and_an_end_before_the_start_drags_the_star
     let t = el(&d, "t");
     assert!(d.set_selection_range(t, 1, 5, None));
     assert!(d.set_selection_start(t, 8));
-    assert_eq!((d.selection_start(t), d.selection_end(t)), (Some(8), Some(8)));
+    assert_eq!(
+        (d.selection_start(t), d.selection_end(t)),
+        (Some(8), Some(8))
+    );
 
     assert!(d.set_selection_range(t, 3, 5, None));
     assert!(d.set_selection_end(t, 0));
-    assert_eq!((d.selection_start(t), d.selection_end(t)), (Some(0), Some(0)));
+    assert_eq!(
+        (d.selection_start(t), d.selection_end(t)),
+        (Some(0), Some(0))
+    );
 }
 
 #[test]
@@ -209,11 +252,19 @@ fn a_backward_selection_puts_the_cursor_at_its_start() {
     let t = el(&d, "t");
     assert!(d.set_selection_range(t, 2, 5, Some("backward")));
     let n = d.find_webcore(t).unwrap();
-    assert_eq!((n.input_cursor, n.input_sel_anchor), (2, 5), "backward: cursor leads at the start");
+    assert_eq!(
+        (n.input_cursor, n.input_sel_anchor),
+        (2, 5),
+        "backward: cursor leads at the start"
+    );
 
     assert!(d.set_selection_range(t, 2, 5, Some("forward")));
     let n = d.find_webcore(t).unwrap();
-    assert_eq!((n.input_cursor, n.input_sel_anchor), (5, 2), "forward: cursor trails at the end");
+    assert_eq!(
+        (n.input_cursor, n.input_sel_anchor),
+        (5, 2),
+        "forward: cursor trails at the end"
+    );
 }
 
 // ─── setRangeText ───────────────────────────────────────────────────────────
@@ -224,7 +275,10 @@ fn set_range_text_without_a_range_uses_the_current_selection() {
     assert!(d.set_selection_range(x, 1, 3, None));
     assert!(d.set_range_text(x, "XY", None, "preserve"));
     assert_eq!(d.value(x), "HXYlo");
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(1), Some(3)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(1), Some(3))
+    );
 }
 
 #[test]
@@ -274,7 +328,11 @@ fn preserve_moves_each_end_by_where_it_sits_relative_to_the_replaced_range() {
         d.set_value(x, value);
         assert!(d.set_selection_range(x, sel.0, sel.1, None));
         assert!(d.set_range_text(x, replacement, Some(*range), "preserve"));
-        assert_eq!(&d.value(x), want_value, "{value:?} sel {sel:?} ← {replacement:?}@{range:?}");
+        assert_eq!(
+            &d.value(x),
+            want_value,
+            "{value:?} sel {sel:?} ← {replacement:?}@{range:?}"
+        );
         assert_eq!(
             (d.selection_start(x), d.selection_end(x)),
             (Some(want_sel.0), Some(want_sel.1)),
@@ -294,7 +352,10 @@ fn a_start_past_its_end_is_an_index_size_error_but_one_past_the_value_is_not() {
     d.set_value(x, "Hi");
     assert!(d.set_range_text(x, "Z", Some((10, 20)), "preserve"));
     assert_eq!(d.value(x), "HiZ");
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(2), Some(2)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(2), Some(2))
+    );
 }
 
 #[test]
@@ -310,7 +371,12 @@ fn set_range_text_leaves_the_range_directionless() {
     assert!(d.set_selection_range(x, 1, 3, Some("backward")));
     assert!(d.set_range_text(x, "Q", None, "preserve"));
     assert_eq!(
-        (d.value(x), d.selection_start(x), d.selection_end(x), d.selection_direction(x)),
+        (
+            d.value(x),
+            d.selection_start(x),
+            d.selection_end(x),
+            d.selection_direction(x)
+        ),
         ("HQlo".to_string(), Some(1), Some(2), Some("none")),
     );
 }
@@ -323,7 +389,10 @@ fn assigning_a_different_value_collapses_the_selection_to_the_end() {
     d.set_value(x, "abcdef");
     assert!(d.set_selection_range(x, 2, 4, None));
     d.set_value(x, "ghijkl");
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(6), Some(6)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(6), Some(6))
+    );
 }
 
 #[test]
@@ -347,9 +416,16 @@ fn textarea_offsets_index_the_lf_normalised_api_value() {
     let ta = el(&d, "ta");
     assert_eq!(d.value(ta), "line1\nline2");
     d.select(ta);
-    assert_eq!((d.selection_start(ta), d.selection_end(ta)), (Some(0), Some(11)));
+    assert_eq!(
+        (d.selection_start(ta), d.selection_end(ta)),
+        (Some(0), Some(11))
+    );
     assert!(d.set_range_text(ta, "X", Some((0, 5)), "preserve"));
-    assert_eq!(d.value(ta), "X\nline2", "the newline is one offset, not two");
+    assert_eq!(
+        d.value(ta),
+        "X\nline2",
+        "the newline is one offset, not two"
+    );
 }
 
 // ─── encodings: the two fixtures that disagree ──────────────────────────────
@@ -361,16 +437,25 @@ fn a_bmp_non_ascii_value_is_indexed_in_characters_not_bytes() {
     let (mut d, x) = one(r#"<input id=x type=text value="">"#);
     d.set_value(x, "日本ab");
     d.select(x);
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(0), Some(4)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(0), Some(4))
+    );
 
     assert!(d.set_selection_range(x, 1, 3, None));
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(1), Some(3)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(1), Some(3))
+    );
 
     let (mut d, x) = one(r#"<input id=x type=text value="">"#);
     d.set_value(x, "日本ab");
     assert!(d.set_range_text(x, "Q", Some((1, 3)), "preserve"));
     assert_eq!(d.value(x), "日Qb");
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(3), Some(3)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(3), Some(3))
+    );
 }
 
 #[test]
@@ -381,18 +466,27 @@ fn an_astral_value_is_indexed_in_utf16_units_not_characters() {
     let (mut d, x) = one(r#"<input id=x type=text value="">"#);
     d.set_value(x, "😀ab");
     d.select(x);
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(0), Some(4)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(0), Some(4))
+    );
 
     let (mut d, x) = one(r#"<input id=x type=text value="">"#);
     d.set_value(x, "😀");
     assert!(d.set_selection_range(x, 0, 99, None));
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(0), Some(2)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(0), Some(2))
+    );
 
     // Both offsets past the end, and in the wrong order. `store_selection`
     // carries no length clamp of its own — it relies on `utf16_to_char_floor`
     // saturating — so this is the assertion that makes that reliance visible.
     assert!(d.set_selection_range(x, 99, 50, None));
-    assert_eq!((d.selection_start(x), d.selection_end(x)), (Some(2), Some(2)));
+    assert_eq!(
+        (d.selection_start(x), d.selection_end(x)),
+        (Some(2), Some(2))
+    );
 
     // An offset PAST the pair is exact.
     let (mut d, x) = one(r#"<input id=x type=text value="">"#);
@@ -425,11 +519,17 @@ fn setting_a_selection_fires_select_at_the_control() {
     d.add_event_listener(
         t,
         "select",
-        Box::new(move |_, _| { *counter.lock().unwrap() += 1; }),
+        Box::new(move |_, _| {
+            *counter.lock().unwrap() += 1;
+        }),
         Default::default(),
     );
     d.select(t);
     assert!(d.set_selection_range(t, 0, 2, None));
     assert!(d.set_range_text(t, "Q", Some((0, 1)), "preserve"));
-    assert_eq!(*seen.lock().unwrap(), 3, "select(), setSelectionRange and setRangeText each fire it");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        3,
+        "select(), setSelectionRange and setRangeText each fire it"
+    );
 }

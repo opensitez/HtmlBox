@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 /// Resolve `<slot>` elements in a shadow tree by projecting light DOM children into them.
 pub(crate) fn resolve_slots_inner(shadow_children: &mut Vec<WebCore>, light_children: &[WebCore]) {
@@ -16,15 +16,26 @@ pub(crate) fn resolve_slots_inner(shadow_children: &mut Vec<WebCore>, light_chil
                 // Default slot: all light children without a `slot` attribute
                 // Slottables are elements and non-blank text. A comment is
                 // neither, so it is not projected.
-                light_children.iter()
-                    .filter(|lc| !lc.attributes.contains_key("slot") && lc.is_element()
-                        || (lc.is_text_node() && !lc.text.trim().is_empty() && !lc.attributes.contains_key("slot")))
+                light_children
+                    .iter()
+                    .filter(|lc| {
+                        !lc.attributes.contains_key("slot") && lc.is_element()
+                            || (lc.is_text_node()
+                                && !lc.text.trim().is_empty()
+                                && !lc.attributes.contains_key("slot"))
+                    })
                     .cloned()
                     .collect()
             } else {
                 // Named slot: light children with matching `slot` attribute
-                light_children.iter()
-                    .filter(|lc| lc.attributes.get("slot").map(|s| s == &slot_name).unwrap_or(false))
+                light_children
+                    .iter()
+                    .filter(|lc| {
+                        lc.attributes
+                            .get("slot")
+                            .map(|s| s == &slot_name)
+                            .unwrap_or(false)
+                    })
                     .cloned()
                     .collect()
             };

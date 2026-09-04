@@ -35,8 +35,12 @@ pub enum TokenError {
 
 /// Validate one token the way DOM §7.1 does, before any mutation happens.
 pub fn validate_token(token: &str) -> Result<(), TokenError> {
-    if token.is_empty() { return Err(TokenError::Syntax); }
-    if token.chars().any(|c| c.is_ascii_whitespace()) { return Err(TokenError::InvalidCharacter); }
+    if token.is_empty() {
+        return Err(TokenError::Syntax);
+    }
+    if token.chars().any(|c| c.is_ascii_whitespace()) {
+        return Err(TokenError::InvalidCharacter);
+    }
     Ok(())
 }
 
@@ -64,18 +68,47 @@ fn supported_tokens(attr: &str) -> Option<&'static [&'static str]> {
     match attr {
         // HTML §4.6.7 link types, the subset that is not author-defined.
         "rel" => Some(&[
-            "alternate", "author", "bookmark", "canonical", "dns-prefetch", "expect",
-            "external", "help", "icon", "license", "manifest", "modulepreload",
-            "next", "nofollow", "noopener", "noreferrer", "opener", "pingback",
-            "preconnect", "prefetch", "preload", "prev", "privacy-policy",
-            "search", "stylesheet", "tag", "terms-of-service",
+            "alternate",
+            "author",
+            "bookmark",
+            "canonical",
+            "dns-prefetch",
+            "expect",
+            "external",
+            "help",
+            "icon",
+            "license",
+            "manifest",
+            "modulepreload",
+            "next",
+            "nofollow",
+            "noopener",
+            "noreferrer",
+            "opener",
+            "pingback",
+            "preconnect",
+            "prefetch",
+            "preload",
+            "prev",
+            "privacy-policy",
+            "search",
+            "stylesheet",
+            "tag",
+            "terms-of-service",
         ]),
         // HTML §4.8.5 sandboxing flags.
         "sandbox" => Some(&[
-            "allow-downloads", "allow-forms", "allow-modals",
-            "allow-orientation-lock", "allow-pointer-lock", "allow-popups",
-            "allow-popups-to-escape-sandbox", "allow-presentation",
-            "allow-same-origin", "allow-scripts", "allow-top-navigation",
+            "allow-downloads",
+            "allow-forms",
+            "allow-modals",
+            "allow-orientation-lock",
+            "allow-pointer-lock",
+            "allow-popups",
+            "allow-popups-to-escape-sandbox",
+            "allow-presentation",
+            "allow-same-origin",
+            "allow-scripts",
+            "allow-top-navigation",
             "allow-top-navigation-by-user-activation",
             "allow-top-navigation-to-custom-protocols",
         ]),
@@ -98,11 +131,15 @@ impl TokenList<'_> {
     /// The attribute string, verbatim. `class="a a b  c"` stringifies to
     /// `"a a b  c"` and NOT to the serialized set.
     pub fn value(&self) -> String {
-        self.doc.get_attribute(self.id, self.attr).unwrap_or_default()
+        self.doc
+            .get_attribute(self.id, self.attr)
+            .unwrap_or_default()
     }
 
     /// The number of DISTINCT tokens — 3 for `class="a a b  c"`.
-    pub fn length(&self) -> usize { self.tokens().len() }
+    pub fn length(&self) -> usize {
+        self.tokens().len()
+    }
 
     pub fn item(&self, index: usize) -> Option<String> {
         self.tokens().into_iter().nth(index)
@@ -115,12 +152,13 @@ impl TokenList<'_> {
     /// `supports(token)`. `None` is the `TypeError` Chrome throws when the
     /// attribute defines no supported tokens, which is every `classList`.
     pub fn supports(&self, token: &str) -> Option<bool> {
-        supported_tokens(self.attr)
-            .map(|list| list.iter().any(|t| t.eq_ignore_ascii_case(token)))
+        supported_tokens(self.attr).map(|list| list.iter().any(|t| t.eq_ignore_ascii_case(token)))
     }
 
     /// The parsed set, for iteration — `DOMTokenList` is `iterable<DOMString>`.
-    pub fn values(&self) -> Vec<String> { self.tokens() }
+    pub fn values(&self) -> Vec<String> {
+        self.tokens()
+    }
 }
 
 /// A mutable view of one token-list attribute.
@@ -132,15 +170,31 @@ pub struct TokenListMut<'a> {
 
 impl TokenListMut<'_> {
     fn view(&self) -> TokenList<'_> {
-        TokenList { doc: self.doc, id: self.id, attr: self.attr }
+        TokenList {
+            doc: self.doc,
+            id: self.id,
+            attr: self.attr,
+        }
     }
 
-    pub fn value(&self) -> String { self.view().value() }
-    pub fn length(&self) -> usize { self.view().length() }
-    pub fn item(&self, index: usize) -> Option<String> { self.view().item(index) }
-    pub fn contains(&self, token: &str) -> bool { self.view().contains(token) }
-    pub fn supports(&self, token: &str) -> Option<bool> { self.view().supports(token) }
-    pub fn values(&self) -> Vec<String> { self.view().values() }
+    pub fn value(&self) -> String {
+        self.view().value()
+    }
+    pub fn length(&self) -> usize {
+        self.view().length()
+    }
+    pub fn item(&self, index: usize) -> Option<String> {
+        self.view().item(index)
+    }
+    pub fn contains(&self, token: &str) -> bool {
+        self.view().contains(token)
+    }
+    pub fn supports(&self, token: &str) -> Option<bool> {
+        self.view().supports(token)
+    }
+    pub fn values(&self) -> Vec<String> {
+        self.view().values()
+    }
 
     /// The stringifier setter — writes the attribute verbatim, without
     /// normalising. Chrome on `classList.value = "  p   q "` leaves
@@ -150,14 +204,17 @@ impl TokenListMut<'_> {
     }
 
     fn write(&mut self, tokens: &[String]) {
-        self.doc.set_attribute(self.id, self.attr, &serialize_ordered_set(tokens));
+        self.doc
+            .set_attribute(self.id, self.attr, &serialize_ordered_set(tokens));
     }
 
     /// Every token is validated BEFORE anything is written, so a bad token in
     /// the middle of a call leaves the attribute untouched rather than
     /// half-applied.
     fn validate_all(tokens: &[&str]) -> Result<(), TokenError> {
-        for t in tokens { validate_token(t)?; }
+        for t in tokens {
+            validate_token(t)?;
+        }
         Ok(())
     }
 
@@ -165,7 +222,9 @@ impl TokenListMut<'_> {
         Self::validate_all(tokens)?;
         let mut set = self.view().values();
         for t in tokens {
-            if !set.iter().any(|s| s == t) { set.push((*t).to_string()); }
+            if !set.iter().any(|s| s == t) {
+                set.push((*t).to_string());
+            }
         }
         self.write(&set);
         Ok(())
@@ -175,7 +234,9 @@ impl TokenListMut<'_> {
         Self::validate_all(tokens)?;
         // An element with no such attribute keeps having none. Chrome:
         // `remove` on a class-less div leaves `getAttribute("class")` null.
-        if self.doc.get_attribute(self.id, self.attr).is_none() { return Ok(()); }
+        if self.doc.get_attribute(self.id, self.attr).is_none() {
+            return Ok(());
+        }
         let mut set = self.view().values();
         set.retain(|s| !tokens.iter().any(|t| s == t));
         self.write(&set);
@@ -187,8 +248,12 @@ impl TokenListMut<'_> {
         validate_token(token)?;
         let present = self.contains(token);
         let want = force.unwrap_or(!present);
-        if want && !present { self.add(&[token])?; }
-        if !want && present { self.remove(&[token])?; }
+        if want && !present {
+            self.add(&[token])?;
+        }
+        if !want && present {
+            self.remove(&[token])?;
+        }
         Ok(want)
     }
 
@@ -198,11 +263,15 @@ impl TokenListMut<'_> {
         validate_token(token)?;
         validate_token(new_token)?;
         let mut set = self.view().values();
-        let Some(i) = set.iter().position(|s| s == token) else { return Ok(false) };
+        let Some(i) = set.iter().position(|s| s == token) else {
+            return Ok(false);
+        };
         match set.iter().position(|s| s == new_token) {
             // Already present elsewhere: the old token is dropped rather than
             // duplicating the new one.
-            Some(j) if j != i => { set.remove(i); }
+            Some(j) if j != i => {
+                set.remove(i);
+            }
             _ => set[i] = new_token.to_string(),
         }
         self.write(&set);

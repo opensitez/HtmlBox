@@ -1,14 +1,13 @@
+use super::harness::*;
+use crate::html::{decode_entities, parse_html};
+use crate::layout::LayoutEngine;
 /// Tests for parser robustness fixes:
 /// - decode_entities: bare `&` without `;` treated as literal
 /// - Iterative parser: deep nesting doesn't stack-overflow
 /// - Close-tag matching: mismatched tags don't inflate depth
 /// - split_node_with_br: element nodes aren't destroyed by br insertion
 /// - Cascade/layout depth guards
-
 use crate::types::*;
-use crate::html::{parse_html, decode_entities};
-use crate::layout::LayoutEngine;
-use super::harness::*;
 
 // ─── decode_entities ─────────────────────────────────────────────────────────
 
@@ -63,7 +62,11 @@ fn decode_entities_ampersand_far_from_semicolon() {
     // `;` is more than 32 chars away — should treat `&` as literal.
     let input = format!("&{}x;", "a".repeat(40));
     let result = decode_entities(&input);
-    assert!(result.starts_with('&'), "bare & with distant ; should be literal, got: {}", result);
+    assert!(
+        result.starts_with('&'),
+        "bare & with distant ; should be literal, got: {}",
+        result
+    );
 }
 
 // ─── Iterative parser: deep nesting ──────────────────────────────────────────
@@ -102,7 +105,10 @@ fn parser_handles_mismatched_close_tags() {
     let html = r#"<div><svg><path d="M0 0"></path></svg><p>After SVG</p></div>"#;
     let doc = parse_html(&html);
     let text = doc.root.text_content();
-    assert!(text.contains("After SVG"), "content after SVG must be preserved");
+    assert!(
+        text.contains("After SVG"),
+        "content after SVG must be preserved"
+    );
 }
 
 #[test]
@@ -111,8 +117,14 @@ fn parser_stray_close_tag_ignored() {
     let html = "<div>Hello</span> world</div>";
     let doc = parse_html(&html);
     let text = doc.root.text_content();
-    assert!(text.contains("Hello"), "text before stray close tag preserved");
-    assert!(text.contains("world"), "text after stray close tag preserved");
+    assert!(
+        text.contains("Hello"),
+        "text before stray close tag preserved"
+    );
+    assert!(
+        text.contains("world"),
+        "text after stray close tag preserved"
+    );
 }
 
 #[test]
@@ -144,7 +156,11 @@ fn parser_mismatched_svg_close_tags_dont_inflate_depth() {
     let doc = parse_html(&html);
     // Depth should be modest (< 20), not inflated by SVG internals.
     let depth = tree_depth(&doc.root);
-    assert!(depth < 30, "tree depth {} should be < 30 (SVG close tags mustn't inflate it)", depth);
+    assert!(
+        depth < 30,
+        "tree depth {} should be < 30 (SVG close tags mustn't inflate it)",
+        depth
+    );
 }
 
 // ─── Cascade/layout depth guards ─────────────────────────────────────────────
@@ -187,20 +203,25 @@ fn insert_br_in_td_preserves_table_structure() {
     );
 
     // Find the <td> and click in the middle.
-    let td = find_box(&doc.root, &|b: &WebCore| b.tag == "td")
-        .expect("<td> must exist before Enter");
+    let td =
+        find_box(&doc.root, &|b: &WebCore| b.tag == "td").expect("<td> must exist before Enter");
     let (cx, cy) = {
         let line = &td.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0)
     };
 
-    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
-    doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+    doc.editor
+        .handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
+    doc.editor
+        .handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     // The <td> must still exist after the split.
     let td_after = find_box(&doc.root, &|b: &WebCore| b.tag == "td");
-    assert!(td_after.is_some(), "<td> must still exist after Enter (not destroyed by split_node_with_br)");
+    assert!(
+        td_after.is_some(),
+        "<td> must still exist after Enter (not destroyed by split_node_with_br)"
+    );
 
     // The <td> must contain a <br>.
     let td_node = td_after.unwrap();
@@ -215,27 +236,38 @@ fn insert_br_in_div_preserves_div() {
     use crate::Renderer;
 
     let mut renderer = Renderer::new();
-    let mut doc = renderer.load_html(
-        r#"<div contenteditable="true">Hello world</div>"#,
-        900.0,
-    );
+    let mut doc = renderer.load_html(r#"<div contenteditable="true">Hello world</div>"#, 900.0);
 
     let div = find_box(&doc.root, &|b: &WebCore| {
-        b.tag == "div" && b.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false)
-    }).expect("editable div");
+        b.tag == "div"
+            && b.attributes
+                .get("contenteditable")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+    })
+    .expect("editable div");
     let (cx, cy) = {
         let line = &div.layout.line_cache[0];
         (line.x + line.width / 2.0, line.y + line.height / 2.0)
     };
 
-    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
-    doc.editor.handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
+    doc.editor
+        .handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
+    doc.editor
+        .handle_key_event(&mut doc.root, HtmlEventType::KeyDown, 13, None, false);
     renderer.layout_engine().layout(&mut doc, 900.0);
 
     let div_after = find_box(&doc.root, &|b: &WebCore| {
-        b.tag == "div" && b.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false)
+        b.tag == "div"
+            && b.attributes
+                .get("contenteditable")
+                .map(|v| v == "true")
+                .unwrap_or(false)
     });
-    assert!(div_after.is_some(), "editable <div> must still exist after Enter");
+    assert!(
+        div_after.is_some(),
+        "editable <div> must still exist after Enter"
+    );
     let has_br = div_after.unwrap().children.iter().any(|c| c.tag == "br");
     assert!(has_br, "<div> must contain a <br> after Enter");
 }
@@ -248,31 +280,35 @@ fn insert_char_marks_layout_dirty() {
     use crate::Renderer;
 
     let mut renderer = Renderer::new();
-    let mut doc = renderer.load_html(
-        r#"<p contenteditable="true">Hello</p>"#,
-        900.0,
-    );
+    let mut doc = renderer.load_html(r#"<p contenteditable="true">Hello</p>"#, 900.0);
 
-    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p")
-        .expect("p element");
+    let p = find_box(&doc.root, &|b: &WebCore| b.tag == "p").expect("p element");
     let (cx, cy) = {
         let line = &p.layout.line_cache[0];
         (line.x + 1.0, line.y + line.height / 2.0)
     };
 
-    doc.editor.handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
+    doc.editor
+        .handle_mouse_event(&doc.root, HtmlEventType::MouseDown, (cx, cy), 0);
 
     // Insert a character — must mark node dirty so layout re-runs.
     doc.editor.insert_char(&mut doc.root, 'X');
 
     let p_after_insert = find_box(&doc.root, &|b: &WebCore| b.tag == "p").unwrap();
-    assert!(p_after_insert.layout.layout_dirty, "node must be layout_dirty after insert_char");
+    assert!(
+        p_after_insert.layout.layout_dirty,
+        "node must be layout_dirty after insert_char"
+    );
 
     // After re-layout, the inserted character should appear in the text.
     renderer.layout_engine().layout(&mut doc, 900.0);
     let p_relaid = find_box(&doc.root, &|b: &WebCore| b.tag == "p").unwrap();
     let text = p_relaid.text_content();
-    assert!(text.contains('X'), "inserted character must appear after relayout, got: {}", text);
+    assert!(
+        text.contains('X'),
+        "inserted character must appear after relayout, got: {}",
+        text
+    );
 }
 
 // ─── Tailwind class with & in selector matching ──────────────────────────────
@@ -284,7 +320,10 @@ fn tailwind_class_with_ampersand_parsed_correctly() {
     let html = r#"<div class="[&_.foo]:contents">text</div>"#;
     let doc = parse_html(&html);
     let div = find_box(&doc.root, &|b: &WebCore| {
-        b.attributes.get("class").map(|c| c.contains("[&_.foo]:contents")).unwrap_or(false)
+        b.attributes
+            .get("class")
+            .map(|c| c.contains("[&_.foo]:contents"))
+            .unwrap_or(false)
     });
     assert!(div.is_some(),
         "class attribute must preserve `[&_.foo]:contents` verbatim (bare & not consumed as entity)");

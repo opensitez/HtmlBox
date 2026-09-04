@@ -85,9 +85,12 @@ impl CompositorLayer {
     /// Is this the identity transform?
     pub fn has_transform(&self) -> bool {
         let [a, b, c, d, e, f] = self.transform;
-        (a - 1.0).abs() > 0.001 || b.abs() > 0.001
-            || c.abs() > 0.001 || (d - 1.0).abs() > 0.001
-            || e.abs() > 0.001 || f.abs() > 0.001
+        (a - 1.0).abs() > 0.001
+            || b.abs() > 0.001
+            || c.abs() > 0.001
+            || (d - 1.0).abs() > 0.001
+            || e.abs() > 0.001
+            || f.abs() > 0.001
     }
 
     /// Is this layer scrollable?
@@ -110,7 +113,8 @@ pub struct Compositor {
 impl Compositor {
     pub fn new() -> Self {
         let root = CompositorLayer::new(
-            LayerId(0), 0,
+            LayerId(0),
+            0,
             Rect::new(0.0, 0.0, 0.0, 0.0),
             LayerReason::Root,
         );
@@ -129,7 +133,9 @@ impl Compositor {
 
         // Root layer covers the viewport
         let root_layer = self.alloc_layer(
-            0, Rect::new(0.0, 0.0, viewport_w, viewport_h), LayerReason::Root,
+            0,
+            Rect::new(0.0, 0.0, viewport_w, viewport_h),
+            LayerReason::Root,
         );
         self.root = root_layer;
 
@@ -140,7 +146,9 @@ impl Compositor {
     fn build_layers_walk(&mut self, node: &WebCore, parent_layer: LayerId) {
         use crate::types::*;
 
-        if matches!(node.style.display, Display::None) { return; }
+        if matches!(node.style.display, Display::None) {
+            return;
+        }
 
         let needs_layer = self.needs_own_layer(node);
 
@@ -150,10 +158,13 @@ impl Compositor {
             // Set layer properties from node style
             if let Some(l) = self.get_mut(layer) {
                 l.opacity = node.style.opacity;
-                l.clips = matches!(node.style.overflow_x,
-                    Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
-                    || matches!(node.style.overflow_y,
-                    Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
+                l.clips = matches!(
+                    node.style.overflow_x,
+                    Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                ) || matches!(
+                    node.style.overflow_y,
+                    Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                );
 
                 if l.clips {
                     l.scroll_width = node.layout.scroll_width;
@@ -164,8 +175,11 @@ impl Compositor {
                 if !node.style.transform.is_empty() {
                     // Basic transform support — extract translate/scale
                     // Full matrix parsing would go here
-                    l.transform = parse_transform_basic(&node.style.transform,
-                        node.layout.border_rect.w, node.layout.border_rect.h);
+                    l.transform = parse_transform_basic(
+                        &node.style.transform,
+                        node.layout.border_rect.w,
+                        node.layout.border_rect.h,
+                    );
                 }
             }
 
@@ -222,7 +236,8 @@ impl Compositor {
     fn alloc_layer(&mut self, node_id: u32, bounds: Rect, reason: LayerReason) -> LayerId {
         let id = LayerId(self.next_id);
         self.next_id += 1;
-        self.layers.push(CompositorLayer::new(id, node_id, bounds, reason));
+        self.layers
+            .push(CompositorLayer::new(id, node_id, bounds, reason));
         id
     }
 
@@ -318,7 +333,9 @@ impl Compositor {
 }
 
 impl Default for Compositor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Basic transform parsing — extracts translate and scale from CSS transform string.
@@ -327,21 +344,32 @@ fn parse_transform_basic(transform: &str, w: f32, h: f32) -> [f32; 6] {
 
     for part in transform.split(')') {
         let part = part.trim();
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
 
-        if let Some(args) = part.strip_prefix("translate(").or_else(|| part.strip_prefix("translateX(")) {
-            let vals: Vec<f32> = args.split(',')
+        if let Some(args) = part
+            .strip_prefix("translate(")
+            .or_else(|| part.strip_prefix("translateX("))
+        {
+            let vals: Vec<f32> = args
+                .split(',')
                 .enumerate()
                 .filter_map(|(axis, s)| length(s, if axis == 0 { w } else { h }))
                 .collect();
-            if !vals.is_empty() { result[4] += vals[0]; }
-            if vals.len() > 1 { result[5] += vals[1]; }
+            if !vals.is_empty() {
+                result[4] += vals[0];
+            }
+            if vals.len() > 1 {
+                result[5] += vals[1];
+            }
         } else if let Some(args) = part.strip_prefix("translateY(") {
             if let Some(v) = length(args, h) {
                 result[5] += v;
             }
         } else if let Some(args) = part.strip_prefix("scale(") {
-            let vals: Vec<f32> = args.split(',')
+            let vals: Vec<f32> = args
+                .split(',')
                 .filter_map(|s| s.trim().parse().ok())
                 .collect();
             if !vals.is_empty() {
@@ -366,7 +394,11 @@ fn parse_transform_basic(transform: &str, w: f32, h: f32) -> [f32; 6] {
 fn length(text: &str, reference: f32) -> Option<f32> {
     let text = text.trim();
     match text.strip_suffix('%') {
-        Some(pct) => pct.trim().parse::<f32>().ok().map(|p| p / 100.0 * reference),
+        Some(pct) => pct
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|p| p / 100.0 * reference),
         None => text.trim_end_matches("px").trim().parse::<f32>().ok(),
     }
 }
@@ -396,22 +428,32 @@ mod tests {
 
     #[test]
     fn compositor_builds_layers() {
-        let doc = load_html(concat!(
+        let doc = load_html(
+            concat!(
             "<div style='position:fixed;top:0;left:0;width:100px;height:50px'>Fixed</div>",
             "<div style='overflow:auto;height:200px'><div style='height:1000px'>Scroll</div></div>",
             "<div style='opacity:0.5'>Semi</div>",
-        ), 800.0);
+        ),
+            800.0,
+        );
         let mut comp = Compositor::new();
         comp.build_layers(&doc.root, 800.0, 600.0);
         // Should have: root + fixed + scroll + opacity = 4 layers
-        assert!(comp.layer_count() >= 4,
-            "expected >=4 layers, got {}", comp.layer_count());
+        assert!(
+            comp.layer_count() >= 4,
+            "expected >=4 layers, got {}",
+            comp.layer_count()
+        );
     }
 
     #[test]
     fn compositor_scroll() {
         let mut comp = Compositor::new();
-        let layer = comp.alloc_layer(1, Rect::new(0.0, 0.0, 100.0, 100.0), LayerReason::ScrollContainer);
+        let layer = comp.alloc_layer(
+            1,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            LayerReason::ScrollContainer,
+        );
         if let Some(l) = comp.get_mut(layer) {
             l.scroll_height = 500.0;
         }

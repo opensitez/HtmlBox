@@ -1,10 +1,10 @@
 //! Range slider widget — standalone tiny-skia rendered slider.
 
+use super::{circle_path, rounded_rect_path, WidgetColors};
 use tiny_skia::*;
-use super::{WidgetColors, rounded_rect_path, circle_path};
 
 pub struct Slider {
-    pub value: f32,     // 0.0..1.0
+    pub value: f32, // 0.0..1.0
     pub min: f32,
     pub max: f32,
     pub disabled: bool,
@@ -30,7 +30,11 @@ pub struct Slider {
 
 impl Slider {
     pub fn new(min: f32, max: f32, value: f32) -> Self {
-        let pct = if max > min { (value - min) / (max - min) } else { 0.0 };
+        let pct = if max > min {
+            (value - min) / (max - min)
+        } else {
+            0.0
+        };
         Self {
             value: pct.clamp(0.0, 1.0),
             min,
@@ -76,7 +80,11 @@ impl Slider {
                 self.track_height,
             )
         };
-        let travel = if self.vertical { self.height } else { self.width } - self.thumb_radius * 2.0;
+        let travel = if self.vertical {
+            self.height
+        } else {
+            self.width
+        } - self.thumb_radius * 2.0;
         let along = self.thumb_radius + self.value * travel.max(0.0);
         let (thumb_x, thumb_y) = if self.vertical {
             (x + self.width / 2.0, y + along)
@@ -93,7 +101,11 @@ impl Slider {
         // Filled portion — from the track's start up to the thumb.
         let (r, g, b, a) = self.colors.accent;
         paint.set_color_rgba8(r, g, b, a);
-        let filled = if self.vertical { thumb_y - y } else { thumb_x - x };
+        let filled = if self.vertical {
+            thumb_y - y
+        } else {
+            thumb_x - x
+        };
         if filled > 0.0 {
             let (fw, fh) = if self.vertical {
                 (track_w, filled)
@@ -111,7 +123,11 @@ impl Slider {
         if let Some(path) = circle_path(thumb_x, thumb_y, self.thumb_radius) {
             pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
         }
-        let (r, g, b, a) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+        let (r, g, b, a) = if self.focused {
+            self.colors.focus_ring
+        } else {
+            self.colors.border
+        };
         paint.set_color_rgba8(r, g, b, a);
         let mut stroke = Stroke::default();
         stroke.width = 1.0;
@@ -126,7 +142,9 @@ impl Slider {
 
     /// Handle mouse down — start dragging if on thumb.
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
-        if self.disabled { return false; }
+        if self.disabled {
+            return false;
+        }
         self.dragging = true;
         self.set_from_pointer(x, y);
         true

@@ -52,14 +52,9 @@ pub enum DomMutation {
     /// An element was closed.
     CloseElement,
     /// A resource was discovered that should be fetched.
-    ResourceHint {
-        kind: ResourceKind,
-        url: String,
-    },
+    ResourceHint { kind: ResourceKind, url: String },
     /// Document title changed.
-    TitleChanged {
-        title: String,
-    },
+    TitleChanged { title: String },
 }
 
 /// Kind of resource discovered during parsing.
@@ -152,7 +147,9 @@ impl StreamingParser {
 
     /// Can we paint? True when all render-blocking CSS has loaded.
     pub fn can_paint(&self) -> bool {
-        self.render_blocking.iter().all(|url| self.loaded_resources.contains(url))
+        self.render_blocking
+            .iter()
+            .all(|url| self.loaded_resources.contains(url))
     }
 
     /// Mark a resource as loaded.
@@ -182,7 +179,9 @@ impl StreamingParser {
         loop {
             // Skip leading whitespace in some contexts
             let buf = self.buffer.trim_start().to_string();
-            if buf.is_empty() { break; }
+            if buf.is_empty() {
+                break;
+            }
 
             if self.in_style {
                 // Accumulate content until </style>
@@ -229,7 +228,9 @@ impl StreamingParser {
                     if tag_content.starts_with('/') {
                         // Closing tag
                         let tag_name = tag_content[1..].trim().to_lowercase();
-                        if tag_name == "head" { self.head_closed = true; }
+                        if tag_name == "head" {
+                            self.head_closed = true;
+                        }
                         self.stack.pop();
                         mutations.push(DomMutation::CloseElement);
                     } else if tag_content.starts_with('!') {
@@ -237,8 +238,7 @@ impl StreamingParser {
                     } else {
                         // Opening tag
                         let (tag_name, attrs) = parse_tag_quick(tag_content);
-                        let self_closing = tag_content.ends_with('/')
-                            || is_void_element(&tag_name);
+                        let self_closing = tag_content.ends_with('/') || is_void_element(&tag_name);
 
                         // Resource discovery
                         self.discover_resources(&tag_name, &attrs, &mut mutations);
@@ -281,7 +281,9 @@ impl StreamingParser {
                     });
                 }
                 self.buffer = buf[next_tag..].to_string();
-                if next_tag == buf.len() { break; }
+                if next_tag == buf.len() {
+                    break;
+                }
             }
         }
 
@@ -289,7 +291,12 @@ impl StreamingParser {
     }
 
     /// Discover resources in a tag for preloading.
-    fn discover_resources(&mut self, tag: &str, attrs: &HashMap<String, String>, mutations: &mut Vec<DomMutation>) {
+    fn discover_resources(
+        &mut self,
+        tag: &str,
+        attrs: &HashMap<String, String>,
+        mutations: &mut Vec<DomMutation>,
+    ) {
         match tag {
             "link" => {
                 if attrs.get("rel").map(|s| s == "stylesheet").unwrap_or(false) {
@@ -299,7 +306,8 @@ impl StreamingParser {
                         if !self.head_closed {
                             self.render_blocking.push(url.clone());
                         }
-                        self.discovered_resources.push((ResourceKind::Stylesheet, url.clone()));
+                        self.discovered_resources
+                            .push((ResourceKind::Stylesheet, url.clone()));
                         mutations.push(DomMutation::ResourceHint {
                             kind: ResourceKind::Stylesheet,
                             url,
@@ -307,14 +315,16 @@ impl StreamingParser {
                     }
                 } else if attrs.get("rel").map(|s| s == "preconnect").unwrap_or(false) {
                     if let Some(href) = attrs.get("href") {
-                        self.discovered_resources.push((ResourceKind::Preconnect, href.clone()));
+                        self.discovered_resources
+                            .push((ResourceKind::Preconnect, href.clone()));
                     }
                 }
             }
             "img" => {
                 if let Some(src) = attrs.get("src") {
                     let url = crate::html::resolve_url(src, &self.base_url);
-                    self.discovered_resources.push((ResourceKind::Image, url.clone()));
+                    self.discovered_resources
+                        .push((ResourceKind::Image, url.clone()));
                     mutations.push(DomMutation::ResourceHint {
                         kind: ResourceKind::Image,
                         url,
@@ -345,10 +355,13 @@ fn parse_tag_quick(content: &str) -> (String, HashMap<String, String>) {
         while !remaining.is_empty() {
             // Skip whitespace
             remaining = remaining.trim_start();
-            if remaining.is_empty() { break; }
+            if remaining.is_empty() {
+                break;
+            }
 
             // Find attribute name
-            let name_end = remaining.find(|c: char| c == '=' || c.is_ascii_whitespace())
+            let name_end = remaining
+                .find(|c: char| c == '=' || c.is_ascii_whitespace())
                 .unwrap_or(remaining.len());
             let name = remaining[..name_end].to_lowercase();
             remaining = remaining[name_end..].trim_start();
@@ -357,17 +370,33 @@ fn parse_tag_quick(content: &str) -> (String, HashMap<String, String>) {
                 remaining = remaining[1..].trim_start();
                 // Parse value
                 if remaining.starts_with('"') {
-                    let end = remaining[1..].find('"').map(|i| i + 1).unwrap_or(remaining.len());
+                    let end = remaining[1..]
+                        .find('"')
+                        .map(|i| i + 1)
+                        .unwrap_or(remaining.len());
                     let value = &remaining[1..end];
                     attrs.insert(name, value.to_string());
-                    remaining = if end + 1 < remaining.len() { &remaining[end + 1..] } else { "" };
+                    remaining = if end + 1 < remaining.len() {
+                        &remaining[end + 1..]
+                    } else {
+                        ""
+                    };
                 } else if remaining.starts_with('\'') {
-                    let end = remaining[1..].find('\'').map(|i| i + 1).unwrap_or(remaining.len());
+                    let end = remaining[1..]
+                        .find('\'')
+                        .map(|i| i + 1)
+                        .unwrap_or(remaining.len());
                     let value = &remaining[1..end];
                     attrs.insert(name, value.to_string());
-                    remaining = if end + 1 < remaining.len() { &remaining[end + 1..] } else { "" };
+                    remaining = if end + 1 < remaining.len() {
+                        &remaining[end + 1..]
+                    } else {
+                        ""
+                    };
                 } else {
-                    let end = remaining.find(|c: char| c.is_ascii_whitespace()).unwrap_or(remaining.len());
+                    let end = remaining
+                        .find(|c: char| c.is_ascii_whitespace())
+                        .unwrap_or(remaining.len());
                     let value = &remaining[..end];
                     attrs.insert(name, value.to_string());
                     remaining = &remaining[end..];
@@ -386,8 +415,23 @@ fn parse_tag_quick(content: &str) -> (String, HashMap<String, String>) {
 
 /// Check if an HTML element is void (self-closing, no end tag).
 fn is_void_element(tag: &str) -> bool {
-    matches!(tag, "area" | "base" | "br" | "col" | "embed" | "hr" | "img"
-        | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr")
+    matches!(
+        tag,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
 }
 
 #[cfg(test)]
@@ -398,7 +442,9 @@ mod tests {
     fn streaming_basic() {
         let mut parser = StreamingParser::new("");
         let mutations = parser.feed_str("<html><head><title>Test</title></head>");
-        assert!(mutations.iter().any(|m| matches!(m, DomMutation::TitleChanged { title } if title == "Test")));
+        assert!(mutations
+            .iter()
+            .any(|m| matches!(m, DomMutation::TitleChanged { title } if title == "Test")));
     }
 
     #[test]
@@ -409,17 +455,22 @@ mod tests {
         assert!(m1.is_empty()); // incomplete tag, buffered
 
         let m2 = parser.feed_str("ss='hello'>World</div>");
-        assert!(m2.iter().any(|m| matches!(m, DomMutation::InsertElement { tag, .. } if tag == "div")));
-        assert!(m2.iter().any(|m| matches!(m, DomMutation::AppendText { text, .. } if text == "World")));
+        assert!(m2
+            .iter()
+            .any(|m| matches!(m, DomMutation::InsertElement { tag, .. } if tag == "div")));
+        assert!(m2
+            .iter()
+            .any(|m| matches!(m, DomMutation::AppendText { text, .. } if text == "World")));
     }
 
     #[test]
     fn streaming_resource_discovery() {
         let mut parser = StreamingParser::new("https://example.com");
         let mutations = parser.feed_str(
-            r#"<head><link rel="stylesheet" href="/style.css"><img src="/logo.png"></head>"#
+            r#"<head><link rel="stylesheet" href="/style.css"><img src="/logo.png"></head>"#,
         );
-        let resources: Vec<_> = mutations.iter()
+        let resources: Vec<_> = mutations
+            .iter()
             .filter(|m| matches!(m, DomMutation::ResourceHint { .. }))
             .collect();
         assert!(resources.len() >= 2, "should discover stylesheet and image");
@@ -438,10 +489,11 @@ mod tests {
     #[test]
     fn streaming_inline_style() {
         let mut parser = StreamingParser::new("");
-        let mutations = parser.feed_str(
-            "<style>.red { color: red; }</style><div class='red'>Hello</div>"
-        );
-        assert!(mutations.iter().any(|m| matches!(m, DomMutation::AddStylesheet { css, .. } if css.contains("red"))));
+        let mutations =
+            parser.feed_str("<style>.red { color: red; }</style><div class='red'>Hello</div>");
+        assert!(mutations
+            .iter()
+            .any(|m| matches!(m, DomMutation::AddStylesheet { css, .. } if css.contains("red"))));
     }
 
     #[test]

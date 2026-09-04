@@ -21,7 +21,10 @@ fn doc() -> Document {
 fn a_node_in_the_tree_is_never_a_candidate() {
     let d = doc();
     let host = d.get_element_by_id("host").unwrap();
-    assert!(!d.detached_candidates().contains(&host), "it is in the document");
+    assert!(
+        !d.detached_candidates().contains(&host),
+        "it is in the document"
+    );
 }
 
 /// …and one that is detached and held by nothing IS one.
@@ -43,7 +46,10 @@ fn a_node_nothing_holds_is_a_candidate() {
 fn pending_nodes_holds_an_uninserted_node() {
     let mut d = doc();
     let made = d.create_element("i");
-    assert!(!d.detached_candidates().contains(&made), "pending_nodes names it");
+    assert!(
+        !d.detached_candidates().contains(&made),
+        "pending_nodes names it"
+    );
 }
 
 /// …and everything under it, not just the node itself.
@@ -66,7 +72,10 @@ fn a_removed_node_is_still_held() {
     let host = d.get_element_by_id("host").unwrap();
     let text = d.child_nodes(host)[0];
     d.remove_child(text);
-    assert!(!d.detached_candidates().contains(&text), "still re-insertable");
+    assert!(
+        !d.detached_candidates().contains(&text),
+        "still re-insertable"
+    );
 }
 
 fn detached_but_for(f: impl FnOnce(&mut Document, u32)) -> (Vec<u32>, u32) {
@@ -119,7 +128,10 @@ fn a_range_holds_its_containers() {
         let r = d.create_range();
         d.range_set_start(r, n, 0);
     });
-    assert!(!c.contains(&n), "a range end-point is a reference to the node");
+    assert!(
+        !c.contains(&n),
+        "a range end-point is a reference to the node"
+    );
 }
 
 /// ⛔ Same shape as a range: keyed by TRAVERSAL id, node ids inside the value.
@@ -128,7 +140,10 @@ fn a_traversal_holds_its_root() {
     let (c, n) = detached_but_for(|d, n| {
         d.create_tree_walker(n, 0xFFFF_FFFF, None);
     });
-    assert!(!c.contains(&n), "a walker's root is a reference to the node");
+    assert!(
+        !c.contains(&n),
+        "a walker's root is a reference to the node"
+    );
 }
 
 #[test]
@@ -146,13 +161,16 @@ fn enumerating_candidates_frees_nothing() {
     let before = d.arena.len();
     let cands = d.detached_candidates();
     assert!(cands.contains(&orphan));
-    assert_eq!(d.arena.len(), before, "enumeration must not mutate the arena");
+    assert_eq!(
+        d.arena.len(),
+        before,
+        "enumeration must not mutate the arena"
+    );
     assert!(
         d.arena.is_alive(crate::dom::arena::NodeId(orphan)),
         "a candidate is still a live node — freeing is the caller's call"
     );
 }
-
 
 /// ⛔ Shadow nodes are NOT arena nodes, so they can never be candidates — and
 /// that is why the two guards that used to be here were vacuous.
@@ -186,7 +204,10 @@ fn shadow_nodes_live_outside_the_arena() {
         "so it is outside the range `detached_candidates` scans"
     );
     let kids = d.shadow_children(host);
-    assert!(!kids.is_empty(), "the shadow tree must have content to test");
+    assert!(
+        !kids.is_empty(),
+        "the shadow tree must have content to test"
+    );
     for id in kids {
         assert!(
             !d.arena.is_alive(crate::dom::arena::NodeId(id)),

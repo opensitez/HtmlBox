@@ -16,7 +16,9 @@ use crate::parse_html;
 
 /// Every prefix of `src`, so a document truncated at any byte is exercised.
 fn truncations(src: &str) -> impl Iterator<Item = &str> {
-    (0..=src.len()).filter(move |i| src.is_char_boundary(*i)).map(move |i| &src[..i])
+    (0..=src.len())
+        .filter(move |i| src.is_char_boundary(*i))
+        .map(move |i| &src[..i])
 }
 
 #[test]
@@ -43,16 +45,64 @@ fn parsing_malformed_markup_never_panics() {
     // Each of these is a token the tokenizer can fall off the end of, or a
     // shape that has previously produced a bad index.
     const INPUTS: &[&str] = &[
-        "", "<", "<>", "</", "</>", "<!", "<!-", "<!--", "<!-->", "<!--->",
-        "<!---->", "<!doctype", "<?", "<?x", "<//", "< ", "<3", "&", "&#",
-        "&#x", "&#x;", "&#;", "&#xZZ;", "&notarealentity;", "&#999999999;",
-        "<div", "<div ", "<div a", "<div a=", "<div a=\"", "<div a=\"x",
-        "<div a='", "<div/", "<div//", "<div / ", "<p<p>", "<div a=b=c>",
-        "<div \"q\">", "<div ='v'>", "<script>", "<script>x", "<style>",
-        "<title>", "<textarea>", "<noscript>", "<table><tr><td>",
-        "<select><option>", "<b><i><u>", "<!--<div>-->", "</div></div></div>",
-        "<div></", "<div></div", "\u{0}", "<div>\u{0}</div>", "<\u{0}div>",
-        "\u{FFFD}", "<div a=\u{0}>", "<!--\u{0}-->",
+        "",
+        "<",
+        "<>",
+        "</",
+        "</>",
+        "<!",
+        "<!-",
+        "<!--",
+        "<!-->",
+        "<!--->",
+        "<!---->",
+        "<!doctype",
+        "<?",
+        "<?x",
+        "<//",
+        "< ",
+        "<3",
+        "&",
+        "&#",
+        "&#x",
+        "&#x;",
+        "&#;",
+        "&#xZZ;",
+        "&notarealentity;",
+        "&#999999999;",
+        "<div",
+        "<div ",
+        "<div a",
+        "<div a=",
+        "<div a=\"",
+        "<div a=\"x",
+        "<div a='",
+        "<div/",
+        "<div//",
+        "<div / ",
+        "<p<p>",
+        "<div a=b=c>",
+        "<div \"q\">",
+        "<div ='v'>",
+        "<script>",
+        "<script>x",
+        "<style>",
+        "<title>",
+        "<textarea>",
+        "<noscript>",
+        "<table><tr><td>",
+        "<select><option>",
+        "<b><i><u>",
+        "<!--<div>-->",
+        "</div></div></div>",
+        "<div></",
+        "<div></div",
+        "\u{0}",
+        "<div>\u{0}</div>",
+        "<\u{0}div>",
+        "\u{FFFD}",
+        "<div a=\u{0}>",
+        "<!--\u{0}-->",
     ];
     for input in INPUTS {
         let _ = parse_html(input);
@@ -92,5 +142,7 @@ fn deeply_nested_markup_does_not_overflow() {
             let _ = parse_html(&siblings);
         })
         .expect("spawn");
-    handle.join().expect("parsing 50-deep markup must not fault");
+    handle
+        .join()
+        .expect("parsing 50-deep markup must not fault");
 }

@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Apply presentational attributes ───────────────────────────────────────
 
@@ -23,13 +23,22 @@ use crate::css::*;
 fn add_presentational_style(node: &mut WebCore, prop: &str, value: &str) {
     let existing = node.attributes.get("style").cloned().unwrap_or_default();
     let already = existing.split(';').any(|d| {
-        d.split(':').next().map(|k| k.trim().eq_ignore_ascii_case(prop)).unwrap_or(false)
+        d.split(':')
+            .next()
+            .map(|k| k.trim().eq_ignore_ascii_case(prop))
+            .unwrap_or(false)
     });
-    if already { return; }
+    if already {
+        return;
+    }
     let decl = format!("{}:{}", prop, value);
     node.attributes.insert(
         "style",
-        if existing.trim().is_empty() { decl } else { format!("{};{}", existing, decl) },
+        if existing.trim().is_empty() {
+            decl
+        } else {
+            format!("{};{}", existing, decl)
+        },
     );
 }
 
@@ -41,7 +50,9 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
     if tag == "body" {
         if let Some(text_color) = attrs.get("text") {
             let text_color = text_color.clone();
-            if !node.attributes.contains_key("color") { node.attributes.insert("color", text_color); }
+            if !node.attributes.contains_key("color") {
+                node.attributes.insert("color", text_color);
+            }
         }
     }
 
@@ -57,20 +68,52 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
     for (attr, val) in ordered_attrs {
         match attr.as_str() {
             "align" => match val.as_str() {
-                "center"  => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "center"),
-                "right"   => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "right"),
-                "left"    => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "left"),
-                "justify" => apply_property(std::sync::Arc::make_mut(&mut node.style), "text-align", "justify"),
+                "center" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "text-align",
+                    "center",
+                ),
+                "right" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "text-align",
+                    "right",
+                ),
+                "left" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "text-align",
+                    "left",
+                ),
+                "justify" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "text-align",
+                    "justify",
+                ),
                 _ => {}
             },
             "valign" => match val.as_str() {
-                "top"    => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "top"),
-                "middle" => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "middle"),
-                "bottom" => apply_property(std::sync::Arc::make_mut(&mut node.style), "vertical-align", "bottom"),
+                "top" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "vertical-align",
+                    "top",
+                ),
+                "middle" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "vertical-align",
+                    "middle",
+                ),
+                "bottom" => apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "vertical-align",
+                    "bottom",
+                ),
                 _ => {}
             },
             "bgcolor" | "background-color" => {
-                apply_property(std::sync::Arc::make_mut(&mut node.style), "background-color", val);
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "background-color",
+                    val,
+                );
             }
             "color" => {
                 apply_property(std::sync::Arc::make_mut(&mut node.style), "color", val);
@@ -82,71 +125,83 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
                 if val.ends_with('%') {
                     apply_property(std::sync::Arc::make_mut(&mut node.style), "width", val);
                 } else if let Ok(n) = val.parse::<f32>() {
-                    apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", n));
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut node.style),
+                        "width",
+                        &format!("{}px", n),
+                    );
                 }
             }
             "height" => {
                 if val.ends_with('%') {
                     apply_property(std::sync::Arc::make_mut(&mut node.style), "height", val);
                 } else if let Ok(n) = val.parse::<f32>() {
-                    apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", n));
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut node.style),
+                        "height",
+                        &format!("{}px", n),
+                    );
                 }
             }
             "border" if tag == "table" => {
                 if val == "0" {
-                    apply_property(std::sync::Arc::make_mut(&mut node.style), "border", "0px solid transparent");
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut node.style),
+                        "border",
+                        "0px solid transparent",
+                    );
                 } else if let Ok(n) = val.parse::<f32>() {
                     if n > 0.0 {
-                        apply_property(std::sync::Arc::make_mut(&mut node.style), "border", &format!("{}px solid black", n));
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut node.style),
+                            "border",
+                            &format!("{}px solid black", n),
+                        );
                     }
                 }
             }
             // FONT legacy attributes
             "face" if tag == "font" => {
-                apply_property(std::sync::Arc::make_mut(&mut node.style), "font-family", val);
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "font-family",
+                    val,
+                );
             }
-            "size" if tag == "input" => {
-                // HTML input size attribute: number of characters wide
-                // Inject as inline style so it overrides UA width
-                if let Ok(n) = val.parse::<f32>() {
-                    let w = n * 0.6;
-                    let style_str = format!("width:{}em", w);
-                    let existing = node.attributes.get("style").cloned().unwrap_or_default();
-                    node.attributes.insert("style", if existing.is_empty() { style_str } else { format!("{};{}", existing, style_str) });
-                }
-            }
-            // `rows`/`cols` are presentational HINTS. They apply to the
-            // computed style directly and must NOT be written into the `style`
-            // ATTRIBUTE: an author's inline style is a document fact, and
-            // appending to it made the hint reappear on every serialize →
-            // reparse cycle (`style="height:4.2em;height:4.2em;…"`), growing
-            // without bound. It also silently outranked the author's own CSS,
-            // which is the opposite of what a hint does.
-            "rows" if tag == "textarea" => {
-                if let Ok(n) = val.parse::<f32>() {
-                    add_presentational_style(node, "height", &format!("{}em", n * 1.4));
-                }
-            }
-            "cols" if tag == "textarea" => {
-                if let Ok(n) = val.parse::<f32>() {
-                    add_presentational_style(node, "width", &format!("{}em", n * 0.6));
-                }
-            }
+            "size" if tag == "input" => {}
+            "rows" | "cols" if tag == "textarea" => {}
             "size" if tag == "font" => {
                 // HTML font size 1-7 → approximate px sizes
                 let px: f32 = match val.trim() {
-                    "1" => 10.0, "2" => 13.0, "3" => 16.0,
-                    "4" => 18.0, "5" => 24.0, "6" => 32.0, "7" => 48.0,
+                    "1" => 10.0,
+                    "2" => 13.0,
+                    "3" => 16.0,
+                    "4" => 18.0,
+                    "5" => 24.0,
+                    "6" => 32.0,
+                    "7" => 48.0,
                     _ => 16.0,
                 };
-                apply_property(std::sync::Arc::make_mut(&mut node.style), "font-size", &format!("{}px", px));
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "font-size",
+                    &format!("{}px", px),
+                );
             }
             // TABLE legacy attributes
             "cellpadding" if tag == "table" => {
-                apply_property(std::sync::Arc::make_mut(&mut node.style), "cellpadding", val);
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "cellpadding",
+                    val,
+                );
             }
             "cellspacing" if tag == "table" => {
-                apply_property(std::sync::Arc::make_mut(&mut node.style), "cellspacing", val);
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "cellspacing",
+                    val,
+                );
             }
             // COL attributes
             "span" if tag == "col" => {
@@ -165,20 +220,65 @@ pub(crate) fn apply_presentational_attrs(node: &mut WebCore) {
     // dir attribute
     if let Some(dir) = attrs.get("dir") {
         match dir.to_ascii_lowercase().as_str() {
-            "rtl" => apply_property(std::sync::Arc::make_mut(&mut node.style), "direction", "rtl"),
-            "ltr" => apply_property(std::sync::Arc::make_mut(&mut node.style), "direction", "ltr"),
+            "rtl" => apply_property(
+                std::sync::Arc::make_mut(&mut node.style),
+                "direction",
+                "rtl",
+            ),
+            "ltr" => apply_property(
+                std::sync::Arc::make_mut(&mut node.style),
+                "direction",
+                "ltr",
+            ),
+            "auto" => {
+                let text = collect_text_for_dir_auto(node);
+                if let Some(dir) = crate::layout::text::first_strong_direction(&text) {
+                    match dir {
+                        Direction::RTL => apply_property(
+                            std::sync::Arc::make_mut(&mut node.style),
+                            "direction",
+                            "rtl",
+                        ),
+                        Direction::LTR => apply_property(
+                            std::sync::Arc::make_mut(&mut node.style),
+                            "direction",
+                            "ltr",
+                        ),
+                    }
+                }
+            }
             _ => {}
         }
+    }
+}
+
+fn collect_text_for_dir_auto(node: &WebCore) -> String {
+    let mut out = String::new();
+    collect_text_for_dir_auto_inner(node, &mut out);
+    out
+}
+
+fn collect_text_for_dir_auto_inner(node: &WebCore, out: &mut String) {
+    if matches!(node.tag.as_str(), "script" | "style") {
+        return;
+    }
+    if node.tag != "#comment" && !node.text.is_empty() {
+        out.push_str(&node.text);
+    }
+    for child in &node.children {
+        collect_text_for_dir_auto_inner(child, out);
     }
 }
 
 fn apply_inline_style(node: &mut WebCore, css: &str) {
     for decl in css.split(';') {
         let decl = decl.trim();
-        if decl.is_empty() { continue; }
+        if decl.is_empty() {
+            continue;
+        }
         if let Some(colon) = decl.find(':') {
             let prop = decl[..colon].trim();
-            let val  = decl[colon+1..].trim();
+            let val = decl[colon + 1..].trim();
             if !prop.is_empty() && !val.is_empty() {
                 let normalized = normalize_css_value(val);
                 apply_property(std::sync::Arc::make_mut(&mut node.style), prop, &normalized);
@@ -207,12 +307,18 @@ pub(crate) fn normalize_css_text(css: &str) -> String {
     while i < bytes.len() {
         // Try to match number followed by "pt" (with word boundary)
         // Find digits (possibly with decimal) followed by "pt" not followed by another alpha
-        if bytes[i].is_ascii_digit() || (bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i+1].is_ascii_digit()) {
+        if bytes[i].is_ascii_digit()
+            || (bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
+        {
             let start = i;
-            if bytes[i] == b'.' { i += 1; }
-            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') { i += 1; }
+            if bytes[i] == b'.' {
+                i += 1;
+            }
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                i += 1;
+            }
             // Check if followed by "pt" and then non-alpha
-            if i + 1 < bytes.len() && bytes[i] == b'p' && bytes[i+1] == b't' {
+            if i + 1 < bytes.len() && bytes[i] == b'p' && bytes[i + 1] == b't' {
                 let after = i + 2;
                 let boundary = after >= bytes.len()
                     || !bytes[after].is_ascii_alphanumeric() && bytes[after] != b'_';

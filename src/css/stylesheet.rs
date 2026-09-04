@@ -1,27 +1,27 @@
 //! The `Stylesheet` type and its rule index.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Stylesheet ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Default)]
 pub struct Stylesheet {
-    pub rules:      Vec<CssRule>,
-    pub variables:  HashMap<String, String>,  // CSS custom properties from :root
+    pub rules: Vec<CssRule>,
+    pub variables: HashMap<String, String>, // CSS custom properties from :root
     pub font_faces: Vec<FontFaceDecl>,
     /// Parsed `@keyframes` blocks, keyed by animation name.
-    pub keyframes:  HashMap<String, Vec<KeyframeStop>>,
+    pub keyframes: HashMap<String, Vec<KeyframeStop>>,
     /// Selector index: rule indices bucketed by the key selector's id/class/tag.
     /// Built lazily before cascade; avoids O(rules) scan per element.
-    idx_by_id:    HashMap<String, Vec<usize>>,
+    idx_by_id: HashMap<String, Vec<usize>>,
     idx_by_class: HashMap<String, Vec<usize>>,
-    idx_by_tag:   HashMap<String, Vec<usize>>,
-    idx_universal: Vec<usize>,  // rules with * or no specific key selector
-    idx_dirty:    bool,
+    idx_by_tag: HashMap<String, Vec<usize>>,
+    idx_universal: Vec<usize>, // rules with * or no specific key selector
+    idx_dirty: bool,
     /// `@layer` names in declaration order. See `layer_rank`.
     pub layer_order: Vec<String>,
     /// When true, the cascade stores matched CSS rules on each WebCore
@@ -41,7 +41,7 @@ pub struct Stylesheet {
     /// When true, descendants of hover-changed nodes must also be re-cascaded.
     pub has_hover_descendant_rules: bool,
     /// Raw (comment-stripped) CSS sources, kept for re-extracting variables with viewport.
-    pub raw_sources:  Vec<String>,
+    pub raw_sources: Vec<String>,
 }
 
 impl Stylesheet {
@@ -71,9 +71,13 @@ impl Stylesheet {
 
     /// Append already-parsed rules as author-origin.
     pub fn push_author_rules(&mut self, rules: impl IntoIterator<Item = CssRule>) {
+        let before = self.rules.len();
         for mut rule in rules {
             rule.specificity = rule.specificity.saturating_add(AUTHOR_ORIGIN_BOOST);
             self.rules.push(rule);
+        }
+        if self.rules.len() != before {
+            self.idx_dirty = true;
         }
     }
 
@@ -94,8 +98,16 @@ impl Stylesheet {
     /// Parse a CSS string from an external `<link>` with a `media` attribute.
     /// When `link_media` is non-empty (e.g. "print"), all parsed rules inherit
     /// that media condition so they're only applied in the matching context.
-    pub fn parse_and_add_with_base_media(&mut self, css: &str, css_base_url: &str, link_media: &str) {
-        if link_media.is_empty() || link_media.eq_ignore_ascii_case("all") || link_media.eq_ignore_ascii_case("screen") {
+    pub fn parse_and_add_with_base_media(
+        &mut self,
+        css: &str,
+        css_base_url: &str,
+        link_media: &str,
+    ) {
+        if link_media.is_empty()
+            || link_media.eq_ignore_ascii_case("all")
+            || link_media.eq_ignore_ascii_case("screen")
+        {
             self.parse_and_add_with_base(css, css_base_url);
         } else {
             let before = self.rules.len();
@@ -114,8 +126,14 @@ impl Stylesheet {
     /// UNLAYERED normal declaration beats every layered one — CSS Cascade 5
     /// §6.4.4 — so unlayered takes the maximum rank.
     pub fn layer_rank(&self, layer: &str) -> u32 {
-        if layer.is_empty() { return u32::MAX; }
-        self.layer_order.iter().position(|n| n == layer).map(|i| i as u32).unwrap_or(0)
+        if layer.is_empty() {
+            return u32::MAX;
+        }
+        self.layer_order
+            .iter()
+            .position(|n| n == layer)
+            .map(|i| i as u32)
+            .unwrap_or(0)
     }
 
     pub fn parse_and_add(&mut self, css: &str) {
@@ -131,15 +149,16 @@ impl Stylesheet {
         // Extract @keyframes blocks
         let kf = extract_keyframes_cleaned(cleaned);
         self.keyframes.extend(kf);
-        // Pick up the layer order this sheet declared, appending any name we
-        // have not seen — a later sheet may add layers but cannot reorder the
-        // ones already fixed.
-        for name in crate::css::parser::declared_layers() {
-            if !self.layer_order.iter().any(|n| *n == name) {
-                self.layer_order.push(name);
-            }
-        }
+        crate::css::parser::reset_declared_layers();
         if let Some(rules) = parse_stylesheet_cleaned(cleaned) {
+            // Pick up the layer order this sheet declared, appending any name
+            // we have not seen — a later sheet may add layers but cannot
+            // reorder the ones already fixed.
+            for name in crate::css::parser::declared_layers() {
+                if !self.layer_order.iter().any(|n| *n == name) {
+                    self.layer_order.push(name);
+                }
+            }
             for r in rules {
                 self.rules.push(r);
             }
@@ -160,7 +179,9 @@ impl Stylesheet {
 
     /// Rebuild the selector index if dirty.  Called once before each cascade pass.
     pub fn rebuild_index(&mut self) {
-        if !self.idx_dirty { return; }
+        if !self.idx_dirty {
+            return;
+        }
         self.idx_by_id.clear();
         self.idx_by_class.clear();
         self.idx_by_tag.clear();
@@ -172,9 +193,9 @@ impl Stylesheet {
             } else {
                 for key in keys {
                     match key {
-                        SelectorKey::Id(s)    => self.idx_by_id.entry(s).or_default().push(i),
+                        SelectorKey::Id(s) => self.idx_by_id.entry(s).or_default().push(i),
                         SelectorKey::Class(s) => self.idx_by_class.entry(s).or_default().push(i),
-                        SelectorKey::Tag(s)   => self.idx_by_tag.entry(s).or_default().push(i),
+                        SelectorKey::Tag(s) => self.idx_by_tag.entry(s).or_default().push(i),
                         SelectorKey::Universal => self.idx_universal.push(i),
                     }
                 }
@@ -199,16 +220,24 @@ impl Stylesheet {
         self.has_sibling_sensitive_rules = self.rules.iter().any(|rule| {
             rule.selectors.iter().any(|sel| {
                 sel.parts.iter().any(|part| match part {
-                    SelectorPart::Combinator(c) => matches!(
-                        c, Combinator::AdjacentSibling | Combinator::GeneralSibling
-                    ),
+                    SelectorPart::Combinator(c) => {
+                        matches!(c, Combinator::AdjacentSibling | Combinator::GeneralSibling)
+                    }
                     SelectorPart::PseudoClass(pc) => {
                         let name = pc.split('(').next().unwrap_or(pc);
-                        matches!(name,
-                            "first-child" | "last-child" | "only-child"
-                            | "first-of-type" | "last-of-type" | "only-of-type"
-                            | "nth-child" | "nth-last-child"
-                            | "nth-of-type" | "nth-last-of-type")
+                        matches!(
+                            name,
+                            "first-child"
+                                | "last-child"
+                                | "only-child"
+                                | "first-of-type"
+                                | "last-of-type"
+                                | "only-of-type"
+                                | "nth-child"
+                                | "nth-last-child"
+                                | "nth-of-type"
+                                | "nth-last-of-type"
+                        )
                     }
                     _ => false,
                 })
@@ -217,10 +246,15 @@ impl Stylesheet {
 
         self.has_hover_descendant_rules = false;
         'rules: for rule in &self.rules {
-            if !rule.is_hover { continue; }
+            if !rule.is_hover {
+                continue;
+            }
             for sel in &rule.selectors {
                 // Find the last combinator — everything before it is ancestor context
-                let last_comb = sel.parts.iter().rposition(|p| matches!(p, SelectorPart::Combinator(_)));
+                let last_comb = sel
+                    .parts
+                    .iter()
+                    .rposition(|p| matches!(p, SelectorPart::Combinator(_)));
                 if let Some(pos) = last_comb {
                     // Check if :hover appears in the ancestor part (before the combinator)
                     for part in &sel.parts[..pos] {
@@ -236,7 +270,13 @@ impl Stylesheet {
 
     /// Get candidate rule indices for an element with given tag, id, and classes.
     /// Writes into a reusable buffer to avoid per-element allocation.
-    pub fn candidate_rules(&self, tag: &str, id: Option<&str>, classes: &[&str], out: &mut Vec<usize>) {
+    pub fn candidate_rules(
+        &self,
+        tag: &str,
+        id: Option<&str>,
+        classes: &[&str],
+        out: &mut Vec<usize>,
+    ) {
         out.clear();
         // Add universal rules (always candidates)
         out.extend_from_slice(&self.idx_universal);
@@ -314,9 +354,20 @@ fn rule_key_selectors(rule: &CssRule) -> Vec<SelectorKey> {
         for part in sel.parts.iter().rev() {
             match part {
                 SelectorPart::Combinator(_) => break, // stop at first combinator from right
-                SelectorPart::Id(s)    => { best_id = Some(s.clone()); break; }
-                SelectorPart::Class(s) => { if best_class.is_none() { best_class = Some(s.clone()); } }
-                SelectorPart::Tag(t) if t != "*" => { if best_tag.is_none() { best_tag = Some(t.to_ascii_lowercase()); } }
+                SelectorPart::Id(s) => {
+                    best_id = Some(s.clone());
+                    break;
+                }
+                SelectorPart::Class(s) => {
+                    if best_class.is_none() {
+                        best_class = Some(s.clone());
+                    }
+                }
+                SelectorPart::Tag(t) if t != "*" => {
+                    if best_tag.is_none() {
+                        best_tag = Some(t.to_ascii_lowercase());
+                    }
+                }
                 _ => {}
             }
         }

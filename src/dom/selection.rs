@@ -29,11 +29,15 @@ fn char_to_utf16(s: &str, chars: usize) -> usize {
 fn utf16_to_char_floor(s: &str, units: usize) -> usize {
     let mut seen = 0usize;
     for (i, c) in s.chars().enumerate() {
-        if seen >= units { return i; }
+        if seen >= units {
+            return i;
+        }
         // The offset falls INSIDE this character — round back to where it
         // starts. Advancing first and testing after would round the other way
         // and cut the pair off at its far edge.
-        if seen + c.len_utf16() > units { return i; }
+        if seen + c.len_utf16() > units {
+            return i;
+        }
         seen += c.len_utf16();
     }
     s.chars().count()
@@ -43,9 +47,13 @@ fn utf16_to_char_floor(s: &str, units: usize) -> usize {
 fn utf16_to_char_ceil(s: &str, units: usize) -> usize {
     let mut seen = 0usize;
     for (i, c) in s.chars().enumerate() {
-        if seen >= units { return i; }
+        if seen >= units {
+            return i;
+        }
         seen += c.len_utf16();
-        if seen >= units { return i + 1; }
+        if seen >= units {
+            return i + 1;
+        }
     }
     s.chars().count()
 }
@@ -59,7 +67,9 @@ impl Document {
     /// `"line1\nline2"` yields `"X\nline2"`).
     fn selection_value(&self, id: u32) -> Option<String> {
         let node = self.find_webcore(id)?;
-        if !crate::types::selection_api_applies(node) { return None; }
+        if !crate::types::selection_api_applies(node) {
+            return None;
+        }
         Some(self.value(id))
     }
 
@@ -86,7 +96,9 @@ impl Document {
         end: usize,
         direction: Option<crate::types::SelectionDirection>,
     ) {
-        let Some(value) = self.selection_value(id) else { return };
+        let Some(value) = self.selection_value(id) else {
+            return;
+        };
         // No clamp to the value's length here: `utf16_to_char_floor` saturates,
         // so an offset past the end already lands on the last character. A
         // `.min(len)` in front of it was redundant, and a mutation run proved
@@ -97,8 +109,12 @@ impl Document {
         let start = start.min(end);
         let start_c = utf16_to_char_floor(&value, start);
         let end_c = utf16_to_char_floor(&value, end);
-        let Some(node) = self.find_webcore_mut(id) else { return };
-        if let Some(d) = direction { node.input_sel_direction = d; }
+        let Some(node) = self.find_webcore_mut(id) else {
+            return;
+        };
+        if let Some(d) = direction {
+            node.input_sel_direction = d;
+        }
         // A backward selection's cursor sits at its START — the key handler
         // reads the pair as min/max either way, so only the direction field
         // depends on the ordering.
@@ -128,7 +144,9 @@ impl Document {
     /// `element.selectionDirection` — `"none"`, `"forward"` or `"backward"`.
     pub fn selection_direction(&self, id: u32) -> Option<&'static str> {
         let node = self.find_webcore(id)?;
-        if !crate::types::selection_api_applies(node) { return None; }
+        if !crate::types::selection_api_applies(node) {
+            return None;
+        }
         Some(node.input_sel_direction.as_str())
     }
 
@@ -138,7 +156,9 @@ impl Document {
     /// drags the END along (measured: start=8 over a (1,5) selection gives
     /// `[8,8]`, not `[5,5]`), and the direction is left untouched.
     pub fn set_selection_start(&mut self, id: u32, start: u32) -> bool {
-        let Some((_, end)) = self.selection_pair(id) else { return false };
+        let Some((_, end)) = self.selection_pair(id) else {
+            return false;
+        };
         let start = start as usize;
         self.store_selection(id, start, end.max(start), None);
         true
@@ -147,15 +167,24 @@ impl Document {
     /// `element.selectionEnd = n`. An end before the start pulls the start
     /// back with it (measured: end=0 over a (3,5) selection gives `[0,0]`).
     pub fn set_selection_end(&mut self, id: u32, end: u32) -> bool {
-        let Some((start, _)) = self.selection_pair(id) else { return false };
+        let Some((start, _)) = self.selection_pair(id) else {
+            return false;
+        };
         self.store_selection(id, start, end as usize, None);
         true
     }
 
     /// `element.selectionDirection = s`.
     pub fn set_selection_direction(&mut self, id: u32, direction: &str) -> bool {
-        let Some((start, end)) = self.selection_pair(id) else { return false };
-        self.store_selection(id, start, end, Some(crate::types::SelectionDirection::parse(direction)));
+        let Some((start, end)) = self.selection_pair(id) else {
+            return false;
+        };
+        self.store_selection(
+            id,
+            start,
+            end,
+            Some(crate::types::SelectionDirection::parse(direction)),
+        );
         true
     }
 
@@ -171,7 +200,9 @@ impl Document {
         end: u32,
         direction: Option<&str>,
     ) -> bool {
-        if self.selection_value(id).is_none() { return false; }
+        if self.selection_value(id).is_none() {
+            return false;
+        }
         let d = direction
             .map(crate::types::SelectionDirection::parse)
             .unwrap_or(crate::types::SelectionDirection::None);
@@ -187,7 +218,9 @@ impl Document {
     /// `file.select()` without complaint. The spec's step is "if this has no
     /// selectable text, return" — a return, not a throw.
     pub fn select(&mut self, id: u32) {
-        let Some(value) = self.selection_value(id) else { return };
+        let Some(value) = self.selection_value(id) else {
+            return;
+        };
         let len = value.encode_utf16().count();
         self.store_selection(id, 0, len, Some(crate::types::SelectionDirection::None));
         self.fire_select_event(id);
@@ -206,8 +239,12 @@ impl Document {
         range: Option<(u32, u32)>,
         select_mode: &str,
     ) -> bool {
-        let Some(value) = self.selection_value(id) else { return false };
-        if !matches!(select_mode, "select" | "start" | "end" | "preserve") { return false; }
+        let Some(value) = self.selection_value(id) else {
+            return false;
+        };
+        if !matches!(select_mode, "select" | "start" | "end" | "preserve") {
+            return false;
+        }
         let (sel_start, sel_end) = match self.selection_pair(id) {
             Some(p) => p,
             None => return false,
@@ -216,7 +253,9 @@ impl Document {
             Some((s, e)) => {
                 // IndexSizeError. Checked BEFORE clamping, so `(10, 20)` on a
                 // two-character value is legal and `(3, 1)` is not.
-                if s > e { return false; }
+                if s > e {
+                    return false;
+                }
                 (s as usize, e as usize)
             }
             None => (sel_start, sel_end),
@@ -249,9 +288,18 @@ impl Document {
 
         let (mut new_start, mut new_sel_end) = (sel_start, sel_end);
         match select_mode {
-            "select" => { new_start = start; new_sel_end = new_end; }
-            "start" => { new_start = start; new_sel_end = start; }
-            "end" => { new_start = new_end; new_sel_end = new_end; }
+            "select" => {
+                new_start = start;
+                new_sel_end = new_end;
+            }
+            "start" => {
+                new_start = start;
+                new_sel_end = start;
+            }
+            "end" => {
+                new_start = new_end;
+                new_sel_end = new_end;
+            }
             // The one that carries arithmetic. Verified against Chrome for all
             // seven positions the old selection can take relative to the
             // replaced range: before, after, straddling either edge, fully
@@ -262,15 +310,26 @@ impl Document {
                 // An offset PAST the replaced range slides by the size change;
                 // one INSIDE it collapses onto the edge it is nearest in role
                 // — the start onto the range's start, the end onto its new end.
-                if sel_start > end { new_start = (sel_start as i64 + delta).max(0) as usize; }
-                else if sel_start > start { new_start = start; }
-                if sel_end > end { new_sel_end = (sel_end as i64 + delta).max(0) as usize; }
-                else if sel_end > start { new_sel_end = new_end; }
+                if sel_start > end {
+                    new_start = (sel_start as i64 + delta).max(0) as usize;
+                } else if sel_start > start {
+                    new_start = start;
+                }
+                if sel_end > end {
+                    new_sel_end = (sel_end as i64 + delta).max(0) as usize;
+                } else if sel_end > start {
+                    new_sel_end = new_end;
+                }
             }
         }
         // `setRangeText` never carries a direction — the range it leaves is
         // directionless whatever the selection it replaced was (measured).
-        self.store_selection(id, new_start, new_sel_end, Some(crate::types::SelectionDirection::None));
+        self.store_selection(
+            id,
+            new_start,
+            new_sel_end,
+            Some(crate::types::SelectionDirection::None),
+        );
         self.fire_select_event(id);
         true
     }

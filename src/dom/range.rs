@@ -41,14 +41,21 @@ pub struct RangeStore {
 }
 
 impl RangeStore {
-    pub fn new() -> Self { Self { map: HashMap::new(), next_id: 0 } }
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            next_id: 0,
+        }
+    }
 
     /// Every NODE this store keeps a reference to.
     ///
     /// ⛔ Not the map's keys — those are RANGE handles. The node ids are the
     /// two containers inside each value. See `TraversalStore::node_ids`.
     pub fn node_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.map.values().flat_map(|r| [r.start_container, r.end_container])
+        self.map
+            .values()
+            .flat_map(|r| [r.start_container, r.end_container])
     }
 
     pub fn insert(&mut self, r: RangeState) -> u32 {
@@ -58,11 +65,21 @@ impl RangeStore {
         id
     }
 
-    pub fn get(&self, id: u32) -> Option<RangeState> { self.map.get(&id).copied() }
-    pub fn set(&mut self, id: u32, r: RangeState) { self.map.insert(id, r); }
-    pub fn ids(&self) -> Vec<u32> { self.map.keys().copied().collect() }
-    pub fn len(&self) -> usize { self.map.len() }
-    pub fn is_empty(&self) -> bool { self.map.is_empty() }
+    pub fn get(&self, id: u32) -> Option<RangeState> {
+        self.map.get(&id).copied()
+    }
+    pub fn set(&mut self, id: u32, r: RangeState) {
+        self.map.insert(id, r);
+    }
+    pub fn ids(&self) -> Vec<u32> {
+        self.map.keys().copied().collect()
+    }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 
 impl Document {
@@ -93,9 +110,9 @@ impl Document {
 
     /// `range.collapsed` — both boundary points are the same point.
     pub fn range_collapsed(&self, r: u32) -> bool {
-        self.ranges.get(r).is_some_and(|s| {
-            s.start_container == s.end_container && s.start_offset == s.end_offset
-        })
+        self.ranges
+            .get(r)
+            .is_some_and(|s| s.start_container == s.end_container && s.start_offset == s.end_offset)
     }
 
     /// A node's **length** (DOM §4.4): character data counts its data in
@@ -110,8 +127,13 @@ impl Document {
     /// A node's index among its parent's children, or 0 when it has no parent.
     fn node_index(&self, id: u32) -> usize {
         let parent = self.parent_node(id);
-        if parent == 0 { return 0; }
-        self.child_nodes(parent).iter().position(|c| *c == id).unwrap_or(0)
+        if parent == 0 {
+            return 0;
+        }
+        self.child_nodes(parent)
+            .iter()
+            .position(|c| *c == id)
+            .unwrap_or(0)
     }
 
     /// The root of `id`'s tree — the topmost node reachable by parents.
@@ -119,7 +141,9 @@ impl Document {
         let mut cur = id;
         loop {
             let parent = self.parent_node(cur);
-            if parent == 0 || parent == cur { return cur; }
+            if parent == 0 || parent == cur {
+                return cur;
+            }
             cur = parent;
         }
     }
@@ -129,24 +153,36 @@ impl Document {
     /// `None` when the two are in different trees, which is the
     /// `WrongDocumentError` the comparing members throw.
     fn compare_points(&self, a: u32, a_off: usize, b: u32, b_off: usize) -> Option<Ordering> {
-        if a == b { return Some(a_off.cmp(&b_off)); }
+        if a == b {
+            return Some(a_off.cmp(&b_off));
+        }
         // Two roots have no order between them. `diverging_children` below
         // also answers `None` for that case, so this is an explicit statement
         // of the rule rather than the only thing enforcing it — which is why a
         // mutation removing it stays green while the BEHAVIOUR is still
         // pinned by `comparing_two_ranges_in_different_trees_...`.
-        if self.tree_root(a) != self.tree_root(b) { return None; }
+        if self.tree_root(a) != self.tree_root(b) {
+            return None;
+        }
         // DOM §4.4 step 4: when A is an ANCESTOR of B, the answer turns on
         // whether the branch B sits in starts before A's offset — a child
         // index below the offset puts A after B, not before it.
         if self.is_ancestor_of(a, b) {
             let child = self.ancestor_child_of(b, a)?;
-            return Some(if self.node_index(child) < a_off { Ordering::Greater } else { Ordering::Less });
+            return Some(if self.node_index(child) < a_off {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            });
         }
         // The mirror, inverted: ask where B sits relative to A and flip it.
         if self.is_ancestor_of(b, a) {
             let child = self.ancestor_child_of(a, b)?;
-            return Some(if self.node_index(child) < b_off { Ordering::Less } else { Ordering::Greater });
+            return Some(if self.node_index(child) < b_off {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            });
         }
         // Siblings by tree order: walk up to the common ancestor and compare
         // the two branches' indices.
@@ -155,12 +191,18 @@ impl Document {
     }
 
     fn is_ancestor_of(&self, ancestor: u32, node: u32) -> bool {
-        if ancestor == node { return false; }
+        if ancestor == node {
+            return false;
+        }
         let mut cur = node;
         loop {
             let parent = self.parent_node(cur);
-            if parent == 0 || parent == cur { return false; }
-            if parent == ancestor { return true; }
+            if parent == 0 || parent == cur {
+                return false;
+            }
+            if parent == ancestor {
+                return true;
+            }
             cur = parent;
         }
     }
@@ -170,8 +212,12 @@ impl Document {
         let mut cur = node;
         loop {
             let parent = self.parent_node(cur);
-            if parent == 0 { return None; }
-            if parent == ancestor { return Some(cur); }
+            if parent == 0 {
+                return None;
+            }
+            if parent == ancestor {
+                return Some(cur);
+            }
             cur = parent;
         }
     }
@@ -198,7 +244,9 @@ impl Document {
         let mut cur = node;
         loop {
             let parent = self.parent_node(cur);
-            if parent == 0 || parent == cur { break; }
+            if parent == 0 || parent == cur {
+                break;
+            }
             out.push(parent);
             cur = parent;
         }
@@ -222,9 +270,17 @@ impl Document {
     }
 
     fn set_boundary(&mut self, r: u32, node: u32, offset: usize, start: bool) -> bool {
-        let Some(mut s) = self.ranges.get(r) else { return false };
-        if offset > self.node_length(node) { return false; }
-        let other_root = self.tree_root(if start { s.end_container } else { s.start_container });
+        let Some(mut s) = self.ranges.get(r) else {
+            return false;
+        };
+        if offset > self.node_length(node) {
+            return false;
+        }
+        let other_root = self.tree_root(if start {
+            s.end_container
+        } else {
+            s.start_container
+        });
         let collapse = self.tree_root(node) != other_root
             || if start {
                 self.compare_points(node, offset, s.end_container, s.end_offset)
@@ -236,11 +292,17 @@ impl Document {
         if start {
             s.start_container = node;
             s.start_offset = offset;
-            if collapse { s.end_container = node; s.end_offset = offset; }
+            if collapse {
+                s.end_container = node;
+                s.end_offset = offset;
+            }
         } else {
             s.end_container = node;
             s.end_offset = offset;
-            if collapse { s.start_container = node; s.start_offset = offset; }
+            if collapse {
+                s.start_container = node;
+                s.start_offset = offset;
+            }
         }
         self.ranges.set(r, s);
         true
@@ -275,7 +337,9 @@ impl Document {
     /// ⛔ The default is the END, not the start — `collapse()` with no
     /// argument is `collapse(false)` (measured: it lands on the end offset).
     pub fn range_collapse(&mut self, r: u32, to_start: bool) {
-        let Some(mut s) = self.ranges.get(r) else { return };
+        let Some(mut s) = self.ranges.get(r) else {
+            return;
+        };
         if to_start {
             s.end_container = s.start_container;
             s.end_offset = s.start_offset;
@@ -290,27 +354,37 @@ impl Document {
     /// boundaries sit in its PARENT.
     pub fn range_select_node(&mut self, r: u32, node: u32) -> bool {
         let parent = self.parent_node(node);
-        if parent == 0 { return false; }
+        if parent == 0 {
+            return false;
+        }
         let index = self.node_index(node);
-        self.ranges.set(r, RangeState {
-            start_container: parent,
-            start_offset: index,
-            end_container: parent,
-            end_offset: index + 1,
-        });
+        self.ranges.set(
+            r,
+            RangeState {
+                start_container: parent,
+                start_offset: index,
+                end_container: parent,
+                end_offset: index + 1,
+            },
+        );
         true
     }
 
     /// `range.selectNodeContents(node)` — everything inside it.
     pub fn range_select_node_contents(&mut self, r: u32, node: u32) -> bool {
-        if self.ranges.get(r).is_none() { return false; }
+        if self.ranges.get(r).is_none() {
+            return false;
+        }
         let len = self.node_length(node);
-        self.ranges.set(r, RangeState {
-            start_container: node,
-            start_offset: 0,
-            end_container: node,
-            end_offset: len,
-        });
+        self.ranges.set(
+            r,
+            RangeState {
+                start_container: node,
+                start_offset: 0,
+                end_container: node,
+                end_offset: len,
+            },
+        );
         true
     }
 
@@ -329,7 +403,9 @@ impl Document {
     /// `range.commonAncestorContainer`.
     pub fn common_ancestor_container(&self, r: u32) -> Option<u32> {
         let s = self.ranges.get(r)?;
-        if s.start_container == s.end_container { return Some(s.start_container); }
+        if s.start_container == s.end_container {
+            return Some(s.start_container);
+        }
         let mut chain = self.ancestor_chain(s.start_container);
         chain.insert(0, s.start_container);
         let mut end_chain = self.ancestor_chain(s.end_container);
@@ -348,10 +424,25 @@ impl Document {
         let a = self.ranges.get(r)?;
         let b = self.ranges.get(other)?;
         let (an, ao, bn, bo) = match how {
-            START_TO_START => (a.start_container, a.start_offset, b.start_container, b.start_offset),
-            START_TO_END => (a.end_container, a.end_offset, b.start_container, b.start_offset),
+            START_TO_START => (
+                a.start_container,
+                a.start_offset,
+                b.start_container,
+                b.start_offset,
+            ),
+            START_TO_END => (
+                a.end_container,
+                a.end_offset,
+                b.start_container,
+                b.start_offset,
+            ),
             END_TO_END => (a.end_container, a.end_offset, b.end_container, b.end_offset),
-            END_TO_START => (a.start_container, a.start_offset, b.end_container, b.end_offset),
+            END_TO_START => (
+                a.start_container,
+                a.start_offset,
+                b.end_container,
+                b.end_offset,
+            ),
             _ => return None,
         };
         Some(match self.compare_points(an, ao, bn, bo)? {
@@ -364,8 +455,12 @@ impl Document {
     /// `range.comparePoint(node, offset)` — `-1` before, `0` inside, `1` after.
     pub fn range_compare_point(&self, r: u32, node: u32, offset: usize) -> Option<i8> {
         let s = self.ranges.get(r)?;
-        if self.tree_root(node) != self.tree_root(s.start_container) { return None; }
-        if offset > self.node_length(node) { return None; }
+        if self.tree_root(node) != self.tree_root(s.start_container) {
+            return None;
+        }
+        if offset > self.node_length(node) {
+            return None;
+        }
         if self.compare_points(node, offset, s.start_container, s.start_offset)? == Ordering::Less {
             return Some(-1);
         }
@@ -385,24 +480,35 @@ impl Document {
 
     /// `range.intersectsNode(node)`.
     pub fn range_intersects_node(&self, r: u32, node: u32) -> bool {
-        let Some(s) = self.ranges.get(r) else { return false };
-        if self.tree_root(node) != self.tree_root(s.start_container) { return false; }
+        let Some(s) = self.ranges.get(r) else {
+            return false;
+        };
+        if self.tree_root(node) != self.tree_root(s.start_container) {
+            return false;
+        }
         let parent = self.parent_node(node);
-        if parent == 0 { return true; }
+        if parent == 0 {
+            return true;
+        }
         let index = self.node_index(node);
-        let before_end =
-            self.compare_points(parent, index, s.end_container, s.end_offset) == Some(Ordering::Less);
-        let after_start = self
-            .compare_points(parent, index + 1, s.start_container, s.start_offset)
+        let before_end = self.compare_points(parent, index, s.end_container, s.end_offset)
+            == Some(Ordering::Less);
+        let after_start = self.compare_points(parent, index + 1, s.start_container, s.start_offset)
             == Some(Ordering::Greater);
         before_end && after_start
     }
 
     /// `range.toString()` — the text between the boundaries.
     pub fn range_to_string(&self, r: u32) -> String {
-        let Some(s) = self.ranges.get(r) else { return String::new() };
+        let Some(s) = self.ranges.get(r) else {
+            return String::new();
+        };
         if self.node_type(s.start_container) == 3 && s.start_container == s.end_container {
-            return substring16(&self.text_data(s.start_container), s.start_offset, s.end_offset);
+            return substring16(
+                &self.text_data(s.start_container),
+                s.start_offset,
+                s.end_offset,
+            );
         }
         let mut out = String::new();
         if self.node_type(s.start_container) == 3 {
@@ -414,7 +520,11 @@ impl Document {
             out.push_str(&self.text_data(node));
         }
         if self.node_type(s.end_container) == 3 {
-            out.push_str(&substring16(&self.text_data(s.end_container), 0, s.end_offset));
+            out.push_str(&substring16(
+                &self.text_data(s.end_container),
+                0,
+                s.end_offset,
+            ));
         }
         out
     }
@@ -435,14 +545,18 @@ impl Document {
 
     /// Every node between the boundary points, in tree order.
     fn nodes_in_tree_order(&self, s: &RangeState) -> Vec<u32> {
-        let Some(root) = self.common_ancestor_of(s) else { return Vec::new() };
+        let Some(root) = self.common_ancestor_of(s) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         self.collect_descendants(root, &mut out);
         out
     }
 
     fn common_ancestor_of(&self, s: &RangeState) -> Option<u32> {
-        if s.start_container == s.end_container { return Some(s.start_container); }
+        if s.start_container == s.end_container {
+            return Some(s.start_container);
+        }
         let mut chain = self.ancestor_chain(s.start_container);
         chain.insert(0, s.start_container);
         let mut end_chain = self.ancestor_chain(s.end_container);
@@ -462,7 +576,9 @@ impl Document {
     /// end.
     fn is_contained(&self, node: u32, s: &RangeState) -> bool {
         let parent = self.parent_node(node);
-        if parent == 0 { return false; }
+        if parent == 0 {
+            return false;
+        }
         let index = self.node_index(node);
         let after_start = matches!(
             self.compare_points(parent, index, s.start_container, s.start_offset),
@@ -496,10 +612,17 @@ impl Document {
     /// wrong.
     pub fn delete_contents(&mut self, r: u32) {
         let Some(s) = self.ranges.get(r) else { return };
-        if s.start_container == s.end_container && s.start_offset == s.end_offset { return; }
+        if s.start_container == s.end_container && s.start_offset == s.end_offset {
+            return;
+        }
         // A range inside ONE text node is a data edit, not a tree edit.
         if s.start_container == s.end_container && self.node_type(s.start_container) == 3 {
-            self.replace_data(s.start_container, s.start_offset, s.end_offset - s.start_offset, "");
+            self.replace_data(
+                s.start_container,
+                s.start_offset,
+                s.end_offset - s.start_offset,
+                "",
+            );
             return;
         }
         let doomed = self.contained_nodes_to_remove(&s);
@@ -512,7 +635,9 @@ impl Document {
             let len = self.character_data_length(s.start_container);
             self.replace_data(s.start_container, s.start_offset, len - s.start_offset, "");
         }
-        for node in doomed { self.remove_child(node); }
+        for node in doomed {
+            self.remove_child(node);
+        }
         self.collapse_to_start(r, &s);
     }
 
@@ -538,7 +663,11 @@ impl Document {
             return Some(frag);
         }
         if s.start_container == s.end_container && self.node_type(s.start_container) == 3 {
-            let text = substring16(&self.text_data(s.start_container), s.start_offset, s.end_offset);
+            let text = substring16(
+                &self.text_data(s.start_container),
+                s.start_offset,
+                s.end_offset,
+            );
             let t = self.create_text_node(&text);
             self.append_child(frag, t);
             return Some(frag);
@@ -563,13 +692,25 @@ impl Document {
             return Some(self.clone_node(node, true));
         }
         let touches = self.range_touches(node, s);
-        if !touches { return None; }
+        if !touches {
+            return None;
+        }
         if self.node_type(node) == 3 {
             let data = self.text_data(node);
             let len = data.encode_utf16().count();
-            let from = if node == s.start_container { s.start_offset } else { 0 };
-            let to = if node == s.end_container { s.end_offset } else { len };
-            if from >= to { return None; }
+            let from = if node == s.start_container {
+                s.start_offset
+            } else {
+                0
+            };
+            let to = if node == s.end_container {
+                s.end_offset
+            } else {
+                len
+            };
+            if from >= to {
+                return None;
+            }
             let text = substring16(&data, from, to);
             return Some(self.create_text_node(&text));
         }
@@ -584,8 +725,12 @@ impl Document {
 
     /// Does any part of `node` fall between the boundary points?
     fn range_touches(&self, node: u32, s: &RangeState) -> bool {
-        if node == s.start_container || node == s.end_container { return true; }
-        if self.is_ancestor_of(node, s.start_container) || self.is_ancestor_of(node, s.end_container) {
+        if node == s.start_container || node == s.end_container {
+            return true;
+        }
+        if self.is_ancestor_of(node, s.start_container)
+            || self.is_ancestor_of(node, s.end_container)
+        {
             return true;
         }
         self.is_contained(node, s)
@@ -597,7 +742,9 @@ impl Document {
         let all = self.nodes_in_tree_order(s);
         let contained: Vec<u32> = all
             .into_iter()
-            .filter(|n| *n != s.start_container && *n != s.end_container && self.is_contained(*n, s))
+            .filter(|n| {
+                *n != s.start_container && *n != s.end_container && self.is_contained(*n, s)
+            })
             .filter(|n| !self.is_ancestor_of(*n, s.start_container))
             .filter(|n| !self.is_ancestor_of(*n, s.end_container))
             .collect();
@@ -615,14 +762,19 @@ impl Document {
         // The start point survives the deletion; the end folds onto it. The
         // live-update hooks have already moved the offsets, so this reads the
         // CURRENT state rather than the one captured before the edit.
-        let Some(now) = self.ranges.get(r) else { return };
+        let Some(now) = self.ranges.get(r) else {
+            return;
+        };
         let _ = s;
-        self.ranges.set(r, RangeState {
-            start_container: now.start_container,
-            start_offset: now.start_offset,
-            end_container: now.start_container,
-            end_offset: now.start_offset,
-        });
+        self.ranges.set(
+            r,
+            RangeState {
+                start_container: now.start_container,
+                start_offset: now.start_offset,
+                end_container: now.start_container,
+                end_offset: now.start_offset,
+            },
+        );
     }
 
     /// `range.insertNode(node)`.
@@ -632,12 +784,16 @@ impl Document {
     /// to the parent at the insertion index. The offsets alone (`[1, 2]`) read
     /// the other way; only printing the containers shows it.
     pub fn insert_node(&mut self, r: u32, node: u32) -> bool {
-        let Some(s) = self.ranges.get(r) else { return false };
+        let Some(s) = self.ranges.get(r) else {
+            return false;
+        };
         let container = s.start_container;
         let (parent, index) = if self.node_type(container) == 3 {
             // Split, and insert between the two halves.
             let parent = self.parent_node(container);
-            if parent == 0 { return false; }
+            if parent == 0 {
+                return false;
+            }
             if s.start_offset == 0 {
                 (parent, self.node_index(container))
             } else if s.start_offset >= self.character_data_length(container) {
@@ -665,21 +821,35 @@ impl Document {
     /// partially contains a non-text node — measured on a range running from
     /// inside one text node into a `<b>`'s text.
     pub fn surround_contents(&mut self, r: u32, node: u32) -> bool {
-        let Some(s) = self.ranges.get(r) else { return false };
+        let Some(s) = self.ranges.get(r) else {
+            return false;
+        };
         // Partially contained non-text node → InvalidStateError.
         for n in self.nodes_in_tree_order(&s) {
-            if self.node_type(n) == 3 { continue; }
+            if self.node_type(n) == 3 {
+                continue;
+            }
             let partially = (self.is_ancestor_of(n, s.start_container)
                 || self.is_ancestor_of(n, s.end_container))
                 && !self.is_contained(n, &s);
-            if partially { return false; }
+            if partially {
+                return false;
+            }
         }
         // "Replace all with null within node" — an existing child of the
         // wrapper is discarded (measured: a `<u>` carrying "old" loses it).
-        for child in self.child_nodes(node) { self.remove_child(child); }
-        let Some(frag) = self.extract_contents(r) else { return false };
-        if !self.insert_node(r, node) { return false; }
-        for child in self.child_nodes(frag) { self.append_child(node, child); }
+        for child in self.child_nodes(node) {
+            self.remove_child(child);
+        }
+        let Some(frag) = self.extract_contents(r) else {
+            return false;
+        };
+        if !self.insert_node(r, node) {
+            return false;
+        }
+        for child in self.child_nodes(frag) {
+            self.append_child(node, child);
+        }
         self.range_select_node_contents(r, node);
         true
     }
@@ -694,11 +864,19 @@ impl Document {
 impl Document {
     /// A node was inserted into `parent` at `index`.
     pub(crate) fn ranges_after_insert(&mut self, parent: u32, index: usize) {
-        if self.suppress_range_updates { return; }
+        if self.suppress_range_updates {
+            return;
+        }
         for r in self.ranges.ids() {
-            let Some(mut s) = self.ranges.get(r) else { continue };
-            if s.start_container == parent && s.start_offset > index { s.start_offset += 1; }
-            if s.end_container == parent && s.end_offset > index { s.end_offset += 1; }
+            let Some(mut s) = self.ranges.get(r) else {
+                continue;
+            };
+            if s.start_container == parent && s.start_offset > index {
+                s.start_offset += 1;
+            }
+            if s.end_container == parent && s.end_offset > index {
+                s.end_offset += 1;
+            }
             self.ranges.set(r, s);
         }
     }
@@ -709,9 +887,13 @@ impl Document {
     /// range whose container is inside the doomed subtree has to be moved to
     /// `(parent, index)`, and neither is reachable once the links are cut.
     pub(crate) fn ranges_before_remove(&mut self, node: u32, parent: u32, index: usize) {
-        if self.suppress_range_updates { return; }
+        if self.suppress_range_updates {
+            return;
+        }
         for r in self.ranges.ids() {
-            let Some(mut s) = self.ranges.get(r) else { continue };
+            let Some(mut s) = self.ranges.get(r) else {
+                continue;
+            };
             if s.start_container == node || self.is_ancestor_of(node, s.start_container) {
                 s.start_container = parent;
                 s.start_offset = index;
@@ -742,7 +924,9 @@ impl Document {
         count: usize,
         data_len: usize,
     ) {
-        if self.suppress_range_updates { return; }
+        if self.suppress_range_updates {
+            return;
+        }
         let shift = |v: usize| -> usize {
             if v > offset + count {
                 (v + data_len).saturating_sub(count)
@@ -753,9 +937,15 @@ impl Document {
             }
         };
         for r in self.ranges.ids() {
-            let Some(mut s) = self.ranges.get(r) else { continue };
-            if s.start_container == node { s.start_offset = shift(s.start_offset); }
-            if s.end_container == node { s.end_offset = shift(s.end_offset); }
+            let Some(mut s) = self.ranges.get(r) else {
+                continue;
+            };
+            if s.start_container == node {
+                s.start_offset = shift(s.start_offset);
+            }
+            if s.end_container == node {
+                s.end_offset = shift(s.end_offset);
+            }
             self.ranges.set(r, s);
         }
     }
@@ -763,7 +953,9 @@ impl Document {
     /// `splitText(node, offset)` ran, producing `new_node`.
     pub(crate) fn ranges_after_split_text(&mut self, node: u32, offset: usize, new_node: u32) {
         for r in self.ranges.ids() {
-            let Some(mut s) = self.ranges.get(r) else { continue };
+            let Some(mut s) = self.ranges.get(r) else {
+                continue;
+            };
             if s.start_container == node && s.start_offset > offset {
                 s.start_container = new_node;
                 s.start_offset -= offset;

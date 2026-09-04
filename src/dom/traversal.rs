@@ -75,7 +75,10 @@ pub struct TraversalStore {
 
 impl TraversalStore {
     pub fn new() -> Self {
-        Self { map: HashMap::new(), next_id: 1 }
+        Self {
+            map: HashMap::new(),
+            next_id: 1,
+        }
     }
 
     /// Every NODE this store keeps a reference to.
@@ -95,20 +98,30 @@ impl TraversalStore {
         id
     }
 
-    pub fn get(&self, id: u32) -> Option<&Traversal> { self.map.get(&id) }
-    pub fn get_mut(&mut self, id: u32) -> Option<&mut Traversal> { self.map.get_mut(&id) }
-    pub fn ids(&self) -> Vec<u32> { self.map.keys().copied().collect() }
+    pub fn get(&self, id: u32) -> Option<&Traversal> {
+        self.map.get(&id)
+    }
+    pub fn get_mut(&mut self, id: u32) -> Option<&mut Traversal> {
+        self.map.get_mut(&id)
+    }
+    pub fn ids(&self) -> Vec<u32> {
+        self.map.keys().copied().collect()
+    }
 }
 
 impl std::fmt::Debug for TraversalStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TraversalStore").field("live", &self.map.len()).finish()
+        f.debug_struct("TraversalStore")
+            .field("live", &self.map.len())
+            .finish()
     }
 }
 
 /// The `whatToShow` bit for a `nodeType`, per DOM §6.3: bit `1 << (type - 1)`.
 pub fn show_bit(node_type: u16) -> u32 {
-    if node_type == 0 { return 0; }
+    if node_type == 0 {
+        return 0;
+    }
     1u32 << (node_type - 1)
 }
 
@@ -179,7 +192,9 @@ impl Document {
     /// Settable to a node OUTSIDE the root — Chrome allows it and traversal
     /// carries on from there, stopping at the root going up.
     pub fn set_current_node(&mut self, t: u32, node: u32) {
-        if let Some(tr) = self.traversals.get_mut(t) { tr.current = node; }
+        if let Some(tr) = self.traversals.get_mut(t) {
+            tr.current = node;
+        }
     }
 
     /// `iterator.referenceNode`.
@@ -206,13 +221,17 @@ impl Document {
     /// walker over `SHOW_ELEMENT` called its filter for four elements and for
     /// none of the eleven text nodes between them.
     fn filter_node(&mut self, t: u32, node: u32) -> u16 {
-        let Some(tr) = self.traversals.get(t) else { return FILTER_REJECT };
+        let Some(tr) = self.traversals.get(t) else {
+            return FILTER_REJECT;
+        };
         let what = tr.what_to_show;
         let has_filter = tr.filter.is_some();
         if what & show_bit(self.node_type(node)) == 0 {
             return FILTER_SKIP;
         }
-        if !has_filter { return FILTER_ACCEPT; }
+        if !has_filter {
+            return FILTER_ACCEPT;
+        }
         // The filter needs `&Document` while it lives inside one. Lifting it
         // out for the call is the same move `dispatch_dom_event` makes with
         // `event_targets`; a filter that re-enters its own traversal sees no
@@ -222,7 +241,9 @@ impl Document {
             return FILTER_ACCEPT;
         };
         let verdict = f(self, node);
-        if let Some(tr) = self.traversals.get_mut(t) { tr.filter = Some(f); }
+        if let Some(tr) = self.traversals.get_mut(t) {
+            tr.filter = Some(f);
+        }
         verdict
     }
 
@@ -230,23 +251,35 @@ impl Document {
 
     /// The next node in tree order, not leaving `root`'s subtree.
     fn following_within(&self, node: u32, root: u32) -> Option<u32> {
-        if let Some(first) = self.first_child(node) { return Some(first); }
+        if let Some(first) = self.first_child(node) {
+            return Some(first);
+        }
         let mut cur = node;
         loop {
-            if cur == root { return None; }
+            if cur == root {
+                return None;
+            }
             let sib = self.next_sibling(cur);
-            if sib != 0 { return Some(sib); }
+            if sib != 0 {
+                return Some(sib);
+            }
             let parent = self.parent_node(cur);
-            if parent == 0 || cur == root { return None; }
+            if parent == 0 || cur == root {
+                return None;
+            }
             cur = parent;
         }
     }
 
     /// The previous node in tree order, not leaving `root`'s subtree.
     fn preceding_within(&self, node: u32, root: u32) -> Option<u32> {
-        if node == root { return None; }
+        if node == root {
+            return None;
+        }
         let prev = self.previous_sibling(node);
-        if prev != 0 { return Some(self.last_inclusive_descendant(prev)); }
+        if prev != 0 {
+            return Some(self.last_inclusive_descendant(prev));
+        }
         let parent = self.parent_node(node);
         (parent != 0).then_some(parent)
     }
@@ -264,9 +297,13 @@ impl Document {
     fn is_inclusive_ancestor(&self, ancestor: u32, node: u32) -> bool {
         let mut cur = node;
         loop {
-            if cur == ancestor { return true; }
+            if cur == ancestor {
+                return true;
+            }
             let parent = self.parent_node(cur);
-            if parent == 0 || parent == cur { return false; }
+            if parent == 0 || parent == cur {
+                return false;
+            }
             cur = parent;
         }
     }
@@ -283,7 +320,9 @@ impl Document {
         loop {
             // Descend while the last verdict did not prune the subtree.
             while result != FILTER_REJECT {
-                let Some(child) = self.first_child(node) else { break };
+                let Some(child) = self.first_child(node) else {
+                    break;
+                };
                 node = child;
                 result = self.filter_node(t, node);
                 if result == FILTER_ACCEPT {
@@ -294,11 +333,17 @@ impl Document {
             // Then the nearest following node, without leaving the root.
             let mut temp = node;
             let sibling = loop {
-                if temp == root { return None; }
+                if temp == root {
+                    return None;
+                }
                 let sib = self.next_sibling(temp);
-                if sib != 0 { break sib; }
+                if sib != 0 {
+                    break sib;
+                }
                 let parent = self.parent_node(temp);
-                if parent == 0 { return None; }
+                if parent == 0 {
+                    return None;
+                }
                 temp = parent;
             };
             node = sibling;
@@ -323,7 +368,9 @@ impl Document {
                 let mut result = self.filter_node(t, node);
                 // Walk to the deepest last descendant that is not pruned.
                 while result != FILTER_REJECT {
-                    let Some(last) = self.last_child(node) else { break };
+                    let Some(last) = self.last_child(node) else {
+                        break;
+                    };
                     node = last;
                     result = self.filter_node(t, node);
                 }
@@ -334,7 +381,9 @@ impl Document {
                 sibling = self.previous_sibling(node);
             }
             let parent = self.parent_node(node);
-            if node == root || parent == 0 { return None; }
+            if node == root || parent == 0 {
+                return None;
+            }
             node = parent;
             if self.filter_node(t, node) == FILTER_ACCEPT {
                 self.set_current_node(t, node);
@@ -380,7 +429,11 @@ impl Document {
             let tr = self.traversals.get(t)?;
             (tr.current, tr.root)
         };
-        let mut node = match if first { self.first_child(start) } else { self.last_child(start) } {
+        let mut node = match if first {
+            self.first_child(start)
+        } else {
+            self.last_child(start)
+        } {
             Some(n) => n,
             None => return None,
         };
@@ -391,16 +444,32 @@ impl Document {
                 return Some(node);
             }
             if result == FILTER_SKIP {
-                let child = if first { self.first_child(node) } else { self.last_child(node) };
-                if let Some(c) = child { node = c; continue; }
+                let child = if first {
+                    self.first_child(node)
+                } else {
+                    self.last_child(node)
+                };
+                if let Some(c) = child {
+                    node = c;
+                    continue;
+                }
             }
             // Rejected, or skipped with nothing under it: move sideways, then
             // up — but never past the node the walk started from.
             loop {
-                let sib = if first { self.next_sibling(node) } else { self.previous_sibling(node) };
-                if sib != 0 { node = sib; break; }
+                let sib = if first {
+                    self.next_sibling(node)
+                } else {
+                    self.previous_sibling(node)
+                };
+                if sib != 0 {
+                    node = sib;
+                    break;
+                }
                 let parent = self.parent_node(node);
-                if parent == 0 || parent == root || parent == start { return None; }
+                if parent == 0 || parent == root || parent == start {
+                    return None;
+                }
                 node = parent;
             }
         }
@@ -422,9 +491,15 @@ impl Document {
             let tr = self.traversals.get(t)?;
             (tr.current, tr.root)
         };
-        if node == root { return None; }
+        if node == root {
+            return None;
+        }
         loop {
-            let mut sibling = if next { self.next_sibling(node) } else { self.previous_sibling(node) };
+            let mut sibling = if next {
+                self.next_sibling(node)
+            } else {
+                self.previous_sibling(node)
+            };
             while sibling != 0 {
                 node = sibling;
                 let result = self.filter_node(t, node);
@@ -433,18 +508,32 @@ impl Document {
                     return Some(node);
                 }
                 // A skipped sibling's own children are candidates.
-                let inner = if next { self.first_child(node) } else { self.last_child(node) };
+                let inner = if next {
+                    self.first_child(node)
+                } else {
+                    self.last_child(node)
+                };
                 sibling = match inner {
                     Some(c) if result != FILTER_REJECT => c,
-                    _ => if next { self.next_sibling(node) } else { self.previous_sibling(node) },
+                    _ => {
+                        if next {
+                            self.next_sibling(node)
+                        } else {
+                            self.previous_sibling(node)
+                        }
+                    }
                 };
             }
             let parent = self.parent_node(node);
-            if parent == 0 || parent == root { return None; }
+            if parent == 0 || parent == root {
+                return None;
+            }
             node = parent;
             // Climbing past an ACCEPTED ancestor would return a node that is
             // not a sibling of anything the caller asked about.
-            if self.filter_node(t, node) == FILTER_ACCEPT { return None; }
+            if self.filter_node(t, node) == FILTER_ACCEPT {
+                return None;
+            }
         }
     }
 
@@ -482,7 +571,9 @@ impl Document {
             } else {
                 node = self.preceding_within(node, root)?;
             }
-            if self.filter_node(t, node) == FILTER_ACCEPT { break; }
+            if self.filter_node(t, node) == FILTER_ACCEPT {
+                break;
+            }
         }
         if let Some(tr) = self.traversals.get_mut(t) {
             tr.current = node;
@@ -502,23 +593,35 @@ impl Document {
     /// before, the reference moves FORWARD past the removed subtree instead.
     pub fn run_pre_removing_steps(&mut self, node: u32) {
         for t in self.traversals.ids() {
-            let Some(tr) = self.traversals.get(t) else { continue };
-            if tr.kind != TraversalKind::NodeIterator { continue; }
+            let Some(tr) = self.traversals.get(t) else {
+                continue;
+            };
+            if tr.kind != TraversalKind::NodeIterator {
+                continue;
+            }
             let (root, reference, before) = (tr.root, tr.current, tr.pointer_before);
-            if node == root || !self.is_inclusive_ancestor(node, reference) { continue; }
+            if node == root || !self.is_inclusive_ancestor(node, reference) {
+                continue;
+            }
             if before {
                 // The first node after the removed subtree that is still
                 // inside the root.
                 let mut next = self.following_within(node, root);
                 while let Some(n) = next {
-                    if !self.is_inclusive_ancestor(node, n) { break; }
+                    if !self.is_inclusive_ancestor(node, n) {
+                        break;
+                    }
                     next = self.following_within(n, root);
                 }
                 if let Some(n) = next {
-                    if let Some(tr) = self.traversals.get_mut(t) { tr.current = n; }
+                    if let Some(tr) = self.traversals.get_mut(t) {
+                        tr.current = n;
+                    }
                     continue;
                 }
-                if let Some(tr) = self.traversals.get_mut(t) { tr.pointer_before = false; }
+                if let Some(tr) = self.traversals.get_mut(t) {
+                    tr.pointer_before = false;
+                }
             }
             // The node immediately before the removed one.
             let prev = self.previous_sibling(node);
@@ -527,7 +630,9 @@ impl Document {
             } else {
                 self.parent_node(node)
             };
-            if let Some(tr) = self.traversals.get_mut(t) { tr.current = new_ref; }
+            if let Some(tr) = self.traversals.get_mut(t) {
+                tr.current = new_ref;
+            }
         }
     }
 }

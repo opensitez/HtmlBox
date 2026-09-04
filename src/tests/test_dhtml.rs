@@ -1,9 +1,9 @@
 //! Tests for proper HTML/DHTML behavior — verifying the engine works as
 //! a dynamic HTML app engine with correct rendering, inheritance, and mutation.
 
+use crate::dom::events::DomEvent;
 use crate::frame::EngineFrame;
 use crate::html::parse_html;
-use crate::dom::events::DomEvent;
 use std::sync::{Arc, Mutex};
 
 fn frame(html: &str) -> EngineFrame {
@@ -34,7 +34,11 @@ fn font_size_inherits() {
     let node = f.doc.get_box_by_id(s).unwrap();
     let style = node.style.clone();
     let fs = style.font_size_px(16.0, 16.0);
-    assert!((fs - 24.0).abs() < 1.0, "font-size should inherit: got {}", fs);
+    assert!(
+        (fs - 24.0).abs() < 1.0,
+        "font-size should inherit: got {}",
+        fs
+    );
 }
 
 #[test]
@@ -44,7 +48,10 @@ fn background_does_not_inherit() {
     let node = f.doc.get_box_by_id(child).unwrap();
     let style = node.style.clone();
     // Background should NOT inherit — child should have transparent/default
-    assert_ne!(style.background_color.b, 255, "background should not inherit");
+    assert_ne!(
+        style.background_color.b, 255,
+        "background should not inherit"
+    );
 }
 
 #[test]
@@ -53,7 +60,11 @@ fn display_does_not_inherit() {
     let child = f.doc.get_element_by_id("child").unwrap();
     let node = f.doc.get_box_by_id(child).unwrap();
     let style = node.style.clone();
-    assert_ne!(style.display, crate::types::Display::Flex, "display should not inherit");
+    assert_ne!(
+        style.display,
+        crate::types::Display::Flex,
+        "display should not inherit"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -77,7 +88,10 @@ fn add_class_triggers_style_update() {
 
     // After: red
     let node = f.doc.get_box_by_id(p).unwrap();
-    assert_eq!(node.style.color.r, 255, "adding .red class should make text red");
+    assert_eq!(
+        node.style.color.r, 255,
+        "adding .red class should make text red"
+    );
 }
 
 #[test]
@@ -89,8 +103,11 @@ fn set_style_property_updates_layout() {
     f.set_style(box_id, "width", "200px");
     f.update_frame();
 
-    assert!((f.doc.offset_width(box_id) - 200.0).abs() < 2.0,
-        "width should update to 200px, got {}", f.doc.offset_width(box_id));
+    assert!(
+        (f.doc.offset_width(box_id) - 200.0).abs() < 2.0,
+        "width should update to 200px, got {}",
+        f.doc.offset_width(box_id)
+    );
 }
 
 #[test]
@@ -130,9 +147,13 @@ fn click_event_fires_handler() {
 
     let clicked = Arc::new(Mutex::new(false));
     let c = clicked.clone();
-    f.on(btn, "click", Box::new(move |_, _d: &mut crate::Document| {
-        *c.lock().unwrap() = true;
-    }));
+    f.on(
+        btn,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| {
+            *c.lock().unwrap() = true;
+        }),
+    );
 
     let mut evt = DomEvent::new("click", btn);
     f.dispatch_event(&mut evt);
@@ -154,7 +175,10 @@ fn click_handler_can_modify_dom() {
     f.update_frame();
 
     let node = f.doc.get_box_by_id(target).unwrap();
-    assert_eq!(node.style.color.r, 255, "target should be red after class add");
+    assert_eq!(
+        node.style.color.r, 255,
+        "target should be red after class add"
+    );
 }
 
 #[test]
@@ -162,14 +186,21 @@ fn prevent_default_works() {
     let mut f = frame(r#"<a id="link" href="/page">Go</a>"#);
     let link = f.doc.get_element_by_id("link").unwrap();
 
-    f.on(link, "click", Box::new(|e, _d: &mut crate::Document| {
-        e.prevent_default();
-    }));
+    f.on(
+        link,
+        "click",
+        Box::new(|e, _d: &mut crate::Document| {
+            e.prevent_default();
+        }),
+    );
 
     let mut evt = DomEvent::new("click", link);
     f.dispatch_event(&mut evt);
 
-    assert!(evt.default_prevented(), "preventDefault should stop navigation");
+    assert!(
+        evt.default_prevented(),
+        "preventDefault should stop navigation"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -185,7 +216,11 @@ fn inline_style_overrides_class() {
 
     let node = f.doc.get_box_by_id(p).unwrap();
     let color = node.style.color;
-    assert_eq!(color.r, 255, "inline style should override class: r={}", color.r);
+    assert_eq!(
+        color.r, 255,
+        "inline style should override class: r={}",
+        color.r
+    );
     assert_eq!(color.b, 0);
 }
 
@@ -210,10 +245,12 @@ fn class_selector_overrides_tag() {
 
 #[test]
 fn border_box_sizing() {
-    let mut f = frame(r#"
+    let mut f = frame(
+        r#"
         <div id="a" style="width: 200px; padding: 20px; box-sizing: content-box">a</div>
         <div id="b" style="width: 200px; padding: 20px; box-sizing: border-box">b</div>
-    "#);
+    "#,
+    );
     let a = f.doc.get_element_by_id("a").unwrap();
     let b = f.doc.get_element_by_id("b").unwrap();
 
@@ -221,24 +258,38 @@ fn border_box_sizing() {
     let wb = f.doc.offset_width(b);
 
     // content-box: width = content, so total = 200 + 40 padding = 240
-    assert!((wa - 240.0).abs() < 5.0, "content-box should be ~240px, got {}", wa);
+    assert!(
+        (wa - 240.0).abs() < 5.0,
+        "content-box should be ~240px, got {}",
+        wa
+    );
     // border-box: width includes padding, so total = 200
-    assert!((wb - 200.0).abs() < 5.0, "border-box should be ~200px, got {}", wb);
+    assert!(
+        (wb - 200.0).abs() < 5.0,
+        "border-box should be ~200px, got {}",
+        wb
+    );
 }
 
 #[test]
 fn nested_percentage_resolves_correctly() {
-    let mut f = frame(r#"
+    let mut f = frame(
+        r#"
         <div style="width: 600px">
             <div style="width: 50%">
                 <div id="inner" style="width: 50%">inner</div>
             </div>
         </div>
-    "#);
+    "#,
+    );
     let inner = f.doc.get_element_by_id("inner").unwrap();
     let w = f.doc.offset_width(inner);
     // 50% of 50% of 600 = 150
-    assert!((w - 150.0).abs() < 5.0, "nested 50% of 50% of 600 should be ~150, got {}", w);
+    assert!(
+        (w - 150.0).abs() < 5.0,
+        "nested 50% of 50% of 600 should be ~150, got {}",
+        w
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -257,7 +308,11 @@ fn min_function_in_width() {
     let mut f = frame(r#"<div id="box" style="width: min(300px, 50%)">x</div>"#);
     let w = f.doc.offset_width(f.doc.get_element_by_id("box").unwrap());
     // 50% of ~784 (body) = ~392, min(300, 392) = 300
-    assert!((w - 300.0).abs() < 5.0, "min(300px, 50%) should be ~300, got {}", w);
+    assert!(
+        (w - 300.0).abs() < 5.0,
+        "min(300px, 50%) should be ~300, got {}",
+        w
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -284,13 +339,19 @@ fn multiple_mutations_one_frame() {
     let children = f.doc.child_nodes(app);
     assert_eq!(children.len(), 10, "all 10 items should be in DOM");
     for &child in &children {
-        assert!(f.doc.offset_height(child) > 0.0, "each item should have layout");
+        assert!(
+            f.doc.offset_height(child) > 0.0,
+            "each item should have layout"
+        );
     }
 }
 
 #[test]
 fn no_change_no_work() {
     let mut f = frame(r#"<div>stable</div>"#);
-    assert!(!f.update_frame(), "second frame with no changes should return false");
+    assert!(
+        !f.update_frame(),
+        "second frame with no changes should return false"
+    );
     assert!(!f.update_frame(), "third frame should also return false");
 }

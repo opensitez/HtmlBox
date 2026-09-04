@@ -3,10 +3,10 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::css::*;
-use std::collections::{HashMap, HashSet};
-use crate::layout::LayoutEngine;
 use crate::dom::*;
 use crate::html::*;
+use crate::layout::LayoutEngine;
+use std::collections::{HashMap, HashSet};
 
 impl Document {
     /// Re-apply the CSS cascade to the entire document tree.
@@ -17,11 +17,17 @@ impl Document {
         // Invalidate hover/active pointers — raw pointers may alias differently
         // after WebCore trees are rebuilt or re-allocated during parsing.
         self.hovered_box = 0;
-        self.active_box  = 0;
+        self.active_box = 0;
         self.stylesheet.rebuild_index();
         crate::css::apply_cascade_vp(
-            &mut self.root, &self.stylesheet, None, 16.0,
-            self.viewport_w, self.viewport_h, self.focused_box, self.keyboard_focus,
+            &mut self.root,
+            &self.stylesheet,
+            None,
+            16.0,
+            self.viewport_w,
+            self.viewport_h,
+            self.focused_box,
+            self.keyboard_focus,
         );
     }
 
@@ -29,11 +35,17 @@ impl Document {
     pub fn recascade_with_focus(&mut self, focused: u32) {
         self.focused_box = focused;
         self.hovered_box = 0;
-        self.active_box  = 0;
+        self.active_box = 0;
         self.stylesheet.rebuild_index();
         crate::css::apply_cascade_vp(
-            &mut self.root, &self.stylesheet, None, 16.0,
-            self.viewport_w, self.viewport_h, self.focused_box, self.keyboard_focus,
+            &mut self.root,
+            &self.stylesheet,
+            None,
+            16.0,
+            self.viewport_w,
+            self.viewport_h,
+            self.focused_box,
+            self.keyboard_focus,
         );
     }
 

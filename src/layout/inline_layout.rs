@@ -1,19 +1,19 @@
-use crate::types::*;
-use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Stretch, Style as CTextStyle, Weight};
-use crate::layout::{LayoutEngine, ResolvedBox, FloatContext, FloatSide, layout_positioned};
+use super::Constraints;
 use crate::layout::block::collapse_two;
 use crate::layout::has_block_children;
 use crate::layout::text::resolve_bidi_line;
-use super::Constraints;
+use crate::layout::{layout_positioned, FloatContext, FloatSide, LayoutEngine, ResolvedBox};
+use crate::types::*;
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Stretch, Style as CTextStyle, Weight};
 
 /// Lay out a box whose children are inline-level (text runs, inline-block).
 /// Returns total outer height of the box.
 /// `float_ctx` is the float context from the containing block (may be None).
 pub fn layout_inline_block(
-    engine:       &LayoutEngine,
-    node:         &mut WebCore,
-    rbox:         &ResolvedBox,
-    c:            &Constraints,
+    engine: &LayoutEngine,
+    node: &mut WebCore,
+    rbox: &ResolvedBox,
+    c: &Constraints,
     parent_float_ctx: Option<&mut FloatContext>,
 ) -> f32 {
     let containing_w = c.available_width;
@@ -36,7 +36,7 @@ pub fn layout_inline_block(
 
     let raw_w = match rbox.content_width {
         Some(w) => w,
-        None    => (containing_w - rbox.h_space()).max(0.0),
+        None => (containing_w - rbox.h_space()).max(0.0),
     };
     // CSS Sizing §5 — the intrinsic keywords, resolved here because this is
     // where the node is in hand. See the same branch in `block.rs`: they read
@@ -44,16 +44,14 @@ pub fn layout_inline_block(
     // `width: min-content` box otherwise filled its containing block.
     // Only when nothing definite was resolved: a forced size — the main size
     // flex hands its items — outranks the item's own intrinsic keyword.
-    let raw_w = match node.style.width.intrinsic().filter(|_| rbox.content_width.is_none()) {
+    let raw_w = match node
+        .style
+        .width
+        .intrinsic()
+        .filter(|_| rbox.content_width.is_none())
+    {
         Some(kind) => {
-            let avail = raw_w;
-            let mn = engine.min_content_width_of_content(node, font_px, root_font_px);
-            let mx = engine.max_content_width_of_content(node, font_px, root_font_px);
-            match kind {
-                CssLength::MinContent => mn,
-                CssLength::MaxContent => mx,
-                _ => mx.min(avail).max(mn),
-            }
+            engine.intrinsic_width(&kind, node, raw_w, font_px, root_font_px, containing_w)
         }
         None => raw_w,
     };
@@ -62,43 +60,73 @@ pub fn layout_inline_block(
     // CSS: with box-sizing:border-box, min/max-width refer to the border box, not the content box.
     let bb_extra = if node.style.box_sizing == crate::types::BoxSizing::BorderBox {
         rbox.padding_left + rbox.padding_right + rbox.border_left + rbox.border_right
-    } else { 0.0 };
-    let min_w = {
-        let v = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
-        (v - bb_extra).max(0.0)
+    } else {
+        0.0
     };
-    let max_w = if node.style.max_width.is_none() || node.style.max_width.is_auto() { f32::MAX } else {
-        let v = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
-        (v - bb_extra).max(0.0)
+    // An intrinsic keyword on min-/max-width names a CONTENT size, so it is
+    // measured, not resolved, and `box_sizing` has nothing to convert. Same
+    // rule as `block.rs`.
+    let avail_w = (containing_w - rbox.h_space()).max(0.0);
+    let min_w = match engine.res_len_sizing(
+        &node.style.min_width,
+        node,
+        avail_w,
+        font_px,
+        containing_w,
+        root_font_px,
+    ) {
+        Some(v) => v,
+        None => {
+            let v = engine.res_len(&node.style.min_width, font_px, containing_w, root_font_px);
+            (v - bb_extra).max(0.0)
+        }
+    };
+    let max_w = match engine.res_len_sizing(
+        &node.style.max_width,
+        node,
+        avail_w,
+        font_px,
+        containing_w,
+        root_font_px,
+    ) {
+        Some(v) => v,
+        None if node.style.max_width.is_none() || node.style.max_width.is_auto() => f32::MAX,
+        None => {
+            let v = engine.res_len(&node.style.max_width, font_px, containing_w, root_font_px);
+            (v - bb_extra).max(0.0)
+        }
     };
     let content_w = raw_w.max(min_w).min(max_w);
 
     // Auto margin centering (CSS 2.1 §10.3.3)
     let margin_left;
     let margin_right;
-    let left_is_auto  = node.style.margin_left.is_auto();
+    let left_is_auto = node.style.margin_left.is_auto();
     let right_is_auto = node.style.margin_right.is_auto();
     if !node.style.width.is_auto() && (left_is_auto || right_is_auto) {
-        let non_margin_space = rbox.border_left + rbox.padding_left + content_w
-                             + rbox.padding_right + rbox.border_right;
+        let non_margin_space = rbox.border_left
+            + rbox.padding_left
+            + content_w
+            + rbox.padding_right
+            + rbox.border_right;
         let available = (containing_w - non_margin_space).max(0.0);
         if left_is_auto && right_is_auto {
-            margin_left  = (available / 2.0).floor();
+            margin_left = (available / 2.0).floor();
             margin_right = available - margin_left;
         } else if left_is_auto {
-            margin_left  = available - rbox.margin_right;
+            margin_left = available - rbox.margin_right;
             margin_right = rbox.margin_right;
         } else {
-            margin_left  = rbox.margin_left;
+            margin_left = rbox.margin_left;
             margin_right = available - rbox.margin_left;
         }
     } else {
-        margin_left  = rbox.margin_left;
+        margin_left = rbox.margin_left;
         margin_right = rbox.margin_right;
     }
 
     let content_x = x + margin_left + rbox.border_left + rbox.padding_left;
-    let content_y = y + rbox.margin_top  + rbox.border_top  + rbox.padding_top;
+    let content_y = y + rbox.margin_top + rbox.border_top + rbox.padding_top;
 
     // Set float context origin now that content_y is known
     if let Some(ref mut fc) = float_ctx {
@@ -114,17 +142,24 @@ pub fn layout_inline_block(
     prelayout_nested_inline_blocks(engine, node, content_w, font_px, root_font_px);
 
     for ci in 0..node.children.len() {
-        if matches!(node.children[ci].style.display,
-                    Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
-            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
-                               0.0, 0.0, font_px, root_font_px));
+        if matches!(
+            node.children[ci].style.display,
+            Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+        ) {
+            engine.layout_box(
+                &mut node.children[ci],
+                &Constraints::new(content_w, 0.0, 0.0, font_px, root_font_px),
+            );
             // Shrink-to-fit for auto-width inline-block (CSS §10.3.9):
             // InlineBlock with width:auto should size to content, not expand to fill container.
             if node.children[ci].style.width.is_auto() {
                 // Use line.width (raw text content width) not line.x + line.width - origin,
                 // because line.x includes the text-align centering offset which inflates
                 // the result when text-align:center is inherited.
-                let max_line_w = node.children[ci].layout.line_cache.iter()
+                let max_line_w = node.children[ci]
+                    .layout
+                    .line_cache
+                    .iter()
                     .map(|l| l.width)
                     .fold(0.0_f32, f32::max);
                 // For block-container inline-blocks (e.g. ul/div with block children),
@@ -138,37 +173,53 @@ pub fn layout_inline_block(
                 {
                     let irb = &node.children[ci];
                     let shrink_w = intrinsic_w
-                        + irb.layout.resolved_pad_left + irb.layout.resolved_pad_right
-                        + irb.layout.resolved_border_left + irb.layout.resolved_border_right
-                        + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
+                        + irb.layout.resolved_pad_left
+                        + irb.layout.resolved_pad_right
+                        + irb.layout.resolved_border_left
+                        + irb.layout.resolved_border_right
+                        + irb.layout.resolved_margin_left
+                        + irb.layout.resolved_margin_right;
                     if shrink_w < content_w {
-                        engine.layout_box(&mut node.children[ci], &Constraints::new(shrink_w,
-                                           0.0, 0.0, font_px, root_font_px));
+                        engine.layout_box(
+                            &mut node.children[ci],
+                            &Constraints::new(shrink_w, 0.0, 0.0, font_px, root_font_px),
+                        );
                     }
                 }
             }
         } else if node.children[ci].style.is_inline_level()
-                  && has_block_children(&node.children[ci]) {
+            && has_block_children(&node.children[ci])
+        {
             // Inline element containing block-level children (e.g. <a><strong style="display:block">).
             // Per CSS, this creates an anonymous block formatting context. We approximate by
             // pre-laying the element out as a block container so its children get proper dimensions.
-            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
-                               0.0, 0.0, font_px, root_font_px));
+            engine.layout_box(
+                &mut node.children[ci],
+                &Constraints::new(content_w, 0.0, 0.0, font_px, root_font_px),
+            );
         } else if !matches!(node.children[ci].style.float, crate::types::Float::None) {
             // Float children need to be laid out to get valid dimensions.
-            engine.layout_box(&mut node.children[ci], &Constraints::new(content_w,
-                               content_x, content_y, font_px, root_font_px));
+            engine.layout_box(
+                &mut node.children[ci],
+                &Constraints::new(content_w, content_x, content_y, font_px, root_font_px),
+            );
             // Shrink-to-fit for auto-width floats
             if node.children[ci].style.width.is_auto() {
-                let intrinsic_w = engine.max_content_width(&node.children[ci], font_px, root_font_px);
+                let intrinsic_w =
+                    engine.max_content_width(&node.children[ci], font_px, root_font_px);
                 if intrinsic_w > 0.0 && intrinsic_w < content_w {
                     let irb = &node.children[ci];
                     let shrink_w = intrinsic_w
-                        + irb.layout.resolved_pad_left + irb.layout.resolved_pad_right
-                        + irb.layout.resolved_border_left + irb.layout.resolved_border_right
-                        + irb.layout.resolved_margin_left + irb.layout.resolved_margin_right;
-                    engine.layout_box(&mut node.children[ci], &Constraints::new(shrink_w,
-                                       content_x, content_y, font_px, root_font_px));
+                        + irb.layout.resolved_pad_left
+                        + irb.layout.resolved_pad_right
+                        + irb.layout.resolved_border_left
+                        + irb.layout.resolved_border_right
+                        + irb.layout.resolved_margin_left
+                        + irb.layout.resolved_margin_right;
+                    engine.layout_box(
+                        &mut node.children[ci],
+                        &Constraints::new(shrink_w, content_x, content_y, font_px, root_font_px),
+                    );
                 }
             }
         }
@@ -176,25 +227,36 @@ pub fn layout_inline_block(
 
     // ── 1. Measure ::before / ::after pseudo-element widths ───────────────────
     let pseudo_font_px = |ps: Option<&ComputedStyle>| -> f32 {
-        ps.and_then(|s| { let f = s.font_size.resolve(font_px, 0.0, root_font_px); if f > 0.0 { Some(f) } else { None } })
-          .unwrap_or(font_px)
+        ps.and_then(|s| {
+            let f = s.font_size.resolve(font_px, 0.0, root_font_px);
+            if f > 0.0 {
+                Some(f)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(font_px)
     };
     let scale = engine.scale;
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let before_w = if !node.style.before_content.is_empty() {
         let bfpx = pseudo_font_px(node.style.before_style.as_deref());
         measure_text_width_scaled(&node.style.before_content, bfpx, font_system, scale)
-    } else { 0.0 };
+    } else {
+        0.0
+    };
     let font_system = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let after_w = if !node.style.after_content.is_empty() {
         let afpx = pseudo_font_px(node.style.after_style.as_deref());
         measure_text_width_scaled(&node.style.after_content, afpx, font_system, scale)
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     // ── 2. Collect flat inline items from all inline children ─────────────────
     let mut text_offset = 0usize;
     let mut items: Vec<InlineItem> = Vec::new();
-    let mut runs:  Vec<InlineRun>  = Vec::new();
+    let mut runs: Vec<InlineRun> = Vec::new();
     // Pass the containing element's style to children for text-decoration and href
     let container_deco = if node.style.text_decoration.underline
         || node.style.text_decoration.overline
@@ -206,8 +268,22 @@ pub fn layout_inline_block(
         None
     };
     for (i, child) in node.children.iter().enumerate() {
-        if matches!(child.style.display, Display::None) { continue; }
-        collect_items_inner(engine, child, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, i, true, &[], container_deco);
+        if matches!(child.style.display, Display::None) {
+            continue;
+        }
+        collect_items_inner(
+            engine,
+            child,
+            font_px,
+            root_font_px,
+            &mut items,
+            &mut runs,
+            &mut text_offset,
+            i,
+            true,
+            &[],
+            container_deco,
+        );
     }
     // Also collect from own text (text directly inside element)
     if !node.text.is_empty() {
@@ -215,7 +291,18 @@ pub fn layout_inline_block(
             // Text node laid out directly (e.g. as a flex child): collect self,
             // but skip whitespace-only nodes (handled by parent inline layout).
             if !node.text.chars().all(|c| c.is_ascii_whitespace()) {
-                collect_items(engine, node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
+                collect_items(
+                    engine,
+                    node,
+                    font_px,
+                    root_font_px,
+                    &mut items,
+                    &mut runs,
+                    &mut text_offset,
+                    0,
+                    false,
+                    &[],
+                );
             }
         } else if !node.layout.inline_runs.is_empty() {
             // Block has pre-built inline runs (e.g. from the markdown parser).
@@ -224,18 +311,42 @@ pub fn layout_inline_block(
             let saved_runs = node.layout.inline_runs.clone();
             for run in &saved_runs {
                 let end = (run.text_offset + run.length).min(node.text.len());
-                if run.text_offset >= end { continue; }
+                if run.text_offset >= end {
+                    continue;
+                }
                 let run_text = node.text[run.text_offset..end].to_string();
                 let mut tmp = WebCore::new("#text");
                 tmp.text = run_text;
                 tmp.style = std::sync::Arc::new(run.style.clone());
-                collect_items(engine, &tmp, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
+                collect_items(
+                    engine,
+                    &tmp,
+                    font_px,
+                    root_font_px,
+                    &mut items,
+                    &mut runs,
+                    &mut text_offset,
+                    0,
+                    false,
+                    &[],
+                );
             }
         } else {
             let mut tmp_node = WebCore::new("#text");
             tmp_node.text = node.text.clone();
             tmp_node.style = node.style.clone();
-            collect_items(engine, &tmp_node, font_px, root_font_px, &mut items, &mut runs, &mut text_offset, 0, false, &[]);
+            collect_items(
+                engine,
+                &tmp_node,
+                font_px,
+                root_font_px,
+                &mut items,
+                &mut runs,
+                &mut text_offset,
+                0,
+                false,
+                &[],
+            );
         }
     }
 
@@ -247,20 +358,35 @@ pub fn layout_inline_block(
         // For non-void blocks with no children (e.g. empty <p> after Enter), add a
         // placeholder line so the caret has a home and the block has visible height.
         const VOID_TAGS: &[&str] = &[
-            "area", "base", "br", "col", "embed", "hr", "img", "input",
-            "link", "meta", "param", "source", "track", "wbr",
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+            "source", "track", "wbr",
         ];
         let is_void = VOID_TAGS.contains(&node.tag.as_str());
         // Only add a placeholder line for elements that can hold inline/prose content
         // and need a visible cursor when empty. Generic structural divs/sections must
         // NOT get one — it would break margin collapsing for empty blocks.
-        let is_prose_tag = matches!(node.tag.as_str(),
-            "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-            | "li" | "dt" | "dd" | "pre" | "blockquote"
-            | "td" | "th" | "caption"
+        let is_prose_tag = matches!(
+            node.tag.as_str(),
+            "p" | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "li"
+                | "dt"
+                | "dd"
+                | "pre"
+                | "blockquote"
+                | "td"
+                | "th"
+                | "caption"
         );
-        let is_contenteditable = node.attributes.get("contenteditable")
-            .map(|v| v == "true").unwrap_or(false);
+        let is_contenteditable = node
+            .attributes
+            .get("contenteditable")
+            .map(|v| v == "true")
+            .unwrap_or(false);
         let has_pseudo_content = before_w > 0.0 || after_w > 0.0;
         let add_placeholder = !is_void
             && node.children.is_empty()
@@ -269,9 +395,15 @@ pub fn layout_inline_block(
         if add_placeholder {
             let pseudo_w = before_w + after_w;
             let ps_font = if has_pseudo_content {
-                pseudo_font_px(node.style.before_style.as_deref()
-                    .or(node.style.after_style.as_deref()))
-            } else { font_px };
+                pseudo_font_px(
+                    node.style
+                        .before_style
+                        .as_deref()
+                        .or(node.style.after_style.as_deref()),
+                )
+            } else {
+                font_px
+            };
             let eff_fpx = if has_pseudo_content { ps_font } else { font_px };
             let line_h = eff_fpx * 1.2;
             node.layout.line_cache = vec![LayoutLine {
@@ -283,7 +415,8 @@ pub fn layout_inline_block(
                 height: line_h,
                 ascent: eff_fpx,
                 descent: eff_fpx * 0.2,
-                extra_space_per_word: 0.0, text_x_offset: 0.0,
+                extra_space_per_word: 0.0,
+                text_x_offset: 0.0,
                 visual_segments: Vec::new(),
                 char_x: Vec::new(),
                 char_x_key: 0,
@@ -294,27 +427,54 @@ pub fn layout_inline_block(
         // inside a paragraph.
         let br_h = if node.tag == "br" { font_px * 1.2 } else { 0.0 };
         let eff_placeholder_fpx = if has_pseudo_content {
-            pseudo_font_px(node.style.before_style.as_deref()
-                .or(node.style.after_style.as_deref()))
-        } else { font_px };
-        let placeholder_h = if add_placeholder { eff_placeholder_fpx * 1.2 } else { br_h };
+            pseudo_font_px(
+                node.style
+                    .before_style
+                    .as_deref()
+                    .or(node.style.after_style.as_deref()),
+            )
+        } else {
+            font_px
+        };
+        let placeholder_h = if add_placeholder {
+            eff_placeholder_fpx * 1.2
+        } else {
+            br_h
+        };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
-                    else {
-                        let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
-                        // Percentage max-height against unknown (0) containing height → treat as none
-                        if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
-                    };
+        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() {
+            f32::MAX
+        } else {
+            let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+            // Percentage max-height against unknown (0) containing height → treat as none
+            if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) {
+                f32::MAX
+            } else {
+                v
+            }
+        };
         let content_h = if let Some(h) = rbox.content_height {
             h
         } else if let Some(ratio) = node.style.aspect_ratio {
-            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { placeholder_h }
+            if ratio > 0.0 {
+                (content_w / ratio).max(0.0).max(min_h).min(max_h)
+            } else {
+                placeholder_h
+            }
         } else {
             placeholder_h
         };
         let content_h = content_h.max(min_h).min(max_h);
-        set_box_rects(node, content_x, content_y, content_w, content_h,
-                      rbox, margin_left, margin_right);
+        set_box_rects(
+            node,
+            content_x,
+            content_y,
+            content_w,
+            content_h,
+            rbox,
+            margin_left,
+            margin_right,
+        );
         node.layout.inline_runs = runs;
         // Still need to lay out absolutely/fixed positioned children.
         // Use collect_grid_children to flatten through display:contents,
@@ -325,7 +485,8 @@ pub fn layout_inline_block(
             engine.pos_cb.get()
         };
         let eff = crate::layout::grid::collect_grid_children(node);
-        let abs_paths: Vec<Vec<usize>> = eff.into_iter()
+        let abs_paths: Vec<Vec<usize>> = eff
+            .into_iter()
             .filter(|path| {
                 let c = crate::layout::grid::grid_child_ref(node, path);
                 matches!(c.style.position, Position::Absolute | Position::Fixed)
@@ -336,8 +497,10 @@ pub fn layout_inline_block(
             layout_positioned(engine, child, containing_rect, font_px, root_font_px);
             // All-auto correction: when no insets are specified, place at containing block's origin.
             let child = crate::layout::grid::grid_child_mut(node, path);
-            let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
-                        && child.style.top.is_auto()   && child.style.bottom.is_auto();
+            let all_auto = child.style.left.is_auto()
+                && child.style.right.is_auto()
+                && child.style.top.is_auto()
+                && child.style.bottom.is_auto();
             if all_auto && matches!(child.style.position, Position::Absolute) {
                 let dx = containing_rect.x - child.layout.border_rect.x;
                 let dy = containing_rect.y - child.layout.border_rect.y;
@@ -365,17 +528,34 @@ pub fn layout_inline_block(
                 line.y += dy;
             }
         }
-        let bottom = node.layout.line_cache.last()
+        let bottom = node
+            .layout
+            .line_cache
+            .last()
             .map(|l| l.y + l.height)
             .unwrap_or(content_y);
         let raw_h = (bottom - content_y).max(0.0);
-        let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
+        let content_h = match rbox.content_height {
+            Some(h) => h,
+            None => raw_h,
+        };
         let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
-                    else { engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px) };
+        let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() {
+            f32::MAX
+        } else {
+            engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px)
+        };
         let content_h = content_h.max(min_h).min(max_h).max(0.0);
-        crate::layout::block::build_box_rects(node, rbox, content_x, content_y, content_w, content_h,
-            margin_left, margin_right);
+        crate::layout::block::build_box_rects(
+            node,
+            rbox,
+            content_x,
+            content_y,
+            content_w,
+            content_h,
+            margin_left,
+            margin_right,
+        );
         node.layout.layout_dirty = false;
         node.layout.last_containing_width = c.available_width;
         return node.layout.margin_rect.h;
@@ -386,17 +566,19 @@ pub fn layout_inline_block(
     let text_indent = engine.res_len(&node.style.text_indent, font_px, content_w, root_font_px);
     let is_rtl = node.style.direction == Direction::RTL;
 
-    let mut cursor_y     = content_y;
-    let mut item_idx     = 0usize;
-    let mut line_cache:  Vec<LayoutLine>           = Vec::new();
-    let mut atomic_pos:  Vec<(Vec<usize>, f32, f32)> = Vec::new(); // (path, x, y)
+    let mut cursor_y = content_y;
+    let mut item_idx = 0usize;
+    let mut line_cache: Vec<LayoutLine> = Vec::new();
+    let mut atomic_pos: Vec<(Vec<usize>, f32, f32)> = Vec::new(); // (path, x, y)
     let mut old_line_idx = 0usize;
     let mut ends_with_break = false;
-    let mut loop_guard   = 0usize;
+    let mut loop_guard = 0usize;
 
     while item_idx < items.len() {
         loop_guard += 1;
-        if loop_guard > 10000 { break; }
+        if loop_guard > 10000 {
+            break;
+        }
         let is_first_line = line_cache.is_empty();
 
         // ── Place leading floats before current line ──────────────────────────
@@ -405,10 +587,17 @@ pub fn layout_inline_block(
                 if let Some(ref mut fc) = float_ctx {
                     let child = &mut node.children[child_idx];
                     let float_w = (child.layout.border_rect.w
-                        + child.layout.resolved_margin_left + child.layout.resolved_margin_right).max(0.0);
+                        + child.layout.resolved_margin_left
+                        + child.layout.resolved_margin_right)
+                        .max(0.0);
                     let float_h = child.layout.margin_rect.h;
-                    let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
-                    let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
+                    let side = if child.style.float == crate::types::Float::Right {
+                        FloatSide::Right
+                    } else {
+                        FloatSide::Left
+                    };
+                    let placed =
+                        fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
                     let dx = content_x + placed.x - child.layout.margin_rect.x;
                     let dy = fc.origin_y + placed.y - child.layout.margin_rect.y;
                     crate::layout::shift_rects(child, dx, dy);
@@ -423,8 +612,13 @@ pub fn layout_inline_block(
         let est_line_h = font_px * 1.2;
         let (mut fc_left, mut fc_right) = (0.0f32, content_w);
         if let Some(fc) = float_ctx.as_ref() {
-            fc.available_width(cursor_y - fc.origin_y, est_line_h, content_w,
-                               &mut fc_left, &mut fc_right);
+            fc.available_width(
+                cursor_y - fc.origin_y,
+                est_line_h,
+                content_w,
+                &mut fc_left,
+                &mut fc_right,
+            );
         }
 
         // Apply text-indent and ::before on first line
@@ -437,7 +631,8 @@ pub fn layout_inline_block(
         // avail_w controls line-breaking; align_w is used for text alignment
         // (always finite so right/center alignment doesn't overflow).
         let finite_w = (fc_right - fc_left).max(0.0);
-        let mut avail_w = if matches!(node.style.white_space, WhiteSpace::Pre | WhiteSpace::Nowrap) {
+        let mut avail_w = if matches!(node.style.white_space, WhiteSpace::Pre | WhiteSpace::Nowrap)
+        {
             f32::MAX
         } else {
             finite_w
@@ -457,19 +652,36 @@ pub fn layout_inline_block(
                 if let Some(ref mut fc) = float_ctx {
                     let child = &mut node.children[child_idx];
                     let float_w = (child.layout.border_rect.w
-                        + child.layout.resolved_margin_left + child.layout.resolved_margin_right).max(0.0);
+                        + child.layout.resolved_margin_left
+                        + child.layout.resolved_margin_right)
+                        .max(0.0);
                     let float_h = child.layout.margin_rect.h;
-                    let side = if child.style.float == crate::types::Float::Right { FloatSide::Right } else { FloatSide::Left };
-                    let placed = fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
+                    let side = if child.style.float == crate::types::Float::Right {
+                        FloatSide::Right
+                    } else {
+                        FloatSide::Left
+                    };
+                    let placed =
+                        fc.place_float(cursor_y - fc.origin_y, float_w, float_h, content_w, side);
                     let dx = content_x + placed.x - child.layout.margin_rect.x;
                     let dy = fc.origin_y + placed.y - child.layout.margin_rect.y;
                     crate::layout::shift_rects(child, dx, dy);
-                    
+
                     // Width might have changed
-                    fc.available_width(cursor_y - fc.origin_y, est_line_h, content_w, &mut fc_left, &mut fc_right);
-                    let temp_fc_left = if is_first_line { fc_left + text_indent + before_w } else { fc_left };
+                    fc.available_width(
+                        cursor_y - fc.origin_y,
+                        est_line_h,
+                        content_w,
+                        &mut fc_left,
+                        &mut fc_right,
+                    );
+                    let temp_fc_left = if is_first_line {
+                        fc_left + text_indent + before_w
+                    } else {
+                        fc_left
+                    };
                     avail_w = (fc_right - temp_fc_left).max(0.0);
-                    
+
                     // Re-evaluate line break from THIS point forward
                     let (new_end, new_next, new_break) = break_one_line(&items, i + 1, avail_w);
                     line_end = new_end;
@@ -484,7 +696,9 @@ pub fn layout_inline_block(
 
         if line_end == item_idx && !was_break {
             // Safety: avoid infinite loop if no progress made
-            if item_idx < items.len() && matches!(items[item_idx].kind, InlineItemKind::Float { .. }) {
+            if item_idx < items.len()
+                && matches!(items[item_idx].kind, InlineItemKind::Float { .. })
+            {
                 item_idx += 1;
                 continue;
             }
@@ -503,8 +717,7 @@ pub fn layout_inline_block(
         // The `line-height` was instead bolted on afterwards, and only ever to
         // GROW the line, so it could not shrink one either.
         let (strut_asc, strut_desc) = strut_metrics(engine, node, font_px, root_font_px);
-        let (raw_h, line_asc, mut line_desc) =
-            measure_metrics(line_items, strut_asc, strut_desc);
+        let (raw_h, line_asc, mut line_desc) = measure_metrics(line_items, strut_asc, strut_desc);
         // A line box occupies whole pixels, which is what a browser reports:
         // half-leading lands on a half pixel, and leaving it there made every
         // line half a pixel short — invisible on one line and a drift of one
@@ -517,9 +730,11 @@ pub fn layout_inline_block(
         // Measure content width: CSS requires stripping leading/trailing
         // collapsible whitespace from each line before alignment.
         // Find the first and last non-space, non-break items.
-        let first_content = line_items.iter()
+        let first_content = line_items
+            .iter()
             .position(|it| !it.is_space && !matches!(it.kind, InlineItemKind::Break));
-        let last_content = line_items.iter()
+        let last_content = line_items
+            .iter()
             .rposition(|it| !it.is_space && !matches!(it.kind, InlineItemKind::Break));
         let content_line_w: f32 = match (first_content, last_content) {
             (Some(f), Some(l)) => line_items[f..=l].iter().map(|it| it.advance).sum(),
@@ -528,34 +743,59 @@ pub fn layout_inline_block(
 
         // Resolve text-align Start/End based on direction
         let effective_align = match node.style.text_align {
-            TextAlign::Start => if is_rtl { TextAlign::Right } else { TextAlign::Left },
-            TextAlign::End   => if is_rtl { TextAlign::Left  } else { TextAlign::Right },
+            TextAlign::Start => {
+                if is_rtl {
+                    TextAlign::Right
+                } else {
+                    TextAlign::Left
+                }
+            }
+            TextAlign::End => {
+                if is_rtl {
+                    TextAlign::Left
+                } else {
+                    TextAlign::Right
+                }
+            }
             a => a,
         };
 
         // Justify: compute extra space per word gap (use align_w, never f32::MAX)
-        let extra_per_gap = if effective_align == TextAlign::Justify && !was_break && next_start < items.len() {
-            let gaps = line_items.iter().filter(|it| it.is_space).count() as f32;
-            if gaps > 0.0 { ((align_w - content_line_w) / gaps).max(0.0) } else { 0.0 }
-        } else { 0.0 };
+        let extra_per_gap =
+            if effective_align == TextAlign::Justify && !was_break && next_start < items.len() {
+                let gaps = line_items.iter().filter(|it| it.is_space).count() as f32;
+                if gaps > 0.0 {
+                    ((align_w - content_line_w) / gaps).max(0.0)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
 
         // X offset for text alignment (use align_w, never f32::MAX)
-        let mut line_x = content_x + fc_left + match effective_align {
-            TextAlign::Right  => (align_w - content_line_w).max(0.0),
-            TextAlign::Center => ((align_w - content_line_w) / 2.0).max(0.0),
-            _                 => 0.0,
-        };
-        if line_x < content_x { line_x = content_x; }
+        let mut line_x = content_x
+            + fc_left
+            + match effective_align {
+                TextAlign::Right => (align_w - content_line_w).max(0.0),
+                TextAlign::Center => ((align_w - content_line_w) / 2.0).max(0.0),
+                _ => 0.0,
+            };
+        if line_x < content_x {
+            line_x = content_x;
+        }
 
         // Account for ::before on first line, ::after on last line
         let is_last_line = next_start >= items.len();
         if is_first_line && before_w > 0.0 {
             line_x -= before_w;
-            if line_x < content_x { line_x = content_x; }
+            if line_x < content_x {
+                line_x = content_x;
+            }
         }
         let line_w_total = content_line_w
             + if is_first_line { before_w } else { 0.0 }
-            + if is_last_line  { after_w  } else { 0.0 };
+            + if is_last_line { after_w } else { 0.0 };
 
         // Compute text range for this line, stripping leading/trailing collapsible
         // whitespace per CSS §16.6.1. Use first_content/last_content from above.
@@ -563,25 +803,63 @@ pub fn layout_inline_block(
             (Some(f), Some(l)) => &line_items[f..=l],
             _ => &line_items[0..0],
         };
-        let text_s = content_items.iter().filter_map(|it| {
-            if let InlineItemKind::Text { text_start, .. } = &it.kind { Some(*text_start) } else { None }
-        }).min().unwrap_or_else(|| {
-            // Fallback: use any item if all are spaces
-            line_items.iter().filter_map(|it| {
-                if let InlineItemKind::Text { text_start, .. } = &it.kind { Some(*text_start) } else { None }
-            }).min().unwrap_or(0)
-        });
-        let text_e = content_items.iter().filter_map(|it| {
-            if let InlineItemKind::Text { text_start, text_len, .. } = &it.kind {
-                Some(text_start + text_len)
-            } else { None }
-        }).max().unwrap_or_else(|| {
-            line_items.iter().filter_map(|it| {
-                if let InlineItemKind::Text { text_start, text_len, .. } = &it.kind {
+        let text_s = content_items
+            .iter()
+            .filter_map(|it| {
+                if let InlineItemKind::Text { text_start, .. } = &it.kind {
+                    Some(*text_start)
+                } else {
+                    None
+                }
+            })
+            .min()
+            .unwrap_or_else(|| {
+                // Fallback: use any item if all are spaces
+                line_items
+                    .iter()
+                    .filter_map(|it| {
+                        if let InlineItemKind::Text { text_start, .. } = &it.kind {
+                            Some(*text_start)
+                        } else {
+                            None
+                        }
+                    })
+                    .min()
+                    .unwrap_or(0)
+            });
+        let text_e = content_items
+            .iter()
+            .filter_map(|it| {
+                if let InlineItemKind::Text {
+                    text_start,
+                    text_len,
+                    ..
+                } = &it.kind
+                {
                     Some(text_start + text_len)
-                } else { None }
-            }).max().unwrap_or(text_s)
-        });
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or_else(|| {
+                line_items
+                    .iter()
+                    .filter_map(|it| {
+                        if let InlineItemKind::Text {
+                            text_start,
+                            text_len,
+                            ..
+                        } = &it.kind
+                        {
+                            Some(text_start + text_len)
+                        } else {
+                            None
+                        }
+                    })
+                    .max()
+                    .unwrap_or(text_s)
+            });
 
         // Early-stop: if matching an old cached line with same breaks at same X and Y
         // (only when no floats involved; check x so different column positions don't reuse cache)
@@ -599,20 +877,39 @@ pub fn layout_inline_block(
                 node.layout.line_cache = line_cache;
                 node.layout.inline_runs = runs;
                 // Update box rects with cached height
-                let bottom = node.layout.line_cache.last()
+                let bottom = node
+                    .layout
+                    .line_cache
+                    .last()
                     .map(|l| l.y + l.height)
                     .unwrap_or(cursor_y);
                 let raw_h = (bottom - content_y).max(0.0);
-                let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
+                let content_h = match rbox.content_height {
+                    Some(h) => h,
+                    None => raw_h,
+                };
                 let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-                let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
-                            else {
-                                let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
-                                if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
-                            };
+                let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() {
+                    f32::MAX
+                } else {
+                    let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+                    if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) {
+                        f32::MAX
+                    } else {
+                        v
+                    }
+                };
                 let content_h = content_h.max(min_h).min(max_h);
-                set_box_rects(node, content_x, content_y, content_w, content_h,
-                              rbox, margin_left, margin_right);
+                set_box_rects(
+                    node,
+                    content_x,
+                    content_y,
+                    content_w,
+                    content_h,
+                    rbox,
+                    margin_left,
+                    margin_right,
+                );
                 return node.layout.margin_rect.h;
             }
         }
@@ -630,12 +927,9 @@ pub fn layout_inline_block(
                         .map(|n| n.style.vertical_align)
                         .unwrap_or(crate::types::VerticalAlign::Baseline);
                     let ay = match valign {
-                        crate::types::VerticalAlign::Top =>
-                            cursor_y,
-                        crate::types::VerticalAlign::Bottom =>
-                            cursor_y + line_h - box_h,
-                        crate::types::VerticalAlign::Middle =>
-                            cursor_y + (line_h - box_h) / 2.0,
+                        crate::types::VerticalAlign::Top => cursor_y,
+                        crate::types::VerticalAlign::Bottom => cursor_y + line_h - box_h,
+                        crate::types::VerticalAlign::Middle => cursor_y + (line_h - box_h) / 2.0,
                         _ => {
                             // Baseline: bottom margin edge on the line baseline
                             let ay = cursor_y + line_asc - box_h;
@@ -659,11 +953,11 @@ pub fn layout_inline_block(
         }
 
         let mut ll = LayoutLine {
-            text_start:  text_s,
+            text_start: text_s,
             text_length: text_e.saturating_sub(text_s),
-            x:      line_x,
-            y:      cursor_y,
-            width:  line_w_total,
+            x: line_x,
+            y: cursor_y,
+            width: line_w_total,
             height: line_h,
             ascent: line_asc,
             descent: line_desc,
@@ -702,7 +996,10 @@ pub fn layout_inline_block(
                     .then(|| ol.char_x.clone())
             });
             match reused {
-                Some(prev) => { ll.char_x = prev; ll.char_x_key = key; }
+                Some(prev) => {
+                    ll.char_x = prev;
+                    ll.char_x_key = key;
+                }
                 None => {
                     if let Some(fs_ptr) = engine.font_system {
                         let fs = unsafe { &mut *fs_ptr };
@@ -722,15 +1019,16 @@ pub fn layout_inline_block(
     // Empty block with no content: add one empty line so the caret has a home.
     if line_cache.is_empty() && items.is_empty() {
         line_cache.push(LayoutLine {
-            text_start:  text_offset,
+            text_start: text_offset,
             text_length: 0,
-            x:      content_x,
-            y:      cursor_y,
-            width:  0.0,
+            x: content_x,
+            y: cursor_y,
+            width: 0.0,
             height: font_px * 1.2,
             ascent: font_px * 1.2,
             descent: 0.0,
-            extra_space_per_word: 0.0, text_x_offset: 0.0,
+            extra_space_per_word: 0.0,
+            text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
             char_x_key: 0,
@@ -741,20 +1039,32 @@ pub fn layout_inline_block(
     // Trailing empty line after <br> (for caret positioning after Enter)
     if ends_with_break {
         line_cache.push(LayoutLine {
-            text_start:  text_offset,
+            text_start: text_offset,
             text_length: 0,
-            x:      content_x,
-            y:      cursor_y,
-            width:  0.0,
+            x: content_x,
+            y: cursor_y,
+            width: 0.0,
             height: font_px * 1.2,
             ascent: font_px * 1.2,
             descent: 0.0,
-            extra_space_per_word: 0.0, text_x_offset: 0.0,
+            extra_space_per_word: 0.0,
+            text_x_offset: 0.0,
             visual_segments: Vec::new(),
             char_x: Vec::new(),
             char_x_key: 0,
         });
         cursor_y += font_px * 1.2;
+    }
+
+    if let Some(limit) = node.style.line_clamp {
+        let limit = limit as usize;
+        if limit > 0 && line_cache.len() > limit {
+            line_cache.truncate(limit);
+            cursor_y = line_cache
+                .last()
+                .map(|line| line.y + line.height)
+                .unwrap_or(content_y);
+        }
     }
 
     // ── 5. Compute content height ──────────────────────────────────────────────
@@ -763,58 +1073,96 @@ pub fn layout_inline_block(
     // A BFC owner (!has_parent_fc) always contains all its floats.
     // A non-BFC element that placed its OWN floats also needs to expand
     // (CSS §9.5: containers with floated children don't collapse).
-    let has_own_floats = float_ctx.as_ref().map_or(false, |fc| fc.floats.len() > floats_before);
+    let has_own_floats = float_ctx
+        .as_ref()
+        .map_or(false, |fc| fc.floats.len() > floats_before);
     let float_bottom = if !has_parent_fc || has_own_floats {
         if let Some(ref fc) = float_ctx {
             let offset = content_y - fc.origin_y;
-            fc.floats.iter()
+            fc.floats
+                .iter()
                 .map(|f| (f.clear - offset).max(0.0))
                 .fold(0.0f32, f32::max)
-        } else { 0.0 }
-    } else { 0.0 };
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
     let raw_h = inline_h.max(float_bottom);
     let min_h = engine.res_len(&node.style.min_height, font_px, 0.0, root_font_px);
-    let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() { f32::MAX }
-                else {
-                    let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
-                    if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) { f32::MAX } else { v }
-                };
-    let content_h = match rbox.content_height { Some(h) => h, None => raw_h };
+    let max_h = if node.style.max_height.is_none() || node.style.max_height.is_auto() {
+        f32::MAX
+    } else {
+        let v = engine.res_len(&node.style.max_height, font_px, 0.0, root_font_px);
+        if v == 0.0 && matches!(node.style.max_height, CssLength::Percent(_)) {
+            f32::MAX
+        } else {
+            v
+        }
+    };
+    let content_h = match rbox.content_height {
+        Some(h) => h,
+        None => raw_h,
+    };
     let content_h = content_h.max(min_h).min(max_h);
 
     // Apply aspect-ratio: if height is auto and aspect_ratio is set, derive height from width
     let content_h = if rbox.content_height.is_none() {
         if let Some(ratio) = node.style.aspect_ratio {
-            if ratio > 0.0 { (content_w / ratio).max(0.0).max(min_h).min(max_h) } else { content_h }
-        } else { content_h }
-    } else { content_h };
+            if ratio > 0.0 {
+                (content_w / ratio).max(0.0).max(min_h).min(max_h)
+            } else {
+                content_h
+            }
+        } else {
+            content_h
+        }
+    } else {
+        content_h
+    };
 
-    set_box_rects(node, content_x, content_y, content_w, content_h,
-                  rbox, margin_left, margin_right);
-    node.layout.line_cache  = line_cache;
+    set_box_rects(
+        node,
+        content_x,
+        content_y,
+        content_w,
+        content_h,
+        rbox,
+        margin_left,
+        margin_right,
+    );
+    node.layout.line_cache = line_cache;
     node.layout.inline_runs = runs;
 
     // ── 5b. Scroll extent for overflow:scroll/auto inline containers ───────────
-    if matches!(node.style.overflow_x, crate::types::Overflow::Scroll | crate::types::Overflow::Auto)
-    || matches!(node.style.overflow_y, crate::types::Overflow::Scroll | crate::types::Overflow::Auto)
-    {
+    if matches!(
+        node.style.overflow_x,
+        crate::types::Overflow::Scroll | crate::types::Overflow::Auto
+    ) || matches!(
+        node.style.overflow_y,
+        crate::types::Overflow::Scroll | crate::types::Overflow::Auto
+    ) {
         // Natural content height from inline lines
         let natural_h = raw_h.max(content_h);
         // Natural content width: max width across all lines
-        let natural_w = node.layout.line_cache.iter()
+        let natural_w = node
+            .layout
+            .line_cache
+            .iter()
             .map(|l| l.width)
             .fold(content_w, f32::max);
         node.layout.scroll_height = natural_h;
-        node.layout.scroll_width  = natural_w;
+        node.layout.scroll_width = natural_w;
         let max_v = (node.layout.scroll_height - content_h).max(0.0);
-        let max_h = (node.layout.scroll_width  - content_w).max(0.0);
-        node.layout.scroll_top  = node.layout.scroll_top.min(max_v).max(0.0);
+        let max_h = (node.layout.scroll_width - content_w).max(0.0);
+        node.layout.scroll_top = node.layout.scroll_top.min(max_v).max(0.0);
         node.layout.scroll_left = node.layout.scroll_left.min(max_h).max(0.0);
     } else {
         node.layout.scroll_height = content_h;
-        node.layout.scroll_width  = content_w;
-        node.layout.scroll_top    = 0.0;
-        node.layout.scroll_left   = 0.0;
+        node.layout.scroll_width = content_w;
+        node.layout.scroll_top = 0.0;
+        node.layout.scroll_left = 0.0;
     }
 
     // ── 6. Position atomic inline-block children ──────────────────────────────
@@ -838,7 +1186,8 @@ pub fn layout_inline_block(
         engine.pos_cb.get()
     };
     let eff2 = crate::layout::grid::collect_grid_children(node);
-    let abs_paths2: Vec<Vec<usize>> = eff2.into_iter()
+    let abs_paths2: Vec<Vec<usize>> = eff2
+        .into_iter()
         .filter(|path| {
             let c = crate::layout::grid::grid_child_ref(node, path);
             matches!(c.style.position, Position::Absolute | Position::Fixed)
@@ -854,8 +1203,10 @@ pub fn layout_inline_block(
         let had_static_y = child.layout.abs_static_y.is_some();
         layout_positioned(engine, child, containing_rect, font_px, root_font_px);
         let child = crate::layout::grid::grid_child_mut(node, path);
-        let all_auto = child.style.left.is_auto()  && child.style.right.is_auto()
-                    && child.style.top.is_auto()   && child.style.bottom.is_auto();
+        let all_auto = child.style.left.is_auto()
+            && child.style.right.is_auto()
+            && child.style.top.is_auto()
+            && child.style.bottom.is_auto();
         if all_auto && matches!(child.style.position, Position::Absolute) && !had_static_y {
             let dx = containing_rect.x - child.layout.border_rect.x;
             let dy = containing_rect.y - child.layout.border_rect.y;
@@ -865,6 +1216,8 @@ pub fn layout_inline_block(
         }
     }
 
+    node.layout.layout_dirty = false;
+    node.layout.last_containing_width = content_w;
     node.layout.margin_rect.h
 }
 
@@ -874,7 +1227,9 @@ pub fn layout_inline_block(
 fn resolve_path<'a>(root: &'a WebCore, path: &[usize]) -> Option<&'a WebCore> {
     let mut cur = root;
     for &idx in path {
-        if idx >= cur.children.len() { return None; }
+        if idx >= cur.children.len() {
+            return None;
+        }
         cur = &cur.children[idx];
     }
     Some(cur)
@@ -884,7 +1239,9 @@ fn resolve_path<'a>(root: &'a WebCore, path: &[usize]) -> Option<&'a WebCore> {
 fn resolve_path_mut<'a>(root: &'a mut WebCore, path: &[usize]) -> Option<&'a mut WebCore> {
     let mut cur = root;
     for &idx in path {
-        if idx >= cur.children.len() { return None; }
+        if idx >= cur.children.len() {
+            return None;
+        }
         cur = &mut cur.children[idx];
     }
     Some(cur)
@@ -893,58 +1250,65 @@ fn resolve_path_mut<'a>(root: &'a mut WebCore, path: &[usize]) -> Option<&'a mut
 // ─── Box rect helper ──────────────────────────────────────────────────────────
 
 fn set_box_rects(
-    node:       &mut WebCore,
-    content_x:  f32, content_y: f32,
-    content_w:  f32, content_h: f32,
-    rbox:       &ResolvedBox,
-    margin_left: f32, margin_right: f32,
+    node: &mut WebCore,
+    content_x: f32,
+    content_y: f32,
+    content_w: f32,
+    content_h: f32,
+    rbox: &ResolvedBox,
+    margin_left: f32,
+    margin_right: f32,
 ) {
     node.layout.content_rect = Rect::new(content_x, content_y, content_w, content_h);
     node.layout.padding_rect = Rect::new(
-        content_x - rbox.padding_left, content_y - rbox.padding_top,
+        content_x - rbox.padding_left,
+        content_y - rbox.padding_top,
         content_w + rbox.padding_left + rbox.padding_right,
-        content_h + rbox.padding_top  + rbox.padding_bottom,
+        content_h + rbox.padding_top + rbox.padding_bottom,
     );
     node.layout.border_rect = Rect::new(
         node.layout.padding_rect.x - rbox.border_left,
         node.layout.padding_rect.y - rbox.border_top,
         node.layout.padding_rect.w + rbox.border_left + rbox.border_right,
-        node.layout.padding_rect.h + rbox.border_top  + rbox.border_bottom,
+        node.layout.padding_rect.h + rbox.border_top + rbox.border_bottom,
     );
-    let mr_w = (node.layout.border_rect.w + margin_left + margin_right).max(node.layout.border_rect.w);
+    let mr_w =
+        (node.layout.border_rect.w + margin_left + margin_right).max(node.layout.border_rect.w);
     node.layout.margin_rect = Rect::new(
         node.layout.border_rect.x - margin_left,
         node.layout.border_rect.y - rbox.margin_top,
         mr_w,
-        node.layout.border_rect.h + rbox.margin_top  + rbox.margin_bottom,
+        node.layout.border_rect.h + rbox.margin_top + rbox.margin_bottom,
     );
     node.layout.baseline = content_y + content_h;
     // Cache resolved values (same as build_box_rects in block.rs)
-    node.layout.resolved_margin_top    = rbox.margin_top;
-    node.layout.resolved_margin_right  = margin_right;
+    node.layout.resolved_margin_top = rbox.margin_top;
+    node.layout.resolved_margin_right = margin_right;
     node.layout.resolved_margin_bottom = rbox.margin_bottom;
-    node.layout.resolved_margin_left   = margin_left;
-    node.layout.resolved_border_top    = rbox.border_top;
-    node.layout.resolved_border_right  = rbox.border_right;
+    node.layout.resolved_margin_left = margin_left;
+    node.layout.resolved_border_top = rbox.border_top;
+    node.layout.resolved_border_right = rbox.border_right;
     node.layout.resolved_border_bottom = rbox.border_bottom;
-    node.layout.resolved_border_left   = rbox.border_left;
-    node.layout.resolved_pad_top       = rbox.padding_top;
-    node.layout.resolved_pad_right     = rbox.padding_right;
-    node.layout.resolved_pad_bottom    = rbox.padding_bottom;
-    node.layout.resolved_pad_left      = rbox.padding_left;
+    node.layout.resolved_border_left = rbox.border_left;
+    node.layout.resolved_pad_top = rbox.padding_top;
+    node.layout.resolved_pad_right = rbox.padding_right;
+    node.layout.resolved_pad_bottom = rbox.padding_bottom;
+    node.layout.resolved_pad_left = rbox.padding_left;
     node.layout.resolved_content_width = content_w;
     // Expose own margins for parent's margin-collapsing logic.
     // For "empty" blocks (no content, no border, no padding, no explicit height),
     // top and bottom margins collapse into each other per CSS 2.1 §8.3.1.
     let is_empty = content_h == 0.0
-        && rbox.border_top    == 0.0 && rbox.border_bottom    == 0.0
-        && rbox.padding_top   == 0.0 && rbox.padding_bottom   == 0.0
+        && rbox.border_top == 0.0
+        && rbox.border_bottom == 0.0
+        && rbox.padding_top == 0.0
+        && rbox.padding_bottom == 0.0
         && rbox.content_height.is_none();
     if is_empty && node.style.min_height.is_auto() {
-        node.layout.collapsed_margin_top    = collapse_two(rbox.margin_top, rbox.margin_bottom);
+        node.layout.collapsed_margin_top = collapse_two(rbox.margin_top, rbox.margin_bottom);
         node.layout.collapsed_margin_bottom = 0.0;
     } else {
-        node.layout.collapsed_margin_top    = rbox.margin_top;
+        node.layout.collapsed_margin_top = rbox.margin_top;
         node.layout.collapsed_margin_bottom = rbox.margin_bottom;
     }
 }
@@ -955,12 +1319,18 @@ fn set_box_rects(
 /// AND the strut, which is always present (CSS 2.1 §10.8). An empty line is
 /// exactly the strut.
 fn measure_metrics(items: &[InlineItem], strut_asc: f32, strut_desc: f32) -> (f32, f32, f32) {
-    let mut max_asc  = strut_asc;
+    let mut max_asc = strut_asc;
     let mut max_desc = strut_desc;
     for it in items {
-        if matches!(it.kind, InlineItemKind::Break) { continue; }
-        if it.ascent  > max_asc  { max_asc  = it.ascent;  }
-        if it.descent > max_desc { max_desc = it.descent; }
+        if matches!(it.kind, InlineItemKind::Break) {
+            continue;
+        }
+        if it.ascent > max_asc {
+            max_asc = it.ascent;
+        }
+        if it.descent > max_desc {
+            max_desc = it.descent;
+        }
     }
     (max_asc + max_desc, max_asc, max_desc)
 }
@@ -991,7 +1361,12 @@ pub fn strut_line_height(
 }
 
 /// The strut for a block: its own font and `line-height`.
-fn strut_metrics(engine: &LayoutEngine, node: &WebCore, font_px: f32, root_font_px: f32) -> (f32, f32) {
+fn strut_metrics(
+    engine: &LayoutEngine,
+    node: &WebCore,
+    font_px: f32,
+    root_font_px: f32,
+) -> (f32, f32) {
     let fs = unsafe { engine.font_system.map(|fs| &mut *fs) };
     let (fa, fd, natural_lh) = font_metrics(fs, &node.style.font_family, font_px);
     let line_h = if node.style.line_height.is_auto() {
@@ -1008,7 +1383,11 @@ fn strut_metrics(engine: &LayoutEngine, node: &WebCore, font_px: f32, root_font_
 pub enum InlineItemKind {
     /// A word or space segment. text_start/text_len are offsets into the
     /// concatenated text collected by `collect_items`.
-    Text  { text_start: usize, text_len: usize, box_idx: usize },
+    Text {
+        text_start: usize,
+        text_len: usize,
+        box_idx: usize,
+    },
     /// An inline-block child.  `path` is a chain of child indices from the
     /// block container down to the actual InlineBlock node (e.g. [2, 0, 0]
     /// means node.children[2].children[0].children[0]).
@@ -1021,12 +1400,12 @@ pub enum InlineItemKind {
 
 #[derive(Debug, Clone)]
 pub struct InlineItem {
-    pub kind:      InlineItemKind,
-    pub advance:   f32,
-    pub ascent:    f32,
-    pub descent:   f32,
-    pub height:    f32,
-    pub is_space:  bool,
+    pub kind: InlineItemKind,
+    pub advance: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub height: f32,
+    pub is_space: bool,
     pub breakable: bool,
 }
 
@@ -1038,37 +1417,51 @@ pub struct InlineItem {
 /// inline container being laid out; Float items use `box_idx` to index back into
 /// that container's `children` vec, so the index is only valid at depth 0.
 pub fn collect_items(
-    engine:          &LayoutEngine,
-    node:            &WebCore,
-    parent_font_px:  f32,
-    root_font_px:    f32,
-    items:           &mut Vec<InlineItem>,
-    runs:            &mut Vec<InlineRun>,
-    text_offset:     &mut usize,
-    box_idx:         usize,
+    engine: &LayoutEngine,
+    node: &WebCore,
+    parent_font_px: f32,
+    root_font_px: f32,
+    items: &mut Vec<InlineItem>,
+    runs: &mut Vec<InlineRun>,
+    text_offset: &mut usize,
+    box_idx: usize,
     is_direct_child: bool,
-    ancestor_path:   &[usize],
+    ancestor_path: &[usize],
 ) {
     // Text decoration is not inherited via CSS cascade, but visually paints
     // across descendants. Track the nearest ancestor's decoration to apply
     // to text runs within decorated inline elements.
-    collect_items_inner(engine, node, parent_font_px, root_font_px, items, runs, text_offset, box_idx, is_direct_child, ancestor_path, None);
+    collect_items_inner(
+        engine,
+        node,
+        parent_font_px,
+        root_font_px,
+        items,
+        runs,
+        text_offset,
+        box_idx,
+        is_direct_child,
+        ancestor_path,
+        None,
+    );
 }
 
 fn collect_items_inner(
-    engine:          &LayoutEngine,
-    node:            &WebCore,
-    parent_font_px:  f32,
-    root_font_px:    f32,
-    items:           &mut Vec<InlineItem>,
-    runs:            &mut Vec<InlineRun>,
-    text_offset:     &mut usize,
-    box_idx:         usize,
+    engine: &LayoutEngine,
+    node: &WebCore,
+    parent_font_px: f32,
+    root_font_px: f32,
+    items: &mut Vec<InlineItem>,
+    runs: &mut Vec<InlineRun>,
+    text_offset: &mut usize,
+    box_idx: usize,
     is_direct_child: bool,
-    ancestor_path:   &[usize],
+    ancestor_path: &[usize],
     parent_decoration: Option<&crate::types::ComputedStyle>,
 ) {
-    if matches!(node.style.display, Display::None) { return; }
+    if matches!(node.style.display, Display::None) {
+        return;
+    }
 
     // Absolutely/fixed positioned elements are out of flow — skip them here;
     // they are laid out separately by layout_positioned.
@@ -1088,8 +1481,12 @@ fn collect_items_inner(
     if !matches!(node.style.float, crate::types::Float::None) && is_direct_child {
         items.push(InlineItem {
             kind: InlineItemKind::Float { child_idx: box_idx },
-            advance: 0.0, ascent: 0.0, descent: 0.0, height: 0.0,
-            is_space: false, breakable: false,
+            advance: 0.0,
+            ascent: 0.0,
+            descent: 0.0,
+            height: 0.0,
+            is_space: false,
+            breakable: false,
         });
         return;
     }
@@ -1116,7 +1513,23 @@ fn collect_items_inner(
         if !node.text.is_empty() {
             let start = *text_offset;
             let (letter_s, word_s) = resolved_spacings(engine, &node.style, font_px, root_font_px);
-            tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family, letter_s, word_s);
+            tokenize_text(
+                engine,
+                &node.text,
+                node.style.white_space,
+                start,
+                font_px,
+                ascent,
+                descent,
+                line_h,
+                box_idx,
+                items,
+                node.style.font_weight,
+                node.style.font_style,
+                &node.style.font_family,
+                letter_s,
+                word_s,
+            );
             // ⛔ `node.style.clone()` now clones the ARC. This wants the
             // VALUE — it is mutated below and stored in an `InlineRun`.
             let mut run_style = (*node.style).clone();
@@ -1125,13 +1538,26 @@ fn collect_items_inner(
             // - text-decoration (not CSS-inherited but visually applies to children)
             // - href (from <a> elements, needed for hit-testing links)
             if let Some(ps) = parent_decoration {
-                if ps.text_decoration.underline { run_style.text_decoration.underline = true; }
-                if ps.text_decoration.overline { run_style.text_decoration.overline = true; }
-                if ps.text_decoration.strikethrough { run_style.text_decoration.strikethrough = true; }
-                if run_style.text_decoration_color.is_none() && ps.text_decoration_color.is_some() {
-                    run_style.text_decoration_color = ps.text_decoration_color;
+                if ps.text_decoration.underline {
+                    run_style.text_decoration.underline = true;
                 }
-                if matches!(run_style.text_decoration_style, crate::types::TextDecorationStyle::Solid) {
+                if ps.text_decoration.overline {
+                    run_style.text_decoration.overline = true;
+                }
+                if ps.text_decoration.strikethrough {
+                    run_style.text_decoration.strikethrough = true;
+                }
+                if ps.text_decoration.underline
+                    || ps.text_decoration.overline
+                    || ps.text_decoration.strikethrough
+                {
+                    run_style.text_decoration_color =
+                        Some(ps.text_decoration_color.unwrap_or(ps.color));
+                }
+                if matches!(
+                    run_style.text_decoration_style,
+                    crate::types::TextDecorationStyle::Solid
+                ) {
                     run_style.text_decoration_style = ps.text_decoration_style;
                 }
                 if run_style.text_decoration_thickness.is_auto() {
@@ -1142,7 +1568,11 @@ fn collect_items_inner(
                     run_style.href = ps.href.clone();
                 }
             }
-            runs.push(InlineRun { text_offset: start, length: node.text.len(), style: run_style });
+            runs.push(InlineRun {
+                text_offset: start,
+                length: node.text.len(),
+                style: run_style,
+            });
             *text_offset += node.text.len();
         }
         return;
@@ -1151,9 +1581,13 @@ fn collect_items_inner(
     // ── Forced line break ─────────────────────────────────────────────────
     if node.tag == "br" {
         items.push(InlineItem {
-            kind:      InlineItemKind::Break,
-            advance:   0.0, ascent, descent, height: line_h,
-            is_space:  false, breakable: false,
+            kind: InlineItemKind::Break,
+            advance: 0.0,
+            ascent,
+            descent,
+            height: line_h,
+            is_space: false,
+            breakable: false,
         });
         return;
     }
@@ -1165,21 +1599,31 @@ fn collect_items_inner(
         && node.style.is_inline_level()
         && !node.is_text_node()
         && has_block_children(node);
-    if matches!(node.style.display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid)
-        || is_inline_with_block_children
+    if matches!(
+        node.style.display,
+        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+    ) || is_inline_with_block_children
     {
         // Use the pre-laid-out margin-rect width (set by the pre-layout pass)
-        let box_w = if node.layout.margin_rect.w > 0.0 { node.layout.margin_rect.w } else { 50.0 };
-        let box_h = if node.layout.margin_rect.h > 0.0 { node.layout.margin_rect.h } else { font_px * 1.2 };
+        let box_w = if node.layout.margin_rect.w > 0.0 {
+            node.layout.margin_rect.w
+        } else {
+            50.0
+        };
+        let box_h = if node.layout.margin_rect.h > 0.0 {
+            node.layout.margin_rect.h
+        } else {
+            font_px * 1.2
+        };
         let mut full_path = ancestor_path.to_vec();
         full_path.push(box_idx);
         items.push(InlineItem {
-            kind:      InlineItemKind::Atomic { path: full_path },
-            advance:   box_w,
-            ascent:    box_h,
-            descent:   0.0,
-            height:    box_h,
-            is_space:  false,
+            kind: InlineItemKind::Atomic { path: full_path },
+            advance: box_w,
+            ascent: box_h,
+            descent: 0.0,
+            height: box_h,
+            is_space: false,
             breakable: true,
         });
         return;
@@ -1189,16 +1633,35 @@ fn collect_items_inner(
     if !node.text.is_empty() {
         let start = *text_offset;
         let (letter_s, word_s) = resolved_spacings(engine, &node.style, font_px, root_font_px);
-        tokenize_text(engine, &node.text, node.style.white_space, start, font_px, ascent, descent, line_h, box_idx, items, node.style.font_weight, node.style.font_style, &node.style.font_family, letter_s, word_s);
-        runs.push(InlineRun { text_offset: start, length: node.text.len(), style: (*node.style).clone() });
+        tokenize_text(
+            engine,
+            &node.text,
+            node.style.white_space,
+            start,
+            font_px,
+            ascent,
+            descent,
+            line_h,
+            box_idx,
+            items,
+            node.style.font_weight,
+            node.style.font_style,
+            &node.style.font_family,
+            letter_s,
+            word_s,
+        );
+        runs.push(InlineRun {
+            text_offset: start,
+            length: node.text.len(),
+            style: (*node.style).clone(),
+        });
         *text_offset += node.text.len();
     }
 
     // ── Inline box decoration: account for padding/border/margin ────────
     // CSS inline elements (not the block container itself) with
     // padding/border/margin add to the line width at the start and end.
-    let has_inline_decoration = !is_direct_child
-        && matches!(node.style.display, Display::Inline);
+    let has_inline_decoration = !is_direct_child && matches!(node.style.display, Display::Inline);
     let (inline_left, inline_right) = if has_inline_decoration {
         // ⛔ THROUGH `res_box`, which is the one place that knows a border with
         // no style occupies nothing (CSS Backgrounds §4.3). `border-width`
@@ -1206,8 +1669,10 @@ fn collect_items_inner(
         // on the first line and 3px on the last of every nested inline box, and
         // a flex item sized to its own text then broke onto a second line.
         let rb = engine.res_box(&node.style, font_px, 0.0, root_font_px);
-        (rb.padding_left + rb.border_left + rb.margin_left,
-         rb.padding_right + rb.border_right + rb.margin_right)
+        (
+            rb.padding_left + rb.border_left + rb.margin_left,
+            rb.padding_right + rb.border_right + rb.margin_right,
+        )
     } else {
         (0.0, 0.0)
     };
@@ -1215,10 +1680,17 @@ fn collect_items_inner(
     // Emit left decoration as a non-breakable zero-height advance
     if inline_left > 0.0 {
         items.push(InlineItem {
-            kind:      InlineItemKind::Text { text_start: *text_offset, text_len: 0, box_idx },
-            advance:   inline_left,
-            ascent:    0.0, descent: 0.0, height: 0.0,
-            is_space:  false, breakable: false,
+            kind: InlineItemKind::Text {
+                text_start: *text_offset,
+                text_len: 0,
+                box_idx,
+            },
+            advance: inline_left,
+            ascent: 0.0,
+            descent: 0.0,
+            height: 0.0,
+            is_space: false,
+            breakable: false,
         });
     }
 
@@ -1238,16 +1710,35 @@ fn collect_items_inner(
         parent_decoration
     };
     for (i, child) in node.children.iter().enumerate() {
-        collect_items_inner(engine, child, font_px, root_font_px, items, runs, text_offset, i, false, &child_path, deco_source);
+        collect_items_inner(
+            engine,
+            child,
+            font_px,
+            root_font_px,
+            items,
+            runs,
+            text_offset,
+            i,
+            false,
+            &child_path,
+            deco_source,
+        );
     }
 
     // Emit right decoration
     if inline_right > 0.0 {
         items.push(InlineItem {
-            kind:      InlineItemKind::Text { text_start: *text_offset, text_len: 0, box_idx },
-            advance:   inline_right,
-            ascent:    0.0, descent: 0.0, height: 0.0,
-            is_space:  false, breakable: false,
+            kind: InlineItemKind::Text {
+                text_start: *text_offset,
+                text_len: 0,
+                box_idx,
+            },
+            advance: inline_right,
+            ascent: 0.0,
+            descent: 0.0,
+            height: 0.0,
+            is_space: false,
+            breakable: false,
         });
     }
     // CSS background-color is not inherited, but an inline element's background
@@ -1268,12 +1759,16 @@ fn collect_items_inner(
 /// length would hand back whatever `auto` degrades to.
 fn resolved_spacings(
     engine: &LayoutEngine,
-    style:  &ComputedStyle,
+    style: &ComputedStyle,
     font_px: f32,
     root_font_px: f32,
 ) -> (f32, f32) {
     let res = |len: &CssLength| -> f32 {
-        if len.is_auto() { 0.0 } else { engine.res_len(len, font_px, 0.0, root_font_px) }
+        if len.is_auto() {
+            0.0
+        } else {
+            engine.res_len(len, font_px, 0.0, root_font_px)
+        }
     };
     (res(&style.letter_spacing), res(&style.word_spacing))
 }
@@ -1291,58 +1786,60 @@ fn resolved_spacings(
 /// character inside an `overflow: hidden` box and overlaps the next inline
 /// outside one.
 fn tokenize_text(
-    engine:      &LayoutEngine,
-    text:        &str,
+    engine: &LayoutEngine,
+    text: &str,
     white_space: WhiteSpace,
     base_offset: usize,
-    font_px:     f32,
-    ascent:      f32,
-    descent:     f32,
-    line_h:      f32,
-    box_idx:     usize,
-    items:       &mut Vec<InlineItem>,
+    font_px: f32,
+    ascent: f32,
+    descent: f32,
+    line_h: f32,
+    box_idx: usize,
+    items: &mut Vec<InlineItem>,
     font_weight: FontWeight,
-    font_style:  FontStyle,
+    font_style: FontStyle,
     font_family: &str,
     letter_spacing: f32,
-    word_spacing:   f32,
+    word_spacing: f32,
 ) {
-    if text.is_empty() { return; }
+    if text.is_empty() {
+        return;
+    }
 
-    let preserve_newlines = matches!(white_space, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine);
+    let preserve_newlines = matches!(
+        white_space,
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+    );
 
     let bytes = text.as_bytes();
     let mut word_start = 0usize;
     let mut i = 0usize;
 
     while i <= bytes.len() {
-        let at_end   = i == bytes.len();
-        let is_nl    = !at_end && bytes[i] == b'\n' && preserve_newlines;
+        let at_end = i == bytes.len();
+        let is_nl = !at_end && bytes[i] == b'\n' && preserve_newlines;
         let is_space = !at_end && !is_nl && bytes[i].is_ascii_whitespace();
 
         if (at_end || is_space || is_nl) && i > word_start {
             // Emit word — use cached measurement to avoid redundant font shaping
             let word = &text[word_start..i];
-            let w = engine.measure_text_cached(
-                word, font_px,
-                font_weight, font_style, font_family,
-            );
+            let w = engine.measure_text_cached(word, font_px, font_weight, font_style, font_family);
             // css-text-3 §8.2: tracking is inserted after EVERY typographic
             // character unit, the last one included — a browser's box for
             // `letter-spacing: 4px` on five letters is twenty pixels wider,
             // not sixteen.
             let tracking = letter_spacing * word.chars().count() as f32;
             items.push(InlineItem {
-                kind:      InlineItemKind::Text {
+                kind: InlineItemKind::Text {
                     text_start: base_offset + word_start,
-                    text_len:   i - word_start,
+                    text_len: i - word_start,
                     box_idx,
                 },
-                advance:   w + tracking,
+                advance: w + tracking,
                 ascent,
                 descent,
-                height:    line_h,
-                is_space:  false,
+                height: line_h,
+                is_space: false,
                 breakable: word_start > 0,
             });
         }
@@ -1352,22 +1849,26 @@ fn tokenize_text(
             // The newline byte itself is represented as a 1-byte Text item with
             // zero advance so caret offsets stay in sync.
             items.push(InlineItem {
-                kind:      InlineItemKind::Text {
+                kind: InlineItemKind::Text {
                     text_start: base_offset + i,
-                    text_len:   1,
+                    text_len: 1,
                     box_idx,
                 },
-                advance:   0.0,
+                advance: 0.0,
                 ascent,
                 descent,
-                height:    line_h,
-                is_space:  false,
+                height: line_h,
+                is_space: false,
                 breakable: false,
             });
             items.push(InlineItem {
-                kind:      InlineItemKind::Break,
-                advance:   0.0, ascent, descent, height: line_h,
-                is_space:  false, breakable: false,
+                kind: InlineItemKind::Break,
+                advance: 0.0,
+                ascent,
+                descent,
+                height: line_h,
+                is_space: false,
+                breakable: false,
             });
             i += 1;
             word_start = i;
@@ -1378,9 +1879,8 @@ fn tokenize_text(
             // Emit one space item per space character so caret byte offsets stay in sync.
             // (Previously all consecutive spaces were collapsed to one rendered item,
             //  causing the caret to drift right while text stayed left.)
-            let space_w = engine.measure_text_cached(
-                " ", font_px, font_weight, font_style, font_family,
-            );
+            let space_w =
+                engine.measure_text_cached(" ", font_px, font_weight, font_style, font_family);
             // A space is a word separator (css-text-3 §8.1) and a character
             // (§8.2), so it carries both spacings.
             let space_w = space_w + word_spacing + letter_spacing;
@@ -1389,19 +1889,19 @@ fn tokenize_text(
             // and non-breakable in pre mode (only \n breaks lines).
             let preserve_spaces = matches!(white_space, WhiteSpace::Pre | WhiteSpace::PreWrap);
             items.push(InlineItem {
-                kind:      InlineItemKind::Text {
+                kind: InlineItemKind::Text {
                     text_start: base_offset + i,
-                    text_len:   1,
+                    text_len: 1,
                     box_idx,
                 },
-                advance:   space_w,
+                advance: space_w,
                 ascent,
                 descent,
-                height:    line_h,
-                is_space:  !preserve_spaces,
+                height: line_h,
+                is_space: !preserve_spaces,
                 breakable: !matches!(white_space, WhiteSpace::Pre),
             });
-            i += 1;       // consume exactly one space byte
+            i += 1; // consume exactly one space byte
             word_start = i;
             continue;
         }
@@ -1421,11 +1921,13 @@ fn tokenize_text(
 fn break_one_line(items: &[InlineItem], start_idx: usize, avail_w: f32) -> (usize, usize, bool) {
     // Skip leading spaces
     let mut i = start_idx;
-    while i < items.len() && items[i].is_space { i += 1; }
+    while i < items.len() && items[i].is_space {
+        i += 1;
+    }
     let line_start = i;
 
-    let mut cur_w    = 0.0f32;
-    let mut last_bp: Option<usize> = None;  // items index of last break opportunity
+    let mut cur_w = 0.0f32;
+    let mut last_bp: Option<usize> = None; // items index of last break opportunity
 
     while i < items.len() {
         let item = &items[i];
@@ -1450,7 +1952,9 @@ fn break_one_line(items: &[InlineItem], start_idx: usize, avail_w: f32) -> (usiz
                 }
                 // Skip leading spaces at start of next line
                 let mut next = bp;
-                while next < items.len() && items[next].is_space { next += 1; }
+                while next < items.len() && items[next].is_space {
+                    next += 1;
+                }
                 return (line_end, next, false);
             } else {
                 // No break point: force break before current item
@@ -1497,33 +2001,48 @@ pub fn break_lines(items: &[InlineItem], max_w: f32) -> Vec<LineBuild> {
 
 #[derive(Debug, Default)]
 pub struct LineBuild {
-    pub items:      Vec<InlineItem>,
-    pub width:      f32,
-    pub height:     f32,
-    pub ascent:     f32,
-    pub descent:    f32,
+    pub items: Vec<InlineItem>,
+    pub width: f32,
+    pub height: f32,
+    pub ascent: f32,
+    pub descent: f32,
     /// Byte offset of the first character on this line in the flat text string.
     pub text_start: usize,
     /// Total byte length of text on this line.
-    pub text_len:   usize,
+    pub text_len: usize,
 }
 
 fn push_line_from_slice(lines: &mut Vec<LineBuild>, slice: &[InlineItem]) {
     let mut line = LineBuild::default();
     let mut text_start = usize::MAX;
-    let mut text_end   = 0usize;
+    let mut text_end = 0usize;
 
     for item in slice {
         line.items.push(item.clone());
-        line.width   += item.advance;
-        if item.ascent  > line.ascent  { line.ascent  = item.ascent;  }
-        if item.descent > line.descent { line.descent = item.descent; }
-        if item.height  > line.height  { line.height  = item.height;  }
+        line.width += item.advance;
+        if item.ascent > line.ascent {
+            line.ascent = item.ascent;
+        }
+        if item.descent > line.descent {
+            line.descent = item.descent;
+        }
+        if item.height > line.height {
+            line.height = item.height;
+        }
 
-        if let InlineItemKind::Text { text_start: ts, text_len: tl, .. } = &item.kind {
-            if *ts < text_start { text_start = *ts; }
+        if let InlineItemKind::Text {
+            text_start: ts,
+            text_len: tl,
+            ..
+        } = &item.kind
+        {
+            if *ts < text_start {
+                text_start = *ts;
+            }
             let end = ts + tl;
-            if end > text_end { text_end = end; }
+            if end > text_end {
+                text_end = end;
+            }
         }
     }
 
@@ -1531,8 +2050,16 @@ fn push_line_from_slice(lines: &mut Vec<LineBuild>, slice: &[InlineItem]) {
         line.height = (line.ascent + line.descent).max(16.0);
     }
 
-    line.text_start = if text_start == usize::MAX { 0 } else { text_start };
-    line.text_len   = if text_end > line.text_start { text_end - line.text_start } else { 0 };
+    line.text_start = if text_start == usize::MAX {
+        0
+    } else {
+        text_start
+    };
+    line.text_len = if text_end > line.text_start {
+        text_end - line.text_start
+    } else {
+        0
+    };
 
     lines.push(line);
 }
@@ -1547,18 +2074,18 @@ fn push_line_from_slice(lines: &mut Vec<LineBuild>, slice: &[InlineItem]) {
 pub(crate) fn css_family_to_cosmic(raw: &str) -> Family<'_> {
     let first = extract_first_css_family(raw);
     match first {
-        "serif"      => Family::Serif,
+        "serif" => Family::Serif,
         "sans-serif" => Family::SansSerif,
-        "monospace"  => Family::Monospace,
-        "cursive"    => Family::Cursive,
-        "fantasy"    => Family::Fantasy,
+        "monospace" => Family::Monospace,
+        "cursive" => Family::Cursive,
+        "fantasy" => Family::Fantasy,
         // ⛔ `system-ui` IS a generic, and `resolve_css_family` — the resolver
         // the MEASURING path uses — treats it as one. Passing it through as a
         // face name here meant a box was measured with the sans-serif generic
         // and painted with whatever cosmic-text made of the literal name.
-        "system-ui"  => Family::SansSerif,
-        ""           => Family::SansSerif,
-        name         => Family::Name(name),
+        "system-ui" => Family::SansSerif,
+        "" => Family::SansSerif,
+        name => Family::Name(name),
     }
 }
 
@@ -1575,12 +2102,12 @@ pub(crate) enum ResolvedFamily {
 impl ResolvedFamily {
     pub(crate) fn as_family(&self) -> Family<'_> {
         match self {
-            ResolvedFamily::Generic("serif")      => Family::Serif,
-            ResolvedFamily::Generic("monospace")  => Family::Monospace,
-            ResolvedFamily::Generic("cursive")    => Family::Cursive,
-            ResolvedFamily::Generic("fantasy")    => Family::Fantasy,
-            ResolvedFamily::Generic(_)            => Family::SansSerif,
-            ResolvedFamily::Named(s)              => Family::Name(&**s),
+            ResolvedFamily::Generic("serif") => Family::Serif,
+            ResolvedFamily::Generic("monospace") => Family::Monospace,
+            ResolvedFamily::Generic("cursive") => Family::Cursive,
+            ResolvedFamily::Generic("fantasy") => Family::Fantasy,
+            ResolvedFamily::Generic(_) => Family::SansSerif,
+            ResolvedFamily::Named(s) => Family::Name(&**s),
         }
     }
 }
@@ -1614,18 +2141,19 @@ pub(crate) fn resolve_css_family(fs: &cosmic_text::FontSystem, raw: &str) -> Res
     // one of those cost 12.7 us a call — more than the fallback scan it
     // exists to prevent. `font_family` lives in an `Arc<ComputedStyle>` shared
     // across elements, so the same pointer comes back over and over.
-    FRONT.with(|f| {
-        let f = f.borrow();
-        for (ptr, len, fam) in f.iter() {
-            if *ptr == raw.as_ptr() && *len == raw.len() {
-                return Some(fam.clone());
+    FRONT
+        .with(|f| {
+            let f = f.borrow();
+            for (ptr, len, fam) in f.iter() {
+                if *ptr == raw.as_ptr() && *len == raw.len() {
+                    return Some(fam.clone());
+                }
             }
-        }
-        None
-    })
-    .map(Some)
-    .unwrap_or(None)
-    .map_or_else(|| resolve_css_family_slow(fs, raw), |f| f)
+            None
+        })
+        .map(Some)
+        .unwrap_or(None)
+        .map_or_else(|| resolve_css_family_slow(fs, raw), |f| f)
 }
 
 thread_local! {
@@ -1639,7 +2167,9 @@ fn resolve_css_family_slow(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedF
     if let Some(hit) = found {
         FRONT.with(|f| {
             let mut f = f.borrow_mut();
-            if f.len() >= 16 { f.clear(); }
+            if f.len() >= 16 {
+                f.clear();
+            }
             f.push((raw.as_ptr(), raw.len(), hit.clone()));
         });
         return hit;
@@ -1661,13 +2191,17 @@ fn resolve_css_family_slow(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedF
     let mut chosen: Option<ResolvedFamily> = None;
     for part in raw.split(',') {
         let name = part.trim().trim_matches('"').trim_matches('\'').trim();
-        if name.is_empty() { continue; }
+        if name.is_empty() {
+            continue;
+        }
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
             "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy" | "system-ui" => {
                 let g = match lower.as_str() {
-                    "serif" => "serif", "monospace" => "monospace",
-                    "cursive" => "cursive", "fantasy" => "fantasy",
+                    "serif" => "serif",
+                    "monospace" => "monospace",
+                    "cursive" => "cursive",
+                    "fantasy" => "fantasy",
                     _ => "sans-serif",
                 };
                 chosen = Some(ResolvedFamily::Generic(g));
@@ -1686,7 +2220,9 @@ fn resolve_css_family_slow(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedF
     FAMILY_CACHE.with(|c| c.borrow_mut().insert(Box::from(raw), chosen.clone()));
     FRONT.with(|f| {
         let mut f = f.borrow_mut();
-        if f.len() >= 16 { f.clear(); }
+        if f.len() >= 16 {
+            f.clear();
+        }
         f.push((raw.as_ptr(), raw.len(), chosen.clone()));
     });
     chosen
@@ -1696,7 +2232,9 @@ fn resolve_css_family_slow(fs: &cosmic_text::FontSystem, raw: &str) -> ResolvedF
 /// Strips surrounding quotes for quoted names.
 fn extract_first_css_family(raw: &str) -> &str {
     let raw = raw.trim();
-    if raw.is_empty() { return ""; }
+    if raw.is_empty() {
+        return "";
+    }
     // Quoted name: `"Times New Roman"` or `'Foo'`
     if raw.starts_with('"') {
         return raw[1..].split('"').next().unwrap_or("").trim();
@@ -1711,15 +2249,25 @@ fn extract_first_css_family(raw: &str) -> &str {
 /// Map a `font_stretch` percentage (100.0 = normal) to a cosmic-text `Stretch` variant.
 pub(crate) fn stretch_from_percent(pct: f32) -> Stretch {
     // CSS spec breakpoints (midpoints between defined values):
-    if      pct <= 56.25  { Stretch::UltraCondensed }
-    else if pct <= 68.75  { Stretch::ExtraCondensed }
-    else if pct <= 81.25  { Stretch::Condensed }
-    else if pct <= 93.75  { Stretch::SemiCondensed }
-    else if pct <= 106.25 { Stretch::Normal }
-    else if pct <= 118.75 { Stretch::SemiExpanded }
-    else if pct <= 137.5  { Stretch::Expanded }
-    else if pct <= 175.0  { Stretch::ExtraExpanded }
-    else                  { Stretch::UltraExpanded }
+    if pct <= 56.25 {
+        Stretch::UltraCondensed
+    } else if pct <= 68.75 {
+        Stretch::ExtraCondensed
+    } else if pct <= 81.25 {
+        Stretch::Condensed
+    } else if pct <= 93.75 {
+        Stretch::SemiCondensed
+    } else if pct <= 106.25 {
+        Stretch::Normal
+    } else if pct <= 118.75 {
+        Stretch::SemiExpanded
+    } else if pct <= 137.5 {
+        Stretch::Expanded
+    } else if pct <= 175.0 {
+        Stretch::ExtraExpanded
+    } else {
+        Stretch::UltraExpanded
+    }
 }
 
 /// Build a cosmic-text `Weight` from a `FontWeight` enum, optionally overridden
@@ -1727,18 +2275,29 @@ pub(crate) fn stretch_from_percent(pct: f32) -> Stretch {
 pub(crate) fn weight_from_style(weight: FontWeight, var: &[(String, f32)]) -> Weight {
     // font-variation-settings 'wght' overrides the logical font-weight.
     for (tag, val) in var {
-        if tag == "wght" { return Weight(*val as u16); }
+        if tag == "wght" {
+            return Weight(*val as u16);
+        }
     }
     Weight(weight.value())
 }
 
 // ─── Text measurement ─────────────────────────────────────────────────────────
 
-pub fn measure_text_width(text: &str, font_px: f32, font_system: Option<&mut cosmic_text::FontSystem>) -> f32 {
+pub fn measure_text_width(
+    text: &str,
+    font_px: f32,
+    font_system: Option<&mut cosmic_text::FontSystem>,
+) -> f32 {
     measure_text_width_scaled(text, font_px, font_system, 1.0)
 }
 
-pub fn measure_text_width_scaled(text: &str, font_px: f32, font_system: Option<&mut cosmic_text::FontSystem>, scale: f32) -> f32 {
+pub fn measure_text_width_scaled(
+    text: &str,
+    font_px: f32,
+    font_system: Option<&mut cosmic_text::FontSystem>,
+    scale: f32,
+) -> f32 {
     if let Some(fs) = font_system {
         measure_text_width_fs(fs, text, font_px, scale)
     } else {
@@ -1747,30 +2306,47 @@ pub fn measure_text_width_scaled(text: &str, font_px: f32, font_system: Option<&
 }
 
 pub fn measure_text_width_weighted(
-    text:        &str,
-    font_px:     f32,
+    text: &str,
+    font_px: f32,
     font_system: Option<&mut cosmic_text::FontSystem>,
-    weight:      FontWeight,
-    style:       FontStyle,
-    scale:       f32,
+    weight: FontWeight,
+    style: FontStyle,
+    scale: f32,
     font_family: &str,
 ) -> f32 {
     if let Some(fs) = font_system {
         let ct_weight = Weight(weight.value());
-        let ct_style  = match style {
-            FontStyle::Italic  => CTextStyle::Italic,
+        let ct_style = match style {
+            FontStyle::Italic => CTextStyle::Italic,
             FontStyle::Oblique => CTextStyle::Oblique,
-            FontStyle::Normal  => CTextStyle::Normal,
+            FontStyle::Normal => CTextStyle::Normal,
         };
         measure_text_width_fs_attrs(fs, text, font_px, ct_weight, ct_style, scale, font_family)
     } else {
         let w = measure_text_width_ts(text, font_px, 8);
-        if weight.is_bold() { w * 1.15 } else { w }
+        if weight.is_bold() {
+            w * 1.15
+        } else {
+            w
+        }
     }
 }
 
-pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_px: f32, scale: f32) -> f32 {
-    measure_text_width_fs_attrs(fs, text, font_px, Weight::NORMAL, CTextStyle::Normal, scale, "")
+pub fn measure_text_width_fs(
+    fs: &mut cosmic_text::FontSystem,
+    text: &str,
+    font_px: f32,
+    scale: f32,
+) -> f32 {
+    measure_text_width_fs_attrs(
+        fs,
+        text,
+        font_px,
+        Weight::NORMAL,
+        CTextStyle::Normal,
+        scale,
+        "",
+    )
 }
 
 /// Measure text width by shaping at physical pixel size (font_px * scale) and
@@ -1778,17 +2354,19 @@ pub fn measure_text_width_fs(fs: &mut cosmic_text::FontSystem, text: &str, font_
 /// also shapes at physical size, ensuring line-breaking decisions agree with
 /// the actual rendered glyph widths.
 pub fn measure_text_width_fs_attrs(
-    fs:     &mut cosmic_text::FontSystem,
-    text:   &str,
+    fs: &mut cosmic_text::FontSystem,
+    text: &str,
     font_px: f32,
     weight: Weight,
-    style:  CTextStyle,
-    scale:  f32,
+    style: CTextStyle,
+    scale: f32,
     font_family: &str,
 ) -> f32 {
-    if text.is_empty() { return 0.0; }
+    if text.is_empty() {
+        return 0.0;
+    }
     let phys_px = font_px * scale.max(1.0);
-    let inv     = if scale > 1.0 { 1.0 / scale } else { 1.0 };
+    let inv = if scale > 1.0 { 1.0 / scale } else { 1.0 };
     let metrics = Metrics::new(phys_px, phys_px * 1.2);
     let mut buffer = Buffer::new(fs, metrics);
     let mut attrs = Attrs::new().weight(weight).style(style);
@@ -1803,7 +2381,9 @@ pub fn measure_text_width_fs_attrs(
 
     let mut max_w = 0.0f32;
     for run in buffer.layout_runs() {
-        if run.line_w > max_w { max_w = run.line_w; }
+        if run.line_w > max_w {
+            max_w = run.line_w;
+        }
     }
     max_w * inv
 }
@@ -1822,17 +2402,26 @@ fn cosmic_text_family(family: &str) -> cosmic_text::Family<'_> {
 }
 
 pub fn measure_text_width_ts(text: &str, font_px: f32, tab_size: i32) -> f32 {
-    let char_w  = font_px * 0.55;
+    let char_w = font_px * 0.55;
     let space_w = char_w * 0.35;
     let ts = (tab_size.max(1)) as f32;
-    text.chars().map(|c| {
-        if c == '\t'                         { space_w * ts }
-        else if "iIlj1!|:;,.'`".contains(c) { char_w * 0.45 }
-        else if "mwMW".contains(c)           { char_w * 1.20 }
-        else if c == ' '                     { space_w }
-        else if c.is_ascii()                 { char_w }
-        else                                 { font_px * 1.0 }  // emoji / CJK: full square width
-    }).sum()
+    text.chars()
+        .map(|c| {
+            if c == '\t' {
+                space_w * ts
+            } else if "iIlj1!|:;,.'`".contains(c) {
+                char_w * 0.45
+            } else if "mwMW".contains(c) {
+                char_w * 1.20
+            } else if c == ' ' {
+                space_w
+            } else if c.is_ascii() {
+                char_w
+            } else {
+                font_px * 1.0
+            } // emoji / CJK: full square width
+        })
+        .sum()
 }
 
 /// The font's ascent, descent and natural line height at `font_px`.
@@ -1878,7 +2467,9 @@ fn font_metric_ratios(fs: &mut cosmic_text::FontSystem, family: &str) -> Option<
         return hit;
     }
     let computed = measure_font_ratios(fs, family);
-    FONT_RATIOS.with(|c| { c.borrow_mut().insert(key, computed); });
+    FONT_RATIOS.with(|c| {
+        c.borrow_mut().insert(key, computed);
+    });
     computed
 }
 
@@ -1901,11 +2492,15 @@ fn measure_font_ratios(fs: &mut cosmic_text::FontSystem, family: &str) -> Option
     let font = fs.get_font(font_id, Weight::NORMAL)?;
     let m = font.metrics();
     let upem = m.units_per_em as f32;
-    if upem <= 0.0 { return None; }
+    if upem <= 0.0 {
+        return None;
+    }
     // `descent` is negative in font units — it measures DOWN from the baseline.
     let asc = m.ascent / upem;
     let desc = -m.descent / upem;
-    if asc <= 0.0 || desc < 0.0 { return None; }
+    if asc <= 0.0 || desc < 0.0 {
+        return None;
+    }
     // The leading is carried as its own ratio rather than folded into a
     // natural line height and subtracted back out later — that subtraction
     // left floating-point dust on an exact value.
@@ -1926,7 +2521,9 @@ fn char_x_fingerprint(
     use std::hash::{Hash, Hasher};
     let start = line.text_start;
     let end = (line.text_start + line.text_length).min(flat.len());
-    if end <= start { return 0; }
+    if end <= start {
+        return 0;
+    }
     let mut h = std::collections::hash_map::DefaultHasher::new();
     flat[start..end].hash(&mut h);
     line.extra_space_per_word.to_bits().hash(&mut h);
@@ -1938,21 +2535,35 @@ fn char_x_fingerprint(
     }
     for r in runs {
         // Only the runs that touch this line can affect its glyphs.
-        if r.text_offset + r.length <= start || r.text_offset >= end { continue; }
+        if r.text_offset + r.length <= start || r.text_offset >= end {
+            continue;
+        }
         r.text_offset.hash(&mut h);
         r.length.hash(&mut h);
         r.style.font_size_px(16.0, 16.0).to_bits().hash(&mut h);
-        r.style.word_spacing.resolve(16.0, 0.0, 16.0).to_bits().hash(&mut h);
+        r.style
+            .word_spacing
+            .resolve(16.0, 0.0, 16.0)
+            .to_bits()
+            .hash(&mut h);
         // Tracking moves every glyph on the line, so a run that only changed
         // its `letter-spacing` must not be handed the previous `char_x`.
-        r.style.letter_spacing.resolve(16.0, 0.0, 16.0).to_bits().hash(&mut h);
+        r.style
+            .letter_spacing
+            .resolve(16.0, 0.0, 16.0)
+            .to_bits()
+            .hash(&mut h);
         r.style.font_weight.value().hash(&mut h);
         (r.style.font_style as u8).hash(&mut h);
         r.style.font_stretch.to_bits().hash(&mut h);
         r.style.font_family.hash(&mut h);
     }
     let v = h.finish();
-    if v == 0 { 1 } else { v }
+    if v == 0 {
+        1
+    } else {
+        v
+    }
 }
 
 // ─── Accurate per-character x positions using cosmic_text ────────────────────
@@ -1964,16 +2575,18 @@ fn char_x_fingerprint(
 /// (Basic for ASCII, Advanced otherwise) so click-to-caret and caret rendering
 /// agree exactly with the rendered text positions.
 pub fn fill_char_x_for_line(
-    fs:    &mut cosmic_text::FontSystem,
-    flat:  &str,
-    runs:  &[InlineRun],
-    line:  &mut LayoutLine,
+    fs: &mut cosmic_text::FontSystem,
+    flat: &str,
+    runs: &[InlineRun],
+    line: &mut LayoutLine,
     scale: f32,
 ) {
     let line_start = line.text_start;
-    let line_end   = (line.text_start + line.text_length).min(flat.len());
-    let range_len  = line_end.saturating_sub(line_start);
-    if range_len == 0 { return; }
+    let line_end = (line.text_start + line.text_length).min(flat.len());
+    let range_len = line_end.saturating_sub(line_start);
+    if range_len == 0 {
+        return;
+    }
 
     // One entry per byte boundary plus one for end-of-line.
     let mut positions = vec![f32::NAN; range_len + 1];
@@ -1981,15 +2594,23 @@ pub fn fill_char_x_for_line(
     let inv_scale = if scale > 0.0 { 1.0 / scale } else { 1.0 };
 
     // Helper: measure a text segment and fill char_x positions
-    let measure_segment = |fs: &mut cosmic_text::FontSystem, s: usize, e: usize,
-                           cursor_x: f32, run: &InlineRun, positions: &mut Vec<f32>| -> f32 {
+    let measure_segment = |fs: &mut cosmic_text::FontSystem,
+                           s: usize,
+                           e: usize,
+                           cursor_x: f32,
+                           run: &InlineRun,
+                           positions: &mut Vec<f32>|
+     -> f32 {
         let seg_text = &flat[s..e];
         let font_px = run.style.font_size_px(16.0, 16.0);
-        let ct_w = weight_from_style(run.style.font_weight, &run.style.rare().font_variation_settings);
+        let ct_w = weight_from_style(
+            run.style.font_weight,
+            &run.style.rare().font_variation_settings,
+        );
         let ct_s = match run.style.font_style {
-            FontStyle::Italic  => CTextStyle::Italic,
+            FontStyle::Italic => CTextStyle::Italic,
             FontStyle::Oblique => CTextStyle::Oblique,
-            FontStyle::Normal  => CTextStyle::Normal,
+            FontStyle::Normal => CTextStyle::Normal,
         };
         let ct_stretch = stretch_from_percent(run.style.font_stretch);
         let phys_px = font_px * scale;
@@ -2001,7 +2622,11 @@ pub fn fill_char_x_for_line(
         // exceeds what the fallback it avoids costs here. The resolver earns
         // its keep in `measure_text_width_fs_attrs`, which is called far less.
         let family = css_family_to_cosmic(&run.style.font_family);
-        let attrs = Attrs::new().weight(ct_w).style(ct_s).stretch(ct_stretch).family(family);
+        let attrs = Attrs::new()
+            .weight(ct_w)
+            .style(ct_s)
+            .stretch(ct_stretch)
+            .family(family);
         buf.set_text(fs, seg_text, &attrs, Shaping::Advanced, None);
         buf.shape_until_scroll(fs, false);
 
@@ -2022,10 +2647,14 @@ pub fn fill_char_x_for_line(
                     }
                 }
                 let right = x1 - cursor_x;
-                if right > seg_advance { seg_advance = right; }
+                if right > seg_advance {
+                    seg_advance = right;
+                }
             }
             let lw = lr.line_w * inv_scale;
-            if lw > seg_advance { seg_advance = lw; }
+            if lw > seg_advance {
+                seg_advance = lw;
+            }
         }
         // The shaper knows nothing about the two spacing properties, so the
         // segment's advance has to carry them or this cursor drifts out of
@@ -2033,6 +2662,21 @@ pub fn fill_char_x_for_line(
         let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
         let letter_s = run.style.letter_spacing.resolve(font_px, 0.0, 16.0);
         let extra = line.extra_space_per_word;
+        let mut adjustment = 0.0;
+        for (rel, ch) in seg_text.char_indices() {
+            let idx = s + rel - line_start;
+            if idx < positions.len() && positions[idx].is_finite() {
+                positions[idx] += adjustment;
+            }
+            adjustment += letter_s;
+            if ch == ' ' {
+                adjustment += word_s + extra;
+            }
+        }
+        let end_idx = e - line_start;
+        if end_idx < positions.len() && positions[end_idx].is_finite() {
+            positions[end_idx] += adjustment;
+        }
         let n_spc = seg_text.chars().filter(|&c| c == ' ').count() as f32;
         let n_chars = seg_text.chars().count() as f32;
         seg_advance + n_spc * (word_s + extra) + n_chars * letter_s
@@ -2053,13 +2697,21 @@ pub fn fill_char_x_for_line(
                 let re = line_end.min(run.text_offset + run.length);
                 let cs = vs_start.max(rs);
                 let ce = vs_end.min(re);
-                if cs >= ce { continue; }
+                if cs >= ce {
+                    continue;
+                }
 
                 let mut s = cs;
-                while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
+                while s < flat.len() && !flat.is_char_boundary(s) {
+                    s += 1;
+                }
                 let mut e = ce;
-                while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
-                if s >= e { continue; }
+                while e > 0 && !flat.is_char_boundary(e) {
+                    e -= 1;
+                }
+                if s >= e {
+                    continue;
+                }
 
                 let advance = measure_segment(fs, s, e, cursor_x, run, &mut positions);
                 cursor_x += advance;
@@ -2073,16 +2725,30 @@ pub fn fill_char_x_for_line(
         {
             let mut last = 0.0f32;
             for p in positions.iter_mut() {
-                if p.is_nan() { *p = last; } else { last = *p; }
+                if p.is_nan() {
+                    *p = last;
+                } else {
+                    last = *p;
+                }
             }
         }
 
         // Set visual segment x/width
         for vs in &mut line.visual_segments {
             let vs_local_start = vs.logical_start.saturating_sub(line_start);
-            let vs_local_end = (vs.logical_start + vs.length).saturating_sub(line_start).min(positions.len().saturating_sub(1));
-            let x0 = if vs_local_start < positions.len() { positions[vs_local_start] } else { 0.0 };
-            let x1 = if vs_local_end < positions.len() { positions[vs_local_end] } else { x0 };
+            let vs_local_end = (vs.logical_start + vs.length)
+                .saturating_sub(line_start)
+                .min(positions.len().saturating_sub(1));
+            let x0 = if vs_local_start < positions.len() {
+                positions[vs_local_start]
+            } else {
+                0.0
+            };
+            let x1 = if vs_local_end < positions.len() {
+                positions[vs_local_end]
+            } else {
+                x0
+            };
             vs.x = x0.min(x1);
             vs.width = (x1 - x0).abs();
         }
@@ -2095,13 +2761,21 @@ pub fn fill_char_x_for_line(
     for run in runs {
         let seg_s = line_start.max(run.text_offset);
         let seg_e = line_end.min(run.text_offset + run.length);
-        if seg_s >= seg_e { continue; }
+        if seg_s >= seg_e {
+            continue;
+        }
 
         let mut s = seg_s;
-        while s < flat.len() && !flat.is_char_boundary(s) { s += 1; }
+        while s < flat.len() && !flat.is_char_boundary(s) {
+            s += 1;
+        }
         let mut e = seg_e;
-        while e > 0 && !flat.is_char_boundary(e) { e -= 1; }
-        if s >= e { continue; }
+        while e > 0 && !flat.is_char_boundary(e) {
+            e -= 1;
+        }
+        if s >= e {
+            continue;
+        }
 
         let advance = measure_segment(fs, s, e, cursor_x, run, &mut positions);
         cursor_x += advance;
@@ -2113,7 +2787,11 @@ pub fn fill_char_x_for_line(
     // Forward-fill NaN gaps (intermediate bytes of multi-byte / ligature glyphs).
     let mut last = 0.0f32;
     for p in positions.iter_mut() {
-        if p.is_nan() { *p = last; } else { last = *p; }
+        if p.is_nan() {
+            *p = last;
+        } else {
+            last = *p;
+        }
     }
 
     line.char_x = positions;
@@ -2131,26 +2809,45 @@ fn collect_flat_text_inner(node: &WebCore, out: &mut String, is_root: bool) {
     if node.is_text_node() {
         // Normalize newlines/tabs to spaces in normal white-space mode
         // so that flat text matches what tokenize_text rendered.
-        if matches!(node.style.white_space, WhiteSpace::Normal | WhiteSpace::Nowrap) {
+        if matches!(
+            node.style.white_space,
+            WhiteSpace::Normal | WhiteSpace::Nowrap
+        ) {
             for c in node.text.chars() {
-                out.push(if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c });
+                out.push(if matches!(c, '\n' | '\r' | '\t') {
+                    ' '
+                } else {
+                    c
+                });
             }
         } else {
             out.push_str(&node.text);
         }
         return;
     }
-    if matches!(node.style.display, Display::None) { return; }
-    if node.tag == "br" { return; }
+    if matches!(node.style.display, Display::None) {
+        return;
+    }
+    if node.tag == "br" {
+        return;
+    }
     // Floats are emitted as Float items in collect_items and their text is not
     // counted in text_offset — skip them here to keep byte offsets in sync.
     // Exception: when called as root (rendering the float itself), include its text.
-    if !is_root && !matches!(node.style.float, crate::types::Float::None) { return; }
+    if !is_root && !matches!(node.style.float, crate::types::Float::None) {
+        return;
+    }
     // Atomic inline-blocks are emitted as Atomic items by the parent; their internal
     // text is NOT part of the parent's flat-text string. However when we are rendering
     // the inline-block itself (is_root=true) we DO want its own text content.
-    if !is_root && matches!(node.style.display,
-        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) { return; }
+    if !is_root
+        && matches!(
+            node.style.display,
+            Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+        )
+    {
+        return;
+    }
     if !node.text.is_empty() {
         out.push_str(&node.text);
     }
@@ -2158,7 +2855,9 @@ fn collect_flat_text_inner(node: &WebCore, out: &mut String, is_root: bool) {
     for child in children {
         // Skip out-of-flow children — they don't contribute to this box's flat text.
         // (collect_flat_text is called separately on each positioned box for its own content.)
-        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
         collect_flat_text_inner(child, out, false);
     }
 }
@@ -2170,17 +2869,26 @@ fn collect_flat_text_inner(node: &WebCore, out: &mut String, is_root: bool) {
 /// `collect_items` encounters an `InlineBlock`, its `margin_rect` is non-zero
 /// so the item gets the correct advance width and ascent.
 fn prelayout_nested_inline_blocks(
-    engine:       &LayoutEngine,
-    node:         &mut WebCore,
-    content_w:    f32,
-    font_px:      f32,
+    engine: &LayoutEngine,
+    node: &mut WebCore,
+    content_w: f32,
+    font_px: f32,
     root_font_px: f32,
 ) {
     for ci in 0..node.children.len() {
-        if matches!(node.children[ci].style.display, Display::None) { continue; }
-        if matches!(node.children[ci].style.position, Position::Absolute | Position::Fixed) { continue; }
-        if matches!(node.children[ci].style.display,
-                    Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+        if matches!(node.children[ci].style.display, Display::None) {
+            continue;
+        }
+        if matches!(
+            node.children[ci].style.position,
+            Position::Absolute | Position::Fixed
+        ) {
+            continue;
+        }
+        if matches!(
+            node.children[ci].style.display,
+            Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+        ) {
             // When called from the top-level (block container), direct inline-block
             // children are already handled by the step 0 loop in layout_inline_block().
             // Only lay out here in the recursive case (node is an inline wrapper,
@@ -2191,15 +2899,25 @@ fn prelayout_nested_inline_blocks(
                     &Constraints::new(content_w, 0.0, 0.0, font_px, root_font_px),
                 );
                 if node.children[ci].style.width.is_auto() {
-                    let max_line_w = node.children[ci].layout.line_cache.iter()
-                        .map(|l| l.width).fold(0.0_f32, f32::max);
-                    let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                        else { engine.max_content_width(&node.children[ci], font_px, root_font_px) };
+                    let max_line_w = node.children[ci]
+                        .layout
+                        .line_cache
+                        .iter()
+                        .map(|l| l.width)
+                        .fold(0.0_f32, f32::max);
+                    let intrinsic_w = if max_line_w > 0.0 {
+                        max_line_w
+                    } else {
+                        engine.max_content_width(&node.children[ci], font_px, root_font_px)
+                    };
                     let gc = &node.children[ci];
                     let shrink_w = intrinsic_w
-                        + gc.layout.resolved_pad_left + gc.layout.resolved_pad_right
-                        + gc.layout.resolved_border_left + gc.layout.resolved_border_right
-                        + gc.layout.resolved_margin_left + gc.layout.resolved_margin_right;
+                        + gc.layout.resolved_pad_left
+                        + gc.layout.resolved_pad_right
+                        + gc.layout.resolved_border_left
+                        + gc.layout.resolved_border_right
+                        + gc.layout.resolved_margin_left
+                        + gc.layout.resolved_margin_right;
                     if shrink_w < content_w {
                         engine.layout_box(
                             &mut node.children[ci],
@@ -2216,22 +2934,39 @@ fn prelayout_nested_inline_blocks(
             // Pre-layout any inline-block grandchildren inside this inline child.
             for gci in 0..node.children[ci].children.len() {
                 let grandchild_display = node.children[ci].children[gci].style.display;
-                if matches!(grandchild_display, Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+                if matches!(
+                    grandchild_display,
+                    Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+                ) {
                     engine.layout_box(
                         &mut node.children[ci].children[gci],
                         &Constraints::new(content_w, 0.0, 0.0, child_font_px, root_font_px),
                     );
                     // Shrink-to-fit for auto-width nested inline-blocks
                     if node.children[ci].children[gci].style.width.is_auto() {
-                        let max_line_w = node.children[ci].children[gci].layout.line_cache.iter()
-                            .map(|l| l.width).fold(0.0_f32, f32::max);
-                        let intrinsic_w = if max_line_w > 0.0 { max_line_w }
-                            else { engine.max_content_width(&node.children[ci].children[gci], font_px, root_font_px) };
+                        let max_line_w = node.children[ci].children[gci]
+                            .layout
+                            .line_cache
+                            .iter()
+                            .map(|l| l.width)
+                            .fold(0.0_f32, f32::max);
+                        let intrinsic_w = if max_line_w > 0.0 {
+                            max_line_w
+                        } else {
+                            engine.max_content_width(
+                                &node.children[ci].children[gci],
+                                font_px,
+                                root_font_px,
+                            )
+                        };
                         let gc = &node.children[ci].children[gci];
                         let shrink_w = intrinsic_w
-                            + gc.layout.resolved_pad_left + gc.layout.resolved_pad_right
-                            + gc.layout.resolved_border_left + gc.layout.resolved_border_right
-                            + gc.layout.resolved_margin_left + gc.layout.resolved_margin_right;
+                            + gc.layout.resolved_pad_left
+                            + gc.layout.resolved_pad_right
+                            + gc.layout.resolved_border_left
+                            + gc.layout.resolved_border_right
+                            + gc.layout.resolved_margin_left
+                            + gc.layout.resolved_margin_right;
                         if shrink_w < content_w {
                             engine.layout_box(
                                 &mut node.children[ci].children[gci],
@@ -2242,8 +2977,11 @@ fn prelayout_nested_inline_blocks(
                 } else if matches!(grandchild_display, Display::Inline) {
                     // One more level: recurse for deeper nesting.
                     prelayout_nested_inline_blocks(
-                        engine, &mut node.children[ci].children[gci],
-                        content_w, child_font_px, root_font_px,
+                        engine,
+                        &mut node.children[ci].children[gci],
+                        content_w,
+                        child_font_px,
+                        root_font_px,
                     );
                 }
             }

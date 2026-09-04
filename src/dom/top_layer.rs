@@ -27,7 +27,9 @@ impl Document {
     ///
     /// The single write point for both halves of the state.
     pub fn add_to_top_layer(&mut self, id: u32, kind: crate::types::TopLayerKind) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         self.top_layer.retain(|n| *n != id);
         self.top_layer.push(id);
         if let Some(node) = self.find_webcore_mut(id) {
@@ -39,7 +41,9 @@ impl Document {
 
     /// Take `id` out of the top layer. A no-op when it was not in it.
     pub fn remove_from_top_layer(&mut self, id: u32) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         self.top_layer.retain(|n| *n != id);
         if let Some(node) = self.find_webcore_mut(id) {
             node.top_layer_kind = None;
@@ -49,7 +53,9 @@ impl Document {
     }
 
     /// The top layer, bottom-first.
-    pub fn top_layer_nodes(&self) -> &[u32] { &self.top_layer }
+    pub fn top_layer_nodes(&self) -> &[u32] {
+        &self.top_layer
+    }
 
     /// `element.popover` — `None` is the IDL's `null`, for an element with no
     /// `popover` attribute at all.
@@ -89,11 +95,19 @@ impl Document {
     /// one that is ALREADY showing is neither — it succeeds and changes
     /// nothing (measured in isolation).
     pub fn show_popover(&mut self, id: u32) -> bool {
-        let Some(state) = self.popover(id) else { return false };
-        if !self.is_connected(id) { return false; }
-        if self.popover_open(id) { return true; }
+        let Some(state) = self.popover(id) else {
+            return false;
+        };
+        if !self.is_connected(id) {
+            return false;
+        }
+        if self.popover_open(id) {
+            return true;
+        }
         // Cancelable, and honoured.
-        if !self.fire_before_toggle(id, "closed", "open") { return false; }
+        if !self.fire_before_toggle(id, "closed", "open") {
+            return false;
+        }
         self.light_dismiss_for(&state, id);
         self.add_to_top_layer(id, crate::types::TopLayerKind::Popover);
         true
@@ -101,10 +115,18 @@ impl Document {
 
     /// `element.hidePopover()`. Hiding one that is already hidden succeeds.
     pub fn hide_popover(&mut self, id: u32) -> bool {
-        if self.popover(id).is_none() { return false; }
-        if !self.is_connected(id) { return false; }
-        if !self.popover_open(id) { return true; }
-        if !self.fire_before_toggle(id, "open", "closed") { return false; }
+        if self.popover(id).is_none() {
+            return false;
+        }
+        if !self.is_connected(id) {
+            return false;
+        }
+        if !self.popover_open(id) {
+            return true;
+        }
+        if !self.fire_before_toggle(id, "open", "closed") {
+            return false;
+        }
         self.remove_from_top_layer(id);
         true
     }
@@ -112,7 +134,11 @@ impl Document {
     /// `element.togglePopover(force)` — returns whether it ends up SHOWING.
     pub fn toggle_popover(&mut self, id: u32, force: Option<bool>) -> bool {
         let want = force.unwrap_or(!self.popover_open(id));
-        if want { self.show_popover(id); } else { self.hide_popover(id); }
+        if want {
+            self.show_popover(id);
+        } else {
+            self.hide_popover(id);
+        }
         self.popover_open(id)
     }
 
@@ -136,7 +162,9 @@ impl Document {
             {
                 continue;
             }
-            let Some(other) = self.popover(node) else { continue };
+            let Some(other) = self.popover(node) else {
+                continue;
+            };
             if closes.contains(&other.as_str()) {
                 self.hide_popover(node);
             }

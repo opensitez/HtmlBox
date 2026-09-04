@@ -1,10 +1,10 @@
 //! XML in an HTML document — namespaces, CDATA sections and processing
 //! instructions.
 
-use crate::types::Document;
-use crate::types::WebCore;
 use crate::css::apply_property;
 use crate::dom::arena::NodeId;
+use crate::types::Document;
+use crate::types::WebCore;
 
 // ─── XML: namespaces, CDATA, processing instructions ────────────────────────
 //
@@ -23,7 +23,11 @@ impl Document {
         let arena_id = self.arena.create_element_ns(namespace, qualified_name);
         let mut b = WebCore::new(qualified_name);
         b.node_id = arena_id.0;
-        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", crate::html::default_display(qualified_name));
+        apply_property(
+            std::sync::Arc::make_mut(&mut b.style),
+            "display",
+            crate::html::default_display(qualified_name),
+        );
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -60,13 +64,17 @@ impl Document {
     /// `node.namespaceURI` — `None` for the null namespace, which is what
     /// every HTML element built by the parser has.
     pub fn namespace_uri(&self, id: u32) -> Option<String> {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return None; }
+        if id == 0 || !self.arena.is_alive(NodeId(id)) {
+            return None;
+        }
         self.arena.get(NodeId(id)).namespace.clone()
     }
 
     /// `node.prefix` — the part of the qualified name before the colon.
     pub fn prefix(&self, id: u32) -> Option<String> {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return None; }
+        if id == 0 || !self.arena.is_alive(NodeId(id)) {
+            return None;
+        }
         self.arena
             .get(NodeId(id))
             .tag
@@ -76,13 +84,20 @@ impl Document {
 
     /// `node.localName` — the qualified name without its prefix.
     pub fn local_name(&self, id: u32) -> String {
-        if id == 0 { return String::new(); }
+        if id == 0 {
+            return String::new();
+        }
         // ⛔ A shadow node is not an arena node, so the guard answered `""` for
         // every element in a shadow tree. The render tree holds the tag.
         if !self.arena.is_alive(NodeId(id)) {
-            let Some(node) = self.find_webcore(id) else { return String::new() };
+            let Some(node) = self.find_webcore(id) else {
+                return String::new();
+            };
             let tag = node.tag.clone();
-            return tag.split_once(':').map(|(_, l)| l.to_string()).unwrap_or(tag);
+            return tag
+                .split_once(':')
+                .map(|(_, l)| l.to_string())
+                .unwrap_or(tag);
         }
         let tag = &self.arena.get(NodeId(id)).tag;
         match tag.split_once(':') {
@@ -103,9 +118,13 @@ impl Document {
         qualified_name: &str,
         value: &str,
     ) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         self.set_attribute(id, qualified_name, value);
-        if !self.arena.is_alive(NodeId(id)) { return; }
+        if !self.arena.is_alive(NodeId(id)) {
+            return;
+        }
         let node = self.arena.get_mut(NodeId(id));
         if namespace.is_empty() {
             // An empty namespace is NULL, not the empty string — so the entry
@@ -122,13 +141,10 @@ impl Document {
     /// A different question from `getAttribute`, not a spelling of it: the
     /// match is on (namespace, localName), so an attribute with the right
     /// local name but the wrong namespace does NOT answer.
-    pub fn get_attribute_ns(
-        &self,
-        id: u32,
-        namespace: &str,
-        local_name: &str,
-    ) -> Option<String> {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return None; }
+    pub fn get_attribute_ns(&self, id: u32, namespace: &str, local_name: &str) -> Option<String> {
+        if id == 0 || !self.arena.is_alive(NodeId(id)) {
+            return None;
+        }
         let want = (!namespace.is_empty()).then_some(namespace);
         let node = self.arena.get(NodeId(id));
         for (name, value) in &node.attributes {

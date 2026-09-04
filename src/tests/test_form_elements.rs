@@ -1,11 +1,20 @@
-use crate::{parse_html, Renderer, Document};
 use crate::css::apply_cascade_vp;
-use crate::types::*;
 use crate::layout::LayoutEngine;
+use crate::types::*;
+use crate::{parse_html, Document, Renderer};
 
 fn layout_html(html: &str, width: f32) -> Document {
     let mut doc = parse_html(html);
-    apply_cascade_vp(&mut doc.root, &doc.stylesheet, None, 16.0, width, 900.0, 0, false);
+    apply_cascade_vp(
+        &mut doc.root,
+        &doc.stylesheet,
+        None,
+        16.0,
+        width,
+        900.0,
+        0,
+        false,
+    );
     let mut eng = LayoutEngine::new();
     eng.viewport_h = 900.0;
     eng.layout(&mut doc, width);
@@ -13,25 +22,47 @@ fn layout_html(html: &str, width: f32) -> Document {
 }
 
 fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-    if node.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(node); }
-    for child in &node.children { if let Some(n) = find_by_id(child, id) { return Some(n); } }
+    if node.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(n) = find_by_id(child, id) {
+            return Some(n);
+        }
+    }
     None
 }
 
 fn find_by_tag<'a>(node: &'a WebCore, tag: &str) -> Option<&'a WebCore> {
-    if node.tag == tag { return Some(node); }
-    for child in &node.children { if let Some(n) = find_by_tag(child, tag) { return Some(n); } }
+    if node.tag == tag {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(n) = find_by_tag(child, tag) {
+            return Some(n);
+        }
+    }
     None
 }
 
 fn find_all_by_tag<'a>(node: &'a WebCore, tag: &str, out: &mut Vec<&'a WebCore>) {
-    if node.tag == tag { out.push(node); }
-    for child in &node.children { find_all_by_tag(child, tag, out); }
+    if node.tag == tag {
+        out.push(node);
+    }
+    for child in &node.children {
+        find_all_by_tag(child, tag, out);
+    }
 }
 
 fn find_by_node_id<'a>(node: &'a WebCore, nid: u32) -> Option<&'a WebCore> {
-    if node.node_id == nid { return Some(node); }
-    for child in &node.children { if let Some(n) = find_by_node_id(child, nid) { return Some(n); } }
+    if node.node_id == nid {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(n) = find_by_node_id(child, nid) {
+            return Some(n);
+        }
+    }
     None
 }
 
@@ -48,35 +79,52 @@ fn text_input_has_correct_display() {
 fn text_input_has_width() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.content_rect.w > 100.0, "input width {} should be > 100", input.layout.content_rect.w);
+    assert!(
+        input.layout.content_rect.w > 100.0,
+        "input width {} should be > 100",
+        input.layout.content_rect.w
+    );
 }
 
 #[test]
 fn text_input_has_height() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.content_rect.h > 10.0, "input height {} should be > 10", input.layout.content_rect.h);
+    assert!(
+        input.layout.content_rect.h > 10.0,
+        "input height {} should be > 10",
+        input.layout.content_rect.h
+    );
 }
 
 #[test]
 fn text_input_preserves_value() {
     let doc = layout_html(r#"<input type="text" value="test123">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("test123"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("test123")
+    );
 }
 
 #[test]
 fn text_input_preserves_placeholder() {
     let doc = layout_html(r#"<input type="text" placeholder="Enter text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("placeholder").map(|s| s.as_str()), Some("Enter text"));
+    assert_eq!(
+        input.attributes.get("placeholder").map(|s| s.as_str()),
+        Some("Enter text")
+    );
 }
 
 #[test]
 fn text_input_has_border() {
     let doc = layout_html(r#"<input type="text">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.resolved_border_top > 0.0, "input should have border");
+    assert!(
+        input.layout.resolved_border_top > 0.0,
+        "input should have border"
+    );
     assert!(input.layout.resolved_border_left > 0.0);
 }
 
@@ -111,14 +159,21 @@ fn text_input_text_centered_vertically() {
     let font_px = input.style.font_size_px(16.0, 16.0);
     let line_h = font_px * 1.2;
     let top_space = (input.layout.content_rect.h - line_h) / 2.0;
-    assert!(top_space > 1.0, "should have > 1px above text, got {}", top_space);
+    assert!(
+        top_space > 1.0,
+        "should have > 1px above text, got {}",
+        top_space
+    );
 }
 
 #[test]
 fn password_input_preserves_value() {
     let doc = layout_html(r#"<input type="password" value="secret">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("secret"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("secret")
+    );
 }
 
 #[test]
@@ -133,8 +188,14 @@ fn process_form_input_key_inserts_char() {
     let doc = layout_html(r#"<input type="text" id="t" value="ab">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -151,8 +212,14 @@ fn process_form_input_key_backspace() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -169,8 +236,14 @@ fn process_form_input_key_arrow_left() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -185,8 +258,14 @@ fn process_form_input_key_arrow_right() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -201,8 +280,14 @@ fn process_form_input_key_enter_not_in_input() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -218,8 +303,14 @@ fn process_form_input_key_space() {
     let doc = layout_html(r#"<input type="text" id="t" value="ab">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -252,7 +343,10 @@ fn checkbox_no_border() {
 fn checkbox_transparent_background() {
     let doc = layout_html(r#"<input type="checkbox">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.style.background_color.a, 0, "checkbox bg should be transparent");
+    assert_eq!(
+        input.style.background_color.a, 0,
+        "checkbox bg should be transparent"
+    );
 }
 
 #[test]
@@ -272,10 +366,17 @@ fn checkbox_text_not_overlapping() {
     let input_right = input.layout.margin_rect.x + input.layout.margin_rect.w;
     // Check that the parent div's line cache positions text after the checkbox
     let div = find_by_tag(&doc.root, "div").unwrap();
-    assert!(!div.layout.line_cache.is_empty(), "div should have line cache");
+    assert!(
+        !div.layout.line_cache.is_empty(),
+        "div should have line cache"
+    );
     let line = &div.layout.line_cache[0];
     // text_x_offset should be > 0 (accounting for checkbox)
-    assert!(line.text_x_offset > 0.0, "text_x_offset {} should be > 0", line.text_x_offset);
+    assert!(
+        line.text_x_offset > 0.0,
+        "text_x_offset {} should be > 0",
+        line.text_x_offset
+    );
 }
 
 // ── Radio Button Tests ───────────────────────────────────────────────────────
@@ -309,15 +410,20 @@ fn submit_button_has_text_child() {
 
     let doc = layout_html(r#"<input type="submit" value="Go">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    eprintln!("AFTER LAYOUT: submit button: tag={} type={:?} display={:?} children={}",
+    eprintln!(
+        "AFTER LAYOUT: submit button: tag={} type={:?} display={:?} children={}",
         input.tag,
         input.attributes.get("type"),
         input.style.display,
-        input.children.len());
+        input.children.len()
+    );
     for (i, c) in input.children.iter().enumerate() {
         eprintln!("  child[{}]: tag={} text={:?}", i, c.tag, c.text);
     }
-    assert!(!input.children.is_empty(), "submit button should have text child");
+    assert!(
+        !input.children.is_empty(),
+        "submit button should have text child"
+    );
     let text = &input.children[0];
     assert_eq!(text.tag, "#text");
     assert_eq!(text.text, "Go");
@@ -343,7 +449,10 @@ fn reset_button_default_label() {
 fn button_has_background() {
     let doc = layout_html(r#"<input type="submit" value="Go">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.style.background_color.a > 0, "button should have background");
+    assert!(
+        input.style.background_color.a > 0,
+        "button should have background"
+    );
 }
 
 #[test]
@@ -357,41 +466,70 @@ fn button_display_inline_flex() {
 fn button_has_width() {
     let doc = layout_html(r#"<input type="submit" value="Submit Form">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.content_rect.w > 20.0, "button width {} should be > 20", input.layout.content_rect.w);
+    assert!(
+        input.layout.content_rect.w > 20.0,
+        "button width {} should be > 20",
+        input.layout.content_rect.w
+    );
 }
 
 // ── Select Tests ─────────────────────────────────────────────────────────────
 
 #[test]
 fn select_preserves_options_in_dom() {
-    let doc = layout_html(r#"<select><option>A</option><option>B</option><option>C</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select><option>A</option><option>B</option><option>C</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
-    let options: Vec<_> = select.children.iter().filter(|c| c.tag == "option").collect();
-    assert_eq!(options.len(), 3, "select should keep 3 option children in DOM");
+    let options: Vec<_> = select
+        .children
+        .iter()
+        .filter(|c| c.tag == "option")
+        .collect();
+    assert_eq!(
+        options.len(),
+        3,
+        "select should keep 3 option children in DOM"
+    );
 }
 
 #[test]
 fn select_options_are_hidden() {
-    let doc = layout_html(r#"<select><option>A</option><option>B</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select><option>A</option><option>B</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     for child in &select.children {
         if child.tag == "option" {
-            assert_eq!(child.style.display, Display::None, "options should be display:none");
+            assert_eq!(
+                child.style.display,
+                Display::None,
+                "options should be display:none"
+            );
         }
     }
 }
 
 #[test]
 fn select_shows_the_selected_option() {
-    let doc = layout_html(r#"<select><option>First</option><option selected>Second</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select><option>First</option><option selected>Second</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     // A `<select>` has NO text child of its own. The parser used to inject one
     // holding the display label, which no browser has: it doubled
     // `textContent`, and a serialize → reparse turned `Second` into
     // `SecondSecond`. The label is derived from the selected option instead.
-    assert!(select.children.iter().all(|c| c.tag != "#text"),
-        "a <select> has no #text child; its label comes from the selected option");
-    let selected = select.children.iter()
+    assert!(
+        select.children.iter().all(|c| c.tag != "#text"),
+        "a <select> has no #text child; its label comes from the selected option"
+    );
+    let selected = select
+        .children
+        .iter()
         .find(|c| c.tag == "option" && c.selectedness)
         .expect("one option is selected");
     assert_eq!(selected.text_content().trim(), "Second");
@@ -399,12 +537,17 @@ fn select_shows_the_selected_option() {
 
 #[test]
 fn select_first_option_selected_by_default() {
-    let doc = layout_html(r#"<select><option>Alpha</option><option>Beta</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select><option>Alpha</option><option>Beta</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     // A drop-down with nothing marked `selected` lands on its first option
     // (HTML §4.10.7's selectedness setting algorithm).
     assert_eq!(crate::html::forms::selected_index(select), 0);
-    let selected = select.children.iter()
+    let selected = select
+        .children
+        .iter()
         .find(|c| c.tag == "option" && c.selectedness)
         .expect("a drop-down always has a selected option");
     assert_eq!(selected.text_content().trim(), "Alpha");
@@ -412,7 +555,10 @@ fn select_first_option_selected_by_default() {
 
 #[test]
 fn select_tracks_selected_index() {
-    let doc = layout_html(r#"<select><option>A</option><option selected>B</option><option>C</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select><option>A</option><option selected>B</option><option>C</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     assert_eq!(crate::html::forms::selected_index(select), 1);
 }
@@ -421,17 +567,28 @@ fn select_tracks_selected_index() {
 fn select_has_width() {
     let doc = layout_html(r#"<select><option>Option</option></select>"#, 400.0);
     let select = find_by_tag(&doc.root, "select").unwrap();
-    assert!(select.layout.content_rect.w > 50.0, "select width {} should be > 50", select.layout.content_rect.w);
+    assert!(
+        select.layout.content_rect.w > 50.0,
+        "select width {} should be > 50",
+        select.layout.content_rect.w
+    );
 }
 
 #[test]
 fn optgroup_preserved_in_dom() {
-    let doc = layout_html(r#"<select>
+    let doc = layout_html(
+        r#"<select>
         <optgroup label="Fruits"><option>Apple</option><option>Banana</option></optgroup>
         <optgroup label="Vegs"><option>Carrot</option></optgroup>
-    </select>"#, 400.0);
+    </select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
-    let optgroups: Vec<_> = select.children.iter().filter(|c| c.tag == "optgroup").collect();
+    let optgroups: Vec<_> = select
+        .children
+        .iter()
+        .filter(|c| c.tag == "optgroup")
+        .collect();
     assert_eq!(optgroups.len(), 2, "select should keep optgroup children");
 }
 
@@ -441,7 +598,10 @@ fn optgroup_preserved_in_dom() {
 fn textarea_has_content() {
     let doc = layout_html(r#"<textarea>Hello World</textarea>"#, 400.0);
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    let has_text = ta.children.iter().any(|c| c.tag == "#text" && c.text.contains("Hello"));
+    let has_text = ta
+        .children
+        .iter()
+        .any(|c| c.tag == "#text" && c.text.contains("Hello"));
     assert!(has_text, "textarea should contain text");
 }
 
@@ -457,11 +617,17 @@ fn textarea_has_width_and_height() {
 
 #[test]
 fn range_input_preserves_attributes() {
-    let doc = layout_html(r#"<input type="range" min="0" max="100" value="60">"#, 400.0);
+    let doc = layout_html(
+        r#"<input type="range" min="0" max="100" value="60">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     assert_eq!(input.attributes.get("min").map(|s| s.as_str()), Some("0"));
     assert_eq!(input.attributes.get("max").map(|s| s.as_str()), Some("100"));
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("60"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("60")
+    );
 }
 
 #[test]
@@ -571,33 +737,48 @@ fn is_text_input_true_for_textarea() {
 
 #[test]
 fn select_option_inherits_color() {
-    let doc = layout_html(r#"<style>select { color: red; }</style>
-        <select><option>A</option><option>B</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>select { color: red; }</style>
+        <select><option>A</option><option>B</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     for child in &select.children {
         if child.tag == "option" {
             // Options should inherit color from select
-            assert_eq!(child.style.color.r, 255, "option should inherit red color from select");
+            assert_eq!(
+                child.style.color.r, 255,
+                "option should inherit red color from select"
+            );
         }
     }
 }
 
 #[test]
 fn select_option_own_style_wins() {
-    let doc = layout_html(r#"<style>option { color: blue; }</style>
-        <select><option>A</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>option { color: blue; }</style>
+        <select><option>A</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     for child in &select.children {
         if child.tag == "option" {
-            assert_eq!(child.style.color.b, 255, "option should have blue from own CSS rule");
+            assert_eq!(
+                child.style.color.b, 255,
+                "option should have blue from own CSS rule"
+            );
         }
     }
 }
 
 #[test]
 fn select_option_background_applies() {
-    let doc = layout_html(r#"<style>option { background-color: yellow; }</style>
-        <select><option>A</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>option { background-color: yellow; }</style>
+        <select><option>A</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     for child in &select.children {
         if child.tag == "option" {
@@ -612,10 +793,13 @@ fn select_option_background_applies() {
 fn select_dark_theme_options_readable() {
     // Simulates a dark theme: select has light text on dark bg
     // Dropdown should NOT show light text on white bg
-    let doc = layout_html(r#"<style>
+    let doc = layout_html(
+        r#"<style>
         select { color: #e2e8f0; background: #1e293b; }
     </style>
-    <select><option>Light</option><option>Dark</option></select>"#, 400.0);
+    <select><option>Light</option><option>Dark</option></select>"#,
+        400.0,
+    );
     let select = find_by_tag(&doc.root, "select").unwrap();
     // The select itself has light text
     assert!(select.style.color.r > 200, "select should have light color");
@@ -624,7 +808,10 @@ fn select_dark_theme_options_readable() {
     for child in &select.children {
         if child.tag == "option" {
             // Options inherit color from select
-            assert!(child.style.color.r > 200, "option inherits light color from select");
+            assert!(
+                child.style.color.r > 200,
+                "option inherits light color from select"
+            );
         }
     }
 }
@@ -635,13 +822,19 @@ fn select_dark_theme_options_readable() {
 fn textarea_has_border() {
     let doc = layout_html(r#"<textarea>text</textarea>"#, 400.0);
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    assert!(ta.layout.resolved_border_top > 0.0, "textarea should have border");
+    assert!(
+        ta.layout.resolved_border_top > 0.0,
+        "textarea should have border"
+    );
 }
 
 #[test]
 fn textarea_css_override() {
-    let doc = layout_html(r#"<style>textarea { background: red; color: white; }</style>
-        <textarea>text</textarea>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>textarea { background: red; color: white; }</style>
+        <textarea>text</textarea>"#,
+        400.0,
+    );
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
     assert_eq!(ta.style.background_color.r, 255);
     assert_eq!(ta.style.color.r, 255);
@@ -650,44 +843,73 @@ fn textarea_css_override() {
 
 #[test]
 fn textarea_width_override() {
-    let doc = layout_html(r#"<style>textarea { width: 400px; }</style>
-        <textarea>text</textarea>"#, 500.0);
+    let doc = layout_html(
+        r#"<style>textarea { width: 400px; }</style>
+        <textarea>text</textarea>"#,
+        500.0,
+    );
     let ta = find_by_tag(&doc.root, "textarea").unwrap();
-    assert!((ta.layout.margin_rect.w - 400.0).abs() < 5.0,
-        "textarea width {} should be ~400", ta.layout.margin_rect.w);
+    assert!(
+        (ta.layout.margin_rect.w - 400.0).abs() < 5.0,
+        "textarea width {} should be ~400",
+        ta.layout.margin_rect.w
+    );
 }
 
 // ── Input styling tests ─────────────────────────────────────────────────────
 
 #[test]
 fn input_padding_override() {
-    let doc = layout_html(r#"<style>input { padding: 10px 15px; }</style>
-        <input type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input { padding: 10px 15px; }</style>
+        <input type="text">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!((input.layout.resolved_pad_top - 10.0).abs() < 1.0, "padding-top {} should be ~10", input.layout.resolved_pad_top);
-    assert!((input.layout.resolved_pad_left - 15.0).abs() < 1.0, "padding-left {} should be ~15", input.layout.resolved_pad_left);
+    assert!(
+        (input.layout.resolved_pad_top - 10.0).abs() < 1.0,
+        "padding-top {} should be ~10",
+        input.layout.resolved_pad_top
+    );
+    assert!(
+        (input.layout.resolved_pad_left - 15.0).abs() < 1.0,
+        "padding-left {} should be ~15",
+        input.layout.resolved_pad_left
+    );
 }
 
 #[test]
 fn input_border_color_override() {
-    let doc = layout_html(r#"<style>input { border: 2px solid red; }</style>
-        <input type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input { border: 2px solid red; }</style>
+        <input type="text">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!((input.layout.resolved_border_top - 2.0).abs() < 0.5, "border should be 2px");
+    assert!(
+        (input.layout.resolved_border_top - 2.0).abs() < 0.5,
+        "border should be 2px"
+    );
 }
 
 #[test]
 fn input_border_radius_override() {
-    let doc = layout_html(r#"<style>input { border-radius: 10px; }</style>
-        <input type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input { border-radius: 10px; }</style>
+        <input type="text">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     assert!((input.style.border_radius.resolve(16.0, 200.0, 16.0) - 10.0).abs() < 1.0);
 }
 
 #[test]
 fn input_font_size_override() {
-    let doc = layout_html(r#"<style>input { font-size: 20px; }</style>
-        <input type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input { font-size: 20px; }</style>
+        <input type="text">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     let fpx = input.style.font_size_px(16.0, 16.0);
     assert!((fpx - 20.0).abs() < 1.0, "font-size {} should be 20", fpx);
@@ -699,15 +921,25 @@ fn input_font_size_override() {
 fn button_element_has_background() {
     let doc = layout_html(r#"<button>Click</button>"#, 400.0);
     let btn = find_by_tag(&doc.root, "button").unwrap();
-    assert!(btn.style.background_color.a > 0, "button should have default bg");
+    assert!(
+        btn.style.background_color.a > 0,
+        "button should have default bg"
+    );
 }
 
 #[test]
 fn button_element_css_background_override() {
-    let doc = layout_html(r#"<style>button { background: green; }</style>
-        <button>Click</button>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>button { background: green; }</style>
+        <button>Click</button>"#,
+        400.0,
+    );
     let btn = find_by_tag(&doc.root, "button").unwrap();
-    assert_eq!(btn.style.background_color.g, 128, "green component should be 128, got {}", btn.style.background_color.g);
+    assert_eq!(
+        btn.style.background_color.g, 128,
+        "green component should be 128, got {}",
+        btn.style.background_color.g
+    );
 }
 
 #[test]
@@ -723,14 +955,25 @@ fn button_white_space_nowrap() {
 fn checkbox_in_label_spacing() {
     let doc = layout_html(r#"<label><input type="checkbox"> Option</label>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.resolved_margin_right >= 4.0, "checkbox should have right margin >= 4, got {}", input.layout.resolved_margin_right);
+    assert!(
+        input.layout.resolved_margin_right >= 4.0,
+        "checkbox should have right margin >= 4, got {}",
+        input.layout.resolved_margin_right
+    );
 }
 
 #[test]
 fn radio_in_label_spacing() {
-    let doc = layout_html(r#"<label><input type="radio" name="g"> Choice</label>"#, 400.0);
+    let doc = layout_html(
+        r#"<label><input type="radio" name="g"> Choice</label>"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.resolved_margin_right >= 4.0, "radio should have right margin >= 4, got {}", input.layout.resolved_margin_right);
+    assert!(
+        input.layout.resolved_margin_right >= 4.0,
+        "radio should have right margin >= 4, got {}",
+        input.layout.resolved_margin_right
+    );
 }
 
 // ── Form input key handling tests ────────────────────────────────────────────
@@ -740,8 +983,14 @@ fn form_input_insert_at_middle() {
     let doc = layout_html(r#"<input type="text" id="t" value="ac">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -757,8 +1006,14 @@ fn form_input_delete_key() {
     let doc = layout_html(r#"<input type="text" id="t" value="abc">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -774,8 +1029,14 @@ fn form_input_home_end() {
     let doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = find_mut(&mut root, "t").unwrap();
@@ -792,8 +1053,14 @@ fn textarea_enter_inserts_newline() {
     let doc = layout_html(r#"<textarea id="t">ab</textarea>"#, 400.0);
     let mut root = doc.root;
     fn find_mut<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let ta = find_mut(&mut root, "t").unwrap();
@@ -810,35 +1077,60 @@ fn textarea_enter_inserts_newline() {
 fn disabled_input_has_reduced_opacity() {
     let doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.style.opacity < 1.0, "disabled input should have reduced opacity, got {}", input.style.opacity);
+    assert!(
+        input.style.opacity < 1.0,
+        "disabled input should have reduced opacity, got {}",
+        input.style.opacity
+    );
 }
 
 #[test]
 fn disabled_input_matches_pseudo_class() {
-    let doc = layout_html(r#"<style>input:disabled { background-color: #eee; }</style>
-        <input type="text" disabled>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input:disabled { background-color: #eee; }</style>
+        <input type="text" disabled>"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.style.background_color.r < 255 || input.style.background_color.g < 255,
-        "disabled input should match :disabled pseudo-class and get #eee bg");
+    assert!(
+        input.style.background_color.r < 255 || input.style.background_color.g < 255,
+        "disabled input should match :disabled pseudo-class and get #eee bg"
+    );
 }
 
 #[test]
 fn disabled_button_matches_pseudo_class() {
-    let doc = layout_html(r#"<style>button:disabled { opacity: 0.5; }</style>
-        <button disabled>Click</button>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>button:disabled { opacity: 0.5; }</style>
+        <button disabled>Click</button>"#,
+        400.0,
+    );
     let btn = find_by_tag(&doc.root, "button").unwrap();
-    assert!(btn.style.opacity < 0.9, "disabled button opacity {} should be < 0.9", btn.style.opacity);
+    assert!(
+        btn.style.opacity < 0.9,
+        "disabled button opacity {} should be < 0.9",
+        btn.style.opacity
+    );
 }
 
 // ── Readonly state tests ────────────────────────────────────────────────────
 
 #[test]
 fn readonly_input_blocks_editing() {
-    let doc = layout_html(r#"<input type="text" id="t" value="fixed" readonly>"#, 400.0);
+    let doc = layout_html(
+        r#"<input type="text" id="t" value="fixed" readonly>"#,
+        400.0,
+    );
     let mut root = doc.root;
     fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = fm(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = fm(&mut root, "t").unwrap();
@@ -853,11 +1145,20 @@ fn readonly_input_blocks_editing() {
 
 #[test]
 fn maxlength_prevents_input() {
-    let doc = layout_html(r#"<input type="text" id="t" value="abc" maxlength="5">"#, 400.0);
+    let doc = layout_html(
+        r#"<input type="text" id="t" value="abc" maxlength="5">"#,
+        400.0,
+    );
     let mut root = doc.root;
     fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = fm(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = fm(&mut root, "t").unwrap();
@@ -874,9 +1175,15 @@ fn maxlength_prevents_input() {
 
 #[test]
 fn label_for_attribute_preserved() {
-    let doc = layout_html(r#"<label for="name">Name:</label><input id="name" type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<label for="name">Name:</label><input id="name" type="text">"#,
+        400.0,
+    );
     let label = find_by_tag(&doc.root, "label").unwrap();
-    assert_eq!(label.attributes.get("for").map(|s| s.as_str()), Some("name"));
+    assert_eq!(
+        label.attributes.get("for").map(|s| s.as_str()),
+        Some("name")
+    );
 }
 
 // ── Textarea rows/cols ──────────────────────────────────────────────────────
@@ -887,8 +1194,12 @@ fn textarea_rows_affects_height() {
     let doc2 = layout_html(r#"<textarea rows="6">text</textarea>"#, 400.0);
     let ta1 = find_by_tag(&doc1.root, "textarea").unwrap();
     let ta2 = find_by_tag(&doc2.root, "textarea").unwrap();
-    assert!(ta2.layout.content_rect.h > ta1.layout.content_rect.h,
-        "rows=6 height {} should be > rows=2 height {}", ta2.layout.content_rect.h, ta1.layout.content_rect.h);
+    assert!(
+        ta2.layout.content_rect.h > ta1.layout.content_rect.h,
+        "rows=6 height {} should be > rows=2 height {}",
+        ta2.layout.content_rect.h,
+        ta1.layout.content_rect.h
+    );
 }
 
 // ── Input size attribute ────────────────────────────────────────────────────
@@ -899,8 +1210,48 @@ fn input_size_affects_width() {
     let doc2 = layout_html(r#"<input type="text" size="40">"#, 500.0);
     let i1 = find_by_tag(&doc1.root, "input").unwrap();
     let i2 = find_by_tag(&doc2.root, "input").unwrap();
-    assert!(i2.layout.content_rect.w > i1.layout.content_rect.w,
-        "size=40 width {} should be > size=5 width {}", i2.layout.content_rect.w, i1.layout.content_rect.w);
+    assert!(
+        i2.layout.content_rect.w > i1.layout.content_rect.w,
+        "size=40 width {} should be > size=5 width {}",
+        i2.layout.content_rect.w,
+        i1.layout.content_rect.w
+    );
+}
+
+#[test]
+fn author_css_overrides_input_size_hint() {
+    let doc = layout_html(
+        r#"<style>input { width: 240px; }</style><input type="text" size="5">"#,
+        400.0,
+    );
+    let input = find_by_tag(&doc.root, "input").unwrap();
+
+    assert!(
+        (input.layout.border_rect.w - 240.0).abs() < 1.0,
+        "author CSS should outrank the input size hint, got {}",
+        input.layout.border_rect.w
+    );
+}
+
+#[test]
+fn author_css_overrides_textarea_rows_and_cols_hints() {
+    let doc = layout_html(
+        r#"<style>textarea { width: 240px; height: 120px; }</style>
+           <textarea rows="2" cols="4">text</textarea>"#,
+        400.0,
+    );
+    let textarea = find_by_tag(&doc.root, "textarea").unwrap();
+
+    assert!(
+        (textarea.layout.border_rect.w - 240.0).abs() < 1.0,
+        "author width should outrank cols hint, got {}",
+        textarea.layout.border_rect.w
+    );
+    assert!(
+        (textarea.layout.border_rect.h - 120.0).abs() < 1.0,
+        "author height should outrank rows hint, got {}",
+        textarea.layout.border_rect.h
+    );
 }
 
 // ── Disabled blocks form_input_key ──────────────────────────────────────────
@@ -910,8 +1261,14 @@ fn disabled_input_blocks_typing() {
     let doc = layout_html(r#"<input type="text" id="t" value="hi" disabled>"#, 400.0);
     let mut root = doc.root;
     fn fm<'a>(n: &'a mut WebCore, id: &str) -> Option<&'a mut WebCore> {
-        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) { return Some(n); }
-        for c in &mut n.children { if let Some(r) = fm(c, id) { return Some(r); } }
+        if n.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = fm(c, id) {
+                return Some(r);
+            }
+        }
         None
     }
     let input = fm(&mut root, "t").unwrap();
@@ -926,8 +1283,11 @@ fn disabled_input_blocks_typing() {
 
 #[test]
 fn required_input_matches_pseudo_class() {
-    let doc = layout_html(r#"<style>input:required { border-color: red; }</style>
-        <input type="text" required>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input:required { border-color: red; }</style>
+        <input type="text" required>"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     // Should match :required — border-color red means border is applied
     // (border-color is not directly on ComputedStyle as a separate field,
@@ -939,27 +1299,43 @@ fn required_input_matches_pseudo_class() {
 
 #[test]
 fn placeholder_shown_matches_empty_input() {
-    let doc = layout_html(r#"<style>input:placeholder-shown { color: gray; }</style>
-        <input type="text" placeholder="hint">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input:placeholder-shown { color: gray; }</style>
+        <input type="text" placeholder="hint">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     // Empty value + placeholder → :placeholder-shown should match
-    assert!(input.attributes.get("value").map(|v| v.is_empty()).unwrap_or(true));
+    assert!(input
+        .attributes
+        .get("value")
+        .map(|v| v.is_empty())
+        .unwrap_or(true));
 }
 
 // ── CSS override tests ──────────────────────────────────────────────────────
 
 #[test]
 fn input_css_width_override() {
-    let doc = layout_html(r#"<style>input { width: 300px; }</style><input type="text">"#, 500.0);
+    let doc = layout_html(
+        r#"<style>input { width: 300px; }</style><input type="text">"#,
+        500.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     // margin_rect width should be close to 300px (border-box)
-    assert!((input.layout.margin_rect.w - 300.0).abs() < 5.0,
-        "input width {} should be ~300", input.layout.margin_rect.w);
+    assert!(
+        (input.layout.margin_rect.w - 300.0).abs() < 5.0,
+        "input width {} should be ~300",
+        input.layout.margin_rect.w
+    );
 }
 
 #[test]
 fn input_css_background_override() {
-    let doc = layout_html(r#"<style>input { background-color: red; }</style><input type="text">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input { background-color: red; }</style><input type="text">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     assert_eq!(input.style.background_color.r, 255);
     assert_eq!(input.style.background_color.g, 0);
@@ -967,9 +1343,16 @@ fn input_css_background_override() {
 
 #[test]
 fn button_css_background_override() {
-    let doc = layout_html(r#"<style>input[type=submit] { background-color: blue; }</style><input type="submit" value="Go">"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input[type=submit] { background-color: blue; }</style><input type="submit" value="Go">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.style.background_color.b, 255, "button bg blue should be 255, got {}", input.style.background_color.b);
+    assert_eq!(
+        input.style.background_color.b, 255,
+        "button bg blue should be 255, got {}",
+        input.style.background_color.b
+    );
 }
 
 // ── Disabled checkbox/radio don't toggle ─────────────────────────────────────
@@ -979,24 +1362,40 @@ fn disabled_checkbox_no_toggle() {
     let html = r#"<input type="checkbox" id="c" disabled>"#;
     let mut doc = layout_html(html, 400.0);
     let cb = find_by_id(&doc.root, "c").unwrap();
-    assert!(!cb.attributes.contains_key("checked"), "should start unchecked");
+    assert!(
+        !cb.attributes.contains_key("checked"),
+        "should start unchecked"
+    );
     // Simulate click via handle_form_click
     let cb_node_id = cb.node_id;
     crate::types::handle_form_click(&mut doc.root, cb_node_id, &mut None);
     let cb = find_by_id(&doc.root, "c").unwrap();
-    assert!(!cb.attributes.contains_key("checked"), "disabled checkbox should not toggle");
+    assert!(
+        !cb.attributes.contains_key("checked"),
+        "disabled checkbox should not toggle"
+    );
 }
 
 // ── Select size=N shows listbox ──────────────────────────────────────────────
 
 #[test]
 fn select_with_size_is_taller() {
-    let doc1 = layout_html(r#"<select><option>A</option><option>B</option></select>"#, 400.0);
-    let doc2 = layout_html(r#"<select size="4"><option>A</option><option>B</option><option>C</option><option>D</option></select>"#, 400.0);
+    let doc1 = layout_html(
+        r#"<select><option>A</option><option>B</option></select>"#,
+        400.0,
+    );
+    let doc2 = layout_html(
+        r#"<select size="4"><option>A</option><option>B</option><option>C</option><option>D</option></select>"#,
+        400.0,
+    );
     let s1 = find_by_tag(&doc1.root, "select").unwrap();
     let s2 = find_by_tag(&doc2.root, "select").unwrap();
-    assert!(s2.layout.margin_rect.h > s1.layout.margin_rect.h,
-        "select size=4 height {} should be > default height {}", s2.layout.margin_rect.h, s1.layout.margin_rect.h);
+    assert!(
+        s2.layout.margin_rect.h > s1.layout.margin_rect.h,
+        "select size=4 height {} should be > default height {}",
+        s2.layout.margin_rect.h,
+        s1.layout.margin_rect.h
+    );
 
     // ⚠ It has to be taller FOR THE RIGHT REASON — roughly four rows, not one
     // row in a bigger font.
@@ -1016,7 +1415,8 @@ fn select_with_size_is_taller() {
     assert!(
         s2.layout.margin_rect.h > s1.layout.margin_rect.h * 2.0,
         "four rows should be well over twice the one-row height, got {} vs {}",
-        s2.layout.margin_rect.h, s1.layout.margin_rect.h
+        s2.layout.margin_rect.h,
+        s1.layout.margin_rect.h
     );
 }
 
@@ -1024,7 +1424,10 @@ fn select_with_size_is_taller() {
 
 #[test]
 fn select_multiple_preserves_attribute() {
-    let doc = layout_html(r#"<select multiple><option>A</option><option>B</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select multiple><option>A</option><option>B</option></select>"#,
+        400.0,
+    );
     let s = find_by_tag(&doc.root, "select").unwrap();
     assert!(s.attributes.contains_key("multiple"));
 }
@@ -1035,7 +1438,10 @@ fn select_multiple_preserves_attribute() {
 fn color_input_preserves_value() {
     let doc = layout_html(r##"<input type="color" value="#ff0000">"##, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("#ff0000"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("#ff0000")
+    );
 }
 
 // ── Date input value ─────────────────────────────────────────────────────────
@@ -1044,7 +1450,10 @@ fn color_input_preserves_value() {
 fn date_input_preserves_value() {
     let doc = layout_html(r#"<input type="date" value="2026-03-23">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("2026-03-23"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("2026-03-23")
+    );
 }
 
 // ── File input ───────────────────────────────────────────────────────────────
@@ -1060,7 +1469,10 @@ fn file_input_has_width() {
 
 #[test]
 fn number_input_preserves_min_max() {
-    let doc = layout_html(r#"<input type="number" min="0" max="100" value="50">"#, 400.0);
+    let doc = layout_html(
+        r#"<input type="number" min="0" max="100" value="50">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     assert_eq!(input.attributes.get("min").map(|s| s.as_str()), Some("0"));
     assert_eq!(input.attributes.get("max").map(|s| s.as_str()), Some("100"));
@@ -1098,17 +1510,32 @@ fn button_is_focusable() {
 
 #[test]
 fn form_inside_table_works() {
-    let doc = layout_html(r#"<table><form><tr><td>Label</td><td><input type="text"></td></tr></form></table>"#, 400.0);
+    let doc = layout_html(
+        r#"<table><form><tr><td>Label</td><td><input type="text"></td></tr></form></table>"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.layout.content_rect.w > 50.0, "input inside form-in-table should have width, got {}", input.layout.content_rect.w);
-    assert!(input.layout.content_rect.h > 5.0, "input inside form-in-table should have height, got {}", input.layout.content_rect.h);
+    assert!(
+        input.layout.content_rect.w > 50.0,
+        "input inside form-in-table should have width, got {}",
+        input.layout.content_rect.w
+    );
+    assert!(
+        input.layout.content_rect.h > 5.0,
+        "input inside form-in-table should have height, got {}",
+        input.layout.content_rect.h
+    );
 }
 
 #[test]
 fn form_inside_table_is_contents() {
     let doc = layout_html(r#"<table><form><tr><td>X</td></tr></form></table>"#, 400.0);
     let form = find_by_tag(&doc.root, "form").unwrap();
-    assert_eq!(form.style.display, Display::Contents, "form inside table should be display:contents");
+    assert_eq!(
+        form.style.display,
+        Display::Contents,
+        "form inside table should be display:contents"
+    );
 }
 
 #[test]
@@ -1126,32 +1553,77 @@ fn click_and_type_integration() {
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, input_center, 0);
 
     // Check focus was set
-    assert!(doc.focused_box != 0, "clicking input should set focused_box");
+    assert!(
+        doc.focused_box != 0,
+        "clicking input should set focused_box"
+    );
 
     // Simulate typing 'abc'
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'a' as u32, Some('a'), false, false, false, false);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'b' as u32, Some('b'), false, false, false, false);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'c' as u32, Some('c'), false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        'a' as u32,
+        Some('a'),
+        false,
+        false,
+        false,
+        false,
+    );
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        'b' as u32,
+        Some('b'),
+        false,
+        false,
+        false,
+        false,
+    );
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        'c' as u32,
+        Some('c'),
+        false,
+        false,
+        false,
+        false,
+    );
 
     // Check value updated
     let input = find_by_id(&doc.root, "t").unwrap();
     // The VALUE, not the `value` attribute. Typing must not edit the document:
     // the attribute is `defaultValue`, and it still reads as the author wrote it.
-    assert_eq!(crate::types::input_value(input), "abc",
-        "typing 'abc' should update the value, got {:?}", crate::types::input_value(input));
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some(""),
-        "typing must leave the `value` content attribute alone");
+    assert_eq!(
+        crate::types::input_value(input),
+        "abc",
+        "typing 'abc' should update the value, got {:?}",
+        crate::types::input_value(input)
+    );
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some(""),
+        "typing must leave the `value` content attribute alone"
+    );
 }
 
 #[test]
 fn click_and_type_password() {
     let mut doc = layout_html(r#"<input type="password" id="p" value="">"#, 400.0);
     let input = find_by_id(&doc.root, "p").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     assert!(doc.focused_box != 0, "password input should focus");
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        'x' as u32,
+        Some('x'),
+        false,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "p").unwrap();
     assert_eq!(crate::types::input_value(input), "x");
 }
@@ -1161,7 +1633,10 @@ fn click_checkbox_toggles() {
     let mut doc = layout_html(r#"<input type="checkbox" id="c">"#, 400.0);
     let cb = find_by_id(&doc.root, "c").unwrap();
     assert!(!cb.checkedness);
-    let center = (cb.layout.border_rect.x + cb.layout.border_rect.w / 2.0, cb.layout.border_rect.y + cb.layout.border_rect.h / 2.0);
+    let center = (
+        cb.layout.border_rect.x + cb.layout.border_rect.w / 2.0,
+        cb.layout.border_rect.y + cb.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let cb = find_by_id(&doc.root, "c").unwrap();
@@ -1178,9 +1653,15 @@ fn click_checkbox_toggles() {
 
 #[test]
 fn click_radio_selects() {
-    let mut doc = layout_html(r#"<input type="radio" name="g" id="r1"><input type="radio" name="g" id="r2">"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="radio" name="g" id="r1"><input type="radio" name="g" id="r2">"#,
+        400.0,
+    );
     let r2 = find_by_id(&doc.root, "r2").unwrap();
-    let center = (r2.layout.border_rect.x + r2.layout.border_rect.w / 2.0, r2.layout.border_rect.y + r2.layout.border_rect.h / 2.0);
+    let center = (
+        r2.layout.border_rect.x + r2.layout.border_rect.w / 2.0,
+        r2.layout.border_rect.y + r2.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let r2 = find_by_id(&doc.root, "r2").unwrap();
@@ -1203,7 +1684,10 @@ fn click_button_fires_event(html: &str, expected_tag: &str) -> Vec<FormEventKind
         events_clone.lock().unwrap().push(e.kind.clone());
     }));
     let btn = find_by_tag(&doc.root, expected_tag).unwrap();
-    let center = (btn.layout.border_rect.x + btn.layout.border_rect.w / 2.0, btn.layout.border_rect.y + btn.layout.border_rect.h / 2.0);
+    let center = (
+        btn.layout.border_rect.x + btn.layout.border_rect.w / 2.0,
+        btn.layout.border_rect.y + btn.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     let result = events_ref.lock().unwrap().clone();
@@ -1214,39 +1698,58 @@ fn click_button_fires_event(html: &str, expected_tag: &str) -> Vec<FormEventKind
 #[test]
 fn submit_input_fires_click_and_submit() {
     let events = click_button_fires_event(
-        r#"<form action="/login"><input type="submit" value="Go"></form>"#, "input");
-    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))), "should fire Click");
+        r#"<form action="/login"><input type="submit" value="Go"></form>"#,
+        "input",
+    );
+    assert!(
+        events.iter().any(|e| matches!(e, FormEventKind::Click(_))),
+        "should fire Click"
+    );
 }
 
 #[test]
 fn button_input_fires_click_only() {
-    let events = click_button_fires_event(
-        r#"<input type="button" value="Action">"#, "input");
-    assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))), "should fire Click");
-    assert!(!events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "should NOT fire Submit");
+    let events = click_button_fires_event(r#"<input type="button" value="Action">"#, "input");
+    assert!(
+        events.iter().any(|e| matches!(e, FormEventKind::Click(_))),
+        "should fire Click"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, FormEventKind::Submit(_))),
+        "should NOT fire Submit"
+    );
 }
 
 #[test]
 fn reset_input_fires_click() {
-    let events = click_button_fires_event(
-        r#"<input type="reset" value="Clear">"#, "input");
+    let events = click_button_fires_event(r#"<input type="reset" value="Clear">"#, "input");
     assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
 }
 
 #[test]
 fn button_element_submit_fires_submit() {
     let events = click_button_fires_event(
-        r#"<form action="/go"><button type="submit">Send</button></form>"#, "button");
+        r#"<form action="/go"><button type="submit">Send</button></form>"#,
+        "button",
+    );
     assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
-    assert!(events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "submit button should fire Submit");
+    assert!(
+        events.iter().any(|e| matches!(e, FormEventKind::Submit(_))),
+        "submit button should fire Submit"
+    );
 }
 
 #[test]
 fn button_element_type_button_no_submit() {
     let events = click_button_fires_event(
-        r#"<form action="/go"><button type="button">Click</button></form>"#, "button");
+        r#"<form action="/go"><button type="button">Click</button></form>"#,
+        "button",
+    );
     assert!(events.iter().any(|e| matches!(e, FormEventKind::Click(_))));
-    assert!(!events.iter().any(|e| matches!(e, FormEventKind::Submit(_))), "type=button should NOT submit");
+    assert!(
+        !events.iter().any(|e| matches!(e, FormEventKind::Submit(_))),
+        "type=button should NOT submit"
+    );
 }
 
 // ── Focus for ALL input types ───────────────────────────────────────────────
@@ -1254,8 +1757,10 @@ fn button_element_type_button_no_submit() {
 fn click_sets_focus(html: &str, tag: &str) -> bool {
     let mut doc = layout_html(html, 400.0);
     let elem = find_by_tag(&doc.root, tag).unwrap();
-    let center = (elem.layout.border_rect.x + elem.layout.border_rect.w / 2.0,
-                  elem.layout.border_rect.y + elem.layout.border_rect.h / 2.0);
+    let center = (
+        elem.layout.border_rect.x + elem.layout.border_rect.w / 2.0,
+        elem.layout.border_rect.y + elem.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     doc.focused_box != 0
@@ -1303,7 +1808,10 @@ fn click_focuses_textarea() {
 
 #[test]
 fn click_focuses_select() {
-    assert!(click_sets_focus(r#"<select><option>A</option></select>"#, "select"));
+    assert!(click_sets_focus(
+        r#"<select><option>A</option></select>"#,
+        "select"
+    ));
 }
 
 #[test]
@@ -1333,54 +1841,74 @@ fn hidden_input_not_focusable_by_click() {
 
 #[test]
 fn tab_cycles_through_form_elements() {
-    let mut doc = layout_html(r#"
+    let mut doc = layout_html(
+        r#"
         <input type="text" id="a">
         <input type="password" id="b">
         <select id="c"><option>X</option></select>
         <textarea id="d">t</textarea>
         <button id="e">Go</button>
-    "#, 400.0);
+    "#,
+        400.0,
+    );
 
     // Tab should cycle: a → b → c → d → e → a
     doc.focus_next();
     assert!(doc.focused_box != 0);
-    let tag1 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let tag1 = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(tag1, "a", "first Tab should focus 'a', got '{}'", tag1);
 
     doc.focus_next();
-    let tag2 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let tag2 = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(tag2, "b");
 
     doc.focus_next();
-    let tag3 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let tag3 = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(tag3, "c");
 
     doc.focus_next();
-    let tag4 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let tag4 = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(tag4, "d");
 
     doc.focus_next();
-    let tag5 = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let tag5 = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(tag5, "e");
 }
 
 #[test]
 fn shift_tab_goes_backwards() {
-    let mut doc = layout_html(r#"
+    let mut doc = layout_html(
+        r#"
         <input type="text" id="a">
         <input type="text" id="b">
         <input type="text" id="c">
-    "#, 400.0);
+    "#,
+        400.0,
+    );
 
     // Focus c first
     doc.focus_next(); // a
     doc.focus_next(); // b
     doc.focus_next(); // c
-    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(id, "c");
 
     doc.focus_prev(); // back to b
-    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(id, "b");
 }
 
@@ -1388,18 +1916,35 @@ fn shift_tab_goes_backwards() {
 
 #[test]
 fn enter_in_text_input_no_newline() {
-    let mut doc = layout_html(r#"<form action="/go"><input type="text" id="t" value="hi"></form>"#, 400.0);
+    let mut doc = layout_html(
+        r#"<form action="/go"><input type="text" id="t" value="hi"></form>"#,
+        400.0,
+    );
     // Focus the input
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
-                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Press Enter
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 13, None, false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        13,
+        None,
+        false,
+        false,
+        false,
+        false,
+    );
     // Should NOT insert newline in single-line input
     let input = find_by_id(&doc.root, "t").unwrap();
-    assert_eq!(input_value(input), "hi", "Enter should not insert in text input");
+    assert_eq!(
+        input_value(input),
+        "hi",
+        "Enter should not insert in text input"
+    );
 }
 
 // ── Disabled elements don't focus on click ──────────────────────────────────
@@ -1408,8 +1953,10 @@ fn enter_in_text_input_no_newline() {
 fn disabled_input_no_focus_on_click() {
     let mut doc = layout_html(r#"<input type="text" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
-                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     // Disabled inputs ARE focusable per HTML spec (browsers focus them on click)
     // but they shouldn't accept keyboard input (already tested above)
@@ -1464,10 +2011,7 @@ fn a_multiple_select_submits_every_option_the_user_picked() {
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted(&data, "tags"), vec!["a", "c"]);
     // The serializer runs over the LIST, so both survive and stay in order.
-    assert_eq!(
-        crate::types::encode_form_urlencoded(&data),
-        "tags=a&tags=c"
-    );
+    assert_eq!(crate::types::encode_form_urlencoded(&data), "tags=a&tags=c");
 }
 
 #[test]
@@ -1504,11 +2048,14 @@ fn the_entry_list_is_in_tree_order() {
 
 #[test]
 fn collect_form_data_basic() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <input type="text" name="user" value="alice">
         <input type="password" name="pass" value="secret">
         <input type="hidden" name="token" value="xyz">
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted_one(&data, "user"), Some("alice"));
@@ -1518,23 +2065,32 @@ fn collect_form_data_basic() {
 
 #[test]
 fn collect_form_data_checkbox() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <input type="checkbox" name="agree" checked>
         <input type="checkbox" name="news">
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted_one(&data, "agree"), Some("on"));
-    assert!(submitted_one(&data, "news").is_none(), "unchecked checkbox should not be in form data");
+    assert!(
+        submitted_one(&data, "news").is_none(),
+        "unchecked checkbox should not be in form data"
+    );
 }
 
 #[test]
 fn collect_form_data_radio() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <input type="radio" name="color" value="red">
         <input type="radio" name="color" value="blue" checked>
         <input type="radio" name="color" value="green">
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted_one(&data, "color"), Some("blue"));
@@ -1542,12 +2098,15 @@ fn collect_form_data_radio() {
 
 #[test]
 fn collect_form_data_select() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <select name="country">
             <option value="us">US</option>
             <option value="fr" selected>France</option>
         </select>
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted_one(&data, "country"), Some("fr"));
@@ -1555,32 +2114,46 @@ fn collect_form_data_select() {
 
 #[test]
 fn collect_form_data_textarea() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <textarea name="bio">Hello world</textarea>
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
-    assert!(submitted_one(&data, "bio").map(|s| s.contains("Hello")).unwrap_or(false));
+    assert!(submitted_one(&data, "bio")
+        .map(|s| s.contains("Hello"))
+        .unwrap_or(false));
 }
 
 #[test]
 fn collect_form_data_disabled_excluded() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <input type="text" name="a" value="yes">
         <input type="text" name="b" value="no" disabled>
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(submitted_one(&data, "a"), Some("yes"));
-    assert!(submitted_one(&data, "b").is_none(), "disabled input should be excluded from form data");
+    assert!(
+        submitted_one(&data, "b").is_none(),
+        "disabled input should be excluded from form data"
+    );
 }
 
 #[test]
 fn collect_form_data_no_name_excluded() {
-    let doc = layout_html(r#"<form id="f">
+    let doc = layout_html(
+        r#"<form id="f">
         <input type="text" value="orphan">
         <input type="text" name="named" value="ok">
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     assert_eq!(data.len(), 1);
@@ -1589,32 +2162,56 @@ fn collect_form_data_no_name_excluded() {
 
 #[test]
 fn form_method_default_get() {
-    let doc = layout_html(r#"<form id="f" action="/search"><input name="q" value="test"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f" action="/search"><input name="q" value="test"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
-    let method = form.attributes.get("method").map(|s| s.as_str()).unwrap_or("get");
+    let method = form
+        .attributes
+        .get("method")
+        .map(|s| s.as_str())
+        .unwrap_or("get");
     assert_eq!(method, "get");
 }
 
 #[test]
 fn form_method_post() {
-    let doc = layout_html(r#"<form id="f" method="POST" action="/login"><input name="u" value="x"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f" method="POST" action="/login"><input name="u" value="x"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
-    let method = form.attributes.get("method").map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    let method = form
+        .attributes
+        .get("method")
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
     assert_eq!(method, "post");
 }
 
 #[test]
 fn form_action_preserved() {
-    let doc = layout_html(r#"<form id="f" action="/submit"><input name="x" value="1"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f" action="/submit"><input name="x" value="1"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
-    assert_eq!(form.attributes.get("action").map(|s| s.as_str()), Some("/submit"));
+    assert_eq!(
+        form.attributes.get("action").map(|s| s.as_str()),
+        Some("/submit")
+    );
 }
 
 #[test]
 fn submit_event_contains_action() {
     let events = click_button_fires_event(
-        r#"<form action="/login"><button type="submit">Go</button></form>"#, "button");
-    let submit = events.iter().find(|e| matches!(e, FormEventKind::Submit(_)));
+        r#"<form action="/login"><button type="submit">Go</button></form>"#,
+        "button",
+    );
+    let submit = events
+        .iter()
+        .find(|e| matches!(e, FormEventKind::Submit(_)));
     assert!(submit.is_some(), "should fire Submit event");
     if let Some(FormEventKind::Submit(action)) = submit {
         assert_eq!(action, "/login");
@@ -1625,23 +2222,40 @@ fn submit_event_contains_action() {
 
 #[test]
 fn reset_clears_text_inputs() {
-    let mut doc = layout_html(r#"<form id="f">
+    let mut doc = layout_html(
+        r#"<form id="f">
         <input type="text" id="t" name="t" value="original">
-    </form>"#, 400.0);
+    </form>"#,
+        400.0,
+    );
     // Simulate typing to change value
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
-                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 'x' as u32, Some('x'), false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        'x' as u32,
+        Some('x'),
+        false,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "t").unwrap();
     assert!(input_value(input).contains('x'), "should have typed");
     // Reset
     let form_node_id = find_by_id(&doc.root, "f").unwrap().node_id;
     crate::types::reset_form(&mut doc.root, form_node_id);
     let input = find_by_id(&doc.root, "t").unwrap();
-    assert_eq!(input_value(input), "original", "reset should restore original value");
+    assert_eq!(
+        input_value(input),
+        "original",
+        "reset should restore original value"
+    );
 }
 
 // ── Autofocus ───────────────────────────────────────────────────────────────
@@ -1657,28 +2271,44 @@ fn autofocus_attribute_preserved() {
 
 #[test]
 fn encode_form_data_urlencoded() {
-    let doc = layout_html(r#"<form id="f"><input name="q" value="hello world"><input name="lang" value="en"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f"><input name="q" value="hello world"><input name="lang" value="en"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     let encoded = crate::types::encode_form_urlencoded(&data);
-    assert!(encoded.contains("q=hello+world") || encoded.contains("q=hello%20world"),
-        "should encode space, got: {}", encoded);
+    assert!(
+        encoded.contains("q=hello+world") || encoded.contains("q=hello%20world"),
+        "should encode space, got: {}",
+        encoded
+    );
     assert!(encoded.contains("lang=en"));
 }
 
 #[test]
 fn build_get_url() {
-    let doc = layout_html(r#"<form id="f" method="get" action="/search"><input name="q" value="test"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f" method="get" action="/search"><input name="q" value="test"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     let url = crate::types::build_form_submit_url("/search", "get", &data);
-    assert!(url.contains("/search?"), "GET should append query string, got: {}", url);
+    assert!(
+        url.contains("/search?"),
+        "GET should append query string, got: {}",
+        url
+    );
     assert!(url.contains("q=test"));
 }
 
 #[test]
 fn build_post_url_no_query() {
-    let doc = layout_html(r#"<form id="f" method="post" action="/login"><input name="u" value="x"></form>"#, 400.0);
+    let doc = layout_html(
+        r#"<form id="f" method="post" action="/login"><input name="u" value="x"></form>"#,
+        400.0,
+    );
     let form = find_by_id(&doc.root, "f").unwrap();
     let data = crate::types::collect_form_data(form);
     let url = crate::types::build_form_submit_url("/login", "post", &data);
@@ -1689,62 +2319,129 @@ fn build_post_url_no_query() {
 
 #[test]
 fn select_arrow_down_changes_option() {
-    let mut doc = layout_html(r#"<select id="s">
+    let mut doc = layout_html(
+        r#"<select id="s">
         <option value="a">Alpha</option>
         <option value="b" selected>Beta</option>
         <option value="c">Gamma</option>
-    </select>"#, 400.0);
+    </select>"#,
+        400.0,
+    );
     // Focus the select
     let sel = find_by_id(&doc.root, "s").unwrap();
-    let center = (sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0, sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0);
+    let center = (
+        sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0,
+        sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Arrow down should select next option
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        40,
+        None,
+        false,
+        false,
+        false,
+        false,
+    ); // down
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert_eq!(crate::html::forms::selected_index(sel), 2,
-        "arrow down should move to index 2");
+    assert_eq!(
+        crate::html::forms::selected_index(sel),
+        2,
+        "arrow down should move to index 2"
+    );
 }
 
 #[test]
 fn select_arrow_up_changes_option() {
-    let mut doc = layout_html(r#"<select id="s">
+    let mut doc = layout_html(
+        r#"<select id="s">
         <option value="a">Alpha</option>
         <option value="b" selected>Beta</option>
         <option value="c">Gamma</option>
-    </select>"#, 400.0);
+    </select>"#,
+        400.0,
+    );
     let sel = find_by_id(&doc.root, "s").unwrap();
-    let center = (sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0, sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0);
+    let center = (
+        sel.layout.border_rect.x + sel.layout.border_rect.w / 2.0,
+        sel.layout.border_rect.y + sel.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        38,
+        None,
+        false,
+        false,
+        false,
+        false,
+    ); // up
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert_eq!(crate::html::forms::selected_index(sel), 0,
-        "arrow up should move to index 0");
+    assert_eq!(
+        crate::html::forms::selected_index(sel),
+        0,
+        "arrow up should move to index 0"
+    );
 }
 
 // ── Number input increment/decrement ────────────────────────────────────────
 
 #[test]
 fn number_input_arrow_up_increments() {
-    let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="number" id="n" value="5" min="0" max="10">"#,
+        400.0,
+    );
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false); // up
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        38,
+        None,
+        false,
+        false,
+        false,
+        false,
+    ); // up
     let input = find_by_id(&doc.root, "n").unwrap();
-    assert_eq!(input_value(input), "6", "arrow up should increment, got {}", input_value(input));
+    assert_eq!(
+        input_value(input),
+        "6",
+        "arrow up should increment, got {}",
+        input_value(input)
+    );
 }
 
 #[test]
 fn number_input_arrow_down_decrements() {
-    let mut doc = layout_html(r#"<input type="number" id="n" value="5" min="0" max="10">"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="number" id="n" value="5" min="0" max="10">"#,
+        400.0,
+    );
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false); // down
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        40,
+        None,
+        false,
+        false,
+        false,
+        false,
+    ); // down
     let input = find_by_id(&doc.root, "n").unwrap();
     assert_eq!(input_value(input), "4");
 }
@@ -1753,10 +2450,21 @@ fn number_input_arrow_down_decrements() {
 fn number_input_respects_max() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="10" max="10">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 38, None, false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        38,
+        None,
+        false,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "n").unwrap();
     assert_eq!(input_value(input), "10", "should not exceed max");
 }
@@ -1765,10 +2473,21 @@ fn number_input_respects_max() {
 fn number_input_respects_min() {
     let mut doc = layout_html(r#"<input type="number" id="n" value="0" min="0">"#, 400.0);
     let input = find_by_id(&doc.root, "n").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0, input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 40, None, false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        40,
+        None,
+        false,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "n").unwrap();
     assert_eq!(input_value(input), "0", "should not go below min");
 }
@@ -1777,19 +2496,30 @@ fn number_input_respects_min() {
 
 #[test]
 fn autofocus_sets_focus_on_load() {
-    let mut doc = layout_html(r#"<input type="text" id="a"><input type="text" id="b" autofocus>"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="text" id="a"><input type="text" id="b" autofocus>"#,
+        400.0,
+    );
     crate::types::apply_autofocus(&mut doc);
     assert!(doc.focused_box != 0, "autofocus should set focused_box");
-    let focused_id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
-    assert_eq!(focused_id, "b", "should focus element with autofocus attribute");
+    let focused_id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
+    assert_eq!(
+        focused_id, "b",
+        "should focus element with autofocus attribute"
+    );
 }
 
 // ── Required visual ─────────────────────────────────────────────────────────
 
 #[test]
 fn required_input_matches_required_pseudo() {
-    let doc = layout_html(r#"<style>input:required { border-color: red; }</style>
-        <input type="text" required>"#, 400.0);
+    let doc = layout_html(
+        r#"<style>input:required { border-color: red; }</style>
+        <input type="text" required>"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
     assert!(input.attributes.contains_key("required"));
     // The :required pseudo-class should match — border-color isn't directly
@@ -1803,18 +2533,45 @@ fn placeholder_text_has_default_gray_color() {
     // Placeholder should be rendered in gray by the renderer (not testable via style)
     let doc = layout_html(r#"<input type="text" placeholder="hint">"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("placeholder").map(|s| s.as_str()), Some("hint"));
+    assert_eq!(
+        input.attributes.get("placeholder").map(|s| s.as_str()),
+        Some("hint")
+    );
     // The renderer draws placeholder in gray — visual test
+}
+
+#[test]
+fn placeholder_pseudo_element_sets_placeholder_color() {
+    let doc = layout_html(
+        r#"<style>input::placeholder { color: rgb(10, 20, 30); }</style>
+           <input type="text" placeholder="hint">"#,
+        400.0,
+    );
+    let input = find_by_tag(&doc.root, "input").unwrap();
+
+    assert_eq!(
+        input
+            .style
+            .placeholder_style
+            .as_ref()
+            .map(|style| style.color),
+        Some(Color::rgb(10, 20, 30))
+    );
 }
 
 // ── Focus ring on tab-focused checkbox ──────────────────────────────────────
 
 #[test]
 fn tab_to_checkbox_sets_focus() {
-    let mut doc = layout_html(r#"<input type="checkbox" id="c"><input type="text" id="t">"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="checkbox" id="c"><input type="text" id="t">"#,
+        400.0,
+    );
     doc.focus_next(); // should focus checkbox first
     assert!(doc.focused_box != 0);
-    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(id, "c", "Tab should focus checkbox");
 }
 
@@ -1822,26 +2579,36 @@ fn tab_to_checkbox_sets_focus() {
 
 #[test]
 fn tabindex_positive_comes_first() {
-    let mut doc = layout_html(r#"
+    let mut doc = layout_html(
+        r#"
         <input type="text" id="a">
         <input type="text" id="b" tabindex="1">
         <input type="text" id="c">
-    "#, 400.0);
+    "#,
+        400.0,
+    );
     doc.focus_next();
-    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(id, "b", "tabindex=1 should be focused first, got {}", id);
 }
 
 #[test]
 fn tabindex_negative_skipped() {
-    let mut doc = layout_html(r#"
+    let mut doc = layout_html(
+        r#"
         <input type="text" id="a">
         <input type="text" id="skip" tabindex="-1">
         <input type="text" id="c">
-    "#, 400.0);
+    "#,
+        400.0,
+    );
     doc.focus_next(); // a
     doc.focus_next(); // should skip "skip" and go to c
-    let id = find_by_node_id(&doc.root, doc.focused_box).and_then(|n| n.attributes.get("id").cloned()).unwrap_or_default();
+    let id = find_by_node_id(&doc.root, doc.focused_box)
+        .and_then(|n| n.attributes.get("id").cloned())
+        .unwrap_or_default();
     assert_eq!(id, "c", "tabindex=-1 should be skipped, got {}", id);
 }
 
@@ -1851,7 +2618,10 @@ fn tabindex_negative_skipped() {
 fn pattern_attribute_preserved() {
     let doc = layout_html(r#"<input type="text" pattern="[0-9]+" id="p">"#, 400.0);
     let input = find_by_id(&doc.root, "p").unwrap();
-    assert_eq!(input.attributes.get("pattern").map(|s| s.as_str()), Some("[0-9]+"));
+    assert_eq!(
+        input.attributes.get("pattern").map(|s| s.as_str()),
+        Some("[0-9]+")
+    );
 }
 
 // ── Required attribute ──────────────────────────────────────────────────────
@@ -1867,7 +2637,10 @@ fn required_attribute_preserved() {
 
 #[test]
 fn select_multiple_attribute_preserved() {
-    let doc = layout_html(r#"<select multiple id="m"><option>A</option><option>B</option></select>"#, 400.0);
+    let doc = layout_html(
+        r#"<select multiple id="m"><option>A</option><option>B</option></select>"#,
+        400.0,
+    );
     let sel = find_by_id(&doc.root, "m").unwrap();
     assert!(sel.attributes.contains_key("multiple"));
 }
@@ -1878,25 +2651,41 @@ fn select_multiple_attribute_preserved() {
 fn disabled_input_has_opacity() {
     let doc = layout_html(r#"<input type="text" value="test" disabled>"#, 400.0);
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert!(input.style.opacity < 1.0, "disabled should have reduced opacity, got {}", input.style.opacity);
+    assert!(
+        input.style.opacity < 1.0,
+        "disabled should have reduced opacity, got {}",
+        input.style.opacity
+    );
 }
 
 // ── Focus ring on tab-focused elements ──────────────────────────────────────
 
 #[test]
 fn tab_focused_element_has_keyboard_focus() {
-    let mut doc = layout_html(r#"<input type="text" id="a"><input type="text" id="b">"#, 400.0);
+    let mut doc = layout_html(
+        r#"<input type="text" id="a"><input type="text" id="b">"#,
+        400.0,
+    );
     doc.focus_next();
-    assert!(doc.keyboard_focus, "Tab focus should set keyboard_focus=true");
+    assert!(
+        doc.keyboard_focus,
+        "Tab focus should set keyboard_focus=true"
+    );
 }
 
 // ── Range slider ────────────────────────────────────────────────────────────
 
 #[test]
 fn range_has_default_value() {
-    let doc = layout_html(r#"<input type="range" min="0" max="100" value="50">"#, 400.0);
+    let doc = layout_html(
+        r#"<input type="range" min="0" max="100" value="50">"#,
+        400.0,
+    );
     let input = find_by_tag(&doc.root, "input").unwrap();
-    assert_eq!(input.attributes.get("value").map(|s| s.as_str()), Some("50"));
+    assert_eq!(
+        input.attributes.get("value").map(|s| s.as_str()),
+        Some("50")
+    );
 }
 
 // ── Ctrl+A selects all text ─────────────────────────────────────────────────
@@ -1905,15 +2694,28 @@ fn range_has_default_value() {
 fn ctrl_a_selects_all_in_input() {
     let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
-                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Ctrl+A
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 65, Some('a'), true, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        65,
+        Some('a'),
+        true,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "t").unwrap();
     assert_eq!(input.input_cursor, 5, "Ctrl+A should move cursor to end");
-    assert_eq!(input.input_sel_anchor, 0, "Ctrl+A should set anchor to start");
+    assert_eq!(
+        input.input_sel_anchor, 0,
+        "Ctrl+A should set anchor to start"
+    );
 }
 
 // ── Backspace with selection deletes selection ──────────────────────────────
@@ -1922,16 +2724,38 @@ fn ctrl_a_selects_all_in_input() {
 fn backspace_deletes_selection() {
     let mut doc = layout_html(r#"<input type="text" id="t" value="hello">"#, 400.0);
     let input = find_by_id(&doc.root, "t").unwrap();
-    let center = (input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
-                  input.layout.border_rect.y + input.layout.border_rect.h / 2.0);
+    let center = (
+        input.layout.border_rect.x + input.layout.border_rect.w / 2.0,
+        input.layout.border_rect.y + input.layout.border_rect.h / 2.0,
+    );
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, center, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, center, 0);
     // Select all with Ctrl+A
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 65, Some('a'), true, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        65,
+        Some('a'),
+        true,
+        false,
+        false,
+        false,
+    );
     // Backspace should delete selection
-    doc.process_key_event(crate::dom::HtmlEventType::KeyDown, 8, None, false, false, false, false);
+    doc.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        8,
+        None,
+        false,
+        false,
+        false,
+        false,
+    );
     let input = find_by_id(&doc.root, "t").unwrap();
-    assert_eq!(input_value(input), "", "backspace should delete selected text");
+    assert_eq!(
+        input_value(input),
+        "",
+        "backspace should delete selected text"
+    );
 }
 
 fn disabled_input_not_focusable() {
@@ -1954,13 +2778,17 @@ fn input_explicit_height_stretches_padding_rect() {
     );
     let input = find_by_id(&doc.root, "t").unwrap();
     // padding_rect.h should be at least 80px (the explicit height)
-    assert!(input.layout.padding_rect.h >= 78.0,
+    assert!(
+        input.layout.padding_rect.h >= 78.0,
         "padding_rect height {} should be >= 78 when height:80px is set",
-        input.layout.padding_rect.h);
+        input.layout.padding_rect.h
+    );
     // border_rect should also reflect the height
-    assert!(input.layout.border_rect.h >= 78.0,
+    assert!(
+        input.layout.border_rect.h >= 78.0,
         "border_rect height {} should be >= 78 when height:80px is set",
-        input.layout.border_rect.h);
+        input.layout.border_rect.h
+    );
 }
 
 #[test]
@@ -1973,12 +2801,17 @@ fn input_explicit_height_content_rect_smaller() {
     let input = find_by_id(&doc.root, "t").unwrap();
     // With border-box, border_rect.h = 100, content_rect.h = 100 - padding*2 - border*2
     // UA has border: 1px, so content = 100 - 20 - 2 = 78
-    assert!(input.layout.border_rect.h >= 98.0,
+    assert!(
+        input.layout.border_rect.h >= 98.0,
         "border_rect height {} should be ~100 with border-box",
-        input.layout.border_rect.h);
-    assert!(input.layout.content_rect.h < input.layout.border_rect.h,
+        input.layout.border_rect.h
+    );
+    assert!(
+        input.layout.content_rect.h < input.layout.border_rect.h,
         "content_rect.h {} should be smaller than border_rect.h {} due to padding",
-        input.layout.content_rect.h, input.layout.border_rect.h);
+        input.layout.content_rect.h,
+        input.layout.border_rect.h
+    );
 }
 
 #[test]
@@ -1989,9 +2822,11 @@ fn textarea_explicit_height_stretches() {
         400.0,
     );
     let ta = find_by_id(&doc.root, "t").unwrap();
-    assert!(ta.layout.padding_rect.h >= 118.0,
+    assert!(
+        ta.layout.padding_rect.h >= 118.0,
         "textarea padding_rect.h {} should be >= 118 with height:120px",
-        ta.layout.padding_rect.h);
+        ta.layout.padding_rect.h
+    );
 }
 
 #[test]
@@ -2002,9 +2837,11 @@ fn select_explicit_height_stretches() {
         400.0,
     );
     let sel = find_by_id(&doc.root, "s").unwrap();
-    assert!(sel.layout.padding_rect.h >= 58.0,
+    assert!(
+        sel.layout.padding_rect.h >= 58.0,
         "select padding_rect.h {} should be >= 58 with height:60px",
-        sel.layout.padding_rect.h);
+        sel.layout.padding_rect.h
+    );
 }
 
 #[test]
@@ -2014,9 +2851,11 @@ fn button_explicit_height_stretches() {
         400.0,
     );
     let btn = find_by_id(&doc.root, "b").unwrap();
-    assert!(btn.layout.padding_rect.h >= 78.0,
+    assert!(
+        btn.layout.padding_rect.h >= 78.0,
         "button padding_rect.h {} should be >= 78 with height:80px",
-        btn.layout.padding_rect.h);
+        btn.layout.padding_rect.h
+    );
 }
 
 #[test]
@@ -2026,9 +2865,11 @@ fn submit_input_explicit_height_stretches() {
         400.0,
     );
     let sub = find_by_id(&doc.root, "s").unwrap();
-    assert!(sub.layout.padding_rect.h >= 58.0,
+    assert!(
+        sub.layout.padding_rect.h >= 58.0,
         "submit padding_rect.h {} should be >= 58 with height:60px",
-        sub.layout.padding_rect.h);
+        sub.layout.padding_rect.h
+    );
 }
 
 // ── Colour picker popup ──────────────────────────────────────────────────────
@@ -2055,7 +2896,10 @@ fn clicking_a_colour_input_opens_its_picker_and_a_swatch_sets_the_value() {
     assert_eq!(doc.open_picker, 0, "nothing is open before the click");
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
-    assert_eq!(doc.open_picker, c, "activating the control opens its picker");
+    assert_eq!(
+        doc.open_picker, c,
+        "activating the control opens its picker"
+    );
 
     // The palette sits below the control; pick the first swatch of the second
     // row, whatever the palette holds there.
@@ -2077,10 +2921,7 @@ fn clicking_a_colour_input_opens_its_picker_and_a_swatch_sets_the_value() {
 
 #[test]
 fn clicking_away_closes_the_picker_without_changing_the_value() {
-    let mut doc = layout_html(
-        r##"<input type="color" id="c" value="#123456">"##,
-        400.0,
-    );
+    let mut doc = layout_html(r##"<input type="color" id="c" value="#123456">"##, 400.0);
     let c = doc.get_element_by_id("c").unwrap();
     let br = find_by_id(&doc.root, "c").unwrap().layout.border_rect;
     let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
@@ -2145,16 +2986,16 @@ fn a_date_input_opens_a_calendar_and_a_day_sets_the_value() {
     // click is taken before hit testing. What differs is only what a pick
     // MEANS — a day, written back as `yyyy-mm-dd`, the format the spec
     // requires of this control's value.
-    let mut doc = layout_html(
-        r#"<input type="date" id="d" value="2026-08-24">"#,
-        400.0,
-    );
+    let mut doc = layout_html(r#"<input type="date" id="d" value="2026-08-24">"#, 400.0);
     let d = doc.get_element_by_id("d").unwrap();
     let br = find_by_id(&doc.root, "d").unwrap().layout.border_rect;
     let centre = (br.x + br.w / 2.0, br.y + br.h / 2.0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, centre, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, centre, 0);
-    assert_eq!(doc.open_picker, d, "activating a date control opens its calendar");
+    assert_eq!(
+        doc.open_picker, d,
+        "activating a date control opens its calendar"
+    );
 
     // August 2026 starts on a Saturday, so the 1st sits in column 5 of row 0.
     let (px, py, _, _) = doc.picker_rect(d).expect("an open picker has geometry");
@@ -2241,13 +3082,19 @@ fn the_auto_selected_option_skips_a_disabled_one() {
         r#"<select id="dd"><option disabled>skip</option><option>take</option></select>"#,
         400.0,
     );
-    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "dd").unwrap()), 1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "dd").unwrap()),
+        1
+    );
 
     let doc = layout_html(
         r#"<select id="g"><optgroup disabled><option>skip</option></optgroup><option>take</option></select>"#,
         400.0,
     );
-    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "g").unwrap()), 1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "g").unwrap()),
+        1
+    );
 }
 
 #[test]
@@ -2338,8 +3185,15 @@ fn a_list_box_click_replaces_the_selection_but_multiple_toggles() {
     let (_, y2) = list_box_row_y(&doc, "lb", 2);
     click_at(&mut doc, x, y2);
     let lb = find_by_id(&doc.root, "lb").unwrap();
-    let selected: Vec<bool> = crate::html::forms::list_of_options(lb).iter().map(|o| o.selectedness).collect();
-    assert_eq!(selected, [false, false, true], "a single-select list box holds one row");
+    let selected: Vec<bool> = crate::html::forms::list_of_options(lb)
+        .iter()
+        .map(|o| o.selectedness)
+        .collect();
+    assert_eq!(
+        selected,
+        [false, false, true],
+        "a single-select list box holds one row"
+    );
 
     // `multiple`: each click TOGGLES, so two rows can be held at once — the
     // state a single index could never express.
@@ -2354,8 +3208,15 @@ fn a_list_box_click_replaces_the_selection_but_multiple_toggles() {
     let (_, y2) = list_box_row_y(&doc, "ml", 2);
     click_at(&mut doc, x, y2);
     let ml = find_by_id(&doc.root, "ml").unwrap();
-    let selected: Vec<bool> = crate::html::forms::list_of_options(ml).iter().map(|o| o.selectedness).collect();
-    assert_eq!(selected, [true, false, true], "a multiple list box holds both rows");
+    let selected: Vec<bool> = crate::html::forms::list_of_options(ml)
+        .iter()
+        .map(|o| o.selectedness)
+        .collect();
+    assert_eq!(
+        selected,
+        [true, false, true],
+        "a multiple list box holds both rows"
+    );
 
     // Clicking a held row again releases it.
     click_at(&mut doc, x, y0);
@@ -2377,9 +3238,19 @@ fn a_click_does_not_edit_the_selected_attribute() {
     click_at(&mut doc, x, y);
     let lb = find_by_id(&doc.root, "lb").unwrap();
     let options = crate::html::forms::list_of_options(lb);
-    assert_eq!(crate::html::forms::selected_index(lb), 1, "the click moved the selection");
-    assert!(options[0].attributes.contains_key("selected"), "the author's default survives");
-    assert!(!options[1].attributes.contains_key("selected"), "the click added no attribute");
+    assert_eq!(
+        crate::html::forms::selected_index(lb),
+        1,
+        "the click moved the selection"
+    );
+    assert!(
+        options[0].attributes.contains_key("selected"),
+        "the author's default survives"
+    );
+    assert!(
+        !options[1].attributes.contains_key("selected"),
+        "the click added no attribute"
+    );
 }
 
 #[test]
@@ -2390,7 +3261,11 @@ fn a_range_starts_at_the_sanitized_value_not_the_attribute() {
         400.0,
     );
     let r = find_by_id(&doc.root, "r").unwrap();
-    assert_eq!(crate::types::input_value(r), "60", "step mismatch rounds up on a tie");
+    assert_eq!(
+        crate::types::input_value(r),
+        "60",
+        "step mismatch rounds up on a tie"
+    );
     assert_eq!(
         r.attributes.get("value").map(|s| s.as_str()),
         Some("50"),
@@ -2411,11 +3286,14 @@ fn clicking_a_range_track_moves_its_value() {
     // never reaches the last pixel of the track.
     click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
 
-    let after: f64 = crate::html::forms::parse_floating_point(
-        &crate::types::input_value(find_by_id(&doc.root, "r").unwrap()),
-    )
+    let after: f64 = crate::html::forms::parse_floating_point(&crate::types::input_value(
+        find_by_id(&doc.root, "r").unwrap(),
+    ))
     .unwrap();
-    assert!(after > 50.0 && after <= 100.0, "clicking three quarters along left the value at {after}");
+    assert!(
+        after > 50.0 && after <= 100.0,
+        "clicking three quarters along left the value at {after}"
+    );
 }
 
 #[test]
@@ -2436,7 +3314,11 @@ fn dragging_a_range_fires_input_all_the_way_and_change_once() {
     }));
 
     let y = rect.y + rect.h / 2.0;
-    doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, (rect.x + rect.w * 0.2, y), 0);
+    doc.process_mouse_event(
+        crate::dom::HtmlEventType::MouseDown,
+        (rect.x + rect.w * 0.2, y),
+        0,
+    );
     for frac in [0.4, 0.6, 0.8] {
         doc.process_mouse_event(
             crate::dom::HtmlEventType::MouseMove,
@@ -2444,12 +3326,22 @@ fn dragging_a_range_fires_input_all_the_way_and_change_once() {
             0,
         );
     }
-    doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, (rect.x + rect.w * 0.8, y), 0);
+    doc.process_mouse_event(
+        crate::dom::HtmlEventType::MouseUp,
+        (rect.x + rect.w * 0.8, y),
+        0,
+    );
 
     let seen = events.lock().unwrap().clone();
     doc.on_form_event = None; // drop the closure before doc
-    let inputs = seen.iter().filter(|e| matches!(e, FormEventKind::Input(_))).count();
-    let changes = seen.iter().filter(|e| matches!(e, FormEventKind::Change(_))).count();
+    let inputs = seen
+        .iter()
+        .filter(|e| matches!(e, FormEventKind::Input(_)))
+        .count();
+    let changes = seen
+        .iter()
+        .filter(|e| matches!(e, FormEventKind::Change(_)))
+        .count();
     assert!(
         inputs >= 4,
         "the press and each move that moved the knob fire `input` — saw {inputs}: {seen:?}"
@@ -2532,11 +3424,14 @@ fn a_vertical_range_reads_the_pointers_y() {
     let rect = r.layout.content_rect;
     click_at(&mut doc, rect.x + rect.w / 2.0, rect.y + rect.h * 0.75);
 
-    let after: f64 = crate::html::forms::parse_floating_point(
-        &crate::types::input_value(find_by_id(&doc.root, "r").unwrap()),
-    )
+    let after: f64 = crate::html::forms::parse_floating_point(&crate::types::input_value(
+        find_by_id(&doc.root, "r").unwrap(),
+    ))
     .unwrap();
-    assert!(after > 50.0, "a vertical range ignored its own axis, landing at {after}");
+    assert!(
+        after > 50.0,
+        "a vertical range ignored its own axis, landing at {after}"
+    );
 }
 
 #[test]
@@ -2549,7 +3444,10 @@ fn a_disabled_control_ignores_a_click() {
     );
     let (x, y) = list_box_row_y(&doc, "lb", 1);
     click_at(&mut doc, x, y);
-    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()), -1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        -1
+    );
 
     let mut doc = layout_html(
         r#"<input id="r" type="range" min="0" max="100" value="0" disabled
@@ -2558,7 +3456,10 @@ fn a_disabled_control_ignores_a_click() {
     );
     let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
     click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
-    assert_eq!(crate::types::input_value(find_by_id(&doc.root, "r").unwrap()), "0");
+    assert_eq!(
+        crate::types::input_value(find_by_id(&doc.root, "r").unwrap()),
+        "0"
+    );
 }
 
 #[test]
@@ -2586,15 +3487,26 @@ fn a_reset_restores_the_authors_defaults_not_the_users_edits() {
         t.value_state = Some("typed".into());
         t.dirty_value = true;
     }
-    assert_eq!(crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()), 1);
+    assert_eq!(
+        crate::html::forms::selected_index(find_by_id(&doc.root, "lb").unwrap()),
+        1
+    );
 
     let form_id = find_by_id(&doc.root, "f").unwrap().node_id;
     crate::types::reset_form(&mut doc.root, form_id);
 
     let lb = find_by_id(&doc.root, "lb").unwrap();
-    assert_eq!(crate::html::forms::selected_index(lb), 0, "reset restores the marked option");
+    assert_eq!(
+        crate::html::forms::selected_index(lb),
+        0,
+        "reset restores the marked option"
+    );
     let t = find_by_id(&doc.root, "t").unwrap();
-    assert_eq!(crate::types::input_value(t), "original", "reset restores the value attribute");
+    assert_eq!(
+        crate::types::input_value(t),
+        "original",
+        "reset restores the value attribute"
+    );
 }
 
 #[test]
@@ -2610,7 +3522,12 @@ fn an_unstyled_list_box_still_occupies_space() {
     );
     let lb = find_by_id(&doc.root, "lb").unwrap();
     let r = lb.layout.content_rect;
-    assert!(r.w > 0.0 && r.h > 0.0, "an unstyled list box laid out to {}x{}", r.w, r.h);
+    assert!(
+        r.w > 0.0 && r.h > 0.0,
+        "an unstyled list box laid out to {}x{}",
+        r.w,
+        r.h
+    );
     // Taller than a drop-down of the same options, which is the whole point of
     // a display size above one.
     let dd = layout_html(
@@ -2618,7 +3535,11 @@ fn an_unstyled_list_box_still_occupies_space() {
         400.0,
     );
     let dd_h = find_by_id(&dd.root, "dd").unwrap().layout.content_rect.h;
-    assert!(r.h > dd_h, "a 4-row list box ({}) is not taller than a drop-down ({dd_h})", r.h);
+    assert!(
+        r.h > dd_h,
+        "a 4-row list box ({}) is not taller than a drop-down ({dd_h})",
+        r.h
+    );
 }
 
 #[test]
@@ -2637,7 +3558,11 @@ fn the_dom_accessors_see_what_a_click_did() {
     let lb_id = find_by_id(&doc.root, "lb").unwrap().node_id;
     let (x, y) = list_box_row_y(&doc, "lb", 1);
     click_at(&mut doc, x, y);
-    assert_eq!(doc.selected_index(lb_id), 1, "selectedIndex did not see the click");
+    assert_eq!(
+        doc.selected_index(lb_id),
+        1,
+        "selectedIndex did not see the click"
+    );
     assert_eq!(doc.value(lb_id), "b", "select.value did not see the click");
 
     let mut doc = layout_html(
@@ -2649,7 +3574,10 @@ fn the_dom_accessors_see_what_a_click_did() {
     let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
     click_at(&mut doc, rect.x + rect.w * 0.75, rect.y + rect.h / 2.0);
     let seen: f64 = crate::html::forms::parse_floating_point(&doc.value(r_id)).unwrap();
-    assert!(seen > 50.0, "input.value did not see the click, reporting {seen}");
+    assert!(
+        seen > 50.0,
+        "input.value did not see the click, reporting {seen}"
+    );
 }
 
 #[test]
@@ -2659,17 +3587,29 @@ fn a_dropdown_built_through_the_dom_selects_its_first_option() {
     // algorithm, so this route left the control with no selection at all.
     let mut doc = layout_html(r#"<select id="dd"></select>"#, 400.0);
     let dd = find_by_id(&doc.root, "dd").unwrap().node_id;
-    assert_eq!(doc.selected_index(dd), -1, "an empty select has no selection");
+    assert_eq!(
+        doc.selected_index(dd),
+        -1,
+        "an empty select has no selection"
+    );
     doc.add_item(dd, "alpha");
     doc.add_item(dd, "beta");
-    assert_eq!(doc.selected_index(dd), 0, "a drop-down auto-selects its first option");
+    assert_eq!(
+        doc.selected_index(dd),
+        0,
+        "a drop-down auto-selects its first option"
+    );
     assert_eq!(doc.value(dd), "alpha");
 
     // A list box built the same way stays empty — the guard is display size.
     let mut doc = layout_html(r#"<select id="lb" size="4"></select>"#, 400.0);
     let lb = find_by_id(&doc.root, "lb").unwrap().node_id;
     doc.add_item(lb, "alpha");
-    assert_eq!(doc.selected_index(lb), -1, "a list box does not auto-select");
+    assert_eq!(
+        doc.selected_index(lb),
+        -1,
+        "a list box does not auto-select"
+    );
 }
 
 #[test]
@@ -2684,14 +3624,22 @@ fn a_value_attribute_write_reaches_a_range_until_it_is_dirty() {
     );
     let r = find_by_id(&doc.root, "r").unwrap().node_id;
     doc.set_attribute(r, "value", "50");
-    assert_eq!(doc.value(r), "60", "an attribute write is sanitized like the markup's");
+    assert_eq!(
+        doc.value(r),
+        "60",
+        "an attribute write is sanitized like the markup's"
+    );
 
     // A click raises the dirty flag; the attribute no longer speaks.
     let rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
     click_at(&mut doc, rect.x + rect.w * 0.1, rect.y + rect.h / 2.0);
     let after_click = doc.value(r);
     doc.set_attribute(r, "value", "100");
-    assert_eq!(doc.value(r), after_click, "a dirty value ignores the attribute");
+    assert_eq!(
+        doc.value(r),
+        after_click,
+        "a dirty value ignores the attribute"
+    );
 }
 
 #[test]
@@ -2724,11 +3672,21 @@ fn a_form_submits_what_the_user_did_not_what_the_markup_said() {
     click_at(&mut doc, t_center.0, t_center.1);
     for ch in ['h', 'i'] {
         doc.process_key_event(
-            crate::dom::HtmlEventType::KeyDown, ch as u32, Some(ch), false, false, false, false,
+            crate::dom::HtmlEventType::KeyDown,
+            ch as u32,
+            Some(ch),
+            false,
+            false,
+            false,
+            false,
         );
     }
     let r_rect = find_by_id(&doc.root, "r").unwrap().layout.content_rect;
-    click_at(&mut doc, r_rect.x + r_rect.w * 0.75, r_rect.y + r_rect.h / 2.0);
+    click_at(
+        &mut doc,
+        r_rect.x + r_rect.w * 0.75,
+        r_rect.y + r_rect.h / 2.0,
+    );
     let (sx, sy) = list_box_row_y(&doc, "s", 1);
     click_at(&mut doc, sx, sy);
 
@@ -2740,9 +3698,11 @@ fn a_form_submits_what_the_user_did_not_what_the_markup_said() {
         "the form submitted the default instead of the typed value"
     );
     assert_eq!(submitted_one(&data, "pick"), Some("b"));
-    let level: f64 = crate::html::forms::parse_floating_point(
-        submitted_one(&data, "level").unwrap_or(""),
-    )
-    .unwrap_or(-1.0);
-    assert!(level > 50.0, "the form submitted the range's default, {level}");
+    let level: f64 =
+        crate::html::forms::parse_floating_point(submitted_one(&data, "level").unwrap_or(""))
+            .unwrap_or(-1.0);
+    assert!(
+        level > 50.0,
+        "the form submitted the range's default, {level}"
+    );
 }

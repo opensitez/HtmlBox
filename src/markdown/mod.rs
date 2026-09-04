@@ -1,9 +1,9 @@
 pub mod serializer;
 
-use std::collections::HashMap;
-use crate::types::*;
 use crate::css::ua_stylesheet;
 use crate::html::load_image_from_src;
+use crate::types::*;
+use std::collections::HashMap;
 
 // ============================================================
 // Markdown Parser — produces Document (Box tree)
@@ -323,7 +323,9 @@ impl<'a> InlineParser<'a> {
                     flush_accum(&mut accum, block, &style);
                     let mut hl_style = style.clone();
                     hl_style.background_color = Color::rgb(255, 255, 0);
-                    block.data.insert("md-highlight".to_string(), "true".to_string());
+                    block
+                        .data
+                        .insert("md-highlight".to_string(), "true".to_string());
                     let inner = &text[pos + 2..close_pos];
                     self.parse_inner(block, inner, hl_style);
                     pos = close_pos + 2;
@@ -344,7 +346,9 @@ impl<'a> InlineParser<'a> {
                         fn_style.color = Color::rgb(0, 0, 238);
                         let display = format!("[{}]", fn_id);
                         append_run(block, &display, fn_style);
-                        block.data.insert("md-footnote-ref".to_string(), fn_id.to_string());
+                        block
+                            .data
+                            .insert("md-footnote-ref".to_string(), fn_id.to_string());
                         pos = close_pos + 1;
                         continue;
                     }
@@ -369,13 +373,21 @@ impl<'a> InlineParser<'a> {
                             // Load image pixel data (file path or data URL)
                             if let Some((data, w, h)) = load_image_from_src(url, "") {
                                 if img.style.width.is_auto() {
-                                    crate::css::apply_property(std::sync::Arc::make_mut(&mut img.style), "width", &format!("{}px", w));
+                                    crate::css::apply_property(
+                                        std::sync::Arc::make_mut(&mut img.style),
+                                        "width",
+                                        &format!("{}px", w),
+                                    );
                                 }
                                 if img.style.height.is_auto() {
-                                    crate::css::apply_property(std::sync::Arc::make_mut(&mut img.style), "height", &format!("{}px", h));
+                                    crate::css::apply_property(
+                                        std::sync::Arc::make_mut(&mut img.style),
+                                        "height",
+                                        &format!("{}px", h),
+                                    );
                                 }
-                                img.image_data   = Some(data);
-                                img.image_width  = w;
+                                img.image_data = Some(data);
+                                img.image_width = w;
                                 img.image_height = h;
                             }
                             block.children.push(img);
@@ -404,7 +416,9 @@ impl<'a> InlineParser<'a> {
                         link_style.href = url;
                         link_style.color = Color::rgb(0, 0, 238);
                         link_style.text_decoration.underline = true;
-                        block.data.insert("md-autolink".to_string(), "true".to_string());
+                        block
+                            .data
+                            .insert("md-autolink".to_string(), "true".to_string());
                         append_run(block, inner, link_style);
                         pos = close_pos + 1;
                         continue;
@@ -473,7 +487,11 @@ impl<'a> InlineParser<'a> {
 
                     // Shortcut reference link: [text] (no following ( or [)
                     let next_after = text_end + 1;
-                    let next_char = if next_after < len { Some(bytes[next_after]) } else { None };
+                    let next_char = if next_after < len {
+                        Some(bytes[next_after])
+                    } else {
+                        None
+                    };
                     if next_char != Some(b'(') && next_char != Some(b'[') {
                         let ref_key = to_lower(link_text);
                         if let Some(rlink) = self.refs.get(&ref_key) {
@@ -482,8 +500,12 @@ impl<'a> InlineParser<'a> {
                             link_style.href = rlink.url.clone();
                             link_style.color = Color::rgb(0, 0, 238);
                             link_style.text_decoration.underline = true;
-                            block.data.insert("md-ref-link".to_string(), link_text.to_string());
-                            block.data.insert("md-ref-shortcut".to_string(), "true".to_string());
+                            block
+                                .data
+                                .insert("md-ref-link".to_string(), link_text.to_string());
+                            block
+                                .data
+                                .insert("md-ref-shortcut".to_string(), "true".to_string());
                             let link_text_owned = link_text.to_string();
                             self.parse_inner(block, &link_text_owned, link_style);
                             pos = text_end + 1;
@@ -494,8 +516,10 @@ impl<'a> InlineParser<'a> {
             }
 
             // Bold + Italic: *** or ___
-            if (c == b'*' || c == b'_') && pos + 2 < len
-                && bytes[pos + 1] == c && bytes[pos + 2] == c
+            if (c == b'*' || c == b'_')
+                && pos + 2 < len
+                && bytes[pos + 1] == c
+                && bytes[pos + 2] == c
             {
                 let delim = &text[pos..pos + 3];
                 if let Some(rel) = text[pos + 3..].find(delim) {
@@ -519,7 +543,9 @@ impl<'a> InlineParser<'a> {
                     flush_accum(&mut accum, block, &style);
                     let mut bold_style = style.clone();
                     bold_style.font_weight = FontWeight::Bold;
-                    block.data.insert("md-bold-delim".to_string(), delim.to_string());
+                    block
+                        .data
+                        .insert("md-bold-delim".to_string(), delim.to_string());
                     let inner = &text[pos + 2..close_pos];
                     self.parse_inner(block, inner, bold_style);
                     pos = close_pos + 2;
@@ -535,10 +561,9 @@ impl<'a> InlineParser<'a> {
                     flush_accum(&mut accum, block, &style);
                     let mut italic_style = style.clone();
                     italic_style.font_style = FontStyle::Italic;
-                    block.data.insert(
-                        "md-italic-delim".to_string(),
-                        delim_char.to_string(),
-                    );
+                    block
+                        .data
+                        .insert("md-italic-delim".to_string(), delim_char.to_string());
                     let inner = &text[pos + 1..close_pos];
                     self.parse_inner(block, inner, italic_style);
                     pos = close_pos + 1;
@@ -624,7 +649,9 @@ fn utf8_char_len(bytes: &[u8], pos: usize) -> usize {
 // ============================================================
 
 fn split_lines(text: &str) -> Vec<String> {
-    text.lines().map(|l| l.trim_end_matches('\r').to_string()).collect()
+    text.lines()
+        .map(|l| l.trim_end_matches('\r').to_string())
+        .collect()
 }
 
 fn is_blank(line: &str) -> bool {
@@ -664,7 +691,7 @@ fn atx_content(line: &str) -> &str {
         return line;
     }
     let content = &line[level as usize + 1..]; // skip "# "
-    // Strip trailing hashes
+                                               // Strip trailing hashes
     let trimmed = content.trim_end();
     let stripped = trimmed.trim_end_matches('#').trim_end();
     stripped
@@ -815,7 +842,8 @@ fn is_table_separator(line: &str) -> bool {
     if !line.contains('-') {
         return false;
     }
-    line.chars().all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+    line.chars()
+        .all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
 }
 
 fn split_table_row(line: &str) -> Vec<String> {
@@ -830,17 +858,20 @@ fn split_table_row(line: &str) -> Vec<String> {
 }
 
 fn parse_table_alignments(sep: &str) -> Vec<TextAlign> {
-    split_table_row(sep).into_iter().map(|cell| {
-        let left = cell.starts_with(':');
-        let right = cell.ends_with(':');
-        if left && right {
-            TextAlign::Center
-        } else if right {
-            TextAlign::Right
-        } else {
-            TextAlign::Left
-        }
-    }).collect()
+    split_table_row(sep)
+        .into_iter()
+        .map(|cell| {
+            let left = cell.starts_with(':');
+            let right = cell.ends_with(':');
+            if left && right {
+                TextAlign::Center
+            } else if right {
+                TextAlign::Right
+            } else {
+                TextAlign::Left
+            }
+        })
+        .collect()
 }
 
 fn is_indented_code_line(line: &str) -> bool {
@@ -879,14 +910,67 @@ fn is_html_block_start(line: &str) -> bool {
     }
     let tag_name = line[tag_start..i].to_ascii_lowercase();
     static BLOCK_TAGS: &[&str] = &[
-        "address", "article", "aside", "base", "basefont", "blockquote", "body",
-        "caption", "center", "col", "colgroup", "dd", "details", "dialog",
-        "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
-        "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6",
-        "head", "header", "hr", "html", "iframe", "legend", "li", "link",
-        "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup",
-        "option", "p", "param", "section", "source", "summary", "table",
-        "tbody", "td", "tfoot", "th", "thead", "tr", "track", "ul",
+        "address",
+        "article",
+        "aside",
+        "base",
+        "basefont",
+        "blockquote",
+        "body",
+        "caption",
+        "center",
+        "col",
+        "colgroup",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "frame",
+        "frameset",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "header",
+        "hr",
+        "html",
+        "iframe",
+        "legend",
+        "li",
+        "link",
+        "main",
+        "menu",
+        "menuitem",
+        "nav",
+        "noframes",
+        "ol",
+        "optgroup",
+        "option",
+        "p",
+        "param",
+        "section",
+        "source",
+        "summary",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "track",
+        "ul",
     ];
     BLOCK_TAGS.contains(&tag_name.as_str())
 }
@@ -965,7 +1049,8 @@ impl<'a> BlockParser<'a> {
             // Thematic break
             if is_thematic_break(line) {
                 let mut hr = make_box("hr");
-                hr.data.insert("md-marker".to_string(), line.trim().to_string());
+                hr.data
+                    .insert("md-marker".to_string(), line.trim().to_string());
                 parent.children.push(hr);
                 self.pos += 1;
                 continue;
@@ -976,7 +1061,9 @@ impl<'a> BlockParser<'a> {
             if heading_level > 0 {
                 let tag = format!("h{}", heading_level);
                 let mut heading = make_box(&tag);
-                heading.data.insert("md-heading".to_string(), "atx".to_string());
+                heading
+                    .data
+                    .insert("md-heading".to_string(), "atx".to_string());
                 let content = atx_content(line).to_string();
                 let ip = InlineParser::new(self.refs);
                 ip.parse(&mut heading, &content);
@@ -1016,13 +1103,12 @@ impl<'a> BlockParser<'a> {
             }
 
             // Indented code block
-            if is_indented_code_line(line) && !line.is_empty()
-                && line.chars().any(|c| c != ' ')
-            {
+            if is_indented_code_line(line) && !line.is_empty() && line.chars().any(|c| c != ' ') {
                 let first_non_space = line.chars().take_while(|c| *c == ' ').count();
                 if first_non_space >= 4 || line.starts_with('\t') {
                     let mut pre = make_box("pre");
-                    pre.data.insert("md-code-style".to_string(), "indented".to_string());
+                    pre.data
+                        .insert("md-code-style".to_string(), "indented".to_string());
                     let mut code_content = String::new();
                     while self.pos < self.lines.len() {
                         let l = &self.lines[self.pos];
@@ -1065,9 +1151,7 @@ impl<'a> BlockParser<'a> {
             if is_blockquote_line(line) {
                 let mut bq = make_box("blockquote");
                 let mut bq_lines: Vec<String> = Vec::new();
-                while self.pos < self.lines.len()
-                    && is_blockquote_line(&self.lines[self.pos])
-                {
+                while self.pos < self.lines.len() && is_blockquote_line(&self.lines[self.pos]) {
                     bq_lines.push(strip_blockquote(&self.lines[self.pos]).to_string());
                     self.pos += 1;
                 }
@@ -1090,7 +1174,9 @@ impl<'a> BlockParser<'a> {
             // Raw HTML block
             if is_html_block_start(line) {
                 let mut html_box = make_box("div");
-                html_box.data.insert("md-raw-html".to_string(), "true".to_string());
+                html_box
+                    .data
+                    .insert("md-raw-html".to_string(), "true".to_string());
                 let mut html_content = line.clone();
                 self.pos += 1;
                 while self.pos < self.lines.len() && !self.lines[self.pos].is_empty() {
@@ -1121,9 +1207,7 @@ impl<'a> BlockParser<'a> {
             }
 
             // Definition list
-            if self.pos + 1 < self.lines.len()
-                && is_definition_marker(&self.lines[self.pos + 1])
-            {
+            if self.pos + 1 < self.lines.len() && is_definition_marker(&self.lines[self.pos + 1]) {
                 self.parse_definition_list(parent);
                 continue;
             }
@@ -1134,9 +1218,13 @@ impl<'a> BlockParser<'a> {
                 if st_level > 0 {
                     let tag = format!("h{}", st_level);
                     let mut heading = make_box(&tag);
-                    heading.data.insert("md-heading".to_string(), "setext".to_string());
+                    heading
+                        .data
+                        .insert("md-heading".to_string(), "setext".to_string());
                     let setext_char = if st_level == 1 { "=" } else { "-" };
-                    heading.data.insert("md-setext-char".to_string(), setext_char.to_string());
+                    heading
+                        .data
+                        .insert("md-setext-char".to_string(), setext_char.to_string());
                     let content = line.to_string();
                     let ip = InlineParser::new(self.refs);
                     ip.parse(&mut heading, &content);
@@ -1204,11 +1292,13 @@ impl<'a> BlockParser<'a> {
     fn parse_list(&mut self, parent: &mut WebCore, first_item: ListInfo) {
         let list_tag = if first_item.ordered { "ol" } else { "ul" };
         let mut list = make_box(list_tag);
-        list.data.insert("md-bullet".to_string(), first_item.marker.clone());
+        list.data
+            .insert("md-bullet".to_string(), first_item.marker.clone());
         if first_item.ordered {
             std::sync::Arc::make_mut(&mut list.style).list_style_type = ListStyleType::Decimal;
             if first_item.number != 1 {
-                list.data.insert("md-start".to_string(), first_item.number.to_string());
+                list.data
+                    .insert("md-start".to_string(), first_item.number.to_string());
             }
         } else {
             std::sync::Arc::make_mut(&mut list.style).list_style_type = ListStyleType::Disc;
@@ -1239,10 +1329,14 @@ impl<'a> BlockParser<'a> {
             }
 
             let li_info = detect_list_item(line);
-            if li_info.valid && li_info.indent == base_indent && li_info.ordered == first_item.ordered {
+            if li_info.valid
+                && li_info.indent == base_indent
+                && li_info.ordered == first_item.ordered
+            {
                 let mut item = make_box("li");
                 if first_item.ordered {
-                    std::sync::Arc::make_mut(&mut item.style).list_style_type = ListStyleType::Decimal;
+                    std::sync::Arc::make_mut(&mut item.style).list_style_type =
+                        ListStyleType::Decimal;
                     std::sync::Arc::make_mut(&mut item.style).list_index = li_info.number;
                 }
 
@@ -1250,7 +1344,12 @@ impl<'a> BlockParser<'a> {
                     has_task_items = true;
                     item.data.insert(
                         "md-task".to_string(),
-                        if li_info.task_state == 1 { "checked" } else { "unchecked" }.to_string(),
+                        if li_info.task_state == 1 {
+                            "checked"
+                        } else {
+                            "unchecked"
+                        }
+                        .to_string(),
                     );
                 }
 
@@ -1308,7 +1407,8 @@ impl<'a> BlockParser<'a> {
         }
 
         if has_task_items {
-            list.data.insert("md-task-list".to_string(), "true".to_string());
+            list.data
+                .insert("md-task-list".to_string(), "true".to_string());
         }
 
         parent.children.push(list);
@@ -1316,7 +1416,9 @@ impl<'a> BlockParser<'a> {
 
     fn parse_table(&mut self, parent: &mut WebCore) {
         let mut table = make_box("table");
-        table.data.insert("md-table".to_string(), "true".to_string());
+        table
+            .data
+            .insert("md-table".to_string(), "true".to_string());
 
         let header_cells = split_table_row(&self.lines[self.pos]);
         let alignments = parse_table_alignments(&self.lines[self.pos + 1]);
@@ -1408,7 +1510,8 @@ impl<'a> BlockParser<'a> {
                     while self.pos < self.lines.len() && is_blank(&self.lines[self.pos]) {
                         self.pos += 1;
                     }
-                    if self.pos >= self.lines.len() || !is_definition_marker(&self.lines[self.pos]) {
+                    if self.pos >= self.lines.len() || !is_definition_marker(&self.lines[self.pos])
+                    {
                         break;
                     }
                     let def_line = &self.lines[self.pos];
@@ -1508,7 +1611,9 @@ pub fn parse_markdown(markdown: &str) -> Document {
     // Emit footnote definitions as a section at the end
     if !footnote_defs.is_empty() {
         let mut fn_section = make_box("div");
-        fn_section.data.insert("md-footnotes".to_string(), "true".to_string());
+        fn_section
+            .data
+            .insert("md-footnotes".to_string(), "true".to_string());
 
         // Add hr separator
         let hr = make_box("hr");
@@ -1516,8 +1621,10 @@ pub fn parse_markdown(markdown: &str) -> Document {
 
         for fn_def in &footnote_defs {
             let mut p = make_box("p");
-            p.data.insert("md-footnote-def".to_string(), fn_def.id.clone());
-            p.data.insert("md-footnote-label".to_string(), fn_def.id.clone());
+            p.data
+                .insert("md-footnote-def".to_string(), fn_def.id.clone());
+            p.data
+                .insert("md-footnote-label".to_string(), fn_def.id.clone());
             let ip = InlineParser::new(&refs);
             ip.parse(&mut p, &fn_def.content);
             fn_section.children.push(p);

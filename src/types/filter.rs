@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── CSS Filter ───────────────────────────────────────────────────────────────
 
@@ -25,5 +25,10 @@ pub enum FilterOp {
     Opacity(f32),
     Saturate(f32),
     Sepia(f32),
-    DropShadow { dx: f32, dy: f32, blur: f32, color: Color },
+    DropShadow {
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+    },
 }

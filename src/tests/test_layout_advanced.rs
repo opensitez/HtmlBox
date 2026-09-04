@@ -1,10 +1,10 @@
 // Ported from tests/test_layout_advanced.cpp
 
+use super::harness::*;
 use crate::css::apply_property;
 use crate::html::parse_html;
 use crate::layout::LayoutEngine;
 use crate::types::*;
-use super::harness::*;
 
 // ── Min-Height / Max-Height Parsing ───────────────────────────────────────────
 
@@ -44,7 +44,8 @@ fn layoutadv_max_height_percent() {
 fn layoutadv_min_height_enforced() {
     let doc = parse_and_layout(r#"<div style="min-height: 200px;">Short</div>"#, 800.0);
     let b = find_box(&doc.root, &|b| {
-        b.tag == "div" && !b.style.min_height.is_auto()
+        b.tag == "div"
+            && !b.style.min_height.is_auto()
             && (b.style.min_height.resolve(16.0, 0.0, 16.0) - 200.0).abs() < 1.0
     });
     assert!(b.is_some());
@@ -57,7 +58,9 @@ fn layoutadv_max_height_enforced() {
         r#"<div style="max-height: 50px; overflow: hidden;"><p>Line1</p><p>Line2</p><p>Line3</p><p>Line4</p><p>Line5</p></div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && !b.style.max_height.is_none());
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && !b.style.max_height.is_none()
+    });
     assert!(b.is_some());
     assert!(b.unwrap().layout.content_rect.h <= 50.0);
 }
@@ -72,9 +75,14 @@ fn layoutadv_margin_collapsing_positive() {
     );
     let divs = find_all_boxes(&doc.root, &|b| b.tag == "div");
     assert!(divs.len() >= 2);
-    let content_gap = divs[1].layout.content_rect.y - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
+    let content_gap = divs[1].layout.content_rect.y
+        - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
     // Collapsed to max(30,20)=30, not 50
-    assert!(content_gap < 45.0, "expected collapsed gap < 45, got {}", content_gap);
+    assert!(
+        content_gap < 45.0,
+        "expected collapsed gap < 45, got {}",
+        content_gap
+    );
 }
 
 #[test]
@@ -85,9 +93,14 @@ fn layoutadv_margin_collapsing_equal() {
     );
     let divs = find_all_boxes(&doc.root, &|b| b.tag == "div");
     assert!(divs.len() >= 2);
-    let content_gap = divs[1].layout.content_rect.y - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
+    let content_gap = divs[1].layout.content_rect.y
+        - (divs[0].layout.content_rect.y + divs[0].layout.content_rect.h);
     // Should be ~20 (collapsed), not 40 (sum)
-    assert!(content_gap < 35.0, "expected collapsed gap < 35, got {}", content_gap);
+    assert!(
+        content_gap < 35.0,
+        "expected collapsed gap < 35, got {}",
+        content_gap
+    );
 }
 
 // ── Semantic HTML5 Elements ───────────────────────────────────────────────────
@@ -241,7 +254,8 @@ fn layoutadv_mixed_flow_layout() {
 fn layoutadv_child_combinator_flex_basis_applied() {
     // ".grid > *" with "flex: 1 1 260px" must apply flex-basis to direct children
     // so they are laid out side by side, not one per row.
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
             .grid { display: flex; flex-wrap: wrap; gap: 20px; }
             .grid > * { flex: 1 1 260px; }
@@ -252,25 +266,38 @@ fn layoutadv_child_combinator_flex_basis_applied() {
             <div class="card">B</div>
             <div class="card">C</div>
         </div>
-    "#, 1024.0);
+    "#,
+        1024.0,
+    );
 
     let cards: Vec<_> = find_all_boxes(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "card").unwrap_or(false)
+        b.attributes
+            .get("class")
+            .map(|c| c == "card")
+            .unwrap_or(false)
     });
     assert_eq!(cards.len(), 3);
 
     // All three cards should be on the same row (same y position).
     let y0 = cards[0].layout.margin_rect.y;
-    assert!((cards[1].layout.margin_rect.y - y0).abs() < 2.0,
-        "card B should be on the same row as card A (child combinator not applying flex-basis)");
-    assert!((cards[2].layout.margin_rect.y - y0).abs() < 2.0,
-        "card C should be on the same row as card A");
+    assert!(
+        (cards[1].layout.margin_rect.y - y0).abs() < 2.0,
+        "card B should be on the same row as card A (child combinator not applying flex-basis)"
+    );
+    assert!(
+        (cards[2].layout.margin_rect.y - y0).abs() < 2.0,
+        "card C should be on the same row as card A"
+    );
 
     // They should be side-by-side (x positions increasing).
-    assert!(cards[1].layout.margin_rect.x > cards[0].layout.margin_rect.x + 50.0,
-        "card B should be to the right of card A");
-    assert!(cards[2].layout.margin_rect.x > cards[1].layout.margin_rect.x + 50.0,
-        "card C should be to the right of card B");
+    assert!(
+        cards[1].layout.margin_rect.x > cards[0].layout.margin_rect.x + 50.0,
+        "card B should be to the right of card A"
+    );
+    assert!(
+        cards[2].layout.margin_rect.x > cards[1].layout.margin_rect.x + 50.0,
+        "card C should be to the right of card B"
+    );
 }
 
 // ── compute_intrinsic_width: auto margins must not inflate parent width ────────
@@ -282,7 +309,8 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
     // Before the fix, flex items defaulting to auto flex-basis would call
     // compute_intrinsic_width, which used margin_rect.x + margin_rect.w
     // even for auto-margin elements, giving a ~container-width result.
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
             .flex { display: flex; gap: 10px; }
             .box { padding: 10px; }
@@ -293,33 +321,48 @@ fn layoutadv_auto_margin_does_not_inflate_intrinsic_width() {
             <div class="box"><div class="inner"></div><p>B</p></div>
             <div class="box"><div class="inner"></div><p>C</p></div>
         </div>
-    "#, 900.0);
+    "#,
+        900.0,
+    );
 
     let boxes: Vec<_> = find_all_boxes(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "box").unwrap_or(false)
+        b.attributes
+            .get("class")
+            .map(|c| c == "box")
+            .unwrap_or(false)
     });
     assert_eq!(boxes.len(), 3);
 
     // All three flex items should be on the same row.
     let y0 = boxes[0].layout.margin_rect.y;
-    assert!((boxes[1].layout.margin_rect.y - y0).abs() < 2.0,
-        "box B on same row as A — auto margin in child should not inflate intrinsic width");
-    assert!((boxes[2].layout.margin_rect.y - y0).abs() < 2.0,
-        "box C on same row as A");
+    assert!(
+        (boxes[1].layout.margin_rect.y - y0).abs() < 2.0,
+        "box B on same row as A — auto margin in child should not inflate intrinsic width"
+    );
+    assert!(
+        (boxes[2].layout.margin_rect.y - y0).abs() < 2.0,
+        "box C on same row as A"
+    );
 
     // Each box should be much narrower than the full container.
     for b in &boxes {
-        assert!(b.layout.margin_rect.w < 400.0,
-            "auto-margin child must not inflate flex item intrinsic width to container width");
+        assert!(
+            b.layout.margin_rect.w < 400.0,
+            "auto-margin child must not inflate flex item intrinsic width to container width"
+        );
     }
 }
 
 // ── Flex-stretch height on initial layout and after viewport resize ───────────
 
 fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-    if node.attributes.get("id").map(|s| s == id).unwrap_or(false) { return Some(node); }
+    if node.attributes.get("id").map(|s| s == id).unwrap_or(false) {
+        return Some(node);
+    }
     for child in &node.children {
-        if let Some(b) = find_by_id(child, id) { return Some(b); }
+        if let Some(b) = find_by_id(child, id) {
+            return Some(b);
+        }
     }
     None
 }
@@ -346,8 +389,11 @@ fn flex_stretch_sidebar_fills_height_initial() {
     engine.layout(&mut doc, 800.0);
 
     let side = find_by_id(&doc.root, "side").expect("side");
-    assert!((side.layout.border_rect.h - 600.0).abs() < 2.0,
-        "sidebar should stretch to 100vh=600px on initial layout, got {}", side.layout.border_rect.h);
+    assert!(
+        (side.layout.border_rect.h - 600.0).abs() < 2.0,
+        "sidebar should stretch to 100vh=600px on initial layout, got {}",
+        side.layout.border_rect.h
+    );
 }
 
 /// Flex-stretch: sidebar correctly updates its height when the window is resized.
@@ -374,8 +420,11 @@ fn flex_stretch_sidebar_updates_on_viewport_height_resize() {
 
     {
         let side = find_by_id(&doc.root, "side").expect("side");
-        assert!((side.layout.border_rect.h - 600.0).abs() < 2.0,
-            "initial: sidebar should be 600px, got {}", side.layout.border_rect.h);
+        assert!(
+            (side.layout.border_rect.h - 600.0).abs() < 2.0,
+            "initial: sidebar should be 600px, got {}",
+            side.layout.border_rect.h
+        );
     }
 
     // Simulate window resize: taller viewport. Width unchanged so pruning would
@@ -385,8 +434,11 @@ fn flex_stretch_sidebar_updates_on_viewport_height_resize() {
 
     {
         let side = find_by_id(&doc.root, "side").expect("side");
-        assert!((side.layout.border_rect.h - 900.0).abs() < 2.0,
-            "after resize to 900px: sidebar should be 900px, got {}", side.layout.border_rect.h);
+        assert!(
+            (side.layout.border_rect.h - 900.0).abs() < 2.0,
+            "after resize to 900px: sidebar should be 900px, got {}",
+            side.layout.border_rect.h
+        );
     }
 }
 
@@ -414,8 +466,14 @@ fn layout_pruning_still_active_on_width_only_resize() {
 
     {
         let card = find_by_id(&doc.root, "card").expect("card");
-        assert!((card.layout.border_rect.w - 300.0).abs() < 2.0, "initial: card 300px wide");
-        assert!((card.layout.border_rect.h - 200.0).abs() < 2.0, "initial: card 200px tall");
+        assert!(
+            (card.layout.border_rect.w - 300.0).abs() < 2.0,
+            "initial: card 300px wide"
+        );
+        assert!(
+            (card.layout.border_rect.h - 200.0).abs() < 2.0,
+            "initial: card 200px tall"
+        );
     }
 
     // Widen viewport; card dimensions unchanged, only centering margin shifts.
@@ -423,8 +481,14 @@ fn layout_pruning_still_active_on_width_only_resize() {
 
     {
         let card = find_by_id(&doc.root, "card").expect("card");
-        assert!((card.layout.border_rect.w - 300.0).abs() < 2.0, "after width resize: card still 300px");
-        assert!((card.layout.border_rect.h - 200.0).abs() < 2.0, "after width resize: card still 200px");
+        assert!(
+            (card.layout.border_rect.w - 300.0).abs() < 2.0,
+            "after width resize: card still 300px"
+        );
+        assert!(
+            (card.layout.border_rect.h - 200.0).abs() < 2.0,
+            "after width resize: card still 200px"
+        );
     }
 }
 
@@ -451,12 +515,13 @@ fn set_natural_size(node: &mut WebCore, w: u32, h: u32) -> usize {
 /// while the image itself laid out at 150×150.
 #[test]
 fn layoutadv_replaced_intrinsic_width_follows_definite_height() {
-    let mut doc = parse(
-        "<div id=card><a><img height='150' src='x.png'></a></div>"
-    );
+    let mut doc = parse("<div id=card><a><img height='150' src='x.png'></a></div>");
     assert_eq!(set_natural_size(&mut doc.root, 1024, 1024), 1);
     let engine = LayoutEngine::new();
-    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    let card = find_box(&doc.root, &|n: &WebCore| {
+        n.attributes.get("id").map(String::as_str) == Some("card")
+    })
+    .expect("card");
     assert_eq!(engine.max_content_width(card, 16.0, 16.0), 150.0);
     assert_eq!(engine.min_content_width(card, 16.0, 16.0), 150.0);
 }
@@ -467,7 +532,10 @@ fn layoutadv_replaced_intrinsic_width_uses_the_ratio() {
     let mut doc = parse("<div id=card><img height='100' src='x.png'></div>");
     assert_eq!(set_natural_size(&mut doc.root, 800, 200), 1);
     let engine = LayoutEngine::new();
-    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    let card = find_box(&doc.root, &|n: &WebCore| {
+        n.attributes.get("id").map(String::as_str) == Some("card")
+    })
+    .expect("card");
     assert_eq!(engine.max_content_width(card, 16.0, 16.0), 400.0);
 }
 
@@ -477,7 +545,10 @@ fn layoutadv_replaced_intrinsic_width_defaults_to_natural() {
     let mut doc = parse("<div id=card><img src='x.png'></div>");
     assert_eq!(set_natural_size(&mut doc.root, 640, 480), 1);
     let engine = LayoutEngine::new();
-    let card = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("card")).expect("card");
+    let card = find_box(&doc.root, &|n: &WebCore| {
+        n.attributes.get("id").map(String::as_str) == Some("card")
+    })
+    .expect("card");
     assert_eq!(engine.max_content_width(card, 16.0, 16.0), 640.0);
 }
 
@@ -488,16 +559,29 @@ fn layoutadv_flex_items_size_to_the_displayed_image_not_the_photo() {
     let mut doc = parse(
         "<style>.row{display:flex;flex-wrap:wrap}</style>\
          <div class=row><div id=a><img height='150' src='1.png'></div>\
-         <div id=b><img height='150' src='2.png'></div></div>"
+         <div id=b><img height='150' src='2.png'></div></div>",
     );
-    assert_eq!(set_natural_size(&mut doc.root, 1024, 1024), 2, "both images present");
+    assert_eq!(
+        set_natural_size(&mut doc.root, 1024, 1024),
+        2,
+        "both images present"
+    );
     let mut engine = LayoutEngine::new();
     engine.layout(&mut doc, 1256.0);
-    let a = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("a")).expect("a");
-    let b = find_box(&doc.root, &|n: &WebCore| n.attributes.get("id").map(String::as_str) == Some("b")).expect("b");
+    let a = find_box(&doc.root, &|n: &WebCore| {
+        n.attributes.get("id").map(String::as_str) == Some("a")
+    })
+    .expect("a");
+    let b = find_box(&doc.root, &|n: &WebCore| {
+        n.attributes.get("id").map(String::as_str) == Some("b")
+    })
+    .expect("b");
     assert_eq!(a.layout.margin_rect.w, 150.0, "item a");
     assert_eq!(b.layout.margin_rect.w, 150.0, "item b");
-    assert_eq!(b.layout.margin_rect.y, a.layout.margin_rect.y, "same flex line");
+    assert_eq!(
+        b.layout.margin_rect.y, a.layout.margin_rect.y,
+        "same flex line"
+    );
 }
 
 /// **Inline nesting must not lose the spaces between words.** The max-content
@@ -510,11 +594,18 @@ fn layoutadv_max_content_width_survives_inline_nesting() {
     let doc = renderer.load_html(
         "<div id=plain>Faire un don</div>\
          <div id=nested><a><span>Faire un don</span></a></div>",
-        800.0);
+        800.0,
+    );
     let find = |id: &str| {
         fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap()
@@ -523,8 +614,10 @@ fn layoutadv_max_content_width_survives_inline_nesting() {
     let plain = engine.max_content_width(find("plain"), 16.0, 16.0);
     let nested = engine.max_content_width(find("nested"), 16.0, 16.0);
     assert!(plain > 40.0, "the text was measured at all: {plain}");
-    assert!((plain - nested).abs() < 0.5,
-        "nesting changed the max-content width: plain {plain} vs nested {nested}");
+    assert!(
+        (plain - nested).abs() < 0.5,
+        "nesting changed the max-content width: plain {plain} vs nested {nested}"
+    );
 }
 
 /// **The intrinsic measurement must count the spaces between words.** A
@@ -536,20 +629,29 @@ fn layoutadv_max_content_width_counts_inter_word_spaces() {
     let mut renderer = crate::renderer::Renderer::new();
     let doc = renderer.load_html(
         "<div id=spaced>Faire un don</div><div id=joined>Faireundon</div>",
-        800.0);
+        800.0,
+    );
     let engine = renderer.layout_engine();
     let find = |id: &str| {
         fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap()
     };
     let spaced = engine.max_content_width(find("spaced"), 16.0, 16.0);
     let joined = engine.max_content_width(find("joined"), 16.0, 16.0);
-    assert!(spaced > joined + 4.0,
-        "the two spaces were not measured: 'Faire un don' {spaced} vs 'Faireundon' {joined}");
+    assert!(
+        spaced > joined + 4.0,
+        "the two spaces were not measured: 'Faire un don' {spaced} vs 'Faireundon' {joined}"
+    );
 }
 
 // ── Multi-column: a wrapper must not collapse every column into one ──────────
@@ -558,10 +660,15 @@ fn layoutadv_max_content_width_counts_inter_word_spaces() {
 fn column_xs(root: &WebCore, class: &str) -> Vec<f32> {
     let mut xs = Vec::new();
     fn walk(n: &WebCore, class: &str, xs: &mut Vec<f32>) {
-        if n.attributes.get("class").map_or(false, |c| c.split_whitespace().any(|w| w == class)) {
+        if n.attributes
+            .get("class")
+            .map_or(false, |c| c.split_whitespace().any(|w| w == class))
+        {
             xs.push(n.layout.margin_rect.x);
         }
-        for c in &n.children { walk(c, class, xs); }
+        for c in &n.children {
+            walk(c, class, xs);
+        }
     }
     walk(root, class, &mut xs);
     xs
@@ -590,8 +697,11 @@ fn layoutadv_multicol_distributes_through_a_wrapper() {
     let mut distinct: Vec<f32> = xs.clone();
     distinct.sort_by(|a, b| a.partial_cmp(b).unwrap());
     distinct.dedup_by(|a, b| (*a - *b).abs() < 0.5);
-    assert_eq!(distinct.len(), 3,
-        "items should occupy 3 column positions, got {distinct:?} from {xs:?}");
+    assert_eq!(
+        distinct.len(),
+        3,
+        "items should occupy 3 column positions, got {distinct:?} from {xs:?}"
+    );
 }
 
 /// The direct-children case must keep working.
@@ -628,7 +738,8 @@ fn layoutadv_multicol_default_gap_is_one_em() {
          <div class=cols>\
            <div class=item>a</div><div class=item>b</div><div class=item>c</div>\
          </div>",
-        800.0);
+        800.0,
+    );
     let mut pm = tiny_skia::Pixmap::new(800, 200).unwrap();
     renderer.render(&mut doc, &mut pm, 1.0);
     let xs = {
@@ -640,8 +751,10 @@ fn layoutadv_multicol_default_gap_is_one_em() {
     assert_eq!(xs.len(), 3, "three columns, got {xs:?}");
     // col_w = (600 - 2*16) / 3 = 189.33; column starts 0, 205.33, 410.67.
     let step = xs[1] - xs[0];
-    assert!((step - 205.33).abs() < 1.0,
-        "a 1em gap gives a 205.33px column pitch, got {step} from {xs:?}");
+    assert!(
+        (step - 205.33).abs() < 1.0,
+        "a 1em gap gives a 205.33px column pitch, got {step} from {xs:?}"
+    );
 }
 
 /// **max-content is the content laid out with no soft wrap taken**
@@ -653,12 +766,19 @@ fn layoutadv_max_content_sums_inline_siblings() {
     let mut renderer = crate::renderer::Renderer::new();
     let doc = renderer.load_html(
         "<div id=split>Hello <span>World</span></div><div id=whole>Hello World</div>",
-        800.0);
+        800.0,
+    );
     let engine = renderer.layout_engine();
     let find = |id: &str| {
         fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap()
@@ -668,8 +788,10 @@ fn layoutadv_max_content_sums_inline_siblings() {
     assert!(whole > 40.0, "the control measured something: {whole}");
     // Within one space width: the text node's own max-content collapses its
     // trailing space, which is a separate (known) gap in cross-node whitespace.
-    assert!(split > whole - 6.0 && split <= whole + 1.0,
-        "inline siblings must sum on one line: split={split} vs whole={whole}");
+    assert!(
+        split > whole - 6.0 && split <= whole + 1.0,
+        "inline siblings must sum on one line: split={split} vs whole={whole}"
+    );
 }
 
 /// A block-level child still starts a new line, so it is MAXed, not summed.
@@ -678,20 +800,29 @@ fn layoutadv_max_content_maxes_block_siblings() {
     let mut renderer = crate::renderer::Renderer::new();
     let doc = renderer.load_html(
         "<div id=blocks><div>Hello</div><div>World</div></div><div id=one>Hello</div>",
-        800.0);
+        800.0,
+    );
     let engine = renderer.layout_engine();
     let find = |id: &str| {
         fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap()
     };
     let blocks = engine.max_content_width(find("blocks"), 16.0, 16.0);
     let one = engine.max_content_width(find("one"), 16.0, 16.0);
-    assert!((blocks - one).abs() < 6.0,
-        "two block children stack, so max-content is the wider one: {blocks} vs {one}");
+    assert!(
+        (blocks - one).abs() < 6.0,
+        "two block children stack, so max-content is the wider one: {blocks} vs {one}"
+    );
 }
 
 /// **`box-sizing: border-box` means the specified width ALREADY includes
@@ -706,18 +837,259 @@ fn layoutadv_border_box_width_is_not_double_counted() {
     let doc = renderer.load_html(
         "<div id=bb><div style='box-sizing:border-box;width:200px;padding:20px'>x</div></div>\
          <div id=cb><div style='box-sizing:content-box;width:160px;padding:20px'>x</div></div>",
-        800.0);
+        800.0,
+    );
     let engine = renderer.layout_engine();
     let find = |id: &str| {
         fn walk<'a>(n: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap()
     };
     let bb = engine.max_content_width(find("bb"), 16.0, 16.0);
     let cb = engine.max_content_width(find("cb"), 16.0, 16.0);
-    assert_eq!(bb, 200.0, "border-box: the 200px already includes the 40px padding");
-    assert_eq!(cb, 200.0, "content-box: 160 + 40 padding = 200 (the control)");
+    assert_eq!(
+        bb, 200.0,
+        "border-box: the 200px already includes the 40px padding"
+    );
+    assert_eq!(
+        cb, 200.0,
+        "content-box: 160 + 40 padding = 200 (the control)"
+    );
+}
+
+/// **css-sizing-3 §6.1 — the `fit-content(<length>)` function form must
+/// parse and clamp.** `value_parse.rs:24` only recognises the bare
+/// `fit-content` keyword string; `fit-content(200px)` falls through to
+/// `parse_length_inner` and comes back `Auto` (confirmed directly:
+/// `parse_length("fit-content(200px)")` → `Auto` against the clean worktree).
+/// As a `width` that is indistinguishable from plain `width:auto` — and a
+/// block box with `width:auto` fills its containing block rather than
+/// shrink-to-fitting — so the box comes out at the full available width
+/// (884px in this fixture's 900px viewport) instead of clamped to 200.
+///
+/// The fixture's content is many short repeated words so max-content is far
+/// above 200px and min-content is far below it regardless of the exact font
+/// metrics — the clamp value 200 is the only number that can come out
+/// correctly, so no Chrome measurement or pixel tolerance for text is
+/// needed; a generous tolerance is kept only for layout rounding.
+///
+/// Expectation source: the fit-content(X) formula itself (X clamped between
+/// min- and max-content, both of which this fixture keeps clear of 200 by a
+/// wide margin), not Chrome.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+#[test]
+fn fit_content_function_form_clamps_the_box() {
+    let html = r#"
+        <div id="box" style="width:fit-content(200px);">
+          <p style="margin:0">word word word word word word word word word word word word word word word</p>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let b = find_by_id(&doc.root, "box").unwrap();
+    assert!(
+        (b.layout.border_rect.w - 200.0).abs() < 3.0,
+        "fit-content(200px) should clamp the box to ~200px, got {}",
+        b.layout.border_rect.w
+    );
+}
+
+/// **css-sizing-3 §6.1 — `min-width: max-content` must expand the box to its
+/// content's max-content size, not collapse it.** `CssLength::resolve_vp`
+/// (`src/types/length.rs:138`) returns `0.0` for `MinContent`/`MaxContent`/
+/// `FitContent`, and `is_auto()` (`:150`) reports `true` for all three, so
+/// `block.rs:404`'s `min_w` is always 0 for these keywords — a `width:0` box
+/// with `min-width:max-content` stays at 0 instead of growing to fit.
+///
+/// Two fixed-width inline-blocks (no text) so the expected max-content is
+/// exact arithmetic (50+50=100), matching the convention already used by
+/// `grid_min_content_track_uses_the_min_content_contribution` in
+/// `test_grid.rs` for the same reason: no font-dependent measurement.
+///
+/// Expectation source: spec arithmetic (sum of the two fixed widths), not Chrome.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+///
+/// Confirmed against the engine (clean worktree, HEAD 98c918e): this fixture
+/// currently measures W=0.
+#[test]
+fn min_width_max_content_expands_a_zero_width_box() {
+    let html = r#"
+        <div id="box" style="width:0px; min-width:max-content;">
+          <span style="display:inline-block; width:50px; height:10px"></span><span style="display:inline-block; width:50px; height:10px"></span>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let b = find_by_id(&doc.root, "box").unwrap();
+    assert!(
+        (b.layout.border_rect.w - 100.0).abs() < 0.5,
+        "min-width:max-content on a width:0 box should give 100 (50+50), got {}",
+        b.layout.border_rect.w
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Multi-column (css-multicol-1, css-break-3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// **css-multicol-1 §7, §8.2 — `column-fill: auto` with a constrained
+/// `height` must overflow into a second column once the first is full.**
+/// `layout_columns` (`block.rs:1034`) takes `_rbox` (leading underscore: truly
+/// unused) and never reads any height constraint; with `balance = false`
+/// (`column-fill:auto`), `target_col_h` is set to `f32::MAX`
+/// (`block.rs:1090`) unconditionally, so the "does this overflow the column"
+/// check at `:1119` can never fire. Content stacks in column 1 and spills
+/// past the container's own height instead of flowing into column 2.
+///
+/// Expectation source: spec behaviour (a full column moves to the next),
+/// not Chrome — this only needs the item count in column 1 vs. column 2 to
+/// differ, not exact pixel positions.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+///
+/// Confirmed against the engine (clean worktree, HEAD 98c918e): all four
+/// items currently land at the same x (8, 8, 8, 8) — one distinct column
+/// position, not two.
+#[test]
+fn column_fill_auto_overflows_a_full_column() {
+    let html = r#"
+        <div style="column-fill:auto; column-count:2; height:50px; width:200px; column-gap:0;">
+          <div class="item" style="height:20px">a</div>
+          <div class="item" style="height:20px">b</div>
+          <div class="item" style="height:20px">c</div>
+          <div class="item" style="height:20px">d</div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let items = crate::tests::harness::find_all_boxes(&doc.root, &|b: &WebCore| {
+        b.attributes
+            .get("class")
+            .map(|c| c == "item")
+            .unwrap_or(false)
+    });
+    let mut xs: Vec<f32> = items.iter().map(|b| b.layout.margin_rect.x).collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert_eq!(xs.len(), 2,
+        "a full first column (height:50, 2×20px items) must overflow into a second column, got {} distinct x positions", xs.len());
+}
+
+/// **css-break-3 §3 — `break-before: column` must force a new column,
+/// independent of whether the current column has room.** A grep of
+/// `block.rs` for `break_inside`/`break_before`/`break_after` returns zero
+/// hits — the properties are parsed and cascaded but consulted nowhere in
+/// `layout_columns`.
+///
+/// `column-fill:auto` keeps this isolated from the balancing algorithm (a
+/// separate gap, tested above/below): with no height constraint and no
+/// forced break, everything would naturally stay in column 1, so any move
+/// to column 2 here can only be the forced break firing.
+///
+/// Expectation source: spec behaviour (forced break starts a new column),
+/// not Chrome.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+///
+/// Confirmed against the engine (clean worktree, HEAD 98c918e): item `b`
+/// currently lands at the same x as `a` (x=8), stacked directly below it.
+#[test]
+fn break_before_column_forces_a_new_column() {
+    let html = r#"
+        <div style="column-fill:auto; column-count:3; width:300px; column-gap:0;">
+          <div id="a" style="height:10px">a</div>
+          <div id="b" style="break-before:column; height:10px">b</div>
+          <div id="c" style="height:10px">c</div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let a = find_by_id(&doc.root, "a").unwrap();
+    let b = find_by_id(&doc.root, "b").unwrap();
+    assert!(
+        (b.layout.margin_rect.x - a.layout.margin_rect.x).abs() > 1.0,
+        "break-before:column on b must move it to a new column (a.x={}, b.x={})",
+        a.layout.margin_rect.x,
+        b.layout.margin_rect.x
+    );
+}
+
+/// **css-multicol-1 §7 — balancing must not leave a column empty while
+/// unplaced content remains.** The algorithm in `block.rs:1087`–`1132` uses
+/// one global average (`total_content_h / n_cols`) with a flat 1.1 slack and
+/// checks *before* placing each item whether it alone would overshoot —
+/// including the very first item in a column. A single item taller than the
+/// average blows the slack on the FIRST column before anything has been
+/// placed there, so the whole column is skipped and every remaining item
+/// (including that first, tall one) piles into the last column.
+///
+/// This asserts the invariant the naive-average approach violates — every
+/// column receives some content — rather than a specific pixel split. A real
+/// shortest-fit balance could legitimately choose several different splits
+/// (and this engine is not a fragmentation container, so it cannot split the
+/// 100px item across columns the way Chrome might); what no correct
+/// algorithm does is leave a column at zero while content is left over.
+///
+/// Expectation source: the invariant itself (no starved column), not a
+/// specific Chrome layout — deliberately robust to whichever correct
+/// algorithm the fix picks.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+///
+/// Confirmed against the engine (clean worktree, HEAD 98c918e): all five
+/// items currently land at the same x (column 2); column 1 gets nothing.
+#[test]
+fn balance_never_starves_a_column() {
+    let html = r#"
+        <div style="column-count:2; width:200px; column-gap:0;">
+          <div class="item" style="height:100px">a</div>
+          <div class="item" style="height:1px">b</div>
+          <div class="item" style="height:1px">c</div>
+          <div class="item" style="height:1px">d</div>
+          <div class="item" style="height:1px">e</div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let items = crate::tests::harness::find_all_boxes(&doc.root, &|b: &WebCore| {
+        b.attributes
+            .get("class")
+            .map(|c| c == "item")
+            .unwrap_or(false)
+    });
+    let mut xs: Vec<f32> = items.iter().map(|b| b.layout.margin_rect.x).collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert_eq!(xs.len(), 2,
+        "with 104px of content over 2 columns, both columns must receive some content, got {} distinct x positions (all content in one column)", xs.len());
+}
+
+/// **css-multicol-1 §3.4 step 11 — column width is `max(0, …)`, not
+/// `max(1px, …)`.** `block.rs:1071`: `let col_w = ((content_w - total_gaps) /
+/// n_cols as f32).max(1.0);`. With more columns/gap than available width the
+/// formula goes negative and the spec floors it at 0; this floors it at 1px
+/// instead, so every column paints/measures 1px wider than it should in that
+/// (admittedly extreme) case.
+///
+/// Expectation source: spec arithmetic — `(5 - 9×10) / 10 = -8.5`, floored to
+/// 0 by the spec and to 1 by the engine — not Chrome.
+/// Destination: `src/tests/test_layout_advanced.rs`.
+///
+/// Confirmed against the engine (clean worktree, HEAD 98c918e): the column
+/// items currently measure width 1.0, not 0.0.
+#[test]
+fn column_width_floors_at_zero_not_one_pixel() {
+    let html = r#"
+        <div style="column-count:10; column-gap:10px; width:5px;">
+          <div id="a">a</div><div id="b">b</div><div id="c">c</div>
+        </div>
+    "#;
+    let doc = parse_and_layout(html, 900.0);
+    let a = find_by_id(&doc.root, "a").unwrap();
+    assert!(
+        a.layout.border_rect.w < 0.5,
+        "(5 - 9×10)/10 = -8.5 must floor at 0, not 1px, got {}",
+        a.layout.border_rect.w
+    );
 }

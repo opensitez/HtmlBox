@@ -153,13 +153,19 @@ pub fn best_representation(n: f64) -> String {
         return "NaN".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+        return if n > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        };
     }
     let sign = if n < 0.0 { "-" } else { "" };
     // `{:e}` gives the SHORTEST round-tripping digits with an exponent, which
     // is exactly ECMAScript's (s, k, n) triple in a different spelling.
     let sci = format!("{:e}", n.abs());
-    let (mantissa, exp) = sci.split_once('e').expect("`{:e}` always emits an exponent");
+    let (mantissa, exp) = sci
+        .split_once('e')
+        .expect("`{:e}` always emits an exponent");
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let k = digits.len() as i32;
     let exp: i32 = exp.parse().expect("`{:e}` always emits a decimal exponent");
@@ -170,7 +176,11 @@ pub fn best_representation(n: f64) -> String {
     let body = if k <= point && point <= 21 {
         format!("{digits}{}", "0".repeat((point - k) as usize))
     } else if 0 < point && point <= 21 {
-        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
     } else if -6 < point && point <= 0 {
         format!("0.{}{digits}", "0".repeat((-point) as usize))
     } else {
@@ -257,7 +267,12 @@ pub fn option_ids(select: &WebCore) -> Vec<u32> {
 /// The same walk, mutable. The callback also receives whether the option's
 /// `<optgroup>` is disabled, which is half of what makes an option disabled.
 pub fn for_each_option_mut(select: &mut WebCore, f: &mut dyn FnMut(&mut WebCore, bool)) {
-    fn walk(node: &mut WebCore, in_optgroup: bool, group_disabled: bool, f: &mut dyn FnMut(&mut WebCore, bool)) {
+    fn walk(
+        node: &mut WebCore,
+        in_optgroup: bool,
+        group_disabled: bool,
+        f: &mut dyn FnMut(&mut WebCore, bool),
+    ) {
         for child in &mut node.children {
             match child.tag.as_str() {
                 "option" => f(child, group_disabled),
@@ -558,10 +573,18 @@ pub fn allowed_value_step(input: &WebCore) -> Option<f64> {
 /// step". `<input type=range step=20 value=50>` with no `min` has a step base
 /// of 50, so 50 is already conforming and nothing is rounded.
 pub fn step_base(input: &WebCore) -> f64 {
-    if let Some(n) = input.attributes.get("min").and_then(|v| parse_floating_point(v)) {
+    if let Some(n) = input
+        .attributes
+        .get("min")
+        .and_then(|v| parse_floating_point(v))
+    {
         return n;
     }
-    if let Some(n) = input.attributes.get("value").and_then(|v| parse_floating_point(v)) {
+    if let Some(n) = input
+        .attributes
+        .get("value")
+        .and_then(|v| parse_floating_point(v))
+    {
         return n;
     }
     0.0
@@ -602,7 +625,11 @@ pub fn snap_to_step(input: &WebCore, value: f64) -> f64 {
     // all — the spec applies its `≤ maximum` clause only "if the maximum is not
     // less than the minimum".
     let k_min = ((min - base) / step).ceil();
-    let k_max = if max < min { f64::INFINITY } else { ((max - base) / step).floor() };
+    let k_max = if max < min {
+        f64::INFINITY
+    } else {
+        ((max - base) / step).floor()
+    };
     if k_min > k_max {
         // No conforming number exists, and the spec's rounding requirement is
         // conditioned on there being one. Leave the value alone.
@@ -625,7 +652,11 @@ pub fn snap_to_step(input: &WebCore, value: f64) -> f64 {
                 let dc = (candidate - value).abs();
                 // `>=` is the tie-break: an equally distant candidate wins, and
                 // `upper` is visited second, so the larger one survives.
-                if dc < db || (dc == db && candidate > b) { candidate } else { b }
+                if dc < db || (dc == db && candidate > b) {
+                    candidate
+                } else {
+                    b
+                }
             }
         });
     }
@@ -794,7 +825,16 @@ mod tests {
         // HTML §4.10.5.1.13, verbatim: "the markup <input type=range min=0
         // max=100 step=20 value=50> results in a range control whose initial
         // value is 60." 50 is equidistant from 40 and 60; the tie goes UP.
-        let input = el("input", &[("type", "range"), ("min", "0"), ("max", "100"), ("step", "20"), ("value", "50")]);
+        let input = el(
+            "input",
+            &[
+                ("type", "range"),
+                ("min", "0"),
+                ("max", "100"),
+                ("step", "20"),
+                ("value", "50"),
+            ],
+        );
         assert_eq!(sanitize_range_value(&input, "50"), 60.0);
     }
 
@@ -802,7 +842,10 @@ mod tests {
     fn a_step_base_comes_from_value_when_there_is_no_min() {
         // Same step and value as above, but with no `min` the step base is the
         // VALUE — so 50 is already conforming and must not move.
-        let input = el("input", &[("type", "range"), ("step", "20"), ("value", "50")]);
+        let input = el(
+            "input",
+            &[("type", "range"), ("step", "20"), ("value", "50")],
+        );
         assert_eq!(sanitize_range_value(&input, "50"), 50.0);
     }
 
@@ -810,7 +853,15 @@ mod tests {
     fn an_invalid_value_becomes_the_default_not_zero() {
         // The spec's other note on the same example: "the invalid value ++50
         // was ignored". The default is min + (max-min)/2 = 50, NOT the minimum.
-        let input = el("input", &[("type", "range"), ("min", "-100"), ("max", "100"), ("step", "any")]);
+        let input = el(
+            "input",
+            &[
+                ("type", "range"),
+                ("min", "-100"),
+                ("max", "100"),
+                ("step", "any"),
+            ],
+        );
         assert_eq!(sanitize_range_value(&input, "++50"), 0.0);
         let plain = el("input", &[("type", "range"), ("step", "any")]);
         assert_eq!(sanitize_range_value(&plain, "not a number"), 50.0);
@@ -818,7 +869,15 @@ mod tests {
 
     #[test]
     fn out_of_range_values_clamp_to_the_bounds() {
-        let input = el("input", &[("type", "range"), ("min", "10"), ("max", "20"), ("step", "any")]);
+        let input = el(
+            "input",
+            &[
+                ("type", "range"),
+                ("min", "10"),
+                ("max", "20"),
+                ("step", "any"),
+            ],
+        );
         assert_eq!(sanitize_range_value(&input, "-5"), 10.0);
         assert_eq!(sanitize_range_value(&input, "1000"), 20.0);
     }
@@ -827,7 +886,15 @@ mod tests {
     fn snapping_stays_inside_the_bounds() {
         // The nearest step to 99 is 100, which is over the maximum, so the
         // answer is the largest conforming number at or under it.
-        let input = el("input", &[("type", "range"), ("min", "0"), ("max", "95"), ("step", "10")]);
+        let input = el(
+            "input",
+            &[
+                ("type", "range"),
+                ("min", "0"),
+                ("max", "95"),
+                ("step", "10"),
+            ],
+        );
         assert_eq!(sanitize_range_value(&input, "99"), 90.0);
     }
 
@@ -842,7 +909,10 @@ mod tests {
         // "if the rules ... return an error, zero, or a number less than zero,
         // then the allowed value step is the default step". Range's is 1.
         for spelling in ["0", "-3", "banana"] {
-            let input = el("input", &[("type", "range"), ("min", "0"), ("step", spelling)]);
+            let input = el(
+                "input",
+                &[("type", "range"), ("min", "0"), ("step", spelling)],
+            );
             assert_eq!(allowed_value_step(&input), Some(1.0), "step={spelling}");
             assert_eq!(sanitize_range_value(&input, "3.7"), 4.0, "step={spelling}");
         }
@@ -855,7 +925,10 @@ mod tests {
         assert_eq!(display_size(&el("select", &[("size", "7")])), 7);
         // A `size` that does not parse falls back to the SAME default, so a
         // multi-select keeps its four rows.
-        assert_eq!(display_size(&el("select", &[("size", "wide"), ("multiple", "")])), 4);
+        assert_eq!(
+            display_size(&el("select", &[("size", "wide"), ("multiple", "")])),
+            4
+        );
         assert_eq!(display_size(&el("select", &[("size", "-2")])), 1);
     }
 
@@ -869,7 +942,10 @@ mod tests {
         assert!(!is_list_box(&el("select", &[("size", "0")])));
         // A multi-select with an explicit display size of 1 is not a list box:
         // the spec allows a multi-select drop-down there.
-        assert!(!is_list_box(&el("select", &[("multiple", ""), ("size", "1")])));
+        assert!(!is_list_box(&el(
+            "select",
+            &[("multiple", ""), ("size", "1")]
+        )));
     }
 
     #[test]
@@ -885,7 +961,10 @@ mod tests {
         select.children.push(group);
         select.children.push(el("option", &[("value", "c")]));
 
-        let values: Vec<String> = list_of_options(&select).iter().map(|o| option_value(o)).collect();
+        let values: Vec<String> = list_of_options(&select)
+            .iter()
+            .map(|o| option_value(o))
+            .collect();
         assert_eq!(values, ["a", "b", "c"]);
     }
 

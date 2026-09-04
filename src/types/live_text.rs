@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── aria-live helper ──────────────────────────────────────────────────────────
 
@@ -19,7 +19,10 @@ pub(crate) fn collect_live_text(node: &WebCore) -> String {
     let mut in_ws = false;
     for ch in buf.chars() {
         if ch.is_ascii_whitespace() {
-            if !in_ws { out.push(' '); in_ws = true; }
+            if !in_ws {
+                out.push(' ');
+                in_ws = true;
+            }
         } else {
             in_ws = false;
             out.push(ch);
@@ -30,7 +33,9 @@ pub(crate) fn collect_live_text(node: &WebCore) -> String {
 
 fn collect_live_text_inner(node: &WebCore, buf: &mut String) {
     if !node.text.trim().is_empty() {
-        if !buf.is_empty() { buf.push(' '); }
+        if !buf.is_empty() {
+            buf.push(' ');
+        }
         buf.push_str(node.text.trim());
     }
     for child in &node.children {

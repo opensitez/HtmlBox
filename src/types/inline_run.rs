@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Inline Run ───────────────────────────────────────────────────────────────
 
@@ -13,6 +13,6 @@ use crate::html::*;
 #[derive(Clone, Debug)]
 pub struct InlineRun {
     pub text_offset: usize,
-    pub length:      usize,
-    pub style:       ComputedStyle,
+    pub length: usize,
+    pub style: ComputedStyle,
 }

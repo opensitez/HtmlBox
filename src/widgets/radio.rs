@@ -1,7 +1,7 @@
 //! Radio button widget — standalone tiny-skia rendered radio button.
 
+use super::{circle_path, WidgetColors};
 use tiny_skia::*;
-use super::{WidgetColors, circle_path};
 
 pub struct Radio {
     pub selected: bool,
@@ -39,7 +39,11 @@ impl Radio {
             paint.set_color_rgba8(cr, cg, cb, ca);
             pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
 
-            let (cr, cg, cb, ca) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+            let (cr, cg, cb, ca) = if self.focused {
+                self.colors.focus_ring
+            } else {
+                self.colors.border
+            };
             paint.set_color_rgba8(cr, cg, cb, ca);
             let mut stroke = Stroke::default();
             stroke.width = if self.focused { 2.0 } else { 1.0 };
@@ -62,7 +66,9 @@ impl Radio {
     }
 
     pub fn click(&mut self, x: f32, y: f32) -> bool {
-        if self.disabled { return false; }
+        if self.disabled {
+            return false;
+        }
         let cx = self.size / 2.0;
         let cy = self.size / 2.0;
         let dist = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();

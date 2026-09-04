@@ -1,8 +1,8 @@
 //! Document metadata, the doctype and the document collections
 //! (HTML §3.1.1, DOM §4.5).
 
-use crate::types::Document;
 use crate::dom::arena::NodeId;
+use crate::types::Document;
 
 // ─── Document metadata and the document collections (HTML §3.1.1, DOM §4.5) ─
 //
@@ -30,7 +30,9 @@ impl Document {
 
     /// `doctype.name`, which is also its `nodeName`.
     pub fn doctype_name(&self) -> Option<String> {
-        self.arena.try_get(NodeId(self.doctype)).map(|n| n.tag.clone())
+        self.arena
+            .try_get(NodeId(self.doctype))
+            .map(|n| n.tag.clone())
     }
 
     /// `doctype.publicId` — the empty string when absent, never null.
@@ -80,15 +82,23 @@ impl Document {
 
     /// `document.visibilityState` and `document.hidden`. No page-visibility
     /// machinery exists, and a document nobody has hidden is visible.
-    pub fn visibility_state(&self) -> &'static str { "visible" }
-    pub fn document_hidden(&self) -> bool { false }
+    pub fn visibility_state(&self) -> &'static str {
+        "visible"
+    }
+    pub fn document_hidden(&self) -> bool {
+        false
+    }
 
     /// `document.referrer` — empty with no navigation history to draw on.
-    pub fn referrer(&self) -> &'static str { "" }
+    pub fn referrer(&self) -> &'static str {
+        ""
+    }
 
     /// `document.URL` / `.documentURI` — the base URL the document was parsed
     /// against.
-    pub fn document_uri(&self) -> &str { &self.base_url }
+    pub fn document_uri(&self) -> &str {
+        &self.base_url
+    }
 
     /// `document.links` — `<a>` and `<area>` that HAVE an `href`.
     pub fn links(&self) -> Vec<u32> {
@@ -100,9 +110,7 @@ impl Document {
     /// `document.anchors` — `<a>` with a `name`, whether or not it has an
     /// `href`.
     pub fn anchors(&self) -> Vec<u32> {
-        self.collect_elements(|d, id| {
-            d.tag_name(id) == Some("a") && d.has_attribute(id, "name")
-        })
+        self.collect_elements(|d, id| d.tag_name(id) == Some("a") && d.has_attribute(id, "name"))
     }
 
     /// `document.images` — every `<img>`, with or without a `src`.
@@ -127,11 +135,15 @@ impl Document {
 
     /// `document.plugins` — an alias for `embeds` (measured: same length, and
     /// the spec says they return the same collection).
-    pub fn plugins(&self) -> Vec<u32> { self.embeds() }
+    pub fn plugins(&self) -> Vec<u32> {
+        self.embeds()
+    }
 
     /// `document.applets`, which HTML defines as always empty — `<applet>` was
     /// removed from the language and the collection kept for compatibility.
-    pub fn applets(&self) -> Vec<u32> { Vec::new() }
+    pub fn applets(&self) -> Vec<u32> {
+        Vec::new()
+    }
 
     /// `document.getElementsByName(name)`.
     ///
@@ -149,11 +161,12 @@ impl Document {
     pub fn get_elements_by_tag_name_ns(&self, namespace: &str, local: &str) -> Vec<u32> {
         const XHTML: &str = "http://www.w3.org/1999/xhtml";
         self.collect_elements(|d, id| {
-            let Some(node) = d.arena.try_get(NodeId(id)) else { return false };
+            let Some(node) = d.arena.try_get(NodeId(id)) else {
+                return false;
+            };
             let ns = node.namespace.as_deref().unwrap_or(XHTML);
             let ns_ok = namespace == "*" || namespace == ns;
-            let name_ok = local == "*"
-                || d.local_name(id).eq_ignore_ascii_case(local);
+            let name_ok = local == "*" || d.local_name(id).eq_ignore_ascii_case(local);
             ns_ok && name_ok
         })
     }

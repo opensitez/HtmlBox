@@ -74,7 +74,9 @@ pub fn pattern_matches(pattern: &str, value: &str) -> Option<bool> {
     let v: Vec<char> = value.chars().collect();
     let mut ok = false;
     let matched = match_alt(&p, 0, p.len(), &v, 0, &mut |rest| {
-        if rest == v.len() { ok = true; }
+        if rest == v.len() {
+            ok = true;
+        }
         rest == v.len()
     })?;
     Some(matched && ok)
@@ -91,7 +93,9 @@ fn match_alt(
     k: &mut dyn FnMut(usize) -> bool,
 ) -> Option<bool> {
     for (from, to) in split_alternatives(p, start, end)? {
-        if match_seq(p, from, to, v, at, k)? { return Some(true); }
+        if match_seq(p, from, to, v, at, k)? {
+            return Some(true);
+        }
     }
     Some(false)
 }
@@ -110,12 +114,17 @@ fn split_alternatives(p: &[char], start: usize, end: usize) -> Option<Vec<(usize
             ']' if in_class => in_class = false,
             '(' if !in_class => depth += 1,
             ')' if !in_class => depth = depth.checked_sub(1)?,
-            '|' if !in_class && depth == 0 => { parts.push((from, i)); from = i + 1; }
+            '|' if !in_class && depth == 0 => {
+                parts.push((from, i));
+                from = i + 1;
+            }
             _ => {}
         }
         i += 1;
     }
-    if in_class || depth != 0 { return None; }
+    if in_class || depth != 0 {
+        return None;
+    }
     parts.push((from, end));
     Some(parts)
 }
@@ -129,7 +138,9 @@ fn match_seq(
     at: usize,
     k: &mut dyn FnMut(usize) -> bool,
 ) -> Option<bool> {
-    if start >= end { return Some(k(at)); }
+    if start >= end {
+        return Some(k(at));
+    }
     let (atom_end, quant_end, min, max) = read_term(p, start, end)?;
     let rest = quant_end;
 
@@ -140,21 +151,31 @@ fn match_seq(
     while max.map_or(true, |m| count < m) {
         let cursor = *ends.last().unwrap();
         let mut next = None;
-        match_atom(p, start, atom_end, v, cursor, &mut |e| { next = Some(e); true })?;
+        match_atom(p, start, atom_end, v, cursor, &mut |e| {
+            next = Some(e);
+            true
+        })?;
         match next {
-            Some(e) if e != cursor => { ends.push(e); count += 1; }
+            Some(e) if e != cursor => {
+                ends.push(e);
+                count += 1;
+            }
             // A zero-width atom would loop forever; one pass is all it can add.
             _ => break,
         }
     }
     while ends.len() > min {
         let e = *ends.last().unwrap();
-        if match_seq(p, rest, end, v, e, k)? { return Some(true); }
+        if match_seq(p, rest, end, v, e, k)? {
+            return Some(true);
+        }
         ends.pop();
     }
     if ends.len() == min {
         let e = *ends.last().unwrap();
-        if match_seq(p, rest, end, v, e, k)? { return Some(true); }
+        if match_seq(p, rest, end, v, e, k)? {
+            return Some(true);
+        }
     }
     Some(false)
 }
@@ -166,10 +187,21 @@ fn read_term(p: &[char], start: usize, end: usize) -> Option<(usize, usize, usiz
         '\\' if start + 1 < end => start + 2,
         '[' => {
             let mut i = start + 1;
-            if i < end && p[i] == '^' { i += 1; }
-            if i < end && p[i] == ']' { i += 1; }
-            while i < end && p[i] != ']' { if p[i] == '\\' { i += 1; } i += 1; }
-            if i >= end { return None; }
+            if i < end && p[i] == '^' {
+                i += 1;
+            }
+            if i < end && p[i] == ']' {
+                i += 1;
+            }
+            while i < end && p[i] != ']' {
+                if p[i] == '\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i >= end {
+                return None;
+            }
             i + 1
         }
         '(' => {
@@ -187,7 +219,9 @@ fn read_term(p: &[char], start: usize, end: usize) -> Option<(usize, usize, usiz
                 }
                 i += 1;
             }
-            if depth != 0 { return None; }
+            if depth != 0 {
+                return None;
+            }
             i
         }
         // `^` and `$` are meaningless in an anchored pattern, and `*`/`+`/`?`
@@ -231,24 +265,46 @@ fn match_atom(
             // meaningful here, and a lookaround is beyond this engine.
             let mut inner = start + 1;
             if p.get(inner) == Some(&'?') {
-                if p.get(inner + 1) == Some(&':') { inner += 2; } else { return None; }
+                if p.get(inner + 1) == Some(&':') {
+                    inner += 2;
+                } else {
+                    return None;
+                }
             }
             match_alt(p, inner, end - 1, v, at, k)
         }
         '[' => {
-            if at >= v.len() { return Some(false); }
-            if class_matches(p, start, end, v[at])? { Some(k(at + 1)) } else { Some(false) }
+            if at >= v.len() {
+                return Some(false);
+            }
+            if class_matches(p, start, end, v[at])? {
+                Some(k(at + 1))
+            } else {
+                Some(false)
+            }
         }
         '\\' => {
-            if at >= v.len() { return Some(false); }
-            if escape_matches(p[start + 1], v[at]) { Some(k(at + 1)) } else { Some(false) }
+            if at >= v.len() {
+                return Some(false);
+            }
+            if escape_matches(p[start + 1], v[at]) {
+                Some(k(at + 1))
+            } else {
+                Some(false)
+            }
         }
         '.' => {
-            if at >= v.len() || v[at] == '\n' { return Some(false); }
+            if at >= v.len() || v[at] == '\n' {
+                return Some(false);
+            }
             Some(k(at + 1))
         }
         c => {
-            if at < v.len() && v[at] == c { Some(k(at + 1)) } else { Some(false) }
+            if at < v.len() && v[at] == c {
+                Some(k(at + 1))
+            } else {
+                Some(false)
+            }
         }
     }
 }
@@ -271,21 +327,29 @@ fn escape_matches(class: char, c: char) -> bool {
 fn class_matches(p: &[char], start: usize, end: usize, c: char) -> Option<bool> {
     let mut i = start + 1;
     let negated = p.get(i) == Some(&'^');
-    if negated { i += 1; }
+    if negated {
+        i += 1;
+    }
     let close = end - 1;
     let mut hit = false;
     while i < close {
         if p[i] == '\\' && i + 1 < close {
-            if escape_matches(p[i + 1], c) { hit = true; }
+            if escape_matches(p[i + 1], c) {
+                hit = true;
+            }
             i += 2;
             continue;
         }
         if i + 2 < close && p[i + 1] == '-' && p[i + 2] != ']' {
-            if p[i] <= c && c <= p[i + 2] { hit = true; }
+            if p[i] <= c && c <= p[i + 2] {
+                hit = true;
+            }
             i += 3;
             continue;
         }
-        if p[i] == c { hit = true; }
+        if p[i] == c {
+            hit = true;
+        }
         i += 1;
     }
     Some(hit != negated)
@@ -295,12 +359,18 @@ fn class_matches(p: &[char], start: usize, end: usize, c: char) -> Option<bool> 
 /// regular expression defines it. Deliberately laxer than RFC 5322, which is
 /// what the spec says it is: "a willful violation".
 pub fn is_valid_email(value: &str) -> bool {
-    let Some((local, domain)) = value.split_once('@') else { return false };
-    if local.is_empty() || domain.is_empty() { return false }
-    let local_ok = local.chars().all(|c| {
-        c.is_ascii_alphanumeric() || "!#$%&'*+/=?^_`{|}~.-".contains(c)
-    });
-    if !local_ok { return false }
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || domain.is_empty() {
+        return false;
+    }
+    let local_ok = local
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+/=?^_`{|}~.-".contains(c));
+    if !local_ok {
+        return false;
+    }
     // A label is alphanumeric with interior hyphens; at least one label.
     domain.split('.').all(|label| {
         !label.is_empty()
@@ -319,7 +389,9 @@ pub fn is_valid_url(value: &str) -> bool {
         Some((scheme, _)) => {
             !scheme.is_empty()
                 && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
         }
         None => false,
     }

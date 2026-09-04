@@ -553,8 +553,16 @@ impl Image {
     /// Negative width or height is normalised, matching how the spec reads a
     /// rectangle with either extent negative.
     pub fn crop(&self, sx: f32, sy: f32, sw: f32, sh: f32) -> Option<Image> {
-        let (x0, x1) = if sw < 0.0 { (sx + sw, sx) } else { (sx, sx + sw) };
-        let (y0, y1) = if sh < 0.0 { (sy + sh, sy) } else { (sy, sy + sh) };
+        let (x0, x1) = if sw < 0.0 {
+            (sx + sw, sx)
+        } else {
+            (sx, sx + sw)
+        };
+        let (y0, y1) = if sh < 0.0 {
+            (sy + sh, sy)
+        } else {
+            (sy, sy + sh)
+        };
 
         let x0 = x0.floor().max(0.0) as u32;
         let y0 = y0.floor().max(0.0) as u32;
@@ -838,9 +846,7 @@ impl SmoothingQuality {
     pub fn to_filter_quality(self) -> tiny_skia::FilterQuality {
         match self {
             SmoothingQuality::Low => tiny_skia::FilterQuality::Nearest,
-            SmoothingQuality::Medium | SmoothingQuality::High => {
-                tiny_skia::FilterQuality::Bilinear
-            }
+            SmoothingQuality::Medium | SmoothingQuality::High => tiny_skia::FilterQuality::Bilinear,
         }
     }
 }
@@ -1495,12 +1501,7 @@ fn transform_path_op(op: PathOp, m: Matrix) -> PathOp {
                 y: y0.min(y1),
                 w: (x1 - x0).abs(),
                 h: (y1 - y0).abs(),
-                radii: [
-                    radii[0] * s,
-                    radii[1] * s,
-                    radii[2] * s,
-                    radii[3] * s,
-                ],
+                radii: [radii[0] * s, radii[1] * s, radii[2] * s, radii[3] * s],
             }
         }
         // A circle under a non-uniform or rotated matrix is an ellipse, so it

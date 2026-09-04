@@ -14,34 +14,31 @@
 //! Inside the browser engine, these same widgets are used to render HTML form
 //! elements (`<input>`, `<select>`, `<textarea>`, etc.).
 
-pub mod checkbox;
-pub mod radio;
-pub mod textfield;
-pub mod select;
 pub mod button;
-pub mod slider;
-pub mod progress;
-pub mod stepper;
+pub mod checkbox;
 pub mod color_swatch;
-pub mod file_button;
 pub mod date_field;
+pub mod file_button;
+pub mod progress;
+pub mod radio;
+pub mod select;
+pub mod slider;
+pub mod stepper;
+pub mod textfield;
 
-pub use checkbox::Checkbox;
-pub use radio::Radio;
-pub use textfield::TextInput;
-pub use select::Select;
 pub use button::Button;
-pub use slider::Slider;
-pub use progress::{Band, Gauge, meter_band};
-pub use stepper::Stepper;
-pub use color_swatch::{
-    ColorSwatch, PALETTE, PALETTE_CELL, PALETTE_COLUMNS, to_simple_colour,
-};
-pub use file_button::{CHOOSE, FileButton, NOTHING_CHOSEN};
+pub use checkbox::Checkbox;
+pub use color_swatch::{to_simple_colour, ColorSwatch, PALETTE, PALETTE_CELL, PALETTE_COLUMNS};
 pub use date_field::{
-    Calendar, DateField, Kind as DateKind, days_in_month, first_weekday, parse_date,
-    to_date_value,
+    days_in_month, first_weekday, parse_date, to_date_value, Calendar, DateField, Kind as DateKind,
 };
+pub use file_button::{FileButton, CHOOSE, NOTHING_CHOSEN};
+pub use progress::{meter_band, Band, Gauge};
+pub use radio::Radio;
+pub use select::Select;
+pub use slider::Slider;
+pub use stepper::Stepper;
+pub use textfield::TextInput;
 
 use tiny_skia::PathBuilder;
 

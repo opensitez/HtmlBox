@@ -36,24 +36,68 @@ pub struct Constraints {
 
 impl Constraints {
     #[inline]
-    pub fn new(available_width: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32) -> Self {
-        Self { available_width, available_height: None, x, y, parent_font_px, root_font_px,
-               forced_width: None, forced_height: None }
+    pub fn new(
+        available_width: f32,
+        x: f32,
+        y: f32,
+        parent_font_px: f32,
+        root_font_px: f32,
+    ) -> Self {
+        Self {
+            available_width,
+            available_height: None,
+            x,
+            y,
+            parent_font_px,
+            root_font_px,
+            forced_width: None,
+            forced_height: None,
+        }
     }
 
     /// Create constraints with an explicit available height.
     #[inline]
-    pub fn with_height(available_width: f32, available_height: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32) -> Self {
-        Self { available_width, available_height: Some(available_height), x, y, parent_font_px, root_font_px,
-               forced_width: None, forced_height: None }
+    pub fn with_height(
+        available_width: f32,
+        available_height: f32,
+        x: f32,
+        y: f32,
+        parent_font_px: f32,
+        root_font_px: f32,
+    ) -> Self {
+        Self {
+            available_width,
+            available_height: Some(available_height),
+            x,
+            y,
+            parent_font_px,
+            root_font_px,
+            forced_width: None,
+            forced_height: None,
+        }
     }
 
     /// Create constraints with forced content dimensions (for flex items).
     #[inline]
-    pub fn with_forced(available_width: f32, x: f32, y: f32, parent_font_px: f32, root_font_px: f32,
-                       forced_width: Option<f32>, forced_height: Option<f32>) -> Self {
-        Self { available_width, available_height: None, x, y, parent_font_px, root_font_px,
-               forced_width, forced_height }
+    pub fn with_forced(
+        available_width: f32,
+        x: f32,
+        y: f32,
+        parent_font_px: f32,
+        root_font_px: f32,
+        forced_width: Option<f32>,
+        forced_height: Option<f32>,
+    ) -> Self {
+        Self {
+            available_width,
+            available_height: None,
+            x,
+            y,
+            parent_font_px,
+            root_font_px,
+            forced_width,
+            forced_height,
+        }
     }
 }
 
@@ -82,5 +126,10 @@ pub trait FormattingContext {
 
     /// Perform full layout given constraints from parent.
     /// Returns the element's margin-box height.
-    fn layout(&mut self, engine: &LayoutEngine, constraints: &Constraints, rbox: &ResolvedBox) -> f32;
+    fn layout(
+        &mut self,
+        engine: &LayoutEngine,
+        constraints: &Constraints,
+        rbox: &ResolvedBox,
+    ) -> f32;
 }

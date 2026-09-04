@@ -3,14 +3,13 @@
 //! Uses EXACT positions from the layout engine. Never approximates.
 //! Faithfully ports the render_box logic from mod.rs into PaintCmd recording.
 
-use crate::types::{
-    BackgroundClip, BackgroundRepeat, BackgroundSize, Color, ComputedStyle, Display,
-    FontStyle, GradientType, ListStylePosition, ListStyleType,
-    MixBlendMode, Overflow, Position, TextDecorationStyle,
-    TextTransform,
-};
-use crate::types::{WebCore, Rect};
 use super::display_list::{DisplayList, ImageRef, PaintCmd, TextDecoration};
+use crate::types::{
+    BackgroundClip, BackgroundSize, Color, ComputedStyle, ContentVisibility, Display, FontStyle,
+    GradientType, ListStylePosition, ListStyleType, MixBlendMode, Overflow, Position,
+    TextDecorationStyle, TextOverflow, TextTransform,
+};
+use crate::types::{Rect, WebCore};
 
 /// Build a display list from a laid-out box tree.
 pub fn build_display_list(root: &WebCore, viewport_w: f32, viewport_h: f32) -> DisplayList {
@@ -27,6 +26,13 @@ pub fn build_display_list(root: &WebCore, viewport_w: f32, viewport_h: f32) -> D
         active_id: 0,
         visited_hrefs: &visited,
         clip: Rect::new(0.0, 0.0, viewport_w, doc_h),
+        transform_ctx: crate::types::TransformCtx {
+            // The root box's font size IS the root font size — `rem`.
+            font_px: root.style.font_size_px(16.0, 16.0),
+            root_font_px: root.style.font_size_px(16.0, 16.0),
+            viewport_w,
+            viewport_h,
+        },
     };
     let mut list = DisplayList::new();
     build_for_box(root, &mut list, &ctx);
@@ -57,24 +63,40 @@ pub fn build_display_list_full(
         active_id,
         visited_hrefs,
         clip: Rect::new(0.0, 0.0, viewport_w, doc_h),
+        transform_ctx: crate::types::TransformCtx {
+            // The root box's font size IS the root font size — `rem`.
+            font_px: root.style.font_size_px(16.0, 16.0),
+            root_font_px: root.style.font_size_px(16.0, 16.0),
+            viewport_w,
+            viewport_h,
+        },
     };
     let mut list = DisplayList::new();
     build_for_box(root, &mut list, &ctx);
 
     // Fixed elements: rendered at viewport position (already scroll=0)
     let fixed_ctx = BuildContext {
-        scroll_x: 0.0, scroll_y: 0.0,
-        sticky_scroll_x: 0.0, sticky_scroll_y: 0.0,
-        hovered_id, active_id, visited_hrefs,
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        sticky_scroll_x: 0.0,
+        sticky_scroll_y: 0.0,
+        hovered_id,
+        active_id,
+        visited_hrefs,
         clip: Rect::new(0.0, 0.0, viewport_w, viewport_h),
+        transform_ctx: ctx.transform_ctx,
     };
     let mut fixed_ids = Vec::new();
     collect_fixed_elements(root, &mut fixed_ids);
     for fid in fixed_ids {
         fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
-            if node.node_id == id { return Some(node); }
+            if node.node_id == id {
+                return Some(node);
+            }
             for child in &node.children {
-                if let Some(found) = find_node(child, id) { return Some(found); }
+                if let Some(found) = find_node(child, id) {
+                    return Some(found);
+                }
             }
             None
         }
@@ -105,6 +127,10 @@ struct BuildContext<'a> {
     active_id: u32,
     visited_hrefs: &'a std::collections::HashSet<String>,
     clip: Rect,
+    /// What a `transform` needs to resolve `vw`/`vh` and `rem`. Carried on the
+    /// context because the element's own box is not enough: a transform length
+    /// can name the viewport.
+    transform_ctx: crate::types::TransformCtx,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -139,8 +165,13 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     // Only cull elements that clip their children (overflow != visible).
     // Elements with overflow:visible may have children that extend beyond
     // the element's border_rect (e.g. height:100vh wrapper with overflowing content).
-    let clips_children = matches!(node.style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
-        || matches!(node.style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
+    let clips_children = matches!(
+        node.style.overflow_x,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    ) || matches!(
+        node.style.overflow_y,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    );
     if clips_children
         && matches!(node.style.position, Position::Static | Position::Relative)
         && !node.style.is_inline_level()
@@ -173,33 +204,38 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     // `border-radius: 16px 16px 0 0` — the top-rounded card — came out rounded
     // all round, and the same corrupted array feeds the border stroke and the
     // overflow clip.
-    let r_tl = node.style.border_top_left_radius.resolve(font_px, pr.w, 16.0);
-    let r_tr = node.style.border_top_right_radius.resolve(font_px, pr.w, 16.0);
-    let r_br = node.style.border_bottom_right_radius.resolve(font_px, pr.w, 16.0);
-    let r_bl = node.style.border_bottom_left_radius.resolve(font_px, pr.w, 16.0);
+    let r_tl = node
+        .style
+        .border_top_left_radius
+        .resolve(font_px, pr.w, 16.0);
+    let r_tr = node
+        .style
+        .border_top_right_radius
+        .resolve(font_px, pr.w, 16.0);
+    let r_br = node
+        .style
+        .border_bottom_right_radius
+        .resolve(font_px, pr.w, 16.0);
+    let r_bl = node
+        .style
+        .border_bottom_left_radius
+        .resolve(font_px, pr.w, 16.0);
     let radii_arr = [r_tl, r_tr, r_br, r_bl];
 
     // ── Hover / active / visited check ───────────────────────────────────────
     let is_hovered = ctx.hovered_id != 0
         && node.style.hover_style.is_some()
         && subtree_has(node, ctx.hovered_id);
-    let is_active = ctx.active_id != 0
-        && node.style.active_style.is_some()
-        && subtree_has(node, ctx.active_id);
+    let is_active =
+        ctx.active_id != 0 && node.style.active_style.is_some() && subtree_has(node, ctx.active_id);
     let is_visited = node.style.visited_style.is_some()
         && !node.style.href.is_empty()
         && ctx.visited_hrefs.contains(&node.style.href);
 
     let eff_style: &ComputedStyle = if is_active {
-        node.style
-            .active_style
-            .as_deref()
-            .unwrap_or(&node.style)
+        node.style.active_style.as_deref().unwrap_or(&node.style)
     } else if is_visited {
-        node.style
-            .visited_style
-            .as_deref()
-            .unwrap_or(&node.style)
+        node.style.visited_style.as_deref().unwrap_or(&node.style)
     } else if is_hovered {
         node.style.hover_style.as_deref().unwrap_or(&node.style)
     } else {
@@ -278,41 +314,71 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     // shifting when the user scrolls.
     let has_transform = !eff_style.css_transform.ops.is_empty();
     if has_transform {
-        let tr_rect = Rect::new(px, py, pw, ph);
+        let source_rect = match eff_style.transform_box.as_str() {
+            "content-box" => node.layout.content_rect,
+            "padding-box" => node.layout.padding_rect,
+            _ => node.layout.border_rect,
+        };
+        let tr_rect = Rect::new(
+            source_rect.x - sx,
+            source_rect.y - sy,
+            source_rect.w,
+            source_rect.h,
+        );
         list.push(PaintCmd::PushTransform {
-            transform: compute_transform_matrix(eff_style, &tr_rect),
+            transform: compute_transform_matrix(
+                eff_style,
+                &tr_rect,
+                &crate::types::TransformCtx {
+                    font_px: eff_style.font_size_px(
+                        ctx.transform_ctx.root_font_px,
+                        ctx.transform_ctx.root_font_px,
+                    ),
+                    ..ctx.transform_ctx
+                },
+            ),
         });
     }
 
     // Form elements (input, select, button, textarea, etc.) are rendered entirely
     // by the FormElement paint command. Skip CSS background/border/text to avoid
     // double rendering.
-    let _is_form_element = matches!(node.tag.as_str(),
-        "input" | "textarea" | "select" | "button" | "progress" | "meter");
+    let _is_form_element = matches!(
+        node.tag.as_str(),
+        "input" | "textarea" | "select" | "button" | "progress" | "meter"
+    );
 
     // ── CSS filters ───────────────────────────────────────────────────────────
     let has_filter = !eff_style.css_filter.ops.is_empty();
     if has_filter {
         use crate::types::FilterOp;
-        let filters: Vec<(u8, f32, Color)> = eff_style.css_filter.ops.iter().map(|op| {
-            match op {
-                FilterOp::Blur(v)       => (0, *v, Color::TRANSPARENT),
-                FilterOp::Brightness(v) => (1, *v, Color::TRANSPARENT),
-                FilterOp::Contrast(v)   => (2, *v, Color::TRANSPARENT),
-                FilterOp::Grayscale(v)  => (3, *v, Color::TRANSPARENT),
-                FilterOp::HueRotate(v)  => (4, *v, Color::TRANSPARENT),
-                FilterOp::Invert(v)     => (5, *v, Color::TRANSPARENT),
-                FilterOp::Opacity(v)    => (6, *v, Color::TRANSPARENT),
-                FilterOp::Saturate(v)   => (7, *v, Color::TRANSPARENT),
-                FilterOp::Sepia(v)      => (8, *v, Color::TRANSPARENT),
-                FilterOp::DropShadow { dx: _, dy: _, blur, color } => (9, *blur, *color),
-            }
-        }).collect();
+        let filters: Vec<(u8, f32, f32, f32, Color)> = eff_style
+            .css_filter
+            .ops
+            .iter()
+            .map(|op| match op {
+                FilterOp::Blur(v) => (0, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Brightness(v) => (1, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Contrast(v) => (2, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Grayscale(v) => (3, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::HueRotate(v) => (4, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Invert(v) => (5, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Opacity(v) => (6, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Saturate(v) => (7, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::Sepia(v) => (8, *v, 0.0, 0.0, Color::TRANSPARENT),
+                FilterOp::DropShadow {
+                    dx,
+                    dy,
+                    blur,
+                    color,
+                } => (9, *blur, *dx, *dy, *color),
+            })
+            .collect();
         list.push(PaintCmd::PushFilter { filters });
     }
 
     // ── (a) Outer box-shadow ─────────────────────────────────────────────────
-    if let Some(ref bs) = eff_style.box_shadow {
+    for bs in &eff_style.box_shadow {
         if !bs.inset {
             list.push(PaintCmd::BoxShadow {
                 rect: Rect::new(px, py, pw, ph),
@@ -349,23 +415,16 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
             // that always lies inside the intended one, so an unsupported
             // `text` clip paints no more than it does without the property.
             BackgroundClip::PaddingBox | BackgroundClip::Text => Rect::new(px, py, pw, ph),
-            BackgroundClip::BorderBox => {
-                Rect::new(br.x - eff_sx, br.y - eff_sy, br.w, br.h)
-            }
+            BackgroundClip::BorderBox => Rect::new(br.x - eff_sx, br.y - eff_sy, br.w, br.h),
         }
     };
     let bg_clip_rect = background_box(eff_style.background_clip);
     let bg_origin_rect = background_box(eff_style.background_origin);
     // `background-repeat` decides, per axis, whether the image (or gradient)
     // tiles out of the positioning area to cover the painting area.
-    let bg_repeat_x = matches!(
-        node.style.background_repeat,
-        BackgroundRepeat::Repeat | BackgroundRepeat::RepeatX
-    );
-    let bg_repeat_y = matches!(
-        node.style.background_repeat,
-        BackgroundRepeat::Repeat | BackgroundRepeat::RepeatY
-    );
+    let (bg_repeat_x_mode, bg_repeat_y_mode) = node.style.background_repeat.axis_modes();
+    let bg_repeat_x = bg_repeat_x_mode != 0;
+    let bg_repeat_y = bg_repeat_y_mode != 0;
 
     // ── (b) Background color (opacity applied to alpha) ──────────────────────
     {
@@ -417,8 +476,7 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── (c) Gradient background ──────────────────────────────────────────────
-    if node.style.gradient_type != GradientType::None
-        && node.style.rare().gradient_stops.len() >= 2
+    if node.style.gradient_type != GradientType::None && node.style.rare().gradient_stops.len() >= 2
     {
         let opacity = eff_style.opacity;
         let grad_type_u8 = match node.style.gradient_type {
@@ -428,7 +486,8 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         };
         let stops: Vec<(Color, f32)> = node
             .style
-            .rare().gradient_stops
+            .rare()
+            .gradient_stops
             .iter()
             .map(|s| {
                 let a = ((s.color.a as f32) * opacity) as u8;
@@ -506,25 +565,21 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
             list.push(PaintCmd::BackgroundImage {
                 container: bg_origin_rect,
                 clip: bg_clip_rect,
-                data: ImageRef::Owned(
-                    bg_data.clone(),
-                    node.bg_image_width,
-                    node.bg_image_height,
-                ),
+                data: ImageRef::Owned(bg_data.clone(), node.bg_image_width, node.bg_image_height),
                 size_mode,
                 draw_w,
                 draw_h,
                 pos_x,
                 pos_y,
-                repeat_x: bg_repeat_x,
-                repeat_y: bg_repeat_y,
+                repeat_x_mode: bg_repeat_x_mode,
+                repeat_y_mode: bg_repeat_y_mode,
                 radii: radii_arr,
             });
         }
     }
 
     // ── (e) Inset box-shadow ─────────────────────────────────────────────────
-    if let Some(ref bs) = eff_style.box_shadow {
+    for bs in &eff_style.box_shadow {
         if bs.inset {
             list.push(PaintCmd::BoxShadow {
                 rect: Rect::new(px, py, pw, ph),
@@ -572,9 +627,7 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
     }
 
     // ── (g) Outline ──────────────────────────────────────────────────────────
-    if eff_style.outline_width > 0.0
-        && eff_style.outline_style != crate::types::BorderStyle::None
-    {
+    if eff_style.outline_width > 0.0 && eff_style.outline_style != crate::types::BorderStyle::None {
         let ofs = eff_style.outline_offset;
         let ow = eff_style.outline_width;
         let rx = br.x - eff_sx - ofs - ow;
@@ -598,19 +651,27 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         node.style.overflow_y,
         Overflow::Hidden | Overflow::Scroll | Overflow::Auto
     );
+    let overflow_clip_margin =
+        resolve_overflow_clip_margin(eff_style, font_px, node.layout.padding_rect.w);
+    let overflow_clip_rect = Rect::new(
+        px - overflow_clip_margin,
+        py - overflow_clip_margin,
+        pw + 2.0 * overflow_clip_margin,
+        ph + 2.0 * overflow_clip_margin,
+    );
     if overflow_clips {
         list.push(PaintCmd::PushClip {
-            rect: Rect::new(px, py, pw, ph),
+            rect: overflow_clip_rect,
             radius: radii_arr,
         });
     }
 
     // Tighter clip rect for children when overflow is clipping
     let child_clip = if overflow_clips {
-        let cx1 = px.max(ctx.clip.x);
-        let cy1 = py.max(ctx.clip.y);
-        let cx2 = (px + pw).min(ctx.clip.right());
-        let cy2 = (py + ph).min(ctx.clip.bottom());
+        let cx1 = overflow_clip_rect.x.max(ctx.clip.x);
+        let cy1 = overflow_clip_rect.y.max(ctx.clip.y);
+        let cx2 = overflow_clip_rect.right().min(ctx.clip.right());
+        let cy2 = overflow_clip_rect.bottom().min(ctx.clip.bottom());
         Rect::new(cx1, cy1, (cx2 - cx1).max(0.0), (cy2 - cy1).max(0.0))
     } else {
         ctx.clip
@@ -629,210 +690,217 @@ fn build_for_box(node: &WebCore, list: &mut DisplayList, ctx: &BuildContext) {
         active_id: ctx.active_id,
         visited_hrefs: ctx.visited_hrefs,
         clip: child_clip,
+        transform_ctx: ctx.transform_ctx,
     };
 
-    // ── (i) Negative z-index children (paint behind text) ────────────────────
-    {
-        let eff_children = node.effective_children();
-        for child in eff_children {
-            if child.style.is_positioned()
-                && child.style.z_index < 0
-                && !matches!(child.style.display, Display::None)
-            {
-                build_for_box(child, list, &child_ctx);
+    let contents_visible = !matches!(eff_style.content_visibility, ContentVisibility::Hidden);
+    if contents_visible {
+        // ── (i) Negative z-index children (paint behind text) ────────────────
+        {
+            let eff_children = node.effective_children();
+            for child in eff_children {
+                if child.style.is_positioned()
+                    && child.style.z_index < 0
+                    && !matches!(child.style.display, Display::None)
+                {
+                    build_for_box(child, list, &child_ctx);
+                }
             }
         }
-    }
 
-    // ── (j) ::before pseudo-element (inline text content) ────────────────────
-    if !node.style.before_content.is_empty() && !node.layout.line_cache.is_empty() {
-        let first = &node.layout.line_cache[0];
-        let tx = first.x - eff_sx;
-        let ty = first.y - eff_sy;
-        let ps = node
-            .style
-            .before_style
-            .as_deref()
-            .unwrap_or(&node.style);
-        let ps_font_px = {
-            let f = ps.font_size.resolve(font_px, 0.0, 16.0);
-            if f > 0.0 {
-                f
-            } else {
-                font_px
-            }
-        };
-        let line_h = ps
-            .line_height
-            .resolve(ps_font_px, 0.0, 16.0)
-            .max(ps_font_px * 1.2);
-        emit_text(
-            list,
-            tx,
-            ty,
-            &node.style.before_content,
-            ps,
-            ps_font_px,
-            line_h,
-        );
-    }
-
-    // ── (k) Inline text content (line_cache) ─────────────────────────────────
-    if !node.layout.line_cache.is_empty() {
-        build_inline_text(
-            node, eff_style, list, child_sx, child_sy, is_hovered, is_active,
-        );
-    }
-
-    // ── (l) ::after pseudo-element ───────────────────────────────────────────
-    if !node.style.after_content.is_empty() && !node.layout.line_cache.is_empty() {
-        let last = &node.layout.line_cache[node.layout.line_cache.len() - 1];
-        let tx = last.x - eff_sx + last.width;
-        let ty = last.y - eff_sy;
-        let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
-        let ps_font_px = {
-            let f = ps.font_size.resolve(font_px, 0.0, 16.0);
-            if f > 0.0 {
-                f
-            } else {
-                font_px
-            }
-        };
-        let line_h = ps
-            .line_height
-            .resolve(ps_font_px, 0.0, 16.0)
-            .max(ps_font_px * 1.2);
-        emit_text(
-            list,
-            tx,
-            ty,
-            &node.style.after_content,
-            ps,
-            ps_font_px,
-            line_h,
-        );
-    }
-
-    // ── (m) List markers ─────────────────────────────────────────────────────
-    if node.style.display == Display::ListItem && !node.layout.line_cache.is_empty() {
-        build_list_marker(node, list, eff_sx, eff_sy);
-    }
-
-    // ── (n) HR ───────────────────────────────────────────────────────────────
-    if node.tag == "hr" {
-        let cr = node.layout.border_rect;
-        let y_hr = cr.y + cr.h / 2.0 - eff_sy;
-        list.push(PaintCmd::HorizontalRule {
-            x1: cr.x - eff_sx,
-            y1: y_hr,
-            x2: cr.right() - eff_sx,
-        });
-    }
-
-    // ── (o) Form elements (content only — box decoration handled by CSS steps above)
-    build_form_element(node, list, eff_sx, eff_sy);
-
-    // ── (p) Image / SVG / Canvas ─────────────────────────────────────────────
-    //
-    // `<canvas>` joins `<img>` here because by this point it IS one: a canvas
-    // keeps its bitmap in `image_data` exactly as a decoded image does, and
-    // both are premultiplied RGBA, which is what `PixmapRef::from_bytes` at
-    // replay reads. Everything the 2D context drew is already in those bytes,
-    // so painting a canvas is painting its bitmap and nothing else — which is
-    // also what the spec says a canvas is.
-    if node.is_image_element() || node.tag == "svg" || node.tag == "canvas" {
-        if let Some(ref data) = node.image_data {
-            if node.image_width > 0 && node.image_height > 0 {
-                let cr = node.layout.content_rect;
-                let (dst, clip) = object_fit_rect(
-                    &node.style, cr,
-                    node.image_width as f32, node.image_height as f32,
-                    font_px, 16.0,
-                );
-                if clip {
-                    list.push(PaintCmd::PushClip {
-                        rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
-                        radius: [0.0; 4],
-                    });
+        // ── (j) ::before pseudo-element (inline text content) ────────────────
+        if !node.style.before_content.is_empty() && !node.layout.line_cache.is_empty() {
+            let first = &node.layout.line_cache[0];
+            let tx = first.x - eff_sx;
+            let ty = first.y - eff_sy;
+            let ps = node.style.before_style.as_deref().unwrap_or(&node.style);
+            let ps_font_px = {
+                let f = ps.font_size.resolve(font_px, 0.0, 16.0);
+                if f > 0.0 {
+                    f
+                } else {
+                    font_px
                 }
-                list.push(PaintCmd::Image {
-                    rect: Rect::new(dst.x - eff_sx, dst.y - eff_sy, dst.w, dst.h),
-                    data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
-                });
-                if clip { list.push(PaintCmd::PopClip); }
-            }
-        } else if node.tag == "svg" || (node.is_image_element() && node.svg_markup.is_some()) {
-            // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
-            if let Some(ref markup) = node.svg_markup {
-                let cr = node.layout.content_rect;
-                if cr.w > 0.0 && cr.h > 0.0 {
-                    let raster_w = cr.w.round() as u32;
-                    let raster_h = cr.h.round() as u32;
-                    if raster_w > 0 && raster_h > 0 {
-                        // Inject inherited CSS color for currentColor support
-                        let c = node.style.color;
-                        let color_hex = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
-                        let mut colored = markup.replace("currentColor", &color_hex);
-                        if colored.starts_with("<svg") {
-                            if let Some(gt) = colored.find('>') {
-                                let inject = format!(
-                                    "<style>svg{{color:{0}}}path:not([fill]),circle:not([fill]),rect:not([fill]),polygon:not([fill]),line:not([fill]),polyline:not([fill]){{fill:{0}}}</style>",
-                                    color_hex
-                                );
-                                colored.insert_str(gt + 1, &inject);
+            };
+            let line_h = ps
+                .line_height
+                .resolve(ps_font_px, 0.0, 16.0)
+                .max(ps_font_px * 1.2);
+            emit_text(
+                list,
+                tx,
+                ty,
+                &node.style.before_content,
+                ps,
+                ps_font_px,
+                line_h,
+            );
+        }
+
+        // ── (k) Inline text content (line_cache) ─────────────────────────────
+        if !node.layout.line_cache.is_empty() {
+            build_inline_text(
+                node, eff_style, list, child_sx, child_sy, is_hovered, is_active,
+            );
+        }
+
+        // ── (l) ::after pseudo-element ───────────────────────────────────────
+        if !node.style.after_content.is_empty() && !node.layout.line_cache.is_empty() {
+            let last = &node.layout.line_cache[node.layout.line_cache.len() - 1];
+            let tx = last.x - eff_sx + last.width;
+            let ty = last.y - eff_sy;
+            let ps = node.style.after_style.as_deref().unwrap_or(&node.style);
+            let ps_font_px = {
+                let f = ps.font_size.resolve(font_px, 0.0, 16.0);
+                if f > 0.0 {
+                    f
+                } else {
+                    font_px
+                }
+            };
+            let line_h = ps
+                .line_height
+                .resolve(ps_font_px, 0.0, 16.0)
+                .max(ps_font_px * 1.2);
+            emit_text(
+                list,
+                tx,
+                ty,
+                &node.style.after_content,
+                ps,
+                ps_font_px,
+                line_h,
+            );
+        }
+
+        // ── (m) List markers ─────────────────────────────────────────────────
+        if node.style.display == Display::ListItem && !node.layout.line_cache.is_empty() {
+            build_list_marker(node, list, eff_sx, eff_sy);
+        }
+
+        // ── (n) HR ───────────────────────────────────────────────────────────
+        if node.tag == "hr" {
+            let cr = node.layout.border_rect;
+            let y_hr = cr.y + cr.h / 2.0 - eff_sy;
+            list.push(PaintCmd::HorizontalRule {
+                x1: cr.x - eff_sx,
+                y1: y_hr,
+                x2: cr.right() - eff_sx,
+            });
+        }
+
+        // ── (o) Form elements (content only — box decoration handled by CSS steps above)
+        build_form_element(node, list, eff_sx, eff_sy);
+
+        // ── (p) Image / SVG / Canvas ─────────────────────────────────────────
+        //
+        // `<canvas>` joins `<img>` here because by this point it IS one: a canvas
+        // keeps its bitmap in `image_data` exactly as a decoded image does, and
+        // both are premultiplied RGBA, which is what `PixmapRef::from_bytes` at
+        // replay reads. Everything the 2D context drew is already in those bytes,
+        // so painting a canvas is painting its bitmap and nothing else — which is
+        // also what the spec says a canvas is.
+        if node.is_image_element() || node.tag == "svg" || node.tag == "canvas" {
+            if let Some(ref data) = node.image_data {
+                if node.image_width > 0 && node.image_height > 0 {
+                    let cr = node.layout.content_rect;
+                    let (dst, clip) = object_fit_rect(
+                        &node.style,
+                        cr,
+                        node.image_width as f32,
+                        node.image_height as f32,
+                        font_px,
+                        16.0,
+                    );
+                    if clip {
+                        list.push(PaintCmd::PushClip {
+                            rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
+                            radius: [0.0; 4],
+                        });
+                    }
+                    list.push(PaintCmd::Image {
+                        rect: Rect::new(dst.x - eff_sx, dst.y - eff_sy, dst.w, dst.h),
+                        data: ImageRef::Owned(data.clone(), node.image_width, node.image_height),
+                    });
+                    if clip {
+                        list.push(PaintCmd::PopClip);
+                    }
+                }
+            } else if node.tag == "svg" || (node.is_image_element() && node.svg_markup.is_some()) {
+                // SVG: rasterize from svg_markup on demand (inline <svg> or <img src="*.svg">)
+                if let Some(ref markup) = node.svg_markup {
+                    let cr = node.layout.content_rect;
+                    if cr.w > 0.0 && cr.h > 0.0 {
+                        let raster_w = cr.w.round() as u32;
+                        let raster_h = cr.h.round() as u32;
+                        if raster_w > 0 && raster_h > 0 {
+                            // Inject inherited CSS color for currentColor support
+                            let c = node.style.color;
+                            let color_hex = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+                            let mut colored = markup.replace("currentColor", &color_hex);
+                            if colored.starts_with("<svg") {
+                                if let Some(gt) = colored.find('>') {
+                                    let inject = format!(
+                                        "<style>svg{{color:{0}}}path:not([fill]),circle:not([fill]),rect:not([fill]),polygon:not([fill]),line:not([fill]),polyline:not([fill]){{fill:{0}}}</style>",
+                                        color_hex
+                                    );
+                                    colored.insert_str(gt + 1, &inject);
+                                }
                             }
-                        }
-                        if let Some(rgba) = crate::html::rasterize_svg_to_rgba(&colored, raster_w, raster_h) {
-                            list.push(PaintCmd::Image {
-                                rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
-                                data: ImageRef::Owned(rgba, raster_w, raster_h),
-                            });
+                            if let Some(rgba) =
+                                crate::html::rasterize_svg_to_rgba(&colored, raster_w, raster_h)
+                            {
+                                list.push(PaintCmd::Image {
+                                    rect: Rect::new(cr.x - eff_sx, cr.y - eff_sy, cr.w, cr.h),
+                                    data: ImageRef::Owned(rgba, raster_w, raster_h),
+                                });
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    // ── (q) Children: non-positioned first, then positioned by z-index ───────
-    // Skip ::before/::after (handled as inline text in steps j/l above).
-    // Skip position:fixed (rendered in separate overlay pass).
-    {
-        let eff_children = node.effective_children();
-        let is_renderable = |c: &WebCore| -> bool {
-            !matches!(c.style.display, Display::None)
-                && c.tag != "::before"
-                && c.tag != "::after"
-                && c.style.position != Position::Fixed
-        };
+        // ── (q) Children: non-positioned first, then positioned by z-index ───
+        // Skip ::before/::after (handled as inline text in steps j/l above).
+        // Skip position:fixed (rendered in separate overlay pass).
+        {
+            let eff_children = node.effective_children();
+            let is_renderable = |c: &WebCore| -> bool {
+                !matches!(c.style.display, Display::None)
+                    && c.tag != "::before"
+                    && c.tag != "::after"
+                    && c.style.position != Position::Fixed
+            };
 
-        let has_positioned = eff_children
-            .iter()
-            .any(|c| is_renderable(c) && c.style.is_positioned());
-
-        if !has_positioned {
-            for child in eff_children {
-                if is_renderable(child) {
-                    build_for_box(child, list, &child_ctx);
-                }
-            }
-        } else {
-            // Non-positioned children (normal flow)
-            for child in eff_children {
-                if is_renderable(child) && !child.style.is_positioned() {
-                    build_for_box(child, list, &child_ctx);
-                }
-            }
-
-            // Positioned elements with z-index >= 0 (in front), sorted by z-index
-            let mut positioned: Vec<&WebCore> = eff_children
+            let has_positioned = eff_children
                 .iter()
-                .filter(|c| is_renderable(c) && c.style.is_positioned() && c.style.z_index >= 0)
-                .collect();
-            positioned.sort_by_key(|c| c.style.z_index);
+                .any(|c| is_renderable(c) && c.style.is_positioned());
 
-            for child in &positioned {
-                build_for_box(child, list, &child_ctx);
+            if !has_positioned {
+                for child in eff_children {
+                    if is_renderable(child) {
+                        build_for_box(child, list, &child_ctx);
+                    }
+                }
+            } else {
+                // Non-positioned children (normal flow)
+                for child in eff_children {
+                    if is_renderable(child) && !child.style.is_positioned() {
+                        build_for_box(child, list, &child_ctx);
+                    }
+                }
+
+                // Positioned elements with z-index >= 0 (in front), sorted by z-index
+                let mut positioned: Vec<&WebCore> = eff_children
+                    .iter()
+                    .filter(|c| is_renderable(c) && c.style.is_positioned() && c.style.z_index >= 0)
+                    .collect();
+                positioned.sort_by_key(|c| c.style.z_index);
+
+                for child in &positioned {
+                    build_for_box(child, list, &child_ctx);
+                }
             }
         }
     }
@@ -881,18 +949,27 @@ fn build_inline_text(
 
     let opacity = eff_style.opacity;
     let fallback_font_px = node.style.font_size_px(16.0, 16.0).max(1.0);
-    let fallback_letter_spc = node.style.letter_spacing.resolve(fallback_font_px, 0.0, 16.0);
+    let fallback_letter_spc = node
+        .style
+        .letter_spacing
+        .resolve(fallback_font_px, 0.0, 16.0);
+    let fallback_word_spc = node.style.word_spacing.resolve(fallback_font_px, 0.0, 16.0);
 
     // When overflow is clipping and text-indent pushes content far outside the
     // element's box, skip all text rendering — the clip would hide it anyway and
     // this avoids emitting paint commands for offscreen text.
     let overflow_clips = matches!(
-        node.style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+        node.style.overflow_x,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
     ) || matches!(
-        node.style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+        node.style.overflow_y,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
     );
     if overflow_clips {
-        let ti = node.style.text_indent.resolve(fallback_font_px, node.layout.content_rect.w, 16.0);
+        let ti = node
+            .style
+            .text_indent
+            .resolve(fallback_font_px, node.layout.content_rect.w, 16.0);
         if ti < -(node.layout.content_rect.w + 100.0) {
             return;
         }
@@ -900,8 +977,7 @@ fn build_inline_text(
 
     for line in &node.layout.line_cache {
         let line_start = floor_cb(&flat, line.text_start.min(flat.len()));
-        let line_end =
-            floor_cb(&flat, (line.text_start + line.text_length).min(flat.len()));
+        let line_end = floor_cb(&flat, (line.text_start + line.text_length).min(flat.len()));
         if line_start >= line_end {
             continue;
         }
@@ -948,10 +1024,7 @@ fn build_inline_text(
                     if let Some(last) = seg_chunks.last_mut() {
                         while last.s < last.e
                             && last.s < flat.len()
-                            && matches!(
-                                flat.as_bytes()[last.s],
-                                b' ' | b'\t' | b'\n' | b'\r'
-                            )
+                            && matches!(flat.as_bytes()[last.s], b' ' | b'\t' | b'\n' | b'\r')
                         {
                             last.s += 1;
                         }
@@ -991,25 +1064,19 @@ fn build_inline_text(
                 continue;
             }
 
-            let (run_style, run_font_px, run_letter_spc, _run_word_spc, _run_extra) =
+            let (run_style, run_font_px, run_letter_spc, run_word_spc, _run_extra) =
                 if let Some(ri) = chunk.run_idx {
                     let run = &node.layout.inline_runs[ri];
                     let fp = run.style.font_size_px(16.0, 16.0).max(1.0);
                     let ls = run.style.letter_spacing.resolve(fp, 0.0, 16.0);
                     let ws = run.style.word_spacing.resolve(fp, 0.0, 16.0);
-                    (
-                        Some(&run.style),
-                        fp,
-                        ls,
-                        ws,
-                        line.extra_space_per_word,
-                    )
+                    (Some(&run.style), fp, ls, ws, line.extra_space_per_word)
                 } else {
                     (
                         None,
                         fallback_font_px,
                         fallback_letter_spc,
-                        0.0,
+                        fallback_word_spc,
                         line.extra_space_per_word,
                     )
                 };
@@ -1019,17 +1086,16 @@ fn build_inline_text(
 
             // Normalize raw newlines to spaces
             let seg_text_clean: String;
-            let seg_text_for_draw: &str =
-                if seg_text.contains('\n') || seg_text.contains('\r') {
-                    seg_text_clean = seg_text
-                        .chars()
-                        .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
-                        .collect();
-                    &seg_text_clean
-                } else {
-                    seg_text
-                };
-            let draw_text = apply_text_transform(seg_text_for_draw, style_ref.text_transform);
+            let seg_text_for_draw: &str = if seg_text.contains('\n') || seg_text.contains('\r') {
+                seg_text_clean = seg_text
+                    .chars()
+                    .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+                    .collect();
+                &seg_text_clean
+            } else {
+                seg_text
+            };
+            let mut draw_text = apply_text_transform(seg_text_for_draw, style_ref.text_transform);
             if draw_text.is_empty() {
                 continue;
             }
@@ -1055,6 +1121,66 @@ fn build_inline_text(
             } else {
                 cursor_x
             };
+            if matches!(node.style.text_overflow, TextOverflow::Ellipsis)
+                && overflow_clips
+                && !chunk.rtl
+                && line.width > node.layout.content_rect.w
+            {
+                let content_right = node.layout.content_rect.x - sx + node.layout.content_rect.w;
+                if x_pos >= content_right {
+                    continue;
+                }
+                let available = (content_right - x_pos).max(0.0);
+                let ellipsis_w = run_font_px * 0.75;
+                let budget = (available - ellipsis_w).max(0.0);
+                let start_off = s - line_start;
+                let end_off = e - line_start;
+                if !line.char_x.is_empty()
+                    && end_off < line.char_x.len()
+                    && start_off < line.char_x.len()
+                {
+                    let base_x = line.char_x[start_off];
+                    let mut cut = s;
+                    for (rel, ch) in flat[s..e].char_indices() {
+                        let off = start_off + rel;
+                        if off < line.char_x.len() && line.char_x[off] - base_x <= budget {
+                            cut = s + rel + ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    if cut < e {
+                        let cut = floor_cb(&flat, cut);
+                        draw_text = format!(
+                            "{}…",
+                            apply_text_transform(&flat[s..cut], style_ref.text_transform)
+                        );
+                    }
+                } else {
+                    let mut cut = s;
+                    for (rel, ch) in flat[s..e].char_indices() {
+                        let next = s + rel + ch.len_utf8();
+                        let candidate =
+                            apply_text_transform(&flat[s..next], style_ref.text_transform);
+                        let width = crate::layout::inline_layout::measure_text_width(
+                            &candidate,
+                            run_font_px,
+                            None,
+                        );
+                        if width <= budget {
+                            cut = next;
+                        } else {
+                            break;
+                        }
+                    }
+                    if cut < e {
+                        draw_text = format!(
+                            "{}…",
+                            apply_text_transform(&flat[s..cut], style_ref.text_transform)
+                        );
+                    }
+                }
+            }
 
             // Run background color
             if style_ref.background_color.a > 0 {
@@ -1086,14 +1212,13 @@ fn build_inline_text(
             }
 
             // Text color: use effective style color when run inherits from node
-            let run_color =
-                if std::ptr::eq(style_ref as *const _, node.style.as_ref() as *const _)
-                    || ((is_hovered || is_active) && style_ref.color == node.style.color)
-                {
-                    eff_style.color
-                } else {
-                    style_ref.color
-                };
+            let run_color = if std::ptr::eq(style_ref as *const _, node.style.as_ref() as *const _)
+                || ((is_hovered || is_active) && style_ref.color == node.style.color)
+            {
+                eff_style.color
+            } else {
+                style_ref.color
+            };
             let alpha = ((run_color.a as f32) * opacity) as u8;
             let text_color = Color::rgba(run_color.r, run_color.g, run_color.b, alpha);
 
@@ -1106,14 +1231,10 @@ fn build_inline_text(
                     font_family: style_ref.font_family.clone(),
                     font_size: run_font_px,
                     font_weight: style_ref.font_weight.value(),
-                    font_style: if chunk.rtl {
-                        0
-                    } else {
-                        match style_ref.font_style {
-                            FontStyle::Italic => 1,
-                            FontStyle::Oblique => 2,
-                            _ => 0,
-                        }
+                    font_style: match style_ref.font_style {
+                        FontStyle::Italic => 1,
+                        FontStyle::Oblique => 2,
+                        _ => 0,
                     },
                     font_stretch: style_ref.font_stretch,
                     line_height: run_line_h,
@@ -1123,13 +1244,12 @@ fn build_inline_text(
             }
 
             // Main text
-            let effective_font_style = if chunk.rtl {
-                FontStyle::Normal
-            } else {
-                style_ref.font_style
-            };
+            let effective_font_style = style_ref.font_style;
             let deco_t = style_ref
                 .text_decoration_thickness
+                .resolve(run_font_px, 0.0, 16.0);
+            let underline_offset = style_ref
+                .text_underline_offset
                 .resolve(run_font_px, 0.0, 16.0);
             let letter_sp = run_letter_spc;
 
@@ -1152,9 +1272,7 @@ fn build_inline_text(
                     underline: style_ref.text_decoration.underline,
                     overline: style_ref.text_decoration.overline,
                     strikethrough: style_ref.text_decoration.strikethrough,
-                    color: style_ref
-                        .text_decoration_color
-                        .unwrap_or(text_color),
+                    color: style_ref.text_decoration_color.unwrap_or(text_color),
                     style: match style_ref.text_decoration_style {
                         TextDecorationStyle::Double => 1,
                         TextDecorationStyle::Dotted => 2,
@@ -1167,8 +1285,10 @@ fn build_inline_text(
                     } else {
                         (run_font_px / 12.0).max(1.0)
                     },
+                    underline_offset,
                 },
                 letter_spacing: letter_sp,
+                word_spacing: run_word_spc,
                 small_caps: style_ref.small_caps,
             });
 
@@ -1196,28 +1316,100 @@ fn build_inline_text(
 
 fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
     // Skip marker entirely when list-style-type is None
-    if matches!(node.style.list_style_type, ListStyleType::None) {
+    if matches!(node.style.list_style_type, ListStyleType::None)
+        && node.style.marker_content.is_empty()
+        && node.style.list_style_image.is_empty()
+    {
         return;
     }
     let ms = node.style.marker_style.as_deref();
     let font_px = ms
         .map(|s| s.font_size_px(16.0, 16.0))
         .unwrap_or_else(|| node.style.font_size_px(16.0, 16.0));
-    let first_line = match node.layout.line_cache.first() {
-        Some(l) => l,
-        None => return,
+    let fallback_line_y = node.layout.content_rect.y;
+    let fallback_line_h = node
+        .style
+        .line_height
+        .resolve(font_px, 0.0, 16.0)
+        .max(font_px * 1.2);
+    let (line_x, line_y, line_h) = match node.layout.line_cache.first() {
+        Some(l) => (l.x, l.y, l.height),
+        None => (node.layout.content_rect.x, fallback_line_y, fallback_line_h),
     };
     let inside = node.style.list_style_position == ListStylePosition::Inside;
     let c = ms.map(|s| s.color).unwrap_or(node.style.color);
+    let marker_family = ms
+        .map(|s| s.font_family.clone())
+        .unwrap_or_else(|| node.style.font_family.clone());
+    let marker_weight = ms
+        .map(|s| s.font_weight)
+        .unwrap_or(node.style.font_weight)
+        .value();
+    let marker_style = match ms.map(|s| s.font_style).unwrap_or(node.style.font_style) {
+        FontStyle::Italic => 1,
+        FontStyle::Oblique => 2,
+        _ => 0,
+    };
+    let marker_line_height = ms
+        .map(|s| s.line_height.resolve(font_px, 0.0, 16.0).max(font_px * 1.2))
+        .unwrap_or_else(|| {
+            node.style
+                .line_height
+                .resolve(font_px, 0.0, 16.0)
+                .max(font_px * 1.2)
+        });
+    if !node.style.marker_content.is_empty() {
+        let mx = if inside {
+            line_x - sx
+        } else {
+            line_x - sx - 4.0
+        };
+        list.push(PaintCmd::ListMarker {
+            marker_type: 3,
+            x: mx,
+            y: line_y - sy,
+            size: 0.0,
+            color: c,
+            text: node.style.marker_content.clone(),
+            font_family: marker_family.clone(),
+            font_size: font_px,
+            font_weight: marker_weight,
+            font_style: marker_style,
+            line_height: marker_line_height,
+        });
+        return;
+    }
+
+    if !node.style.list_style_image.is_empty() {
+        let mx = if inside {
+            line_x - sx
+        } else {
+            line_x - sx - font_px
+        };
+        list.push(PaintCmd::ListMarker {
+            marker_type: 4,
+            x: mx,
+            y: line_y - sy,
+            size: font_px,
+            color: c,
+            text: node.style.list_style_image.clone(),
+            font_family: marker_family.clone(),
+            font_size: font_px,
+            font_weight: marker_weight,
+            font_style: marker_style,
+            line_height: fallback_line_h,
+        });
+        return;
+    }
 
     match node.style.list_style_type {
         ListStyleType::Disc => {
             let bx = if inside {
-                first_line.x - sx + 4.0
+                line_x - sx + 4.0
             } else {
-                first_line.x - sx - 10.0
+                line_x - sx - 10.0
             };
-            let by = first_line.y - sy + first_line.height / 2.0;
+            let by = line_y - sy + line_h / 2.0;
             list.push(PaintCmd::ListMarker {
                 marker_type: 0,
                 x: bx,
@@ -1225,24 +1417,20 @@ fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
                 size: 3.0,
                 color: c,
                 text: String::new(),
-                font_family: node.style.font_family.clone(),
+                font_family: marker_family.clone(),
                 font_size: font_px,
-                font_weight: node.style.font_weight.value(),
-                font_style: match node.style.font_style {
-                    FontStyle::Italic => 1,
-                    FontStyle::Oblique => 2,
-                    _ => 0,
-                },
-                line_height: font_px * 1.2,
+                font_weight: marker_weight,
+                font_style: marker_style,
+                line_height: marker_line_height,
             });
         }
         ListStyleType::Circle => {
             let bx = if inside {
-                first_line.x - sx + 4.0
+                line_x - sx + 4.0
             } else {
-                first_line.x - sx - 10.0
+                line_x - sx - 10.0
             };
-            let by = first_line.y - sy + first_line.height / 2.0;
+            let by = line_y - sy + line_h / 2.0;
             list.push(PaintCmd::ListMarker {
                 marker_type: 1,
                 x: bx,
@@ -1250,24 +1438,20 @@ fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
                 size: 3.0,
                 color: c,
                 text: String::new(),
-                font_family: node.style.font_family.clone(),
+                font_family: marker_family.clone(),
                 font_size: font_px,
-                font_weight: node.style.font_weight.value(),
-                font_style: match node.style.font_style {
-                    FontStyle::Italic => 1,
-                    FontStyle::Oblique => 2,
-                    _ => 0,
-                },
-                line_height: font_px * 1.2,
+                font_weight: marker_weight,
+                font_style: marker_style,
+                line_height: marker_line_height,
             });
         }
         ListStyleType::Square => {
             let bx = if inside {
-                first_line.x - sx + 4.0
+                line_x - sx + 4.0
             } else {
-                first_line.x - sx - 10.0
+                line_x - sx - 10.0
             };
-            let by = first_line.y - sy + first_line.height / 2.0;
+            let by = line_y - sy + line_h / 2.0;
             list.push(PaintCmd::ListMarker {
                 marker_type: 2,
                 x: bx,
@@ -1275,38 +1459,41 @@ fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
                 size: 6.0,
                 color: c,
                 text: String::new(),
-                font_family: node.style.font_family.clone(),
+                font_family: marker_family.clone(),
                 font_size: font_px,
-                font_weight: node.style.font_weight.value(),
-                font_style: match node.style.font_style {
-                    FontStyle::Italic => 1,
-                    FontStyle::Oblique => 2,
-                    _ => 0,
-                },
-                line_height: font_px * 1.2,
+                font_weight: marker_weight,
+                font_style: marker_style,
+                line_height: marker_line_height,
             });
         }
         ListStyleType::Decimal
+        | ListStyleType::DecimalLeadingZero
         | ListStyleType::LowerAlpha
         | ListStyleType::UpperAlpha
+        | ListStyleType::LowerLatin
+        | ListStyleType::UpperLatin
         | ListStyleType::LowerRoman
-        | ListStyleType::UpperRoman => {
+        | ListStyleType::UpperRoman
+        | ListStyleType::LowerGreek
+        | ListStyleType::Armenian
+        | ListStyleType::Georgian
+        | ListStyleType::Hebrew
+        | ListStyleType::Hiragana
+        | ListStyleType::Katakana
+        | ListStyleType::HiraganaIroha
+        | ListStyleType::KatakanaIroha
+        | ListStyleType::CjkDecimal => {
             let marker = format_list_marker(node.style.list_style_type, node.style.list_index);
-            let line_h = node
-                .style
-                .line_height
-                .resolve(font_px, 0.0, 16.0)
-                .max(font_px * 1.2);
             let mx = if inside {
-                first_line.x - sx
+                line_x - sx
             } else {
                 // marker_w not available here (we don't have font shaping).
                 // Use an approximate offset that matches the render_box convention:
                 // mx = first_line.x - sx - marker_w - 4.0
                 // Since we can't measure, emit marker text and let replay handle positioning.
-                first_line.x - sx - 4.0
+                line_x - sx - 4.0
             };
-            let my = first_line.y - sy;
+            let my = line_y - sy;
             list.push(PaintCmd::ListMarker {
                 marker_type: 3,
                 x: mx,
@@ -1314,29 +1501,20 @@ fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
                 size: 0.0,
                 color: c,
                 text: marker,
-                font_family: node.style.font_family.clone(),
+                font_family: marker_family.clone(),
                 font_size: font_px,
-                font_weight: node.style.font_weight.value(),
-                font_style: match node.style.font_style {
-                    FontStyle::Italic => 1,
-                    FontStyle::Oblique => 2,
-                    _ => 0,
-                },
-                line_height: line_h,
+                font_weight: marker_weight,
+                font_style: marker_style,
+                line_height: marker_line_height,
             });
         }
         ListStyleType::Disclosure => {
-            let line_h = node
-                .style
-                .line_height
-                .resolve(font_px, 0.0, 16.0)
-                .max(font_px * 1.2);
             let mx = if inside {
-                first_line.x - sx
+                line_x - sx
             } else {
-                first_line.x - sx - 4.0
+                line_x - sx - 4.0
             };
-            let my = first_line.y - sy;
+            let my = line_y - sy;
             list.push(PaintCmd::ListMarker {
                 marker_type: 3,
                 x: mx,
@@ -1344,15 +1522,11 @@ fn build_list_marker(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) {
                 size: 0.0,
                 color: c,
                 text: "\u{25b8}".to_string(),
-                font_family: node.style.font_family.clone(),
+                font_family: marker_family.clone(),
                 font_size: font_px,
-                font_weight: node.style.font_weight.value(),
-                font_style: match node.style.font_style {
-                    FontStyle::Italic => 1,
-                    FontStyle::Oblique => 2,
-                    _ => 0,
-                },
-                line_height: line_h,
+                font_weight: marker_weight,
+                font_style: marker_style,
+                line_height: marker_line_height,
             });
         }
         ListStyleType::None => {}
@@ -1422,7 +1596,10 @@ fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) 
     // and what a single index could never express.
     let (options, selected, selected_all) = if tag == "select" {
         let opts = crate::html::forms::list_of_options(node);
-        let labels: Vec<String> = opts.iter().map(|o| crate::html::forms::option_label(o)).collect();
+        let labels: Vec<String> = opts
+            .iter()
+            .map(|o| crate::html::forms::option_label(o))
+            .collect();
         let all: Vec<bool> = opts.iter().map(|o| o.selectedness).collect();
         let first = all.iter().position(|s| *s).map(|i| i as i32).unwrap_or(-1);
         (labels, first, all)
@@ -1440,11 +1617,25 @@ fn build_form_element(node: &WebCore, list: &mut DisplayList, sx: f32, sy: f32) 
         font_weight: node.style.font_weight.value(),
         font_family: node.style.font_family.clone(),
         color: node.style.color,
+        placeholder_color: node
+            .style
+            .placeholder_style
+            .as_ref()
+            .map(|s| s.color)
+            .unwrap_or_else(|| {
+                let mut c = node.style.color;
+                c.a = (c.a as f32 * 0.5) as u8;
+                c
+            }),
         checked,
         value,
         placeholder,
         input_cursor: node.input_cursor,
-        vertical: !matches!(node.style.writing_mode, crate::types::WritingMode::HorizontalTB),
+        appearance_none: node.style.appearance == "none",
+        vertical: !matches!(
+            node.style.writing_mode,
+            crate::types::WritingMode::HorizontalTB
+        ),
         options,
         selected,
         selected_all,
@@ -1470,7 +1661,9 @@ fn emit_text(
     let fp = font_px.max(1.0);
     let lh = if line_h > 0.0 { line_h } else { fp * 1.2 };
     let letter_sp = style.letter_spacing.resolve(fp, 0.0, 16.0);
+    let word_sp = style.word_spacing.resolve(fp, 0.0, 16.0);
     let deco_t = style.text_decoration_thickness.resolve(fp, 0.0, 16.0);
+    let underline_offset = style.text_underline_offset.resolve(fp, 0.0, 16.0);
     list.push(PaintCmd::Text {
         x,
         y,
@@ -1499,10 +1692,21 @@ fn emit_text(
                 _ => 0,
             },
             thickness: if deco_t > 0.0 { deco_t } else { 1.0 },
+            underline_offset,
         },
         letter_spacing: letter_sp,
+        word_spacing: word_sp,
         small_caps: style.small_caps,
     });
+}
+
+fn resolve_overflow_clip_margin(style: &ComputedStyle, font_px: f32, reference: f32) -> f32 {
+    style
+        .overflow_clip_margin
+        .split_whitespace()
+        .find_map(crate::css::parse_length_checked)
+        .map(|length| length.resolve(font_px, reference, 16.0).max(0.0))
+        .unwrap_or(0.0)
 }
 
 /// An `<option>`'s label — HTML §4.11.3.5: "the value of the option element's
@@ -1543,10 +1747,8 @@ fn collect_flat_text(node: &WebCore, out: &mut String) {
     for child in &node.children {
         if child.tag == "br" {
             out.push('\n');
-        } else if matches!(
-            child.style.display,
-            Display::Inline | Display::None
-        ) || child.tag == "#text"
+        } else if matches!(child.style.display, Display::Inline | Display::None)
+            || child.tag == "#text"
         {
             collect_flat_text(child, out);
         }
@@ -1613,32 +1815,107 @@ fn blend_mode_to_u8(m: MixBlendMode) -> u8 {
 ///
 /// Public because CSSOM asks the same question: `getComputedStyle().transform`
 /// serializes exactly this matrix.
-pub fn compute_transform_matrix(style: &ComputedStyle, rect: &Rect) -> [f32; 6] {
+pub fn compute_transform_matrix(
+    style: &ComputedStyle,
+    rect: &Rect,
+    ctx: &crate::types::TransformCtx,
+) -> [f32; 6] {
+    let [a, b, c, d, e, f] = compute_transform_matrix_raw(style, rect.w, rect.h, ctx);
+    // css-transforms-1 §transform-rendering: the matrix is applied about the
+    // transform origin — translate(origin) · M · translate(-origin).
+    let half = crate::types::CssLength::Percent(50.0);
+    let (ox_len, oy_len) = match &style.rare().transform_origin {
+        Some((x, y)) => (x.clone(), y.clone()),
+        None => (half.clone(), half),
+    };
+    let ox = rect.x + ox_len.resolve(ctx.font_px, rect.w, ctx.root_font_px);
+    let oy = rect.y + oy_len.resolve(ctx.font_px, rect.h, ctx.root_font_px);
+    [
+        a,
+        b,
+        c,
+        d,
+        e + ox - (a * ox + c * oy),
+        f + oy - (b * ox + d * oy),
+    ]
+}
+
+/// The transformation matrix M itself, with NO `transform-origin` applied.
+///
+/// This is what CSSOM serializes for `getComputedStyle().transform`: the origin
+/// is a separate property and is not baked into the reported matrix. Painting
+/// wants the sandwiched form, which is `compute_transform_matrix`.
+///
+/// `ref_w`/`ref_h` are the reference box, which percentages in `translate()`
+/// resolve against — width for the X component, height for the Y.
+pub fn compute_transform_matrix_raw(
+    style: &ComputedStyle,
+    ref_w: f32,
+    ref_h: f32,
+    ctx: &crate::types::TransformCtx,
+) -> [f32; 6] {
     use crate::types::TransformOp;
-    let ox = rect.x + rect.w * style.transform_origin_x;
-    let oy = rect.y + rect.h * style.transform_origin_y;
     let (mut a, mut b, mut c, mut d, mut e, mut f) =
         (1.0f32, 0.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32);
-    for op in &style.css_transform.ops {
+    let rx = |l: &crate::types::CssLength| {
+        l.resolve_vp(
+            ctx.font_px,
+            ref_w,
+            ctx.root_font_px,
+            ctx.viewport_w,
+            ctx.viewport_h,
+        )
+    };
+    let ry = |l: &crate::types::CssLength| {
+        l.resolve_vp(
+            ctx.font_px,
+            ref_h,
+            ctx.root_font_px,
+            ctx.viewport_w,
+            ctx.viewport_h,
+        )
+    };
+    // ⛔ Each function POST-multiplies the matrix built so far — css-transforms-1
+    // §transform-rendering step 3. `translate` used to do `e += tx; f += ty` and
+    // `scale` `a *= sx; d *= sy`, both of which ignore the matrix to their left:
+    // `rotate(90deg) translateX(100px)` moved the box RIGHT instead of DOWN, and
+    // `rotate(45deg) scale(2)` scaled along the un-rotated axes and sheared it.
+    for op in style
+        .css_translate
+        .ops
+        .iter()
+        .chain(style.css_rotate.ops.iter())
+        .chain(style.css_scale.ops.iter())
+        .chain(style.css_transform.ops.iter())
+    {
         match op {
             TransformOp::Translate(tx, ty) => {
-                e += tx;
-                f += ty;
+                let (tx, ty) = (rx(tx), ry(ty));
+                e += a * tx + c * ty;
+                f += b * tx + d * ty;
             }
             TransformOp::TranslateX(tx) => {
-                e += tx;
+                let tx = rx(tx);
+                e += a * tx;
+                f += b * tx;
             }
             TransformOp::TranslateY(ty) => {
-                f += ty;
+                let ty = ry(ty);
+                e += c * ty;
+                f += d * ty;
             }
             TransformOp::Scale(sx, sy) => {
                 a *= sx;
+                b *= sx;
+                c *= sy;
                 d *= sy;
             }
             TransformOp::ScaleX(sx) => {
                 a *= sx;
+                b *= sx;
             }
             TransformOp::ScaleY(sy) => {
+                c *= sy;
                 d *= sy;
             }
             TransformOp::Rotate(deg) => {
@@ -1678,14 +1955,7 @@ pub fn compute_transform_matrix(style: &ComputedStyle, rect: &Rect) -> [f32; 6] 
             }
         }
     }
-    [
-        a,
-        b,
-        c,
-        d,
-        e + ox - (a * ox + c * oy),
-        f + oy - (b * ox + d * oy),
-    ]
+    [a, b, c, d, e, f]
 }
 
 fn apply_text_transform(text: &str, tt: TextTransform) -> String {
@@ -1714,59 +1984,25 @@ fn capitalize_words(text: &str) -> String {
 }
 
 fn format_list_marker(lst: ListStyleType, index: i32) -> String {
-    match lst {
-        ListStyleType::Decimal => format!("{}.", index),
-        ListStyleType::LowerAlpha => {
-            if index > 0 && index <= 26 {
-                format!("{}.", (b'a' + (index - 1) as u8) as char)
-            } else {
-                format!("{}.", index)
-            }
-        }
-        ListStyleType::UpperAlpha => {
-            if index > 0 && index <= 26 {
-                format!("{}.", (b'A' + (index - 1) as u8) as char)
-            } else {
-                format!("{}.", index)
-            }
-        }
-        ListStyleType::LowerRoman => format!("{}.", to_roman_lower(index)),
-        ListStyleType::UpperRoman => format!("{}.", to_roman_upper(index)),
-        _ => String::new(),
-    }
-}
-
-fn to_roman_lower(n: i32) -> String {
-    to_roman_upper(n).to_lowercase()
-}
-
-fn to_roman_upper(mut n: i32) -> String {
-    if n <= 0 || n > 3999 {
-        return n.to_string();
-    }
-    let vals = [
-        (1000, "M"),
-        (900, "CM"),
-        (500, "D"),
-        (400, "CD"),
-        (100, "C"),
-        (90, "XC"),
-        (50, "L"),
-        (40, "XL"),
-        (10, "X"),
-        (9, "IX"),
-        (5, "V"),
-        (4, "IV"),
-        (1, "I"),
-    ];
-    let mut out = String::new();
-    for &(v, s) in &vals {
-        while n >= v {
-            out.push_str(s);
-            n -= v;
-        }
-    }
-    out
+    let style = match lst {
+        ListStyleType::Decimal => "decimal",
+        ListStyleType::DecimalLeadingZero => "decimal-leading-zero",
+        ListStyleType::LowerAlpha | ListStyleType::LowerLatin => "lower-alpha",
+        ListStyleType::UpperAlpha | ListStyleType::UpperLatin => "upper-alpha",
+        ListStyleType::LowerRoman => "lower-roman",
+        ListStyleType::UpperRoman => "upper-roman",
+        ListStyleType::LowerGreek => "lower-greek",
+        ListStyleType::CjkDecimal => "cjk-decimal",
+        ListStyleType::Armenian
+        | ListStyleType::Georgian
+        | ListStyleType::Hebrew
+        | ListStyleType::Hiragana
+        | ListStyleType::Katakana
+        | ListStyleType::HiraganaIroha
+        | ListStyleType::KatakanaIroha => "decimal",
+        _ => return String::new(),
+    };
+    format!("{}.", crate::css::format_counter_value(index, style))
 }
 
 fn collect_fixed_elements(node: &WebCore, out: &mut Vec<u32>) {
@@ -1788,22 +2024,30 @@ fn collect_fixed_elements(node: &WebCore, out: &mut Vec<u32>) {
 /// behaviour — whatever the author asked for.
 fn object_fit_rect(
     style: &crate::types::ComputedStyle,
-    cr: Rect, iw: f32, ih: f32, font_px: f32, root_font_px: f32,
+    cr: Rect,
+    iw: f32,
+    ih: f32,
+    font_px: f32,
+    root_font_px: f32,
 ) -> (Rect, bool) {
     use crate::types::ObjectFit;
     if iw <= 0.0 || ih <= 0.0 || cr.w <= 0.0 || cr.h <= 0.0 {
         return (cr, false);
     }
     let contain = (cr.w / iw).min(cr.h / ih);
-    let cover   = (cr.w / iw).max(cr.h / ih);
+    let cover = (cr.w / iw).max(cr.h / ih);
     let (ow, oh) = match style.object_fit {
-        ObjectFit::Fill    => (cr.w, cr.h),
+        ObjectFit::Fill => (cr.w, cr.h),
         ObjectFit::Contain => (iw * contain, ih * contain),
-        ObjectFit::Cover   => (iw * cover,   ih * cover),
-        ObjectFit::None    => (iw, ih),
+        ObjectFit::Cover => (iw * cover, ih * cover),
+        ObjectFit::None => (iw, ih),
         // `scale-down` is the SMALLER of `none` and `contain`.
         ObjectFit::ScaleDown => {
-            if contain >= 1.0 { (iw, ih) } else { (iw * contain, ih * contain) }
+            if contain >= 1.0 {
+                (iw, ih)
+            } else {
+                (iw * contain, ih * contain)
+            }
         }
     };
     // A percentage aligns that fraction of the object with the same fraction of

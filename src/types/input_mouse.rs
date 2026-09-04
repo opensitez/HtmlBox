@@ -3,10 +3,10 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::css::*;
-use std::collections::{HashMap, HashSet};
-use crate::layout::LayoutEngine;
 use crate::dom::*;
 use crate::html::*;
+use crate::layout::LayoutEngine;
+use std::collections::{HashMap, HashSet};
 
 impl Document {
     /// A pointer event with no modifier keys held.
@@ -14,7 +14,12 @@ impl Document {
     /// The plain spelling, kept because almost every caller has no modifiers to
     /// report and a `false, false, false, false` tail at each of them says
     /// nothing. `process_mouse_event_with_modifiers` is the full event.
-    pub fn process_mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+    pub fn process_mouse_event(
+        &mut self,
+        etype: crate::dom::HtmlEventType,
+        doc_pt: (f32, f32),
+        button: u8,
+    ) -> bool {
         self.process_mouse_event_with_modifiers(etype, doc_pt, button, false, false, false, false)
     }
 
@@ -42,14 +47,14 @@ impl Document {
         // Ctrl on the platforms that use it, ⌘ on the one that does not — the
         // same pair every other modified gesture answers to.
         let unselect_request = ctrl || meta;
-        use crate::dom::{HtmlEventType, HtmlEvent};
+        use crate::dom::{HtmlEvent, HtmlEventType};
         // client_pos = screen-space logical coordinates (doc coords minus scroll).
         let client_pos = (doc_pt.0, doc_pt.1 - self.scroll_y);
 
         let mut evt = HtmlEvent::new(etype);
-        evt.doc_pos    = doc_pt;
+        evt.doc_pos = doc_pt;
         evt.client_pos = client_pos;
-        evt.button     = button;
+        evt.button = button;
         let hit_result = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, button);
         let mut hit_node_id: u32 = hit_result.as_ref().map(|h| h.node_id).unwrap_or(0);
         // For inline links: check if the hit point is inside an inline run
@@ -57,7 +62,9 @@ impl Document {
         if let Some(ref hr) = hit_result {
             if let Some(hit_box) = self.get_node(hr.node_id) {
                 for run in &hit_box.layout.inline_runs {
-                    if hr.local_offset >= run.text_offset && hr.local_offset < run.text_offset + run.length {
+                    if hr.local_offset >= run.text_offset
+                        && hr.local_offset < run.text_offset + run.length
+                    {
                         if !run.style.href.is_empty() {
                             if let Some(link_id) = find_link_node_id(&self.root, &run.style.href) {
                                 hit_node_id = link_id;
@@ -69,7 +76,6 @@ impl Document {
             }
         }
         evt.target = hit_node_id;
-        
 
         let mut redraw = false;
         match etype {
@@ -100,7 +106,10 @@ impl Document {
                     let open_sel_id = self.open_select;
                     let sel = match self.get_node(open_sel_id) {
                         Some(s) => s,
-                        None => { self.open_select = 0; return redraw; }
+                        None => {
+                            self.open_select = 0;
+                            return redraw;
+                        }
                     };
                     let dropdown_y = sel.layout.border_rect.y + sel.layout.border_rect.h;
                     let font_px = sel.style.font_size_px(16.0, 16.0);
@@ -112,14 +121,18 @@ impl Document {
                     let rel_y = doc_pt.1 - dropdown_y - 4.0;
                     for child in &sel.children {
                         if child.tag == "option" {
-                            if rel_y >= y_acc && rel_y < y_acc + item_h { new_hover = opt_i as i32; }
+                            if rel_y >= y_acc && rel_y < y_acc + item_h {
+                                new_hover = opt_i as i32;
+                            }
                             y_acc += item_h;
                             opt_i += 1;
                         } else if child.tag == "optgroup" {
                             y_acc += group_h;
                             for gc in &child.children {
                                 if gc.tag == "option" {
-                                    if rel_y >= y_acc && rel_y < y_acc + item_h { new_hover = opt_i as i32; }
+                                    if rel_y >= y_acc && rel_y < y_acc + item_h {
+                                        new_hover = opt_i as i32;
+                                    }
                                     y_acc += item_h;
                                     opt_i += 1;
                                 }
@@ -139,14 +152,24 @@ impl Document {
                         // DragStart
                         self.drag_active = true;
                         let mut e = HtmlEvent::new(HtmlEventType::DragStart);
-                        e.target = self.drag_source; e.doc_pos = self.drag_start_doc_pt;
-                        e.client_pos = (self.drag_start_doc_pt.0, self.drag_start_doc_pt.1 - self.scroll_y);
-                        if self.dispatch_input_event(e).0 { redraw = true; }
+                        e.target = self.drag_source;
+                        e.doc_pos = self.drag_start_doc_pt;
+                        e.client_pos = (
+                            self.drag_start_doc_pt.0,
+                            self.drag_start_doc_pt.1 - self.scroll_y,
+                        );
+                        if self.dispatch_input_event(e).0 {
+                            redraw = true;
+                        }
                     }
                     if self.drag_active {
                         let mut e = HtmlEvent::new(HtmlEventType::Drag);
-                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.dispatch_input_event(e).0 { redraw = true; }
+                        e.target = self.drag_source;
+                        e.doc_pos = doc_pt;
+                        e.client_pos = client_pos;
+                        if self.dispatch_input_event(e).0 {
+                            redraw = true;
+                        }
                     }
                 }
             }
@@ -156,11 +179,11 @@ impl Document {
                     redraw = true;
                 }
                 if etype == HtmlEventType::MouseDown {
-                    self.mousedown_target  = hit_node_id;
+                    self.mousedown_target = hit_node_id;
                     // Arm drag state machine.
-                    self.drag_source       = hit_node_id;
+                    self.drag_source = hit_node_id;
                     self.drag_start_doc_pt = doc_pt;
-                    self.drag_active       = false;
+                    self.drag_active = false;
                 }
                 // Focus change on click.
                 // Only interactive (focusable) elements receive focus on click.
@@ -174,38 +197,57 @@ impl Document {
                             } else {
                                 find_form_parent_id(&self.root, hit_node_id)
                             }
-                        } else { 0u32 }
-                    } else { 0u32 };
-                    let click_focusable = focus_target_id != 0 &&
-                        self.get_node(focus_target_id)
+                        } else {
+                            0u32
+                        }
+                    } else {
+                        0u32
+                    };
+                    let click_focusable = focus_target_id != 0
+                        && self
+                            .get_node(focus_target_id)
                             .map(|fp| is_focusable_node(fp))
                             .unwrap_or(false);
-                    let new_focus = if click_focusable { focus_target_id } else { 0u32 };
+                    let new_focus = if click_focusable {
+                        focus_target_id
+                    } else {
+                        0u32
+                    };
                     if self.focused_box != new_focus {
                         let old_focus = self.focused_box;
                         self.keyboard_focus = false;
                         self.focused_box = new_focus;
                         if old_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Blur);
-                            e.target = old_focus; e.related_target = new_focus;
+                            e.target = old_focus;
+                            e.related_target = new_focus;
                             self.dispatch_input_event(e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusOut);
-                            e.target = old_focus; e.related_target = new_focus;
+                            e.target = old_focus;
+                            e.related_target = new_focus;
                             self.dispatch_input_event(e);
                         }
                         if new_focus != 0 {
                             let mut e = HtmlEvent::new(HtmlEventType::Focus);
-                            e.target = new_focus; e.related_target = old_focus;
+                            e.target = new_focus;
+                            e.related_target = old_focus;
                             self.dispatch_input_event(e);
                             let mut e = HtmlEvent::new(HtmlEventType::FocusIn);
-                            e.target = new_focus; e.related_target = old_focus;
+                            e.target = new_focus;
+                            e.related_target = old_focus;
                             self.dispatch_input_event(e);
                         }
                         // Always recascade when focus changes so :focus/:focus-visible update.
                         self.stylesheet.rebuild_index();
                         crate::css::apply_cascade_vp(
-                            &mut self.root, &self.stylesheet, None, 16.0,
-                            self.viewport_w, self.viewport_h, self.focused_box, false,
+                            &mut self.root,
+                            &self.stylesheet,
+                            None,
+                            16.0,
+                            self.viewport_w,
+                            self.viewport_h,
+                            self.focused_box,
+                            false,
                         );
                         redraw = true;
                     }
@@ -219,7 +261,8 @@ impl Document {
                 // movement at all.
                 let range_id = find_form_parent_id(&self.root, hit_node_id);
                 if self.is_range_input(range_id)
-                    && !self.get_node(range_id)
+                    && !self
+                        .get_node(range_id)
                         .map(|n| n.attributes.contains_key("disabled"))
                         .unwrap_or(true)
                 {
@@ -253,9 +296,13 @@ impl Document {
                     // DragEnd if drag was active; save flag before resetting.
                     let was_dragging = self.drag_active;
                     if was_dragging {
-                            let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
-                        e.target = self.drag_source; e.doc_pos = doc_pt; e.client_pos = client_pos;
-                        if self.dispatch_input_event(e).0 { redraw = true; }
+                        let mut e = HtmlEvent::new(HtmlEventType::DragEnd);
+                        e.target = self.drag_source;
+                        e.doc_pos = doc_pt;
+                        e.client_pos = client_pos;
+                        if self.dispatch_input_event(e).0 {
+                            redraw = true;
+                        }
                     }
                     self.drag_source = 0;
                     self.drag_active = false;
@@ -320,13 +367,18 @@ impl Document {
                     // The branch it guards reads the click's Y against the
                     // select's own geometry and never consults `hit_node_id`,
                     // so letting it through costs nothing when the list is up.
-                    if (hit_node_id != 0 && hit_node_id == self.mousedown_target || self.open_select != 0)
+                    if (hit_node_id != 0 && hit_node_id == self.mousedown_target
+                        || self.open_select != 0)
                         && !was_dragging
                     {
                         let mut click = HtmlEvent::new(HtmlEventType::Click);
-                        click.target = hit_node_id; click.doc_pos = doc_pt; click.client_pos = client_pos;
+                        click.target = hit_node_id;
+                        click.doc_pos = doc_pt;
+                        click.client_pos = client_pos;
                         click.button = button;
-                        if self.dispatch_input_event(click).0 { redraw = true; }
+                        if self.dispatch_input_event(click).0 {
+                            redraw = true;
+                        }
 
                         // Form element interactions
                         // The second half of the popup rule: an OPEN DROPDOWN
@@ -336,7 +388,13 @@ impl Document {
                         // still needs a real node and keeps its own check.
                         if (hit_node_id != 0 || self.open_select != 0) && button == 0 {
                             let form_click = (hit_node_id != 0)
-                                .then(|| handle_form_click(&mut self.root, hit_node_id, &mut self.on_form_event))
+                                .then(|| {
+                                    handle_form_click(
+                                        &mut self.root,
+                                        hit_node_id,
+                                        &mut self.on_form_event,
+                                    )
+                                })
                                 .flatten();
                             // **EVERY element gets a `click`, not just the form
                             // controls.** `handle_form_click` answers `None` for
@@ -351,7 +409,9 @@ impl Document {
                                 self.fire_element_click(hit_node_id);
                             }
                             if let Some(form_redraw) = form_click {
-                                if form_redraw { redraw = true; }
+                                if form_redraw {
+                                    redraw = true;
+                                }
                                 // `handle_form_click` takes `&mut WebCore`, so it
                                 // wrote `checked` to the render tree only. Push it
                                 // into the arena before anything reads the DOM
@@ -369,30 +429,30 @@ impl Document {
                                 self.style_dirty = true;
                             }
                             // **Activating a `<summary>` toggles its `<details>`**
-                        // (HTML §4.11.1). The summary already draws a pointer
-                        // cursor and a disclosure marker, so the control looked
-                        // interactive and did nothing — the cursor promised an
-                        // interaction that was never wired.
-                        if hit_node_id != 0 && button == 0 {
-                            if let Some(details_id) = self.summary_details(hit_node_id) {
-                                let open = self
-                                    .find_webcore(details_id)
-                                    .map(|n| n.attributes.contains_key("open"))
-                                    .unwrap_or(false);
-                                if open {
-                                    self.remove_attribute(details_id, "open");
-                                } else {
-                                    self.set_attribute(details_id, "open", "");
+                            // (HTML §4.11.1). The summary already draws a pointer
+                            // cursor and a disclosure marker, so the control looked
+                            // interactive and did nothing — the cursor promised an
+                            // interaction that was never wired.
+                            if hit_node_id != 0 && button == 0 {
+                                if let Some(details_id) = self.summary_details(hit_node_id) {
+                                    let open = self
+                                        .find_webcore(details_id)
+                                        .map(|n| n.attributes.contains_key("open"))
+                                        .unwrap_or(false);
+                                    if open {
+                                        self.remove_attribute(details_id, "open");
+                                    } else {
+                                        self.set_attribute(details_id, "open", "");
+                                    }
+                                    // `details:not([open])` is a SELECTOR, so what
+                                    // is shown is a cascade decision — the same
+                                    // reason ticking a checkbox marks style dirty.
+                                    self.style_dirty = true;
+                                    redraw = true;
                                 }
-                                // `details:not([open])` is a SELECTOR, so what
-                                // is shown is a cascade decision — the same
-                                // reason ticking a checkbox marks style dirty.
-                                self.style_dirty = true;
-                                redraw = true;
                             }
-                        }
 
-                        // Handle select dropdown
+                            // Handle select dropdown
                             if self.open_select != 0 {
                                 // Collect options from DOM children
                                 let sel = self.get_node(self.open_select).unwrap();
@@ -406,8 +466,17 @@ impl Document {
                                 let mut total_h = 8.0f32; // padding
                                 for child in &sel.children {
                                     if child.tag == "option" {
-                                        let txt: String = child.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
-                                        let val = child.attributes.get("value").cloned().unwrap_or_else(|| txt.clone());
+                                        let txt: String = child
+                                            .children
+                                            .iter()
+                                            .filter(|c| c.tag == "#text")
+                                            .map(|c| c.text.as_str())
+                                            .collect();
+                                        let val = child
+                                            .attributes
+                                            .get("value")
+                                            .cloned()
+                                            .unwrap_or_else(|| txt.clone());
                                         opt_texts.push(txt.trim().to_string());
                                         opt_values.push(val.trim().to_string());
                                         total_h += item_h;
@@ -415,8 +484,17 @@ impl Document {
                                         total_h += group_h;
                                         for gc in &child.children {
                                             if gc.tag == "option" {
-                                                let txt: String = gc.children.iter().filter(|c| c.tag == "#text").map(|c| c.text.as_str()).collect();
-                                                let val = gc.attributes.get("value").cloned().unwrap_or_else(|| txt.clone());
+                                                let txt: String = gc
+                                                    .children
+                                                    .iter()
+                                                    .filter(|c| c.tag == "#text")
+                                                    .map(|c| c.text.as_str())
+                                                    .collect();
+                                                let val = gc
+                                                    .attributes
+                                                    .get("value")
+                                                    .cloned()
+                                                    .unwrap_or_else(|| txt.clone());
                                                 opt_texts.push(txt.trim().to_string());
                                                 opt_values.push(val.trim().to_string());
                                                 total_h += item_h;
@@ -425,13 +503,16 @@ impl Document {
                                     }
                                 }
 
-                                let dropdown_y = sel.layout.border_rect.y + sel.layout.border_rect.h;
+                                let dropdown_y =
+                                    sel.layout.border_rect.y + sel.layout.border_rect.h;
                                 let popup_w = sel.layout.border_rect.w.max(150.0);
                                 let click_y = doc_pt.1;
                                 let click_x = doc_pt.0;
 
-                                if click_y >= dropdown_y && click_y < dropdown_y + total_h
-                                    && click_x >= sel.layout.border_rect.x && click_x < sel.layout.border_rect.x + popup_w
+                                if click_y >= dropdown_y
+                                    && click_y < dropdown_y + total_h
+                                    && click_x >= sel.layout.border_rect.x
+                                    && click_x < sel.layout.border_rect.x + popup_w
                                 {
                                     // Determine which option was clicked
                                     let rel_y = click_y - dropdown_y - 4.0;
@@ -458,13 +539,16 @@ impl Document {
                                                     opt_i += 1;
                                                 }
                                             }
-                                            if clicked_opt.is_some() { break; }
+                                            if clicked_opt.is_some() {
+                                                break;
+                                            }
                                         }
                                     }
 
                                     if let Some(opt_idx) = clicked_opt {
                                         let sel_id = self.open_select;
-                                        let new_text = opt_texts.get(opt_idx).cloned().unwrap_or_default();
+                                        let new_text =
+                                            opt_texts.get(opt_idx).cloned().unwrap_or_default();
                                         // The option's node_id, so the pick runs
                                         // over the spec's own list of options
                                         // rather than this popup's parallel
@@ -478,11 +562,17 @@ impl Document {
                                         if let (Some(option_id), Some(sel_mut)) =
                                             (option_id, self.find_webcore_mut(sel_id))
                                         {
-                                            let changed = crate::html::forms::pick_option(sel_mut, option_id);
+                                            let changed =
+                                                crate::html::forms::pick_option(sel_mut, option_id);
                                             // The drop-down's shown text is a
                                             // child text node rather than a
                                             // repaint of the options.
-                                            if let Some(tn) = sel_mut.children.iter_mut().rev().find(|c| c.tag == "#text") {
+                                            if let Some(tn) = sel_mut
+                                                .children
+                                                .iter_mut()
+                                                .rev()
+                                                .find(|c| c.tag == "#text")
+                                            {
                                                 tn.text = new_text;
                                             }
                                             sel_mut.layout.layout_dirty = true;
@@ -502,14 +592,18 @@ impl Document {
                             } else {
                                 // Check if clicking a select to open it
                                 let effective_id = find_form_parent_id(&self.root, hit_node_id);
-                                let is_select = self.get_node(effective_id).map(|n| n.tag == "select").unwrap_or(false);
+                                let is_select = self
+                                    .get_node(effective_id)
+                                    .map(|n| n.tag == "select")
+                                    .unwrap_or(false);
                                 // ⛔ A LIST BOX HAS NO POPUP. Its rows are drawn
                                 // inside the control, so a click picks one
                                 // directly — routing it through `open_select`
                                 // opened a phantom list over the page and
                                 // selected nothing, ever.
                                 let list_box = is_select
-                                    && self.get_node(effective_id)
+                                    && self
+                                        .get_node(effective_id)
                                         .map(crate::html::forms::is_list_box)
                                         .unwrap_or(false);
                                 if list_box {
@@ -519,7 +613,11 @@ impl Document {
                                     // `<select>`, so the generic path already
                                     // covered it. Firing a second would report
                                     // two clicks for one press.
-                                    if self.click_list_box_row(effective_id, doc_pt.1, unselect_request) {
+                                    if self.click_list_box_row(
+                                        effective_id,
+                                        doc_pt.1,
+                                        unselect_request,
+                                    ) {
                                         // Selectedness is a SELECTOR
                                         // (`option:checked`), so the cascade has
                                         // to be told, exactly as ticking a
@@ -551,26 +649,33 @@ impl Document {
                         // DblClick: same target within 400 ms.
                         let now = std::time::Instant::now();
                         let is_dbl = self.last_click_target == hit_node_id
-                            && self.last_click_time
+                            && self
+                                .last_click_time
                                 .map(|t| t.elapsed().as_millis() < 400)
                                 .unwrap_or(false);
                         if is_dbl {
                             let mut dbl = HtmlEvent::new(HtmlEventType::DblClick);
-                            dbl.target = hit_node_id; dbl.doc_pos = doc_pt; dbl.client_pos = client_pos;
+                            dbl.target = hit_node_id;
+                            dbl.doc_pos = doc_pt;
+                            dbl.client_pos = client_pos;
                             dbl.button = button;
-                            if self.dispatch_input_event(dbl).0 { redraw = true; }
+                            if self.dispatch_input_event(dbl).0 {
+                                redraw = true;
+                            }
                             // Reset so triple-click doesn't re-trigger.
                             self.last_click_target = 0;
-                            self.last_click_time   = None;
+                            self.last_click_time = None;
                         } else {
                             self.last_click_target = hit_node_id;
-                            self.last_click_time   = Some(now);
+                            self.last_click_time = Some(now);
                         }
                     }
                     self.mousedown_target = 0;
                     // Track visited links + fire on_navigate callback.
                     if button == 0 {
-                        if let Some(href) = crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button) {
+                        if let Some(href) =
+                            crate::layout::hit_test::hit_test_link(&self.root, doc_pt, button)
+                        {
                             self.visited_urls.insert(href.clone());
                             if let Some(ref mut cb) = self.on_navigate {
                                 cb(&href);
@@ -583,12 +688,13 @@ impl Document {
         }
 
         let (handled, mut evt) = self.dispatch_input_event(evt);
-        if handled { redraw = true; }
+        if handled {
+            redraw = true;
+        }
 
         // Also dispatch through the NodeId-based event system (capture/bubble).
         if evt.target != 0 {
-            let mut dom_evt = crate::dom::events::DomEvent::new(
-                etype.as_str(), evt.target);
+            let mut dom_evt = crate::dom::events::DomEvent::new(etype.as_str(), evt.target);
             dom_evt.client_x = client_pos.0;
             dom_evt.client_y = client_pos.1;
             dom_evt.button = button;
@@ -596,22 +702,27 @@ impl Document {
             // defaults, so `event.ctrlKey` was false in every listener however
             // the user actually clicked — a ctrl-click was indistinguishable
             // from a plain one.
-            dom_evt.ctrl_key  = evt.ctrl_key;
+            dom_evt.ctrl_key = evt.ctrl_key;
             dom_evt.shift_key = evt.shift_key;
-            dom_evt.alt_key   = evt.alt_key;
-            dom_evt.meta_key  = evt.meta_key;
+            dom_evt.alt_key = evt.alt_key;
+            dom_evt.meta_key = evt.meta_key;
             dom_evt.related_target = evt.related_target;
             if self.dispatch_dom_event(&mut dom_evt) {
                 redraw = true;
             }
             // A listener that cancelled the event must stop the default
             // action, exactly as one registered the older way does.
-            if dom_evt.default_prevented() { evt.default_prevented = true; }
+            if dom_evt.default_prevented() {
+                evt.default_prevented = true;
+            }
         }
 
         // Only perform editor/default behavior if not prevented by handlers.
         if !evt.default_prevented {
-            if self.editor.handle_mouse_event(&self.root, etype, doc_pt, button) {
+            if self
+                .editor
+                .handle_mouse_event(&self.root, etype, doc_pt, button)
+            {
                 redraw = true;
             }
         }
@@ -631,20 +742,24 @@ impl Document {
     /// Called from the renderer on every `CursorMoved` event.
     /// Returns `true` if listeners were fired (caller should redraw).
     pub fn dispatch_over_out(&mut self, doc_pt: (f32, f32)) -> bool {
-        use crate::dom::{HtmlEventType, HtmlEvent};
+        use crate::dom::{HtmlEvent, HtmlEventType};
         let client_pos = (doc_pt.0, doc_pt.1 - self.scroll_y);
         let new_id: u32 = crate::layout::hit_test::point_to_hit(&self.root, doc_pt, 0)
             .map(|h| h.node_id)
             .unwrap_or(0);
         let old_id = self.hovered_box;
-        if new_id == old_id { return false; }
+        if new_id == old_id {
+            return false;
+        }
 
         let mut redraw = false;
         macro_rules! ev {
             ($t:expr_2021, $tgt:expr_2021, $rel:expr_2021, $bubble:expr_2021) => {{
                 let mut e = HtmlEvent::new($t);
-                e.target = $tgt; e.related_target = $rel;
-                e.doc_pos = doc_pt; e.client_pos = client_pos;
+                e.target = $tgt;
+                e.related_target = $rel;
+                e.doc_pos = doc_pt;
+                e.client_pos = client_pos;
                 // `bubbles` is a property of the event TYPE, so the same call
                 // serves both: `mouseenter`/`mouseleave` fire on the target and
                 // stop, `mouseover`/`mouseout` propagate.
@@ -653,15 +768,23 @@ impl Document {
             }};
         }
         if old_id != 0 {
-            if ev!(HtmlEventType::MouseOut,    old_id, new_id, true)  { redraw = true; }
-            if ev!(HtmlEventType::MouseLeave,  old_id, new_id, false) { redraw = true; }
-            ev!(HtmlEventType::PointerOut,   old_id, new_id, true);
+            if ev!(HtmlEventType::MouseOut, old_id, new_id, true) {
+                redraw = true;
+            }
+            if ev!(HtmlEventType::MouseLeave, old_id, new_id, false) {
+                redraw = true;
+            }
+            ev!(HtmlEventType::PointerOut, old_id, new_id, true);
             ev!(HtmlEventType::PointerLeave, old_id, new_id, false);
         }
         if new_id != 0 {
-            if ev!(HtmlEventType::MouseOver,   new_id, old_id, true)  { redraw = true; }
-            if ev!(HtmlEventType::MouseEnter,  new_id, old_id, false) { redraw = true; }
-            ev!(HtmlEventType::PointerOver,  new_id, old_id, true);
+            if ev!(HtmlEventType::MouseOver, new_id, old_id, true) {
+                redraw = true;
+            }
+            if ev!(HtmlEventType::MouseEnter, new_id, old_id, false) {
+                redraw = true;
+            }
+            ev!(HtmlEventType::PointerOver, new_id, old_id, true);
             ev!(HtmlEventType::PointerEnter, new_id, old_id, false);
         }
 
@@ -669,13 +792,15 @@ impl Document {
         if old_id != 0 {
             let mut e = crate::dom::events::DomEvent::new("mouseout", old_id);
             e.related_target = new_id;
-            e.client_x = client_pos.0; e.client_y = client_pos.1;
+            e.client_x = client_pos.0;
+            e.client_y = client_pos.1;
             self.dispatch_dom_event(&mut e);
         }
         if new_id != 0 {
             let mut e = crate::dom::events::DomEvent::new("mouseover", new_id);
             e.related_target = old_id;
-            e.client_x = client_pos.0; e.client_y = client_pos.1;
+            e.client_x = client_pos.0;
+            e.client_y = client_pos.1;
             self.dispatch_dom_event(&mut e);
         }
         redraw

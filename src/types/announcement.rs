@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── aria-live announcement types ─────────────────────────────────────────────
 
@@ -24,10 +24,10 @@ pub enum LivePoliteness {
 #[derive(Debug, Clone)]
 pub struct Announcement {
     /// Text content to announce.
-    pub text:        String,
+    pub text: String,
     /// Urgency — how the host or AT should prioritise this announcement.
-    pub politeness:  LivePoliteness,
+    pub politeness: LivePoliteness,
     /// `true` when `aria-atomic="true"` was set on the region.
     /// Hosts should announce the full `text`; `false` means only the diff matters.
-    pub atomic:      bool,
+    pub atomic: bool,
 }

@@ -9,11 +9,11 @@
 //! of "which rules matched" is `cascade::apply_cascade_inner`, once.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
-use crate::css::cascade::{MatchMap, MatchSets, match_rules};
+use crate::css::cascade::{match_rules, MatchMap, MatchSets};
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Parallel Cascade ────────────────────────────────────────────────────────
 
@@ -70,7 +70,9 @@ fn flatten_tree_for_cascade<'a>(
     sibling_pos: usize,
     out: &mut Vec<CascadeWorkItem<'a>>,
 ) {
-    if ancestors.len() >= MAX_CASCADE_DEPTH { return; }
+    if ancestors.len() >= MAX_CASCADE_DEPTH {
+        return;
+    }
     // Non-elements and pseudo-elements never match a selector.
     if !node.is_element() || node.tag == "::before" || node.tag == "::after" {
         return;
@@ -91,39 +93,65 @@ fn flatten_tree_for_cascade<'a>(
     }
 
     ancestors.push(AncestorInfo {
-        tag:                node.tag.clone(),
-        attributes:         node.attributes.clone(),
+        tag: node.tag.clone(),
+        attributes: node.attributes.clone(),
         child_index,
         sibling_count,
         type_child_index,
         type_sibling_count,
-        node_id:            node.node_id,
+        node_id: node.node_id,
     });
 
     let n_children = node.children.len();
     if n_children > 0 {
-        let child_tags: Vec<String> = node.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+        let child_tags: Vec<String> = node
+            .children
+            .iter()
+            .map(|c| c.tag.to_ascii_lowercase())
+            .collect();
         let mut type_running: HashMap<&str, usize> = HashMap::new();
-        let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
-            let slot = type_running.entry(tag.as_str()).or_insert(0);
-            let idx = *slot; *slot += 1; idx
-        }).collect();
-        let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
-            *type_running.get(tag.as_str()).unwrap_or(&0)
-        }).collect();
+        let type_counts: Vec<usize> = child_tags
+            .iter()
+            .map(|tag| {
+                let slot = type_running.entry(tag.as_str()).or_insert(0);
+                let idx = *slot;
+                *slot += 1;
+                idx
+            })
+            .collect();
+        let type_totals: Vec<usize> = child_tags
+            .iter()
+            .map(|tag| *type_running.get(tag.as_str()).unwrap_or(&0))
+            .collect();
         let n_elem_children = node.children.iter().filter(|c| c.is_element()).count();
         let mut elem_pos = 0usize;
-        let elem_indices: Vec<usize> = node.children.iter().map(|c| {
-            if !c.is_element() { 0 } else { let p = elem_pos; elem_pos += 1; p }
-        }).collect();
+        let elem_indices: Vec<usize> = node
+            .children
+            .iter()
+            .map(|c| {
+                if !c.is_element() {
+                    0
+                } else {
+                    let p = elem_pos;
+                    elem_pos += 1;
+                    p
+                }
+            })
+            .collect();
 
         // Built once for the whole sibling row: `+` and `~` read a prefix of it.
         let child_siblings = std::sync::Arc::new(
-            node.children.iter().filter(|c| c.is_element()).map(|c| (
-                c.tag.clone(),
-                c.attributes.get("id").cloned().unwrap_or_default(),
-                c.attributes.get("class").cloned().unwrap_or_default(),
-            )).collect::<Vec<_>>(),
+            node.children
+                .iter()
+                .filter(|c| c.is_element())
+                .map(|c| {
+                    (
+                        c.tag.clone(),
+                        c.attributes.get("id").cloned().unwrap_or_default(),
+                        c.attributes.get("class").cloned().unwrap_or_default(),
+                    )
+                })
+                .collect::<Vec<_>>(),
         );
         for (i, child) in node.children.iter().enumerate() {
             let (ci, ns) = if !child.is_element() {
@@ -132,9 +160,15 @@ fn flatten_tree_for_cascade<'a>(
                 (elem_indices[i], n_elem_children)
             };
             flatten_tree_for_cascade(
-                child, ancestors, ci, ns,
-                type_counts[i], type_totals[i],
-                &child_siblings, elem_indices[i], out,
+                child,
+                ancestors,
+                ci,
+                ns,
+                type_counts[i],
+                type_totals[i],
+                &child_siblings,
+                elem_indices[i],
+                out,
             );
         }
     }
@@ -165,20 +199,42 @@ pub fn apply_cascade_parallel(
         let mut work_items: Vec<CascadeWorkItem> = Vec::new();
         let mut ancestors: Vec<AncestorInfo> = Vec::new();
         let no_siblings = std::sync::Arc::new(Vec::new());
-        flatten_tree_for_cascade(root, &mut ancestors, 0, 1, 0, 1, &no_siblings, 0, &mut work_items);
+        flatten_tree_for_cascade(
+            root,
+            &mut ancestors,
+            0,
+            1,
+            0,
+            1,
+            &no_siblings,
+            0,
+            &mut work_items,
+        );
 
-        work_items.par_iter().map(|item| {
-            let mut candidates_buf: Vec<usize> = Vec::new();
-            let sets = match_rules(
-                item.node.0, stylesheet, &item.ancestors,
-                item.child_index, item.sibling_count,
-                item.type_child_index, item.type_sibling_count,
-                vw, vh, focused_box, keyboard_focus, hover_chain,
-                &item.siblings[..item.sibling_pos],
-                &mut candidates_buf,
-            );
-            (item.node.0.node_id, sets)
-        }).collect()
+        work_items
+            .par_iter()
+            .map(|item| {
+                let mut candidates_buf: Vec<usize> = Vec::new();
+                let sets = match_rules(
+                    item.node.0,
+                    stylesheet,
+                    &item.ancestors,
+                    item.child_index,
+                    item.sibling_count,
+                    item.type_child_index,
+                    item.type_sibling_count,
+                    vw,
+                    vh,
+                    focused_box,
+                    keyboard_focus,
+                    hover_chain,
+                    &item.siblings[..item.sibling_pos],
+                    &item.siblings[item.sibling_pos.saturating_add(1).min(item.siblings.len())..],
+                    &mut candidates_buf,
+                );
+                (item.node.0.node_id, sets)
+            })
+            .collect()
     };
 
     let mut ancestors: Vec<AncestorInfo> = Vec::new();
@@ -186,10 +242,26 @@ pub fn apply_cascade_parallel(
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
     let mut share_cache = crate::css::cascade::ShareCache::new();
     apply_cascade_inner(
-        root, stylesheet, parent_style, root_font_px,
-        &mut ancestors, 0, 1, 0, 1,
-        vw, vh, focused_box, keyboard_focus,
-        &stylesheet.variables, &mut candidates_buf, &mut counters,
-        hover_chain, &[], &mut share_cache, Some(&match_map),
+        root,
+        stylesheet,
+        parent_style,
+        root_font_px,
+        &mut ancestors,
+        0,
+        1,
+        0,
+        1,
+        vw,
+        vh,
+        focused_box,
+        keyboard_focus,
+        &stylesheet.variables,
+        &mut candidates_buf,
+        &mut counters,
+        hover_chain,
+        &[],
+        &[],
+        &mut share_cache,
+        Some(&match_map),
     );
 }

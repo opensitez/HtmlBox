@@ -1,8 +1,8 @@
 //! `NamedNodeMap` and `Attr` — DOM §4.9.1 / §4.9.2.
 
-use crate::types::Document;
-use crate::dom::attrs::Attr;
 use crate::dom::arena::NodeId;
+use crate::dom::attrs::Attr;
+use crate::types::Document;
 
 // ─── NamedNodeMap and Attr — DOM §4.9.1 / §4.9.2 ────────────────────────────
 //
@@ -169,12 +169,21 @@ impl Document {
         if id != 0 && self.arena.is_alive(NodeId(id)) {
             let node = self.arena.get(NodeId(id));
             if node.node_type == crate::dom::arena::NodeType::Element {
-                return node.attributes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                return node
+                    .attributes
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
             }
             return Vec::new();
         }
         self.find_webcore(id)
-            .map(|n| n.attributes.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .map(|n| {
+                n.attributes
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

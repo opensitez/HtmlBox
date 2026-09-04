@@ -76,7 +76,9 @@ fn remove_dot_segments(path: &str) -> String {
     for seg in path.split('/') {
         match seg {
             "." => {}
-            ".." => { out.pop(); }
+            ".." => {
+                out.pop();
+            }
             s => out.push(s),
         }
     }
@@ -85,31 +87,48 @@ fn remove_dot_segments(path: &str) -> String {
     if (path.ends_with("/.") || path.ends_with("/..")) && !joined.ends_with('/') {
         joined.push('/');
     }
-    if !joined.starts_with('/') { joined.insert(0, '/'); }
+    if !joined.starts_with('/') {
+        joined.insert(0, '/');
+    }
     joined
 }
 
 impl Url {
     /// `url.protocol` — ⛔ WITH the colon, and `":"` for an empty URL.
-    pub fn protocol(&self) -> String { format!("{}:", self.scheme) }
+    pub fn protocol(&self) -> String {
+        format!("{}:", self.scheme)
+    }
 
     /// `url.host` — hostname plus the port, when the port is not the default.
     pub fn host(&self) -> String {
-        if self.port.is_empty() { self.hostname.clone() }
-        else { format!("{}:{}", self.hostname, self.port) }
+        if self.port.is_empty() {
+            self.hostname.clone()
+        } else {
+            format!("{}:{}", self.hostname, self.port)
+        }
     }
 
     /// `url.pathname`.
-    pub fn pathname(&self) -> &str { &self.path }
+    pub fn pathname(&self) -> &str {
+        &self.path
+    }
 
     /// `url.search` — `""` when empty, EVEN IF the URL had a `?`.
     pub fn search(&self) -> String {
-        if self.query.is_empty() { String::new() } else { format!("?{}", self.query) }
+        if self.query.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", self.query)
+        }
     }
 
     /// `url.hash`.
     pub fn hash(&self) -> String {
-        if self.fragment.is_empty() { String::new() } else { format!("#{}", self.fragment) }
+        if self.fragment.is_empty() {
+            String::new()
+        } else {
+            format!("#{}", self.fragment)
+        }
     }
 
     /// `url.origin` — three shapes, only one of them `scheme://host`.
@@ -119,7 +138,9 @@ impl Url {
     /// mutation proved an explicit early return for it was indistinguishable
     /// from its absence.
     pub fn origin(&self) -> String {
-        if !self.special { return "null".to_string(); }
+        if !self.special {
+            return "null".to_string();
+        }
         format!("{}://{}", self.scheme, self.host())
     }
 
@@ -128,7 +149,9 @@ impl Url {
     /// ⛔ Built from the RAW state, not from the accessors: an empty query
     /// with `has_query` set still writes the `?`.
     pub fn href(&self) -> String {
-        if self.scheme.is_empty() { return String::new(); }
+        if self.scheme.is_empty() {
+            return String::new();
+        }
         let mut out = format!("{}:", self.scheme);
         if self.has_authority {
             out.push_str("//");
@@ -143,8 +166,14 @@ impl Url {
             out.push_str(&self.host());
         }
         out.push_str(&self.path);
-        if self.has_query { out.push('?'); out.push_str(&self.query); }
-        if self.has_fragment { out.push('#'); out.push_str(&self.fragment); }
+        if self.has_query {
+            out.push('?');
+            out.push_str(&self.query);
+        }
+        if self.has_fragment {
+            out.push('#');
+            out.push_str(&self.fragment);
+        }
         out
     }
 }
@@ -172,8 +201,16 @@ pub fn parse(input: &str, base: Option<&Url>) -> Option<Url> {
                 // The whole remainder is the PATH for an opaque scheme —
                 // `mailto:a@b.c` has no host.
                 let (path, query, fragment, hq, hf) = split_tail(rest);
-                Some(Url { scheme, path, query, fragment, has_query: hq, has_fragment: hf,
-                           special: false, ..Default::default() })
+                Some(Url {
+                    scheme,
+                    path,
+                    query,
+                    fragment,
+                    has_query: hq,
+                    has_fragment: hf,
+                    special: false,
+                    ..Default::default()
+                })
             }
         };
     }
@@ -231,10 +268,14 @@ pub fn parse(input: &str, base: Option<&Url>) -> Option<Url> {
 /// The index of the `:` ending a valid scheme, if the input starts with one.
 fn scheme_end(input: &str) -> Option<usize> {
     let i = input.find(':')?;
-    if i == 0 { return None; }
+    if i == 0 {
+        return None;
+    }
     let scheme = &input[..i];
     let mut chars = scheme.chars();
-    if !chars.next()?.is_ascii_alphabetic() { return None; }
+    if !chars.next()?.is_ascii_alphabetic() {
+        return None;
+    }
     chars
         .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
         .then_some(i)
@@ -260,18 +301,26 @@ fn parse_authority(scheme: &str, rest: &str, special: bool) -> Option<Url> {
         // `http://example.com:80x/` throws `TypeError` in Chrome rather than
         // treating `:80x` as part of the host. An EMPTY port is fine.
         Some((h, p)) => {
-            if !p.chars().all(|c| c.is_ascii_digit()) { return None; }
+            if !p.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
             (h.to_string(), p.to_string())
         }
         None => (hostport.to_string(), String::new()),
     };
     // ⛔ The scheme's DEFAULT port is dropped — from `host`, `port` and `href`
     // alike, so `http://x:80/` serializes back without it.
-    if default_port(scheme) == Some(port.as_str()) { port.clear(); }
+    if default_port(scheme) == Some(port.as_str()) {
+        port.clear();
+    }
 
     let (mut path, query, fragment, hq, hf) = split_tail(tail);
     // ⛔ An empty path on a special scheme becomes `/`, and `href` gains it.
-    if path.is_empty() { path = "/".to_string(); } else { path = remove_dot_segments(&path); }
+    if path.is_empty() {
+        path = "/".to_string();
+    } else {
+        path = remove_dot_segments(&path);
+    }
 
     Some(Url {
         scheme: scheme.to_string(),

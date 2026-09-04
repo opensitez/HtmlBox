@@ -7,8 +7,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window;
 
-use webcore::{load_html_with_base, Document, Renderer, HtmlEventType};
 use platform::Platform;
+use webcore::{load_html_with_base, Document, HtmlEventType, Renderer};
 
 const DEMO_HTML: &str = r##"<!DOCTYPE html>
 <html>
@@ -93,38 +93,44 @@ const DEMO_HTML: &str = r##"<!DOCTYPE html>
 "##;
 
 struct App {
-    window:        Option<Arc<Window>>,
-    platform:      Option<Platform>,
-    renderer:      Renderer,
-    doc:           Option<Document>,
-    width:         f32,
-    height:        f32,
-    scale:         f32,
-    mouse_x:       f32,
-    mouse_y:       f32,
-    initial_html:  String,
-    base_url:      String,
+    window: Option<Arc<Window>>,
+    platform: Option<Platform>,
+    renderer: Renderer,
+    doc: Option<Document>,
+    width: f32,
+    height: f32,
+    scale: f32,
+    mouse_x: f32,
+    mouse_y: f32,
+    initial_html: String,
+    base_url: String,
     /// Receiver for a Document being loaded on a background thread.
-    pending_doc:   Option<std::sync::mpsc::Receiver<Document>>,
+    pending_doc: Option<std::sync::mpsc::Receiver<Document>>,
 }
 
 impl App {
-    fn request_redraw(&self) { if let Some(w) = self.window.as_ref() { w.request_redraw(); } }
+    fn request_redraw(&self) {
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("webcore")
-                    .with_inner_size(winit::dpi::LogicalSize::new(900u32, 700u32))
-            ).expect("Failed to create window")
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("webcore")
+                        .with_inner_size(winit::dpi::LogicalSize::new(900u32, 700u32)),
+                )
+                .expect("Failed to create window"),
         );
 
         let platform = Platform::new_windowed(window.clone());
-        self.scale  = platform.scale_factor();
-        self.width  = platform.logical_width();
+        self.scale = platform.scale_factor();
+        self.width = platform.logical_width();
         self.height = platform.logical_height();
         self.renderer.set_scale(self.scale);
 
@@ -140,7 +146,7 @@ impl ApplicationHandler for App {
         });
         self.pending_doc = Some(rx);
 
-        self.window   = Some(window);
+        self.window = Some(window);
         self.platform = Some(platform);
     }
 
@@ -161,7 +167,9 @@ impl ApplicationHandler for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => { event_loop.exit(); }
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
             WindowEvent::Focused(focused) => {
                 if let Some(doc) = self.doc.as_mut() {
                     doc.editor.has_focus = focused;
@@ -170,8 +178,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 platform.resize(size.width, size.height);
-                self.scale  = platform.scale_factor();
-                self.width  = platform.logical_width();
+                self.scale = platform.scale_factor();
+                self.width = platform.logical_width();
                 self.height = platform.logical_height();
                 self.renderer.set_scale(self.scale);
                 if let Some(doc) = self.doc.as_mut() {
@@ -182,8 +190,10 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => (x * 20.0, y * 20.0),
-                    winit::event::MouseScrollDelta::PixelDelta(p)   =>
-                        (p.x as f32 / platform.scale_factor(), p.y as f32 / platform.scale_factor()),
+                    winit::event::MouseScrollDelta::PixelDelta(p) => (
+                        p.x as f32 / platform.scale_factor(),
+                        p.y as f32 / platform.scale_factor(),
+                    ),
                 };
                 let zoom = self.renderer.zoom;
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
@@ -200,7 +210,13 @@ impl ApplicationHandler for App {
                 let (mx, my, sc) = (self.mouse_x, self.mouse_y, self.scale);
                 let (sx, sy) = (mx / sc, my / sc);
                 if let Some(doc) = self.doc.as_mut() {
-                    let sb = doc.process_scrollbar_event(HtmlEventType::MouseMove, sx, sy, self.width, self.height);
+                    let sb = doc.process_scrollbar_event(
+                        HtmlEventType::MouseMove,
+                        sx,
+                        sy,
+                        self.width,
+                        self.height,
+                    );
                     if sb {
                         self.request_redraw();
                     } else {
@@ -213,9 +229,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let bt = match button {
-                    MouseButton::Left   => 0,
+                    MouseButton::Left => 0,
                     MouseButton::Middle => 1,
-                    MouseButton::Right  => 2,
+                    MouseButton::Right => 2,
                     _ => 0,
                 };
                 let zoom = self.renderer.zoom;
@@ -223,7 +239,13 @@ impl ApplicationHandler for App {
                 let (sx, sy) = (mx / sc, my / sc);
                 if state == ElementState::Pressed {
                     if let Some(doc) = self.doc.as_mut() {
-                        let sb = doc.process_scrollbar_event(HtmlEventType::MouseDown, sx, sy, self.width, self.height);
+                        let sb = doc.process_scrollbar_event(
+                            HtmlEventType::MouseDown,
+                            sx,
+                            sy,
+                            self.width,
+                            self.height,
+                        );
                         if !sb {
                             let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                             doc.process_mouse_event(HtmlEventType::MouseDown, pt, bt);
@@ -232,7 +254,13 @@ impl ApplicationHandler for App {
                     }
                 } else {
                     if let Some(doc) = self.doc.as_mut() {
-                        doc.process_scrollbar_event(HtmlEventType::MouseUp, sx, sy, self.width, self.height);
+                        doc.process_scrollbar_event(
+                            HtmlEventType::MouseUp,
+                            sx,
+                            sy,
+                            self.width,
+                            self.height,
+                        );
                         let pt = (sx / zoom, sy / zoom + doc.scroll_y);
                         doc.process_mouse_event(HtmlEventType::MouseUp, pt, bt);
                         self.request_redraw();
@@ -246,7 +274,15 @@ impl ApplicationHandler for App {
                     _ => None,
                 };
                 if let Some(doc) = self.doc.as_mut() {
-                    if doc.process_key_event(HtmlEventType::KeyDown, key_code, ch, false, false, false, false) {
+                    if doc.process_key_event(
+                        HtmlEventType::KeyDown,
+                        key_code,
+                        ch,
+                        false,
+                        false,
+                        false,
+                        false,
+                    ) {
                         let engine = self.renderer.layout_engine();
                         if ch.is_some() && key_code >= 32 {
                             engine.layout_no_cascade(doc, self.width);
@@ -258,12 +294,16 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                let doc = match self.doc.as_mut() { Some(d) => d, None => return };
+                let doc = match self.doc.as_mut() {
+                    Some(d) => d,
+                    None => return,
+                };
                 let renderer = &mut self.renderer;
                 platform.render(|scale, pixmap| {
                     renderer.render(doc, pixmap, scale);
                 });
-                event_loop.set_control_flow(ControlFlow::WaitUntil(doc.editor.next_blink_deadline()));
+                event_loop
+                    .set_control_flow(ControlFlow::WaitUntil(doc.editor.next_blink_deadline()));
             }
             _ => {}
         }
@@ -302,7 +342,8 @@ impl ApplicationHandler for App {
                 needs_redraw = true;
             }
             // Keep polling while resources are still in flight.
-            has_pending = has_pending || doc.pending_images.is_some()
+            has_pending = has_pending
+                || doc.pending_images.is_some()
                 || self.renderer.layout_engine().has_pending_fonts();
         }
         if needs_redraw {
@@ -320,11 +361,11 @@ impl ApplicationHandler for App {
 
 fn winit_key_to_code(key: &Key) -> u32 {
     match key {
-        Key::Named(NamedKey::Enter)     => 13,
+        Key::Named(NamedKey::Enter) => 13,
         Key::Named(NamedKey::Backspace) => 8,
-        Key::Named(NamedKey::Delete)    => 46,
+        Key::Named(NamedKey::Delete) => 46,
         Key::Named(NamedKey::ArrowLeft) => 37,
-        Key::Named(NamedKey::ArrowRight)=> 39,
+        Key::Named(NamedKey::ArrowRight) => 39,
         Key::Character(s) => s.chars().next().map(|c| c as u32).unwrap_or(0),
         _ => 0,
     }
@@ -336,7 +377,9 @@ fn main() {
         if path.starts_with("http://") || path.starts_with("https://") {
             // URL — fetch content, use URL as base
             let html = webcore::http_client()
-                .get(path).send().ok()
+                .get(path)
+                .send()
+                .ok()
                 .and_then(|r| r.bytes().ok())
                 .and_then(|bytes| {
                     String::from_utf8(bytes.to_vec()).ok().or_else(|| {
@@ -359,10 +402,15 @@ fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
-        window: None, platform: None,
+        window: None,
+        platform: None,
         renderer: Renderer::new(),
-        doc: None, width: 900.0, height: 700.0,
-        scale: 1.0, mouse_x: 0.0, mouse_y: 0.0,
+        doc: None,
+        width: 900.0,
+        height: 700.0,
+        scale: 1.0,
+        mouse_x: 0.0,
+        mouse_y: 0.0,
         pending_doc: None,
         initial_html,
         base_url,

@@ -16,7 +16,9 @@ impl Document {
                 return Some(node.node_id);
             }
             for child in &node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
+                if let Some(found) = walk(child, id) {
+                    return Some(found);
+                }
             }
             None
         }
@@ -69,26 +71,43 @@ pub fn matching_ids_from(root: &WebCore, selector: &str, first_only: bool) -> Ve
                 hover_chain: &empty_hover,
                 element_id: root.node_id,
                 prev_siblings: &[],
+                next_siblings: &[],
             };
             for sel in &selectors {
                 if crate::css::matches_selector_with_ancestors(
-                    &sel.parts, &root.tag, &root.attributes, 0, 1, &[], &ctx,
+                    &sel.parts,
+                    &root.tag,
+                    &root.attributes,
+                    0,
+                    1,
+                    &[],
+                    &ctx,
                 ) {
                     results.push(root.node_id);
-                    if first_only { return results; }
+                    if first_only {
+                        return results;
+                    }
                     break;
                 }
             }
         }
         let root_chain = [build_ancestor_entry(root, 0, 1, 0, 1)];
-        query_walk(root, &root_chain, &selectors, &empty_hover, first_only, &mut results);
+        query_walk(
+            root,
+            &root_chain,
+            &selectors,
+            &empty_hover,
+            first_only,
+            &mut results,
+        );
         results
     }
 }
 
 /// Split comma-separated selectors and parse each one.
 fn parse_comma_selectors(selector: &str) -> Vec<crate::css::CssSelector> {
-    selector.split(',')
+    selector
+        .split(',')
         .map(|s| crate::css::parse_selector(s.trim()))
         .collect()
 }
@@ -110,17 +129,39 @@ struct ChildPositions {
 
 fn child_positions(children: &[WebCore]) -> ChildPositions {
     let mut running: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let tags: Vec<String> = children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
-    let type_index: Vec<usize> = tags.iter().map(|t| {
-        let slot = running.entry(t.clone()).or_insert(0);
-        let i = *slot; *slot += 1; i
-    }).collect();
+    let tags: Vec<String> = children
+        .iter()
+        .map(|c| c.tag.to_ascii_lowercase())
+        .collect();
+    let type_index: Vec<usize> = tags
+        .iter()
+        .map(|t| {
+            let slot = running.entry(t.clone()).or_insert(0);
+            let i = *slot;
+            *slot += 1;
+            i
+        })
+        .collect();
     let type_count: Vec<usize> = tags.iter().map(|t| *running.get(t).unwrap_or(&0)).collect();
     let mut pos = 0usize;
-    let elem_index: Vec<usize> = children.iter()
-        .map(|c| if c.is_element() { let p = pos; pos += 1; p } else { 0 })
+    let elem_index: Vec<usize> = children
+        .iter()
+        .map(|c| {
+            if c.is_element() {
+                let p = pos;
+                pos += 1;
+                p
+            } else {
+                0
+            }
+        })
         .collect();
-    ChildPositions { elem_index, elem_count: pos, type_index, type_count }
+    ChildPositions {
+        elem_index,
+        elem_count: pos,
+        type_index,
+        type_count,
+    }
 }
 
 /// Build ancestor info for the current node.
@@ -160,9 +201,23 @@ fn query_walk(
     let pos = child_positions(&node.children);
     // `+` and `~` look BACKWARDS, so this accumulates as the walk moves right.
     let mut prev_siblings: Vec<(String, String, String)> = Vec::new();
+    let sibling_records: Vec<(String, String, String)> = node
+        .children
+        .iter()
+        .filter(|c| c.is_element())
+        .map(|c| {
+            (
+                c.tag.to_ascii_lowercase(),
+                c.attributes.get("id").cloned().unwrap_or_default(),
+                c.attributes.get("class").cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
 
     for (i, child) in node.children.iter().enumerate() {
-        if !child.is_element() || child.node_id == 0 { continue; }
+        if !child.is_element() || child.node_id == 0 {
+            continue;
+        }
 
         let ctx = crate::css::MatchContext {
             focused_box: 0,
@@ -173,25 +228,43 @@ fn query_walk(
             hover_chain,
             element_id: child.node_id,
             prev_siblings: &prev_siblings,
+            next_siblings: &sibling_records[pos.elem_index[i].saturating_add(1)..],
         };
 
         for sel in selectors {
             if crate::css::matches_selector_with_ancestors(
-                &sel.parts, &child.tag, &child.attributes,
-                pos.elem_index[i], pos.elem_count, parent_ancestors, &ctx,
+                &sel.parts,
+                &child.tag,
+                &child.attributes,
+                pos.elem_index[i],
+                pos.elem_count,
+                parent_ancestors,
+                &ctx,
             ) {
                 results.push(child.node_id);
-                if first_only { return true; }
+                if first_only {
+                    return true;
+                }
                 break; // one hit per element, however many alternatives matched
             }
         }
 
         let mut child_ancestors = parent_ancestors.to_vec();
         child_ancestors.push(build_ancestor_entry(
-            child, pos.elem_index[i], pos.elem_count,
-            pos.type_index[i], pos.type_count[i],
+            child,
+            pos.elem_index[i],
+            pos.elem_count,
+            pos.type_index[i],
+            pos.type_count[i],
         ));
-        if query_walk(child, &child_ancestors, selectors, hover_chain, first_only, results) {
+        if query_walk(
+            child,
+            &child_ancestors,
+            selectors,
+            hover_chain,
+            first_only,
+            results,
+        ) {
             return true;
         }
 

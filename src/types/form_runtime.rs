@@ -3,30 +3,42 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 /// Returns true if `node` is a focusable element (native or via tabindex/contenteditable).
 /// tabindex=-1 elements return true (focusable by script/click) but are excluded from
 /// the *tab* order by `collect_focusable_ordered`.
 /// Handle a click on a form element: toggle checkbox, select radio, fire form events.
 /// Returns Some(true) if a redraw is needed, Some(false) if handled but no redraw, None if not a form element.
-pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<FormEventCallback>) -> Option<bool> {
+pub fn handle_form_click(
+    root: &mut WebCore,
+    target: u32,
+    callback: &mut Option<FormEventCallback>,
+) -> Option<bool> {
     // Find a node by node_id in the tree (immutable)
     fn find_ref<'a>(node: &'a WebCore, t: u32) -> Option<&'a WebCore> {
-        if node.node_id == t { return Some(node); }
+        if node.node_id == t {
+            return Some(node);
+        }
         for child in &node.children {
-            if let Some(found) = find_ref(child, t) { return Some(found); }
+            if let Some(found) = find_ref(child, t) {
+                return Some(found);
+            }
         }
         None
     }
     // Find a node by node_id in the tree (mutable)
     fn find_mut<'a>(node: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-        if node.node_id == t { return Some(node); }
+        if node.node_id == t {
+            return Some(node);
+        }
         for child in &mut node.children {
-            if let Some(found) = find_mut(child, t) { return Some(found); }
+            if let Some(found) = find_mut(child, t) {
+                return Some(found);
+            }
         }
         None
     }
@@ -42,7 +54,9 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                     if c.node_id == child_id {
                         return Some(node.node_id);
                     }
-                    if let Some(p) = find_parent_id(c, child_id) { return Some(p); }
+                    if let Some(p) = find_parent_id(c, child_id) {
+                        return Some(p);
+                    }
                 }
                 None
             }
@@ -55,15 +69,33 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
 
     // Disabled elements don't respond to clicks
     let target_node = find_ref(root, target)?;
-    if target_node.attributes.contains_key("disabled") { return None; }
+    if target_node.attributes.contains_key("disabled") {
+        return None;
+    }
 
     // Read target info before mutation
     let (tag, input_type, name, id, value) = {
         let tag = target_node.tag.clone();
-        let input_type = target_node.attributes.get("type").cloned().unwrap_or_default();
-        let name = target_node.attributes.get("name").cloned().unwrap_or_default();
-        let id = target_node.attributes.get("id").cloned().unwrap_or_default();
-        let value = target_node.attributes.get("value").cloned().unwrap_or_default();
+        let input_type = target_node
+            .attributes
+            .get("type")
+            .cloned()
+            .unwrap_or_default();
+        let name = target_node
+            .attributes
+            .get("name")
+            .cloned()
+            .unwrap_or_default();
+        let id = target_node
+            .attributes
+            .get("id")
+            .cloned()
+            .unwrap_or_default();
+        let value = target_node
+            .attributes
+            .get("value")
+            .cloned()
+            .unwrap_or_default();
         (tag, input_type, name, id, value)
     };
 
@@ -85,7 +117,9 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                     let new_checked = !was_checked;
                     if let Some(cb) = callback {
                         cb(&FormEvent {
-                            tag: tag.clone(), id, name,
+                            tag: tag.clone(),
+                            id,
+                            name,
                             kind: FormEventKind::Toggle(new_checked),
                             element: target,
                         });
@@ -115,7 +149,9 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                     node.dirty_checked = true;
                     if let Some(cb) = callback {
                         cb(&FormEvent {
-                            tag: tag.clone(), id, name,
+                            tag: tag.clone(),
+                            id,
+                            name,
                             kind: FormEventKind::Change(value),
                             element: target,
                         });
@@ -130,13 +166,19 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                         fn find_form_for_reset(node: &WebCore, target_id: u32) -> Option<u32> {
                             if node.tag == "form" {
                                 fn contains(n: &WebCore, t: u32) -> bool {
-                                    if n.node_id == t { return true; }
+                                    if n.node_id == t {
+                                        return true;
+                                    }
                                     n.children.iter().any(|c| contains(c, t))
                                 }
-                                if contains(node, target_id) { return Some(node.node_id); }
+                                if contains(node, target_id) {
+                                    return Some(node.node_id);
+                                }
                             }
                             for child in &node.children {
-                                if let Some(f) = find_form_for_reset(child, target_id) { return Some(f); }
+                                if let Some(f) = find_form_for_reset(child, target_id) {
+                                    return Some(f);
+                                }
                             }
                             None
                         }
@@ -146,7 +188,9 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                     }
                     if let Some(cb) = callback {
                         cb(&FormEvent {
-                            tag: tag.clone(), id, name,
+                            tag: tag.clone(),
+                            id,
+                            name,
                             kind: FormEventKind::Click(value),
                             element: target,
                         });
@@ -166,20 +210,29 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
         }
         "button" => {
             let target_node2 = find_ref(root, target);
-            let btn_type = target_node2.and_then(|n| n.attributes.get("type").cloned())
+            let btn_type = target_node2
+                .and_then(|n| n.attributes.get("type").cloned())
                 .unwrap_or_else(|| "submit".to_string());
             if let Some(cb) = callback {
                 let text = target_node2.map(|n| n.text.clone()).unwrap_or_default();
                 cb(&FormEvent {
-                    tag: tag.clone(), id: id.clone(), name: name.clone(),
-                    kind: FormEventKind::Click(if value.is_empty() { text } else { value.clone() }),
+                    tag: tag.clone(),
+                    id: id.clone(),
+                    name: name.clone(),
+                    kind: FormEventKind::Click(if value.is_empty() {
+                        text
+                    } else {
+                        value.clone()
+                    }),
                     element: target,
                 });
                 // Submit buttons trigger form submission
                 if btn_type == "submit" {
                     let action = find_parent_form_action(root, target);
                     cb(&FormEvent {
-                        tag: "form".into(), id: String::new(), name: String::new(),
+                        tag: "form".into(),
+                        id: String::new(),
+                        name: String::new(),
                         kind: FormEventKind::Submit(action),
                         element: target,
                     });
@@ -190,12 +243,20 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
                 fn find_form_id(node: &WebCore, target_id: u32) -> Option<u32> {
                     if node.tag == "form" {
                         fn has(n: &WebCore, t: u32) -> bool {
-                            if n.node_id == t { return true; }
+                            if n.node_id == t {
+                                return true;
+                            }
                             n.children.iter().any(|c| has(c, t))
                         }
-                        if has(node, target_id) { return Some(node.node_id); }
+                        if has(node, target_id) {
+                            return Some(node.node_id);
+                        }
                     }
-                    for c in &node.children { if let Some(f) = find_form_id(c, target_id) { return Some(f); } }
+                    for c in &node.children {
+                        if let Some(f) = find_form_id(c, target_id) {
+                            return Some(f);
+                        }
+                    }
                     None
                 }
                 if let Some(fid) = find_form_id(root, target) {
@@ -217,12 +278,21 @@ pub fn handle_form_click(root: &mut WebCore, target: u32, callback: &mut Option<
 /// Find the form element parent of a target (walks up from #text to select/input/button).
 pub(crate) fn find_form_parent_id(root: &WebCore, target_id: u32) -> u32 {
     fn find_ref<'a>(node: &'a WebCore, t: u32) -> Option<&'a WebCore> {
-        if node.node_id == t { return Some(node); }
-        for child in &node.children { if let Some(f) = find_ref(child, t) { return Some(f); } }
+        if node.node_id == t {
+            return Some(node);
+        }
+        for child in &node.children {
+            if let Some(f) = find_ref(child, t) {
+                return Some(f);
+            }
+        }
         None
     }
     if let Some(node) = find_ref(root, target_id) {
-        if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button") {
+        if matches!(
+            node.tag.as_str(),
+            "input" | "select" | "textarea" | "button"
+        ) {
             return target_id;
         }
     }
@@ -230,11 +300,16 @@ pub(crate) fn find_form_parent_id(root: &WebCore, target_id: u32) -> u32 {
     fn walk(node: &WebCore, target_id: u32) -> Option<u32> {
         for child in &node.children {
             if child.node_id == target_id {
-                if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button" | "label") {
+                if matches!(
+                    node.tag.as_str(),
+                    "input" | "select" | "textarea" | "button" | "label"
+                ) {
                     return Some(node.node_id);
                 }
             }
-            if let Some(p) = walk(child, target_id) { return Some(p); }
+            if let Some(p) = walk(child, target_id) {
+                return Some(p);
+            }
         }
         None
     }
@@ -257,7 +332,9 @@ pub fn find_parent_form_action(root: &WebCore, target_id: u32) -> String {
             // Check if child contains target and this node is a form
             if node.tag == "form" {
                 fn contains(node: &WebCore, target_id: u32) -> bool {
-                    if node.node_id == target_id { return true; }
+                    if node.node_id == target_id {
+                        return true;
+                    }
                     node.children.iter().any(|c| contains(c, target_id))
                 }
                 if contains(child, target_id) {
@@ -294,25 +371,37 @@ pub fn collect_form_data(form: &WebCore) -> Vec<(String, String)> {
 }
 
 fn collect_form_data_inner(node: &WebCore, data: &mut Vec<(String, String)>) {
-    if node.attributes.contains_key("disabled") { return; }
+    if node.attributes.contains_key("disabled") {
+        return;
+    }
     let name = match node.attributes.get("name") {
         Some(n) if !n.is_empty() => n.clone(),
         _ => {
             // No name — recurse into children but don't collect this node
-            for child in &node.children { collect_form_data_inner(child, data); }
+            for child in &node.children {
+                collect_form_data_inner(child, data);
+            }
             return;
         }
     };
     match node.tag.as_str() {
         "input" => {
-            let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            let input_type = node
+                .attributes
+                .get("type")
+                .map(|s| s.as_str())
+                .unwrap_or("text");
             match input_type {
                 "checkbox" => {
                     // What gets SUBMITTED is the current checkedness, not the
                     // author's default — a box the user unticked must not be
                     // in the form data because the markup still says `checked`.
                     if node.checkedness {
-                        let val = node.attributes.get("value").cloned().unwrap_or_else(|| "on".to_string());
+                        let val = node
+                            .attributes
+                            .get("value")
+                            .cloned()
+                            .unwrap_or_else(|| "on".to_string());
                         data.push((name, val));
                     }
                 }
@@ -357,7 +446,9 @@ fn collect_form_data_inner(node: &WebCore, data: &mut Vec<(String, String)>) {
             data.push((name, val));
         }
         _ => {
-            for child in &node.children { collect_form_data_inner(child, data); }
+            for child in &node.children {
+                collect_form_data_inner(child, data);
+            }
         }
     }
 }
@@ -368,8 +459,14 @@ fn collect_form_data_inner(node: &WebCore, data: &mut Vec<(String, String)>) {
 /// Selects reset to the initially selected option.
 pub fn reset_form(root: &mut WebCore, form_id: u32) {
     fn find_mut<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-        if n.node_id == t { return Some(n); }
-        for c in &mut n.children { if let Some(r) = find_mut(c, t) { return Some(r); } }
+        if n.node_id == t {
+            return Some(n);
+        }
+        for c in &mut n.children {
+            if let Some(r) = find_mut(c, t) {
+                return Some(r);
+            }
+        }
         None
     }
     if let Some(form) = find_mut(root, form_id) {
@@ -385,7 +482,11 @@ pub fn reset_form(root: &mut WebCore, form_id: u32) {
 fn reset_form_inner(node: &mut WebCore) {
     match node.tag.as_str() {
         "input" => {
-            let input_type = node.attributes.get("type").cloned().unwrap_or_else(|| "text".to_string());
+            let input_type = node
+                .attributes
+                .get("type")
+                .cloned()
+                .unwrap_or_else(|| "text".to_string());
             match input_type.as_str() {
                 "checkbox" | "radio" => {
                     // Verbatim: "set its ... dirty checkedness flag back to
@@ -436,7 +537,9 @@ fn reset_form_inner(node: &mut WebCore) {
             crate::html::forms::reset_select(node);
         }
         _ => {
-            for child in &mut node.children { reset_form_inner(child); }
+            for child in &mut node.children {
+                reset_form_inner(child);
+            }
         }
     }
 }
@@ -496,7 +599,9 @@ pub fn apply_autofocus(doc: &mut Document) {
             return Some(node.node_id);
         }
         for child in &node.children {
-            if let Some(id) = find_autofocus(child) { return Some(id); }
+            if let Some(id) = find_autofocus(child) {
+                return Some(id);
+            }
         }
         None
     }

@@ -1,14 +1,14 @@
 // Tests for the CSS animation and transition runtime.
 
-use std::time::{Duration, Instant};
-use crate::css::{
-    parse_easing, parse_animation_shorthand, parse_transition_shorthand,
-    extract_keyframes, Stylesheet,
-};
-use crate::types::*;
-use crate::layout::LayoutEngine;
-use crate::html::parse_html;
 use super::harness::*;
+use crate::css::{
+    extract_keyframes, parse_animation_shorthand, parse_easing, parse_transition_shorthand,
+    Stylesheet,
+};
+use crate::html::parse_html;
+use crate::layout::LayoutEngine;
+use crate::types::*;
+use std::time::{Duration, Instant};
 
 // ── Easing function parsing ───────────────────────────────────────────────────
 
@@ -19,12 +19,12 @@ fn easing_linear() {
 
 #[test]
 fn easing_keywords() {
-    assert_eq!(parse_easing("ease"),        EasingFn::Ease);
-    assert_eq!(parse_easing("ease-in"),     EasingFn::EaseIn);
-    assert_eq!(parse_easing("ease-out"),    EasingFn::EaseOut);
+    assert_eq!(parse_easing("ease"), EasingFn::Ease);
+    assert_eq!(parse_easing("ease-in"), EasingFn::EaseIn);
+    assert_eq!(parse_easing("ease-out"), EasingFn::EaseOut);
     assert_eq!(parse_easing("ease-in-out"), EasingFn::EaseInOut);
-    assert_eq!(parse_easing("step-start"),  EasingFn::StepStart);
-    assert_eq!(parse_easing("step-end"),    EasingFn::StepEnd);
+    assert_eq!(parse_easing("step-start"), EasingFn::StepStart);
+    assert_eq!(parse_easing("step-end"), EasingFn::StepEnd);
 }
 
 #[test]
@@ -37,12 +37,18 @@ fn easing_cubic_bezier() {
 
 #[test]
 fn easing_steps_start() {
-    assert_eq!(parse_easing("steps(4, start)"), EasingFn::Steps(4, true));
+    assert_eq!(
+        parse_easing("steps(4, start)"),
+        EasingFn::Steps(4, StepPosition::JumpStart)
+    );
 }
 
 #[test]
 fn easing_steps_end() {
-    assert_eq!(parse_easing("steps(3, end)"), EasingFn::Steps(3, false));
+    assert_eq!(
+        parse_easing("steps(3, end)"),
+        EasingFn::Steps(3, StepPosition::JumpEnd)
+    );
 }
 
 #[test]
@@ -62,18 +68,36 @@ fn apply_easing_linear_is_identity() {
 
 #[test]
 fn apply_easing_boundary_values() {
-    for easing in [EasingFn::Ease, EasingFn::EaseIn, EasingFn::EaseOut, EasingFn::EaseInOut] {
+    for easing in [
+        EasingFn::Ease,
+        EasingFn::EaseIn,
+        EasingFn::EaseOut,
+        EasingFn::EaseInOut,
+    ] {
         let v0 = apply_easing(&easing, 0.0);
         let v1 = apply_easing(&easing, 1.0);
-        assert!(v0.abs() < 1e-3,         "easing {:?} at t=0 should be ~0, got {}", easing, v0);
-        assert!((v1 - 1.0).abs() < 1e-3, "easing {:?} at t=1 should be ~1, got {}", easing, v1);
+        assert!(
+            v0.abs() < 1e-3,
+            "easing {:?} at t=0 should be ~0, got {}",
+            easing,
+            v0
+        );
+        assert!(
+            (v1 - 1.0).abs() < 1e-3,
+            "easing {:?} at t=1 should be ~1, got {}",
+            easing,
+            v1
+        );
     }
 }
 
 #[test]
 fn apply_easing_step_start() {
     let e = EasingFn::StepStart;
-    assert_eq!(apply_easing(&e, 0.0), 0.0);
+    // css-easing-2 §2.3: `step-start` is `steps(1, jump-start)`, whose first
+    // interval — `[0, 1)`, t=0 included — outputs 1. Jumping at the START is
+    // what the value means; answering 0 there was step-END's behaviour.
+    assert_eq!(apply_easing(&e, 0.0), 1.0);
     assert_eq!(apply_easing(&e, 0.5), 1.0);
     assert_eq!(apply_easing(&e, 1.0), 1.0);
 }
@@ -88,7 +112,7 @@ fn apply_easing_step_end() {
 
 #[test]
 fn apply_easing_steps_4() {
-    let e = EasingFn::Steps(4, false);  // jump-end
+    let e = EasingFn::Steps(4, StepPosition::JumpEnd);
     let v = apply_easing(&e, 0.6);
     // floor(0.6 * 4) / 4 = floor(2.4)/4 = 2/4 = 0.5
     assert!((v - 0.5).abs() < 1e-4, "expected 0.5, got {}", v);
@@ -114,7 +138,7 @@ fn parse_animation_with_delay() {
     let a = &anims[0];
     assert_eq!(a.name, "fade");
     assert!((a.duration_ms - 300.0).abs() < 1.0);
-    assert!((a.delay_ms   - 100.0).abs() < 1.0);
+    assert!((a.delay_ms - 100.0).abs() < 1.0);
     assert_eq!(a.timing_fn, EasingFn::EaseIn);
 }
 
@@ -161,6 +185,26 @@ fn parse_animation_iteration_count_number() {
     assert!((anims[0].iteration_count - 3.0).abs() < 0.01);
 }
 
+#[test]
+fn animation_composition_is_parsed_and_stored() {
+    let anims = parse_animation_shorthand("fade 1s linear add");
+    assert_eq!(anims.len(), 1);
+    assert_eq!(anims[0].name, "fade");
+    assert_eq!(anims[0].composition, AnimationComposition::Add);
+
+    let mut s = ComputedStyle::default();
+    crate::css::apply_property(&mut s, "animation-composition", "accumulate");
+    assert_eq!(
+        s.rare().animations[0].composition,
+        AnimationComposition::Accumulate
+    );
+    crate::css::apply_property(&mut s, "animation-composition", "replace");
+    assert_eq!(
+        s.rare().animations[0].composition,
+        AnimationComposition::Replace
+    );
+}
+
 // ── transition shorthand parsing ──────────────────────────────────────────────
 
 #[test]
@@ -178,7 +222,7 @@ fn parse_transition_with_delay() {
     assert_eq!(trs.len(), 1);
     assert_eq!(trs[0].property, "opacity");
     assert!((trs[0].duration_ms - 1000.0).abs() < 1.0);
-    assert!((trs[0].delay_ms    -  500.0).abs() < 1.0);
+    assert!((trs[0].delay_ms - 500.0).abs() < 1.0);
 }
 
 #[test]
@@ -230,6 +274,23 @@ fn extract_keyframes_percent() {
 }
 
 #[test]
+fn extract_keyframes_ignores_invalid_selectors() {
+    let css = r#"
+        @keyframes pulse {
+            abc% { opacity: 0; }
+            150% { opacity: 0.5; }
+            0 { opacity: 0.75; }
+            50%, to { opacity: 1; }
+        }
+    "#;
+    let kf = extract_keyframes(css);
+    let stops = &kf["pulse"];
+    assert_eq!(stops.len(), 2);
+    assert!((stops[0].offset - 0.5).abs() < 1e-4);
+    assert!((stops[1].offset - 1.0).abs() < 1e-4);
+}
+
+#[test]
 fn extract_keyframes_multiple_selectors() {
     let css = r#"
         @keyframes blink {
@@ -241,6 +302,37 @@ fn extract_keyframes_multiple_selectors() {
     let stops = &kf["blink"];
     // 0% + 100% + 50% = 3 stops (sorted by offset)
     assert_eq!(stops.len(), 3);
+}
+
+#[test]
+fn duplicate_keyframe_selectors_cascade_into_one_stop() {
+    let css = r#"
+        @keyframes fade {
+            50% { margin-left: 110px; opacity: 1; }
+            50% { opacity: 0.9; }
+        }
+    "#;
+    let kf = extract_keyframes(css);
+    let stops = &kf["fade"];
+    assert_eq!(stops.len(), 1);
+    assert_eq!(
+        stops[0]
+            .properties
+            .iter()
+            .find(|(k, _)| k == "margin-left")
+            .unwrap()
+            .1,
+        "110px"
+    );
+    assert_eq!(
+        stops[0]
+            .properties
+            .iter()
+            .find(|(k, _)| k == "opacity")
+            .unwrap()
+            .1,
+        "0.9"
+    );
 }
 
 #[test]
@@ -281,15 +373,88 @@ fn extract_keyframes_ignores_regular_rules() {
 #[test]
 fn stylesheet_parse_and_add_stores_keyframes() {
     let mut ss = Stylesheet::default();
-    ss.parse_and_add(r#"
+    ss.parse_and_add(
+        r#"
         @keyframes slide-in {
             from { transform: translateX(-200px); }
             to   { transform: translateX(0); }
         }
         .box { animation: slide-in 0.5s ease; }
-    "#);
+    "#,
+    );
     assert!(ss.keyframes.contains_key("slide-in"));
     assert_eq!(ss.keyframes["slide-in"].len(), 2);
+}
+
+#[test]
+fn extract_keyframes_nested_in_layer_and_supported_supports() {
+    let mut ss = Stylesheet::default();
+    ss.parse_and_add(
+        r#"
+        @layer components {
+            @keyframes layered { from { opacity: 0; } to { opacity: 1; } }
+        }
+        @supports (display: flex) {
+            @keyframes supported { from { opacity: 0; } to { opacity: 1; } }
+        }
+        @supports (definitely-not-a-property: 1) {
+            @keyframes unsupported { from { opacity: 0; } to { opacity: 1; } }
+        }
+    "#,
+    );
+
+    assert!(ss.keyframes.contains_key("layered"));
+    assert!(ss.keyframes.contains_key("supported"));
+    assert!(!ss.keyframes.contains_key("unsupported"));
+}
+
+#[test]
+fn keyframe_declarations_ignore_important_properties() {
+    let kf = extract_keyframes(
+        r#"
+        @keyframes fade {
+            from { opacity: 0 !important; transform: translateX(0px); }
+            to { opacity: 1; }
+        }
+    "#,
+    );
+    let stops = kf.get("fade").expect("keyframes extracted");
+    let from = stops
+        .iter()
+        .find(|stop| stop.offset == 0.0)
+        .expect("from stop");
+
+    assert!(!from.properties.iter().any(|(name, _)| name == "opacity"));
+    assert!(from
+        .properties
+        .iter()
+        .any(|(name, value)| { name == "transform" && value == "translateX(0px)" }));
+}
+
+#[test]
+fn keyframe_timing_function_is_not_an_animated_property() {
+    let kf = extract_keyframes(
+        r#"
+        @keyframes bounce {
+            0% { animation-timing-function: ease-in; top: 0px; }
+            100% { top: 10px; }
+        }
+    "#,
+    );
+    let stops = kf.get("bounce").expect("keyframes extracted");
+    let from = stops
+        .iter()
+        .find(|stop| stop.offset == 0.0)
+        .expect("from stop");
+
+    assert!(from
+        .properties
+        .iter()
+        .all(|(name, _)| name != "animation-timing-function"));
+    assert!(from
+        .properties
+        .iter()
+        .any(|(name, value)| name == "top" && value == "0px"));
 }
 
 // ── Value interpolation ───────────────────────────────────────────────────────
@@ -317,11 +482,15 @@ fn interpolate_value_at_one() {
 fn interpolate_value_rgba_color() {
     // Fully transparent → fully opaque red
     let from = "rgba(255,0,0,0.0000)";
-    let to   = "rgba(255,0,0,1.0000)";
-    let mid  = interpolate_value(from, to, 0.5);
+    let to = "rgba(255,0,0,1.0000)";
+    let mid = interpolate_value(from, to, 0.5);
     assert!(mid.starts_with("rgba("), "expected rgba(), got '{}'", mid);
     // Red channel should stay 255, alpha should be ~0.5
-    assert!(mid.contains("255,0,0"), "red channel should be 255, got '{}'", mid);
+    assert!(
+        mid.contains("255,0,0"),
+        "red channel should be 255, got '{}'",
+        mid
+    );
 }
 
 #[test]
@@ -338,49 +507,143 @@ fn interpolate_value_snaps_on_mismatch() {
 #[test]
 fn interpolate_stops_at_start() {
     let stops = vec![
-        KeyframeStop { offset: 0.0, properties: vec![("opacity".into(), "0".into())] },
-        KeyframeStop { offset: 1.0, properties: vec![("opacity".into(), "1".into())] },
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("opacity".into(), "0".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("opacity".into(), "1".into())],
+        },
     ];
     let props = interpolate_keyframe_stops(&stops, 0.0);
-    let op = props.iter().find(|(k,_)| k == "opacity").map(|(_, v)| v.as_str()).unwrap_or("");
-    assert!(op.parse::<f32>().unwrap_or(-1.0).abs() < 0.01, "expected ~0, got '{}'", op);
+    let op = props
+        .iter()
+        .find(|(k, _)| k == "opacity")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert!(
+        op.parse::<f32>().unwrap_or(-1.0).abs() < 0.01,
+        "expected ~0, got '{}'",
+        op
+    );
 }
 
 #[test]
 fn interpolate_stops_at_end() {
     let stops = vec![
-        KeyframeStop { offset: 0.0, properties: vec![("opacity".into(), "0".into())] },
-        KeyframeStop { offset: 1.0, properties: vec![("opacity".into(), "1".into())] },
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("opacity".into(), "0".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("opacity".into(), "1".into())],
+        },
     ];
     let props = interpolate_keyframe_stops(&stops, 1.0);
-    let op = props.iter().find(|(k,_)| k == "opacity").map(|(_, v)| v.as_str()).unwrap_or("");
+    let op = props
+        .iter()
+        .find(|(k, _)| k == "opacity")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
     assert!((op.parse::<f32>().unwrap_or(-1.0) - 1.0).abs() < 0.01);
 }
 
 #[test]
 fn interpolate_stops_midpoint() {
     let stops = vec![
-        KeyframeStop { offset: 0.0, properties: vec![("opacity".into(), "0".into())] },
-        KeyframeStop { offset: 1.0, properties: vec![("opacity".into(), "1".into())] },
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("opacity".into(), "0".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("opacity".into(), "1".into())],
+        },
     ];
     let props = interpolate_keyframe_stops(&stops, 0.5);
-    let op = props.iter().find(|(k,_)| k == "opacity").map(|(_, v)| v.as_str()).unwrap_or("");
+    let op = props
+        .iter()
+        .find(|(k, _)| k == "opacity")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
     let v: f32 = op.parse().unwrap_or(-1.0);
     assert!((v - 0.5).abs() < 0.05, "expected ~0.5, got {}", v);
 }
 
 #[test]
+fn visibility_keyframes_are_visible_between_endpoints() {
+    let stops = vec![
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("visibility".into(), "hidden".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("visibility".into(), "visible".into())],
+        },
+    ];
+    let start = interpolate_keyframe_stops(&stops, 0.0);
+    let mid = interpolate_keyframe_stops(&stops, 0.25);
+    let end = interpolate_keyframe_stops(&stops, 1.0);
+
+    assert_eq!(start[0].1, "hidden");
+    assert_eq!(mid[0].1, "visible");
+    assert_eq!(end[0].1, "visible");
+}
+
+#[test]
 fn interpolate_stops_between_non_zero_stops() {
     let stops = vec![
-        KeyframeStop { offset: 0.0,  properties: vec![("opacity".into(), "0".into())] },
-        KeyframeStop { offset: 0.5,  properties: vec![("opacity".into(), "0.5".into())] },
-        KeyframeStop { offset: 1.0,  properties: vec![("opacity".into(), "1".into())] },
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("opacity".into(), "0".into())],
+        },
+        KeyframeStop {
+            offset: 0.5,
+            properties: vec![("opacity".into(), "0.5".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("opacity".into(), "1".into())],
+        },
     ];
     // At t=0.25 (between stop 0 and stop 0.5), local_t = 0.5
     let props = interpolate_keyframe_stops(&stops, 0.25);
-    let op = props.iter().find(|(k,_)| k == "opacity").map(|(_, v)| v.as_str()).unwrap_or("");
+    let op = props
+        .iter()
+        .find(|(k, _)| k == "opacity")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
     let v: f32 = op.parse().unwrap_or(-1.0);
     assert!((v - 0.25).abs() < 0.05, "expected ~0.25, got {}", v);
+}
+
+#[test]
+fn keyframe_properties_present_only_later_do_not_disappear() {
+    let stops = vec![
+        KeyframeStop {
+            offset: 0.0,
+            properties: vec![("left".into(), "0px".into())],
+        },
+        KeyframeStop {
+            offset: 0.5,
+            properties: vec![("top".into(), "10px".into())],
+        },
+        KeyframeStop {
+            offset: 1.0,
+            properties: vec![("left".into(), "100px".into())],
+        },
+    ];
+
+    let first_half = interpolate_keyframe_stops(&stops, 0.25);
+    assert!(first_half.iter().any(|(name, _)| name == "top"));
+    assert!(first_half.iter().any(|(name, _)| name == "left"));
+
+    let second_half = interpolate_keyframe_stops(&stops, 0.75);
+    assert!(second_half.iter().any(|(name, _)| name == "top"));
+    assert!(second_half.iter().any(|(name, _)| name == "left"));
 }
 
 // ── apply_property: animation / transition sub-properties ────────────────────
@@ -418,6 +681,47 @@ fn style_transition_shorthand_parsed() {
     assert_eq!(s.rare().transitions[0].property, "opacity");
     assert!((s.rare().transitions[0].duration_ms - 300.0).abs() < 1.0);
     assert_eq!(s.rare().transitions[0].timing_fn, EasingFn::EaseInOut);
+}
+
+#[test]
+fn transition_duration_without_property_defaults_to_all() {
+    let s = style_with("transition", "0.3s ease-out");
+    assert_eq!(s.rare().transitions.len(), 1);
+    assert_eq!(s.rare().transitions[0].property, "all");
+    assert!((s.rare().transitions[0].duration_ms - 300.0).abs() < 1.0);
+
+    let mut sub = ComputedStyle::default();
+    crate::css::apply_property(&mut sub, "transition-duration", "200ms");
+    assert_eq!(sub.rare().transitions[0].property, "all");
+}
+
+#[test]
+fn transition_behavior_allow_discrete_is_parsed_and_stored() {
+    let s = style_with("transition", "display 1s allow-discrete");
+    assert_eq!(s.rare().transitions.len(), 1);
+    assert_eq!(s.rare().transitions[0].property, "display");
+    assert!(s.rare().transitions[0].allow_discrete);
+
+    let mut sub = ComputedStyle::default();
+    crate::css::apply_property(&mut sub, "transition-behavior", "allow-discrete");
+    assert!(sub.rare().transitions[0].allow_discrete);
+    crate::css::apply_property(&mut sub, "transition-behavior", "normal");
+    assert!(!sub.rare().transitions[0].allow_discrete);
+}
+
+#[test]
+fn transitionable_style_includes_common_length_and_side_color_properties() {
+    let mut s = ComputedStyle::default();
+    crate::css::apply_property(&mut s, "width", "10px");
+    crate::css::apply_property(&mut s, "left", "25%");
+    crate::css::apply_property(&mut s, "border-left-color", "red");
+    crate::css::apply_property(&mut s, "gap", "2em");
+
+    let values = extract_transitionable_style(&s);
+    assert_eq!(values.get("width").map(String::as_str), Some("10px"));
+    assert_eq!(values.get("left").map(String::as_str), Some("25%"));
+    assert_eq!(values.get("gap").map(String::as_str), Some("2em"));
+    assert!(values.contains_key("border-left-color"));
 }
 
 #[test]
@@ -459,7 +763,10 @@ fn doc_with_animation(anim_css: &str) -> Document {
 #[test]
 fn sync_animations_starts_state() {
     let doc = doc_with_animation("animation: spin 1s linear infinite;");
-    assert!(!doc.active_animations.is_empty(), "should have at least one active animation");
+    assert!(
+        !doc.active_animations.is_empty(),
+        "should have at least one active animation"
+    );
     assert_eq!(doc.active_animations[0].animation.name, "spin");
 }
 
@@ -492,9 +799,14 @@ fn tick_animations_produces_overrides() {
     let now = doc.active_animations[0].start_time + Duration::from_millis(500);
     doc.tick_animations(now);
     // The 'transform' property should have an override for the animated element.
-    let has_transform_override = doc.animation_overrides.values()
+    let has_transform_override = doc
+        .animation_overrides
+        .values()
         .any(|props| props.iter().any(|(k, _)| k == "transform"));
-    assert!(has_transform_override, "expected a transform override at t=0.5");
+    assert!(
+        has_transform_override,
+        "expected a transform override at t=0.5"
+    );
 }
 
 #[test]
@@ -512,21 +824,56 @@ fn tick_animations_finished_when_done() {
     let now = doc.active_animations[0].start_time + Duration::from_millis(500);
     doc.tick_animations(now);
     // Animation should have been removed.
-    assert!(doc.active_animations.is_empty(), "finished animation should be removed");
+    assert!(
+        doc.active_animations.is_empty(),
+        "finished animation should be removed"
+    );
+}
+
+#[test]
+fn fractional_iteration_count_ends_partway_through_cycle() {
+    let mut doc = doc_with_animation("animation: fade 1s linear 0.5 forwards;");
+    let id = doc.active_animations[0].element_id;
+    let now = doc.active_animations[0].start_time + Duration::from_millis(500);
+
+    doc.tick_animations(now);
+
+    assert!(
+        doc.active_animations.is_empty(),
+        "half-iteration animation should be complete at 500ms"
+    );
+    let opacity = doc
+        .animation_overrides
+        .get(&id)
+        .and_then(|props| {
+            props
+                .iter()
+                .find(|(name, _)| name == "opacity")
+                .map(|(_, value)| value)
+        })
+        .and_then(|v| v.parse::<f32>().ok())
+        .expect("forwards fill opacity override");
+    assert!(
+        (opacity - 0.5).abs() < 0.05,
+        "expected forwards fill at cycle midpoint, got {opacity}"
+    );
 }
 
 #[test]
 fn tick_animations_delay_phase() {
     let mut doc = doc_with_animation("animation: spin 1s linear 0.5s;"); // 500ms delay
-    // Only 100ms in — still in delay.
+                                                                         // Only 100ms in — still in delay.
     let now = doc.active_animations[0].start_time + Duration::from_millis(100);
     doc.tick_animations(now);
     // Still running (in delay phase).
     assert!(doc.needs_animation_frame);
     // No override yet (no backwards fill-mode).
-    assert!(doc.animation_overrides.values().all(|p| p.is_empty() || {
-        p.iter().all(|(k, _)| k != "transform")
-    }), "no transform override expected during delay without backwards fill");
+    assert!(
+        doc.animation_overrides
+            .values()
+            .all(|p| p.is_empty() || { p.iter().all(|(k, _)| k != "transform") }),
+        "no transform override expected during delay without backwards fill"
+    );
 }
 
 #[test]
@@ -535,9 +882,14 @@ fn tick_animations_backwards_fill_during_delay() {
     let now = doc.active_animations[0].start_time + Duration::from_millis(100);
     doc.tick_animations(now);
     // With `backwards`, we should see the "from" keyframe applied (opacity: 0).
-    let has_opacity = doc.animation_overrides.values()
+    let has_opacity = doc
+        .animation_overrides
+        .values()
         .any(|props| props.iter().any(|(k, _)| k == "opacity"));
-    assert!(has_opacity, "backwards fill should apply 'from' keyframe during delay");
+    assert!(
+        has_opacity,
+        "backwards fill should apply 'from' keyframe during delay"
+    );
 }
 
 #[test]
@@ -547,7 +899,9 @@ fn tick_animations_direction_reverse() {
     // At start (t=0), with reverse direction the effective t=1 → opacity should be ~1.
     let now = start + Duration::from_millis(10);
     doc.tick_animations(now);
-    let overrides = doc.animation_overrides.values()
+    let overrides = doc
+        .animation_overrides
+        .values()
         .flat_map(|p| p.iter())
         .find(|(k, _)| k == "opacity")
         .map(|(_, v)| v.parse::<f32>().unwrap_or(-1.0));
@@ -564,23 +918,35 @@ fn tick_animations_alternate_direction() {
     // First iteration (even): t goes 0→1, so opacity goes 0→1.
     let now_half = start + Duration::from_millis(500);
     doc.tick_animations(now_half);
-    let op1 = doc.animation_overrides.values()
+    let op1 = doc
+        .animation_overrides
+        .values()
         .flat_map(|p| p.iter())
         .find(|(k, _)| k == "opacity")
         .and_then(|(_, v)| v.parse::<f32>().ok())
         .unwrap_or(-1.0);
-    assert!((op1 - 0.5).abs() < 0.1, "first iter mid: expected ~0.5, got {}", op1);
+    assert!(
+        (op1 - 0.5).abs() < 0.1,
+        "first iter mid: expected ~0.5, got {}",
+        op1
+    );
 
     // Second iteration (odd): direction reverses, so at t=0.25 within iter, effective=0.75.
     let now_iter2 = start + Duration::from_millis(1250);
     doc.animation_overrides.clear();
     doc.tick_animations(now_iter2);
-    let op2 = doc.animation_overrides.values()
+    let op2 = doc
+        .animation_overrides
+        .values()
         .flat_map(|p| p.iter())
         .find(|(k, _)| k == "opacity")
         .and_then(|(_, v)| v.parse::<f32>().ok())
         .unwrap_or(-1.0);
-    assert!(op2 > 0.5, "second iter (reversed) t=0.25 → effective=0.75, got {}", op2);
+    assert!(
+        op2 > 0.5,
+        "second iter (reversed) t=0.25 → effective=0.75, got {}",
+        op2
+    );
 }
 
 // ── Integration: layout applies animation overrides ───────────────────────────
@@ -603,13 +969,20 @@ fn layout_applies_animation_override_to_style() {
     assert!(b.is_some(), "div should exist");
     // The opacity should be close to 0 (start of fade-in) rather than 1 (stylesheet).
     let opacity = b.unwrap().style.opacity;
-    assert!(opacity < 0.2, "opacity at animation start should be ~0, got {}", opacity);
+    assert!(
+        opacity < 0.2,
+        "opacity at animation start should be ~0, got {}",
+        opacity
+    );
 }
 
 #[test]
 fn doc_needs_animation_frame_set_by_layout() {
     let doc = doc_with_animation("animation: spin 2s linear infinite;");
-    assert!(doc.needs_animation_frame, "should need another frame while animation runs");
+    assert!(
+        doc.needs_animation_frame,
+        "should need another frame while animation runs"
+    );
 }
 
 // ── CSS Transitions ───────────────────────────────────────────────────────────
@@ -626,8 +999,7 @@ fn transition_state_starts_on_style_change() {
 
     // Simulate a style change: manually inject a new opacity into the stylesheet
     // and force a re-cascade by changing the inline style.
-    let b_nid = find_box(&doc.root, &|b: &WebCore| b.tag == "div")
-        .map(|b| b.node_id);
+    let b_nid = find_box(&doc.root, &|b: &WebCore| b.tag == "div").map(|b| b.node_id);
 
     // Directly write a prev_style snapshot for the element with opacity=1,
     // then do another layout — if the computed opacity changed the engine
@@ -657,22 +1029,27 @@ fn transition_interpolates_between_values() {
 
     // Insert a transition state directly.
     let start = Instant::now() - Duration::from_millis(250);
-    doc.transition_states.insert(elem_id, vec![TransitionState {
-        property:    "opacity".to_string(),
-        from_value:  "0".to_string(),
-        to_value:    "1".to_string(),
-        start_time:  start,
-        duration_ms: 500.0,
-        delay_ms:    0.0,
-        timing_fn:   EasingFn::Linear,
-    }]);
+    doc.transition_states.insert(
+        elem_id,
+        vec![TransitionState {
+            property: "opacity".to_string(),
+            from_value: "0".to_string(),
+            to_value: "1".to_string(),
+            start_time: start,
+            duration_ms: 500.0,
+            delay_ms: 0.0,
+            timing_fn: EasingFn::Linear,
+        }],
+    );
 
     let now = start + Duration::from_millis(250);
     doc.tick_animations(now);
 
     // At 250ms / 500ms = 0.5 progress, opacity should be ~0.5.
-    let val = doc.animation_overrides.get(&elem_id)
-        .and_then(|props| props.iter().find(|(k,_)| k == "opacity"))
+    let val = doc
+        .animation_overrides
+        .get(&elem_id)
+        .and_then(|props| props.iter().find(|(k, _)| k == "opacity"))
         .and_then(|(_, v)| v.parse::<f32>().ok())
         .unwrap_or(-1.0);
     assert!((val - 0.5).abs() < 0.05, "expected ~0.5, got {}", val);
@@ -684,21 +1061,30 @@ fn transition_completes_and_is_removed() {
     let elem_id: u32 = 0xBEEF;
 
     let start = Instant::now() - Duration::from_millis(600);
-    doc.transition_states.insert(elem_id, vec![TransitionState {
-        property:    "opacity".to_string(),
-        from_value:  "0".to_string(),
-        to_value:    "1".to_string(),
-        start_time:  start,
-        duration_ms: 500.0,
-        delay_ms:    0.0,
-        timing_fn:   EasingFn::Linear,
-    }]);
+    doc.transition_states.insert(
+        elem_id,
+        vec![TransitionState {
+            property: "opacity".to_string(),
+            from_value: "0".to_string(),
+            to_value: "1".to_string(),
+            start_time: start,
+            duration_ms: 500.0,
+            delay_ms: 0.0,
+            timing_fn: EasingFn::Linear,
+        }],
+    );
 
     let now = start + Duration::from_millis(600);
     doc.tick_animations(now);
 
-    assert!(doc.transition_states.is_empty(), "completed transition should be removed");
-    assert!(!doc.needs_animation_frame, "no more frames needed after transition completes");
+    assert!(
+        doc.transition_states.is_empty(),
+        "completed transition should be removed"
+    );
+    assert!(
+        !doc.needs_animation_frame,
+        "no more frames needed after transition completes"
+    );
 }
 
 #[test]
@@ -707,24 +1093,201 @@ fn transition_delay_applies_from_value() {
     let elem_id: u32 = 0xCAFE;
 
     let start = Instant::now();
-    doc.transition_states.insert(elem_id, vec![TransitionState {
-        property:    "opacity".to_string(),
-        from_value:  "0".to_string(),
-        to_value:    "1".to_string(),
-        start_time:  start,
-        duration_ms: 500.0,
-        delay_ms:    300.0,   // 300ms delay
-        timing_fn:   EasingFn::Linear,
-    }]);
+    doc.transition_states.insert(
+        elem_id,
+        vec![TransitionState {
+            property: "opacity".to_string(),
+            from_value: "0".to_string(),
+            to_value: "1".to_string(),
+            start_time: start,
+            duration_ms: 500.0,
+            delay_ms: 300.0, // 300ms delay
+            timing_fn: EasingFn::Linear,
+        }],
+    );
 
     // Only 100ms elapsed — still in delay.
     let now = start + Duration::from_millis(100);
     doc.tick_animations(now);
 
     // The "from" value should be applied during delay.
-    let val = doc.animation_overrides.get(&elem_id)
-        .and_then(|props| props.iter().find(|(k,_)| k == "opacity"))
+    let val = doc
+        .animation_overrides
+        .get(&elem_id)
+        .and_then(|props| props.iter().find(|(k, _)| k == "opacity"))
         .and_then(|(_, v)| v.parse::<f32>().ok())
         .unwrap_or(-1.0);
-    assert!((val - 0.0).abs() < 0.01, "during delay, from_value (0) should be applied, got {}", val);
+    assert!(
+        (val - 0.0).abs() < 0.01,
+        "during delay, from_value (0) should be applied, got {}",
+        val
+    );
+}
+
+/// Destination: `src/tests/test_animation.rs`.
+#[test]
+fn a_function_with_commas_does_not_split_the_shorthand() {
+    let trs = parse_transition_shorthand("transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)");
+    assert_eq!(
+        trs.len(),
+        1,
+        "`transition: transform .3s cubic-bezier(.4,0,.2,1)` is ONE transition, got {}: {:?}",
+        trs.len(),
+        trs.iter().map(|t| t.property.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(trs[0].property, "transform");
+    assert!(
+        (trs[0].duration_ms - 300.0).abs() < 1.0,
+        "duration should be 300ms, got {}",
+        trs[0].duration_ms
+    );
+    assert_eq!(
+        trs[0].timing_fn,
+        EasingFn::CubicBezier(0.4, 0.0, 0.2, 1.0),
+        "the cubic-bezier control points must survive the shorthand, got {:?}",
+        trs[0].timing_fn
+    );
+
+    let anims = parse_animation_shorthand("spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite");
+    assert_eq!(
+        anims.len(),
+        1,
+        "`animation: spin 1s cubic-bezier(...) infinite` is ONE animation, got {}: {:?}",
+        anims.len(),
+        anims.iter().map(|a| a.name.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(anims[0].name, "spin");
+    assert_eq!(
+        anims[0].timing_fn,
+        EasingFn::CubicBezier(0.4, 0.0, 0.2, 1.0)
+    );
+    assert!(
+        anims[0].iteration_count.is_infinite(),
+        "`infinite` belongs to the one animation, got iteration_count {}",
+        anims[0].iteration_count
+    );
+
+    // `steps()` has the same shape: the truncated `steps(4` parses its count as
+    // `None` and `unwrap_or(1)` turns it into step-end (measured).
+    let st = parse_transition_shorthand("opacity 1s steps(4, jump-end)");
+    assert_eq!(
+        st.len(),
+        1,
+        "`steps(4, jump-end)` is one transition, got {}",
+        st.len()
+    );
+    assert_eq!(
+        st[0].timing_fn,
+        EasingFn::Steps(4, StepPosition::JumpEnd),
+        "the step count must survive the shorthand, got {:?}",
+        st[0].timing_fn
+    );
+}
+
+/// Destination: `src/tests/test_animation.rs`.
+#[test]
+fn steps_supports_every_jump_term() {
+    let at = |f: &str, t: f32| apply_easing(&parse_easing(f), t);
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+
+    // jump-none: n-1 = 2 rises, and the last interval reaches 1.
+    assert!(
+        close(at("steps(3, jump-none)", 0.1), 0.0),
+        "steps(3, jump-none) on [0,1/3) is 0, got {}",
+        at("steps(3, jump-none)", 0.1)
+    );
+    assert!(
+        close(at("steps(3, jump-none)", 0.5), 0.5),
+        "steps(3, jump-none) on [1/3,2/3) is 1/2, got {}",
+        at("steps(3, jump-none)", 0.5)
+    );
+    assert!(
+        close(at("steps(3, jump-none)", 0.8), 1.0),
+        "steps(3, jump-none) on [2/3,1) is 1, got {}",
+        at("steps(3, jump-none)", 0.8)
+    );
+
+    // jump-both: n+1 = 4 divisions, never 0 and never 1 inside [0,1).
+    assert!(
+        close(at("steps(3, jump-both)", 0.1), 0.25),
+        "steps(3, jump-both) on [0,1/3) is 1/4, got {}",
+        at("steps(3, jump-both)", 0.1)
+    );
+    assert!(
+        close(at("steps(3, jump-both)", 0.5), 0.5),
+        "steps(3, jump-both) on [1/3,2/3) is 1/2, got {}",
+        at("steps(3, jump-both)", 0.5)
+    );
+    assert!(
+        close(at("steps(3, jump-both)", 0.8), 0.75),
+        "steps(3, jump-both) on [2/3,1) is 3/4, got {}",
+        at("steps(3, jump-both)", 0.8)
+    );
+
+    // jump-end stays as it is, and `end` is its synonym.
+    assert!(close(at("steps(3, jump-end)", 0.5), 1.0 / 3.0));
+    assert!(close(at("steps(3, end)", 0.5), 1.0 / 3.0));
+}
+
+/// Destination: `src/tests/test_animation.rs`.
+#[test]
+fn step_start_jumps_at_the_start() {
+    let at = |f: &str, t: f32| apply_easing(&parse_easing(f), t);
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+
+    assert!(
+        close(at("step-start", 0.0), 1.0),
+        "css-easing-2 §2.3: `step-start` is `steps(1, start)`, whose only interval \
+         [0,1) has the value 1, so t=0 gives 1; got {}",
+        at("step-start", 0.0)
+    );
+    assert!(close(at("step-start", 0.5), 1.0));
+    assert!(
+        close(at("step-end", 0.0), 0.0),
+        "`step-end` is `steps(1, end)`: [0,1) is 0"
+    );
+
+    assert!(
+        close(at("steps(3, jump-start)", 0.0), 1.0 / 3.0),
+        "steps(3, jump-start) on [0,1/3) is 1/3, got {}",
+        at("steps(3, jump-start)", 0.0)
+    );
+    assert!(
+        close(at("steps(3, jump-start)", 1.0 / 3.0), 2.0 / 3.0),
+        "at an interval boundary the higher interval's value applies: \
+         steps(3, jump-start) at t=1/3 is 2/3, got {}",
+        at("steps(3, jump-start)", 1.0 / 3.0)
+    );
+    assert!(close(at("steps(3, jump-start)", 1.0), 1.0));
+}
+
+/// Destination: `src/tests/test_animation.rs`.
+#[test]
+fn linear_easing_function_is_supported() {
+    // The declaration must survive intact: one animation named `fade`.
+    let anims = parse_animation_shorthand("fade 1s linear(0, 0.25, 1)");
+    assert_eq!(
+        anims.len(),
+        1,
+        "`animation: fade 1s linear(0, .25, 1)` is one animation, got {}: {:?}",
+        anims.len(),
+        anims.iter().map(|a| a.name.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        anims[0].name, "fade",
+        "`linear(...)` is an easing function, not the animation name"
+    );
+
+    let f = parse_easing("linear(0, 0.25, 1)");
+    assert!(
+        (apply_easing(&f, 0.5) - 0.25).abs() < 1e-3,
+        "css-easing-2 §2.1: linear(0, 0.25, 1) has control points at 0, 0.5, 1, so the \
+         output at input 0.5 is 0.25; got {}",
+        apply_easing(&f, 0.5)
+    );
+    assert!(
+        (apply_easing(&f, 0.25) - 0.125).abs() < 1e-3,
+        "half-way between the (0,0) and (0.5,0.25) control points is 0.125; got {}",
+        apply_easing(&f, 0.25)
+    );
 }

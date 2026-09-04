@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── html-level children parser ──────────────────────────────────────────────
 
@@ -52,7 +52,11 @@ pub(crate) fn parse_html_children(
                     parser.reconstruct_into(body_children, from, had_pending);
                 }
             }
-            Some(Token::OpenTag { tag, attrs, self_closing }) => {
+            Some(Token::OpenTag {
+                tag,
+                attrs,
+                self_closing,
+            }) => {
                 parser.pos += 1;
                 match tag.as_str() {
                     "head" => {
@@ -68,7 +72,11 @@ pub(crate) fn parse_html_children(
                     "body" => {
                         parser.head_closed = true;
                         body_box.attributes = attrs;
-                        apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut body_box.style),
+                            "display",
+                            "block",
+                        );
                         apply_presentational_attrs(body_box);
                         if !self_closing {
                             parser.parse_children_into("body", body_children, ol_counter);

@@ -122,19 +122,25 @@ const QUIRKS_PUBLIC_PREFIXES: &[&str] = &[
 
 /// The pair whose mode depends on whether a system identifier is present:
 /// quirks without one, limited-quirks with one.
-const CONDITIONAL_PREFIXES: &[&str] =
-    &["-//w3c//dtd html 4.01 frameset//", "-//w3c//dtd html 4.01 transitional//"];
+const CONDITIONAL_PREFIXES: &[&str] = &[
+    "-//w3c//dtd html 4.01 frameset//",
+    "-//w3c//dtd html 4.01 transitional//",
+];
 
 /// Public-identifier prefixes that always mean limited-quirks.
-const LIMITED_PREFIXES: &[&str] =
-    &["-//w3c//dtd xhtml 1.0 frameset//", "-//w3c//dtd xhtml 1.0 transitional//"];
+const LIMITED_PREFIXES: &[&str] = &[
+    "-//w3c//dtd xhtml 1.0 frameset//",
+    "-//w3c//dtd xhtml 1.0 transitional//",
+];
 
 /// Which mode a document with this doctype is in.
 ///
 /// `None` is "no doctype at all", which is quirks — the single most common way
 /// a real page ends up in it.
 pub fn quirks_mode(doctype: Option<&Doctype>) -> QuirksMode {
-    let Some(dt) = doctype else { return QuirksMode::Quirks };
+    let Some(dt) = doctype else {
+        return QuirksMode::Quirks;
+    };
     // ⛔ The name is checked BEFORE the identifiers. `<!DOCTYPE foo>` is quirks
     // with empty identifiers, which no prefix list would catch (measured).
     if dt.force_quirks || !dt.name.eq_ignore_ascii_case("html") {
@@ -151,7 +157,11 @@ pub fn quirks_mode(doctype: Option<&Doctype>) -> QuirksMode {
         return QuirksMode::Quirks;
     }
     if CONDITIONAL_PREFIXES.iter().any(|p| public.starts_with(p)) {
-        return if has_system { QuirksMode::LimitedQuirks } else { QuirksMode::Quirks };
+        return if has_system {
+            QuirksMode::LimitedQuirks
+        } else {
+            QuirksMode::Quirks
+        };
     }
     if LIMITED_PREFIXES.iter().any(|p| public.starts_with(p)) {
         return QuirksMode::LimitedQuirks;
@@ -182,13 +192,21 @@ pub fn parse_doctype(inner: &str) -> Doctype {
         match first {
             Some(p) => dt.public_id = p,
             // `PUBLIC` with nothing after it is a parse error.
-            None => { dt.force_quirks = true; return dt; }
+            None => {
+                dt.force_quirks = true;
+                return dt;
+            }
         }
-        if let (Some(s), _) = read_quoted(rest.trim_start()) { dt.system_id = s; }
+        if let (Some(s), _) = read_quoted(rest.trim_start()) {
+            dt.system_id = s;
+        }
     } else if keyword.eq_ignore_ascii_case("system") {
         match read_quoted(rest.trim_start()).0 {
             Some(s) => dt.system_id = s,
-            None => { dt.force_quirks = true; return dt; }
+            None => {
+                dt.force_quirks = true;
+                return dt;
+            }
         }
     } else if !keyword.is_empty() {
         // Something that is neither PUBLIC nor SYSTEM after the name.
@@ -209,8 +227,12 @@ fn split_word(s: &str) -> (&str, &str) {
 /// is what the tokenizer does before it hits the `>`.
 fn read_quoted(s: &str) -> (Option<String>, &str) {
     let mut chars = s.char_indices();
-    let Some((_, quote)) = chars.next() else { return (None, s) };
-    if quote != '"' && quote != '\'' { return (None, s); }
+    let Some((_, quote)) = chars.next() else {
+        return (None, s);
+    };
+    if quote != '"' && quote != '\'' {
+        return (None, s);
+    }
     let body = &s[quote.len_utf8()..];
     match body.find(quote) {
         Some(i) => (Some(body[..i].to_string()), &body[i + quote.len_utf8()..]),

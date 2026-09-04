@@ -5,7 +5,8 @@
 fn render_button_bg_covers_right_padding() {
     // Button with red background, 20px left/right padding.
     // After layout, the right 20px zone should be red.
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         body { background: white; }
@@ -15,7 +16,10 @@ fn render_button_bg_covers_right_padding() {
         <div class="row">
           <div class="btn">Hi</div>
         </div>
-    "#, 200, 40);
+    "#,
+        200,
+        40,
+    );
     // The button starts at x=0. Find a non-white pixel to locate button right edge.
     // Scan row y=5 for the last red pixel.
     let y = 5u32;
@@ -33,11 +37,18 @@ fn render_button_bg_covers_right_padding() {
     let mut run = 0u32;
     for x in (0..=last_red).rev() {
         let (r, g, b, _a) = pixel(&pm, x, y);
-        if r > 200 && g < 50 && b < 50 { run += 1; } else { break; }
+        if r > 200 && g < 50 && b < 50 {
+            run += 1;
+        } else {
+            break;
+        }
     }
-    assert!(run >= 15,
+    assert!(
+        run >= 15,
         "Right padding area should be at least 15px red; got {} red pixels ending at x={}",
-        run, last_red);
+        run,
+        last_red
+    );
 }
 
 // ── Float:right text renders at correct position ─────────────────────────────
@@ -45,7 +56,8 @@ fn render_button_bg_covers_right_padding() {
 #[test]
 fn render_float_right_text_visible() {
     // White background, float:right span colored red.
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         body { background: white; }
@@ -53,7 +65,10 @@ fn render_float_right_text_visible() {
         .stat { float: right; color: red; }
         </style>
         <div class="item">Left <span class="stat">Rt</span></div>
-    "#, 300, 40);
+    "#,
+        300,
+        40,
+    );
     // Expect some colored pixels on the right half (x > 100) of the div
     let mut found_right = false;
     for x in 100..200 {
@@ -65,9 +80,14 @@ fn render_float_right_text_visible() {
                 break;
             }
         }
-        if found_right { break; }
+        if found_right {
+            break;
+        }
     }
-    assert!(found_right, "float:right text (red) should appear in right half of container");
+    assert!(
+        found_right,
+        "float:right text (red) should appear in right half of container"
+    );
 }
 
 // ── Button background in graph_demo exact setup ──────────────────────────────
@@ -77,7 +97,8 @@ fn render_float_right_text_visible() {
 fn render_graph_demo_button_bg_right_padding() {
     // Matches graph_demo: * { box-sizing: border-box }, sidebar 170px,
     // content flex:1, button padding 5px 12px, border-radius 6px.
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #0d1117; }
@@ -98,7 +119,10 @@ fn render_graph_demo_button_bg_right_padding() {
             </div>
           </div>
         </div>
-    "#, 800, 60);
+    "#,
+        800,
+        60,
+    );
     // The first button starts at x = 170 (sidebar) + 16 (btn-row pad-left) = 186.
     // It should be blue (#1f6feb → r=31 g=111 b=235) across its full width.
     // Scan y=15 (inside the button, away from top/bottom padding) for blue pixels.
@@ -109,23 +133,27 @@ fn render_graph_demo_button_bg_right_padding() {
         let (r, _g, b, _a) = pixel(&pm, x, y);
         // button blue: high blue, low red
         if b > 150 && r < 100 {
-            if first_blue.is_none() { first_blue = Some(x); }
+            if first_blue.is_none() {
+                first_blue = Some(x);
+            }
             last_blue = Some(x);
         } else if last_blue.is_some() {
             break; // past the first button
         }
     }
     let first = first_blue.expect("No blue pixel found — button background not rendered");
-    let last  = last_blue.unwrap();
+    let last = last_blue.unwrap();
     let btn_w = (last - first + 1) as f32;
     // Button should be at least content(~35px) + 12 + 12 = ~59px wide
     assert!(btn_w >= 40.0,
         "Button blue area should be >= 40px wide (includes both paddings), got {btn_w}px [{first}..{last}]");
     // The rightmost blue pixel should be at least 10px past the text start
     // (i.e., right padding is present). Text starts ~12px from first blue.
-    assert!((last - first) >= 30,
+    assert!(
+        (last - first) >= 30,
         "Button should span at least 30px of blue (text + both paddings), got {} [{first}..{last}]",
-        last - first);
+        last - first
+    );
 }
 
 // ── Bold text background covers right padding (border-radius demo) ────────────
@@ -136,7 +164,8 @@ fn render_graph_demo_button_bg_right_padding() {
 fn render_bold_text_bg_covers_right_padding() {
     // Mirror the "Border Radius" section from demo.html:
     // flex row of bold-text divs with blue bg + 20px padding + border-radius.
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: white; }
@@ -147,22 +176,27 @@ fn render_bold_text_bg_covers_right_padding() {
         <div class="row">
           <div class="card">8px radius</div>
         </div>
-    "#, 300, 80);
+    "#,
+        300,
+        80,
+    );
     // Scan row y=30 (inside the card, away from top/bottom padding rounding).
     // Find the first and last blue pixels — blue: high B, low R.
     let y = 30u32;
     let mut first_blue: Option<u32> = None;
-    let mut last_blue:  Option<u32> = None;
+    let mut last_blue: Option<u32> = None;
     for x in 0..300 {
         let (r, _g, b, _a) = pixel(&pm, x, y);
         if b > 150 && r < 100 {
-            if first_blue.is_none() { first_blue = Some(x); }
+            if first_blue.is_none() {
+                first_blue = Some(x);
+            }
             last_blue = Some(x);
         }
     }
     let first = first_blue.expect("No blue pixel found — bold card background not rendered");
-    let last  = last_blue.unwrap();
-    let span  = last - first + 1;
+    let last = last_blue.unwrap();
+    let span = last - first + 1;
     // Card has 20px left + text ("8px radius" ~9 chars * ~7px ≈ 63px) + 20px right.
     // Total ≥ 100px. Require ≥ 80px to have headroom for font approximation variance
     // but still catch the bug (pre-fix the background was ~63px with no right padding).
@@ -177,9 +211,9 @@ fn render_bold_text_bg_covers_right_padding() {
 
 // Pixel-level render tests for blend modes and gradients.
 
-use tiny_skia::Pixmap;
-use crate::renderer::Renderer;
 use super::harness::parse_and_layout;
+use crate::renderer::Renderer;
+use tiny_skia::Pixmap;
 
 fn render_html(html: &str, w: u32, h: u32) -> Pixmap {
     let mut renderer = Renderer::new();
@@ -196,9 +230,11 @@ fn pixel(pm: &Pixmap, x: u32, y: u32) -> (u8, u8, u8, u8) {
     let d = pm.data();
     // tiny-skia stores premultiplied RGBA
     let a = d[idx + 3];
-    if a == 0 { return (0, 0, 0, 0); }
+    if a == 0 {
+        return (0, 0, 0, 0);
+    }
     // un-premultiply
-    let r = ((d[idx]     as u32 * 255) / a as u32) as u8;
+    let r = ((d[idx] as u32 * 255) / a as u32) as u8;
     let g = ((d[idx + 1] as u32 * 255) / a as u32) as u8;
     let b = ((d[idx + 2] as u32 * 255) / a as u32) as u8;
     (r, g, b, a)
@@ -213,7 +249,8 @@ fn layout_flex_nav_li_items_no_overlap() {
     // (taking max width), which caused the outer flex to assign too-small a width to the
     // ul, which then squished all li items to near-zero causing visual overlap.
     use super::harness::find_box;
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .nav { display: flex; width: 600px; }
@@ -226,22 +263,41 @@ fn layout_flex_nav_li_items_no_overlap() {
             <li>Science</li>
           </ul>
         </nav>
-    "#, 600.0);
+    "#,
+        600.0,
+    );
 
     // Collect li border_rect x positions
     let mut li_boxes: Vec<f32> = Vec::new();
     fn collect_li(node: &crate::types::WebCore, out: &mut Vec<f32>) {
-        if node.tag == "li" { out.push(node.layout.border_rect.x); }
-        for ch in &node.children { collect_li(ch, out); }
+        if node.tag == "li" {
+            out.push(node.layout.border_rect.x);
+        }
+        for ch in &node.children {
+            collect_li(ch, out);
+        }
     }
     collect_li(&doc.root, &mut li_boxes);
 
-    assert_eq!(li_boxes.len(), 3, "expected 3 li boxes, got {}", li_boxes.len());
+    assert_eq!(
+        li_boxes.len(),
+        3,
+        "expected 3 li boxes, got {}",
+        li_boxes.len()
+    );
     // Each li must start strictly after the previous one (no overlap)
-    assert!(li_boxes[1] > li_boxes[0] + 5.0,
-        "Politics li should start after World li; World.x={} Politics.x={}", li_boxes[0], li_boxes[1]);
-    assert!(li_boxes[2] > li_boxes[1] + 5.0,
-        "Science li should start after Politics li; Politics.x={} Science.x={}", li_boxes[1], li_boxes[2]);
+    assert!(
+        li_boxes[1] > li_boxes[0] + 5.0,
+        "Politics li should start after World li; World.x={} Politics.x={}",
+        li_boxes[0],
+        li_boxes[1]
+    );
+    assert!(
+        li_boxes[2] > li_boxes[1] + 5.0,
+        "Science li should start after Politics li; Politics.x={} Science.x={}",
+        li_boxes[1],
+        li_boxes[2]
+    );
 }
 
 // ── Absolute positioned child height from inset: 0 ───────────────────────────
@@ -250,21 +306,34 @@ fn layout_flex_nav_li_items_no_overlap() {
 fn layout_abs_inset_zero_fills_parent_height() {
     // position:absolute; inset:0 must give the child the same height as the parent.
     use super::harness::find_box;
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .parent { width: 200px; height: 100px; position: relative; }
         .child  { position: absolute; inset: 0; }
         </style>
         <div class="parent"><div class="child"></div></div>
-    "#, 200.0);
+    "#,
+        200.0,
+    );
     let child = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "child").unwrap_or(false)
-    }).expect("child not found");
-    assert!((child.layout.border_rect.w - 200.0).abs() < 1.0,
-        "inset:0 child width should be 200, got {}", child.layout.border_rect.w);
-    assert!((child.layout.border_rect.h - 100.0).abs() < 1.0,
-        "inset:0 child height should be 100, got {}", child.layout.border_rect.h);
+        b.attributes
+            .get("class")
+            .map(|c| c == "child")
+            .unwrap_or(false)
+    })
+    .expect("child not found");
+    assert!(
+        (child.layout.border_rect.w - 200.0).abs() < 1.0,
+        "inset:0 child width should be 200, got {}",
+        child.layout.border_rect.w
+    );
+    assert!(
+        (child.layout.border_rect.h - 100.0).abs() < 1.0,
+        "inset:0 child height should be 100, got {}",
+        child.layout.border_rect.h
+    );
 }
 
 // ── Blend mode: solid colors ──────────────────────────────────────────────────
@@ -272,56 +341,84 @@ fn layout_abs_inset_zero_fills_parent_height() {
 #[test]
 fn render_blend_multiply_solid_colors() {
     // Red stage (255,0,0) + blue overlay (inset:0) with multiply → near-black
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 100px; height: 100px; background: #ff0000; position: relative; }
         .overlay { position: absolute; inset: 0; background: #0000ff; mix-blend-mode: multiply; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 100, 100);
+    "#,
+        100,
+        100,
+    );
     let (r, g, b, _) = pixel(&pm, 50, 50);
     // multiply(red, blue) = (255*0/255, 0*0/255, 0*255/255) = (0,0,0) → black
-    assert!(r < 20, "multiply red*blue should give near-black red channel, got {r}");
-    assert!(b < 20, "multiply red*blue should give near-black blue channel, got {b}");
+    assert!(
+        r < 20,
+        "multiply red*blue should give near-black red channel, got {r}"
+    );
+    assert!(
+        b < 20,
+        "multiply red*blue should give near-black blue channel, got {b}"
+    );
 }
 
 #[test]
 fn render_blend_screen_solid_colors() {
     // Red stage (255,0,0) + blue overlay (inset:0) with screen → bright magenta
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 100px; height: 100px; background: #ff0000; position: relative; }
         .overlay { position: absolute; inset: 0; background: #0000ff; mix-blend-mode: screen; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 100, 100);
+    "#,
+        100,
+        100,
+    );
     let (r, g, b, _) = pixel(&pm, 50, 50);
     // screen(red, blue) = 1-(1-1)*(1-0)=1 for R; 1-(1-0)*(1-1)=1 for B → magenta (255,0,255)
-    assert!(r > 200, "screen red*blue should give bright red channel, got {r}");
-    assert!(b > 200, "screen red*blue should give bright blue channel, got {b}");
+    assert!(
+        r > 200,
+        "screen red*blue should give bright red channel, got {r}"
+    );
+    assert!(
+        b > 200,
+        "screen red*blue should give bright blue channel, got {b}"
+    );
 }
 
 #[test]
 fn render_blend_normal_vs_multiply_differ() {
     // Verify that multiply and normal produce different pixels
-    let normal_pm = render_html(r#"
+    let normal_pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 100px; height: 100px; background: #ff6600; position: relative; }
         .overlay { position: absolute; inset: 0; background: #0066ff; mix-blend-mode: normal; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 100, 100);
-    let multiply_pm = render_html(r#"
+    "#,
+        100,
+        100,
+    );
+    let multiply_pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 100px; height: 100px; background: #ff6600; position: relative; }
         .overlay { position: absolute; inset: 0; background: #0066ff; mix-blend-mode: multiply; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 100, 100);
+    "#,
+        100,
+        100,
+    );
     let (nr, ng, nb, _) = pixel(&normal_pm, 50, 50);
     let (mr, mg, mb, _) = pixel(&multiply_pm, 50, 50);
     // normal shows the blue overlay; multiply: orange*blue = much darker
@@ -338,7 +435,8 @@ fn render_blend_normal_vs_multiply_differ() {
 #[test]
 fn render_blend_multiply_gradient_overlay() {
     // Linear base + radial warm overlay (inset:0) with multiply → center darker than normal
-    let normal_pm = render_html(r#"
+    let normal_pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 200px; height: 100px; background: linear-gradient(90deg, #1d4ed8, #be185d);
@@ -348,8 +446,12 @@ fn render_blend_multiply_gradient_overlay() {
                    mix-blend-mode: normal; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 200, 100);
-    let multiply_pm = render_html(r#"
+    "#,
+        200,
+        100,
+    );
+    let multiply_pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .stage { width: 200px; height: 100px; background: linear-gradient(90deg, #1d4ed8, #be185d);
@@ -359,7 +461,10 @@ fn render_blend_multiply_gradient_overlay() {
                    mix-blend-mode: multiply; }
         </style>
         <div class="stage"><div class="overlay"></div></div>
-    "#, 200, 100);
+    "#,
+        200,
+        100,
+    );
     let (nr, ng, nb, _) = pixel(&normal_pm, 100, 50);
     let (mr, mg, mb, _) = pixel(&multiply_pm, 100, 50);
     assert!(
@@ -383,7 +488,8 @@ fn layout_sticky_inside_scrollable_div() {
     // kicked in for elements inside a div.
     //
     // We verify layout: the sticky-header exists and has a valid position inside the container.
-    let doc = super::harness::parse_and_layout(r#"
+    let doc = super::harness::parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .container { height: 200px; overflow-y: scroll; position: relative; width: 300px; }
@@ -394,19 +500,35 @@ fn layout_sticky_inside_scrollable_div() {
           <div class="sticky-hdr">Header</div>
           <div class="content"></div>
         </div>
-    "#, 300.0);
+    "#,
+        300.0,
+    );
     let hdr = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "sticky-hdr").unwrap_or(false)
-    }).expect("sticky-hdr not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "sticky-hdr")
+            .unwrap_or(false)
+    })
+    .expect("sticky-hdr not found");
     let container = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "container").unwrap_or(false)
-    }).expect("container not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "container")
+            .unwrap_or(false)
+    })
+    .expect("container not found");
     // Header must be inside the container vertically
-    assert!(hdr.layout.border_rect.y >= container.layout.border_rect.y,
+    assert!(
+        hdr.layout.border_rect.y >= container.layout.border_rect.y,
         "sticky-hdr should be at or below container top; hdr.y={} container.y={}",
-        hdr.layout.border_rect.y, container.layout.border_rect.y);
-    assert!((hdr.layout.border_rect.h - 30.0).abs() < 1.0,
-        "sticky-hdr height should be 30, got {}", hdr.layout.border_rect.h);
+        hdr.layout.border_rect.y,
+        container.layout.border_rect.y
+    );
+    assert!(
+        (hdr.layout.border_rect.h - 30.0).abs() < 1.0,
+        "sticky-hdr height should be 30, got {}",
+        hdr.layout.border_rect.h
+    );
 }
 
 // ── inline-block in flex: background must cover padding ──────────────────────
@@ -419,7 +541,8 @@ fn layout_inline_block_in_flex_padding_covered() {
     // border_rect.w must equal content_rect.w + left_padding + right_padding (24px total).
     // Bug: background (border_rect) was smaller than content+padding, clipping right padding,
     // caused by the outer flex over-shrinking the content column.
-    let doc = super::harness::parse_and_layout(r#"
+    let doc = super::harness::parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .main    { display: flex; }
@@ -437,24 +560,44 @@ fn layout_inline_block_in_flex_padding_covered() {
             </div>
           </div>
         </div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     let btn = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "btn").unwrap_or(false)
-    }).expect("btn not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "btn")
+            .unwrap_or(false)
+    })
+    .expect("btn not found");
     let pad_total = 12.0 + 12.0; // padding-left + padding-right
     let expected_border_w = btn.layout.content_rect.w + pad_total;
-    assert!((btn.layout.border_rect.w - expected_border_w).abs() < 1.5,
+    assert!(
+        (btn.layout.border_rect.w - expected_border_w).abs() < 1.5,
         "btn border_rect.w should be content_rect.w + 24 = {expected_border_w}, got {}; \
-         content_rect.w={}", btn.layout.border_rect.w, btn.layout.content_rect.w);
+         content_rect.w={}",
+        btn.layout.border_rect.w,
+        btn.layout.content_rect.w
+    );
     // content must be non-trivial (text was measured)
-    assert!(btn.layout.content_rect.w > 5.0,
-        "btn content_rect.w should be > 5 (text width), got {}", btn.layout.content_rect.w);
+    assert!(
+        btn.layout.content_rect.w > 5.0,
+        "btn content_rect.w should be > 5 (text width), got {}",
+        btn.layout.content_rect.w
+    );
     // sidebar must keep its min-width (not be over-shrunk by flex)
     let sidebar = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)
-    }).expect("sidebar not found");
-    assert!(sidebar.layout.border_rect.w >= 169.0,
-        "sidebar must not shrink below min-width 170; got {}", sidebar.layout.border_rect.w);
+        b.attributes
+            .get("class")
+            .map(|c| c == "sidebar")
+            .unwrap_or(false)
+    })
+    .expect("sidebar not found");
+    assert!(
+        sidebar.layout.border_rect.w >= 169.0,
+        "sidebar must not shrink below min-width 170; got {}",
+        sidebar.layout.border_rect.w
+    );
 }
 
 // ── float:right inside a block renders to the right ──────────────────────────
@@ -465,27 +608,42 @@ fn layout_float_right_appears_on_right() {
     // A float:right element inside a fixed-width block should be positioned
     // at the right edge of the parent's content area.
     // Bug: float:right elements inside sb-item were not visible at all.
-    let doc = super::harness::parse_and_layout(r#"
+    let doc = super::harness::parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .item  { width: 170px; padding: 5px 8px; }
         .stat  { float: right; }
         </style>
         <div class="item">/home <span class="stat">4,231</span></div>
-    "#, 200.0);
+    "#,
+        200.0,
+    );
     let stat = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "stat").unwrap_or(false)
-    }).expect("stat not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "stat")
+            .unwrap_or(false)
+    })
+    .expect("stat not found");
     let item = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "item").unwrap_or(false)
-    }).expect("item not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "item")
+            .unwrap_or(false)
+    })
+    .expect("item not found");
     // The float must be to the right of the midpoint of the content area
     let content_mid = item.layout.content_rect.x + item.layout.content_rect.w / 2.0;
-    assert!(stat.layout.border_rect.x > content_mid,
+    assert!(
+        stat.layout.border_rect.x > content_mid,
         "float:right stat should be in right half; stat.x={} content_mid={} item.content={:?}",
-        stat.layout.border_rect.x, content_mid, item.layout.content_rect);
+        stat.layout.border_rect.x,
+        content_mid,
+        item.layout.content_rect
+    );
     // Float right edge should be near the content right edge
-    let stat_right  = stat.layout.border_rect.x + stat.layout.border_rect.w;
+    let stat_right = stat.layout.border_rect.x + stat.layout.border_rect.w;
     let content_right = item.layout.content_rect.x + item.layout.content_rect.w;
     assert!((stat_right - content_right).abs() < 2.0,
         "float:right right edge should align with content right; stat_right={stat_right} content_right={content_right}");
@@ -493,8 +651,9 @@ fn layout_float_right_appears_on_right() {
 
 #[test]
 fn debug_graph_sidebar_and_button() {
-    use super::harness::{find_box, find_all_boxes, parse_and_layout};
-    let doc = parse_and_layout(r#"
+    use super::harness::{find_all_boxes, find_box, parse_and_layout};
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-size: 10pt; }
         body { background: #0d1117; }
@@ -522,22 +681,46 @@ fn debug_graph_sidebar_and_button() {
             </div>
           </div>
         </div>
-    "#, 1024.0);
+    "#,
+        1024.0,
+    );
 
     // Check sidebar width
-    let sidebar = find_box(&doc.root, &|b| b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)).unwrap();
+    let sidebar = find_box(&doc.root, &|b| {
+        b.attributes
+            .get("class")
+            .map(|c| c == "sidebar")
+            .unwrap_or(false)
+    })
+    .unwrap();
     eprintln!("sidebar border_rect={:?}", sidebar.layout.border_rect);
 
     // Check sstat float positions
-    let sstats = find_all_boxes(&doc.root, &|b| b.attributes.get("class").map(|c| c == "sstat").unwrap_or(false));
+    let sstats = find_all_boxes(&doc.root, &|b| {
+        b.attributes
+            .get("class")
+            .map(|c| c == "sstat")
+            .unwrap_or(false)
+    });
     for s in &sstats {
-        eprintln!("sstat border_rect={:?} margin_rect={:?}", s.layout.border_rect, s.layout.margin_rect);
+        eprintln!(
+            "sstat border_rect={:?} margin_rect={:?}",
+            s.layout.border_rect, s.layout.margin_rect
+        );
     }
 
     // Check buttons
-    let btns = find_all_boxes(&doc.root, &|b| matches!(b.attributes.get("class"), Some(c) if c.contains("btn")));
+    let btns = find_all_boxes(
+        &doc.root,
+        &|b| matches!(b.attributes.get("class"), Some(c) if c.contains("btn")),
+    );
     for b in &btns {
-        eprintln!("btn '{}' border_rect={:?} content_rect={:?}", b.attributes.get("id").unwrap_or(&String::new()), b.layout.border_rect, b.layout.content_rect);
+        eprintln!(
+            "btn '{}' border_rect={:?} content_rect={:?}",
+            b.attributes.get("id").unwrap_or(&String::new()),
+            b.layout.border_rect,
+            b.layout.content_rect
+        );
     }
 }
 
@@ -549,7 +732,8 @@ fn debug_graph_sidebar_and_button() {
 fn render_gradient_opacity_applied() {
     // A solid-red gradient at opacity:0.5 over white body.
     // The center pixel should appear as a half-alpha blend (~pink), not full red.
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: white; }
@@ -558,12 +742,24 @@ fn render_gradient_opacity_applied() {
                opacity: 0.5; }
         </style>
         <div class="box"></div>
-    "#, 150, 120);
+    "#,
+        150,
+        120,
+    );
     let (r, g, b, _) = pixel(&pm, 50, 50);
     // red at 50% opacity over white → composited ~(255, 127, 127)
-    assert!(r > 200, "red channel should be high (blend of red+white), got {r}");
-    assert!(g > 80,  "green channel should be elevated by white blend (opacity=0.5), got {g}");
-    assert!(b > 80,  "blue channel should be elevated by white blend (opacity=0.5), got {b}");
+    assert!(
+        r > 200,
+        "red channel should be high (blend of red+white), got {r}"
+    );
+    assert!(
+        g > 80,
+        "green channel should be elevated by white blend (opacity=0.5), got {g}"
+    );
+    assert!(
+        b > 80,
+        "blue channel should be elevated by white blend (opacity=0.5), got {b}"
+    );
 }
 
 // ── Absolute all-auto insets inside flex container: positioned inside container ──
@@ -574,7 +770,8 @@ fn render_gradient_opacity_applied() {
 #[test]
 fn layout_abs_all_auto_in_flex_inside_container() {
     use super::harness::find_box;
-    let doc = super::harness::parse_and_layout(r#"
+    let doc = super::harness::parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { padding-top: 80px; }
@@ -584,19 +781,36 @@ fn layout_abs_all_auto_in_flex_inside_container() {
         .ring { position: absolute; width: 60px; height: 60px; }
         </style>
         <div class="wrap"><div class="ring"></div></div>
-    "#, 300.0);
+    "#,
+        300.0,
+    );
     let wrap = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "wrap").unwrap_or(false)
-    }).expect("wrap not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "wrap")
+            .unwrap_or(false)
+    })
+    .expect("wrap not found");
     let ring = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "ring").unwrap_or(false)
-    }).expect("ring not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "ring")
+            .unwrap_or(false)
+    })
+    .expect("ring not found");
     // ring must be inside wrap (not at document origin ~0,0)
-    assert!(ring.layout.border_rect.y >= wrap.layout.border_rect.y - 1.0,
+    assert!(
+        ring.layout.border_rect.y >= wrap.layout.border_rect.y - 1.0,
         "ring y ({}) should be >= wrap y ({}) — ring should not be at document origin",
-        ring.layout.border_rect.y, wrap.layout.border_rect.y);
-    assert!(ring.layout.border_rect.x >= wrap.layout.border_rect.x - 1.0,
-        "ring x ({}) should be >= wrap x ({})", ring.layout.border_rect.x, wrap.layout.border_rect.x);
+        ring.layout.border_rect.y,
+        wrap.layout.border_rect.y
+    );
+    assert!(
+        ring.layout.border_rect.x >= wrap.layout.border_rect.x - 1.0,
+        "ring x ({}) should be >= wrap x ({})",
+        ring.layout.border_rect.x,
+        wrap.layout.border_rect.x
+    );
 }
 
 /// Absolute child with all-auto insets inside a centered flex container should
@@ -604,7 +818,8 @@ fn layout_abs_all_auto_in_flex_inside_container() {
 #[test]
 fn layout_abs_all_auto_in_flex_centered() {
     use super::harness::find_box;
-    let doc = super::harness::parse_and_layout(r#"
+    let doc = super::harness::parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         .wrap { position: relative; display: flex;
@@ -613,15 +828,27 @@ fn layout_abs_all_auto_in_flex_centered() {
         .child { position: absolute; width: 40px; height: 40px; }
         </style>
         <div class="wrap"><div class="child"></div></div>
-    "#, 300.0);
+    "#,
+        300.0,
+    );
     let child = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "child").unwrap_or(false)
-    }).expect("child not found");
+        b.attributes
+            .get("class")
+            .map(|c| c == "child")
+            .unwrap_or(false)
+    })
+    .expect("child not found");
     // Container 200x200 at origin, child 40x40 → centered at (80, 80)
-    assert!((child.layout.border_rect.x - 80.0).abs() < 2.0,
-        "abs child x should be ~80 (centered), got {}", child.layout.border_rect.x);
-    assert!((child.layout.border_rect.y - 80.0).abs() < 2.0,
-        "abs child y should be ~80 (centered), got {}", child.layout.border_rect.y);
+    assert!(
+        (child.layout.border_rect.x - 80.0).abs() < 2.0,
+        "abs child x should be ~80 (centered), got {}",
+        child.layout.border_rect.x
+    );
+    assert!(
+        (child.layout.border_rect.y - 80.0).abs() < 2.0,
+        "abs child y should be ~80 (centered), got {}",
+        child.layout.border_rect.y
+    );
 }
 
 // ── Border-radius per-side arc: top-only border on a circle ──────────────────
@@ -633,7 +860,8 @@ fn layout_abs_all_auto_in_flex_centered() {
 /// the circle and NOT at the BOTTOM center.
 #[test]
 fn render_border_radius_top_only_renders_top_arc() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #000; }
@@ -646,22 +874,30 @@ fn render_border_radius_top_only_renders_top_arc() {
         }
         </style>
         <div class="spinner"></div>
-    "#, 200, 200);
+    "#,
+        200,
+        200,
+    );
 
     // Top center of the spinner (x=40, y≈2) should have a white arc pixel
     let top_has_border = (2u32..10).any(|y| {
         let (r, g, b, a) = pixel(&pm, 40, y);
         a > 30 && r > 100 && g > 100 && b > 100
     });
-    assert!(top_has_border, "top center of spinner should have a white border arc pixel");
+    assert!(
+        top_has_border,
+        "top center of spinner should have a white border arc pixel"
+    );
 
     // Bottom center (x=40, y≈76) should have NO border (transparent → black background)
     let bottom_has_border = (70u32..80).any(|y| {
         let (r, g, b, a) = pixel(&pm, 40, y);
         a > 30 && r > 100 && g > 100 && b > 100
     });
-    assert!(!bottom_has_border,
-        "bottom center of spinner should be black (no border-bottom), but found border pixels");
+    assert!(
+        !bottom_has_border,
+        "bottom center of spinner should be black (no border-bottom), but found border pixels"
+    );
 }
 
 // ── CSS scale() transform applies to text (heartbeat fix) ────────────────────
@@ -673,17 +909,22 @@ fn render_border_radius_top_only_renders_top_arc() {
 #[test]
 fn render_css_scale_transform_affects_text() {
     // Red text "I" at scale(1) — measure its pixel width.
-    let pm_normal = render_html(r#"
+    let pm_normal = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         body { background: white; }
         .t { font-size: 20px; color: red; display: inline-block; }
         </style>
         <div class="t">I</div>
-    "#, 200, 60);
+    "#,
+        200,
+        60,
+    );
 
     // Same text at scale(2) — should span approximately twice as many red pixels.
-    let pm_scaled = render_html(r#"
+    let pm_scaled = render_html(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         body { background: white; }
@@ -691,7 +932,10 @@ fn render_css_scale_transform_affects_text() {
              transform: scale(2); transform-origin: 0 0; }
         </style>
         <div class="t">I</div>
-    "#, 200, 60);
+    "#,
+        200,
+        60,
+    );
 
     // Count non-white pixels in top row band (y=5..30) for both renders.
     fn count_red_pixels(pm: &tiny_skia::Pixmap, y_range: std::ops::Range<u32>) -> u32 {
@@ -702,14 +946,18 @@ fn render_css_scale_transform_affects_text() {
                     let idx = (y * pm.width() + x) as usize * 4;
                     let d = pm.data();
                     let a = d[idx + 3];
-                    if a == 0 { (0u8, 0u8, 0u8, 0u8) } else {
-                        let r = ((d[idx]     as u32 * 255) / a as u32) as u8;
+                    if a == 0 {
+                        (0u8, 0u8, 0u8, 0u8)
+                    } else {
+                        let r = ((d[idx] as u32 * 255) / a as u32) as u8;
                         let g = ((d[idx + 1] as u32 * 255) / a as u32) as u8;
                         let b = ((d[idx + 2] as u32 * 255) / a as u32) as u8;
                         (r, g, b, a)
                     }
                 };
-                if a > 10 && r > 150 && g < 100 && b < 100 { n += 1; }
+                if a > 10 && r > 150 && g < 100 && b < 100 {
+                    n += 1;
+                }
             }
         }
         n
@@ -718,7 +966,10 @@ fn render_css_scale_transform_affects_text() {
     let normal_red = count_red_pixels(&pm_normal, 5..30);
     let scaled_red = count_red_pixels(&pm_scaled, 5..55);
 
-    assert!(normal_red > 0, "baseline render should have some red text pixels");
+    assert!(
+        normal_red > 0,
+        "baseline render should have some red text pixels"
+    );
     assert!(scaled_red > normal_red,
         "scale(2) text should cover more pixels than scale(1); normal={normal_red} scaled={scaled_red}");
 }
@@ -727,7 +978,8 @@ fn render_css_scale_transform_affects_text() {
 fn debug_sidebar_box_sizing() {
     use super::harness::{find_box, parse_and_layout};
     use crate::types::BoxSizing;
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { box-sizing: border-box; }
         .sidebar { padding: 14px; width: 170px; border-right: 1px solid red; }
@@ -736,16 +988,29 @@ fn debug_sidebar_box_sizing() {
           <div class="sidebar">Sidebar</div>
           <div>Content</div>
         </div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     let sidebar = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "sidebar").unwrap_or(false)
-    }).unwrap();
-    eprintln!("sidebar box_sizing={:?} border_rect.w={} content_rect.w={}",
-        sidebar.style.box_sizing, sidebar.layout.border_rect.w, sidebar.layout.content_rect.w);
-    assert!(matches!(sidebar.style.box_sizing, BoxSizing::BorderBox),
-        "sidebar should have box-sizing:border-box from * rule");
-    assert!((sidebar.layout.border_rect.w - 170.0).abs() < 1.0,
-        "sidebar border_rect.w should be 170 (border-box), got {}", sidebar.layout.border_rect.w);
+        b.attributes
+            .get("class")
+            .map(|c| c == "sidebar")
+            .unwrap_or(false)
+    })
+    .unwrap();
+    eprintln!(
+        "sidebar box_sizing={:?} border_rect.w={} content_rect.w={}",
+        sidebar.style.box_sizing, sidebar.layout.border_rect.w, sidebar.layout.content_rect.w
+    );
+    assert!(
+        matches!(sidebar.style.box_sizing, BoxSizing::BorderBox),
+        "sidebar should have box-sizing:border-box from * rule"
+    );
+    assert!(
+        (sidebar.layout.border_rect.w - 170.0).abs() < 1.0,
+        "sidebar border_rect.w should be 170 (border-box), got {}",
+        sidebar.layout.border_rect.w
+    );
 }
 
 /// Flex-column with align-items:center must shrink auto-width children to their
@@ -755,27 +1020,39 @@ fn debug_sidebar_box_sizing() {
 fn layout_flex_column_center_shrinks_child_to_intrinsic_width() {
     use super::harness::{find_box, parse_and_layout};
     // 400px-wide column, centered. The h2 text "Hi" is much narrower than 400px.
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         .col { display: flex; flex-direction: column; align-items: center; width: 400px; }
         h2 { font-size: 16px; }
         </style>
         <div class="col"><h2>Hi</h2></div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     let col = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "col").unwrap_or(false)
-    }).unwrap();
+        b.attributes
+            .get("class")
+            .map(|c| c == "col")
+            .unwrap_or(false)
+    })
+    .unwrap();
     let h2 = find_box(col, &|b| b.tag == "h2").unwrap();
     // With centering, h2 must be narrower than the 400px container and have
     // a non-zero left offset (margin_rect.x > col.layout.content_rect.x).
-    assert!(h2.layout.margin_rect.w < 380.0,
-        "h2 should shrink to text width, not fill 400px; got w={}", h2.layout.margin_rect.w);
-    assert!(h2.layout.margin_rect.x > col.layout.content_rect.x + 1.0,
+    assert!(
+        h2.layout.margin_rect.w < 380.0,
+        "h2 should shrink to text width, not fill 400px; got w={}",
+        h2.layout.margin_rect.w
+    );
+    assert!(
+        h2.layout.margin_rect.x > col.layout.content_rect.x + 1.0,
         "h2 should be shifted right (centered); x={} col.layout.content_rect.x={}",
-        h2.layout.margin_rect.x, col.layout.content_rect.x);
+        h2.layout.margin_rect.x,
+        col.layout.content_rect.x
+    );
 }
-
 
 // ── linear-gradient geometry (css-images-3 §3.4.1) ───────────────────────────
 
@@ -786,53 +1063,77 @@ fn layout_flex_column_center_shrinks_child_to_intrinsic_width() {
 /// slope +1 in screen coordinates, with the first colour below-left of it.
 #[test]
 fn render_linear_gradient_45deg_line_crosses_the_centre() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>* { margin:0; padding:0 }
         body { background: white }
         .bar { width: 200px; height: 40px;
                background: linear-gradient(45deg, #ff0000 0%, #ff0000 50%,
                                                   #0000ff 50%, #0000ff 100%); }
         </style><div class="bar"></div>
-    "#, 200, 40);
-    let is_red = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); r > 200 && g < 60 && b < 60 };
-    let is_blue = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); b > 200 && r < 60 && g < 60 };
+    "#,
+        200,
+        40,
+    );
+    let is_red = |x, y| {
+        let (r, g, b, _) = pixel(&pm, x, y);
+        r > 200 && g < 60 && b < 60
+    };
+    let is_blue = |x, y| {
+        let (r, g, b, _) = pixel(&pm, x, y);
+        b > 200 && r < 60 && g < 60
+    };
     // Centre (100, 20); boundary points (75,-5)…(135,55). Sampled well clear of it.
-    assert!(is_red(75, 10),   "(75,10) is below-left of the boundary");
+    assert!(is_red(75, 10), "(75,10) is below-left of the boundary");
     assert!(is_blue(115, 10), "(115,10) is above-right of the boundary");
-    assert!(is_red(105, 30),  "(105,30) is below-left of the boundary");
+    assert!(is_red(105, 30), "(105,30) is below-left of the boundary");
     assert!(is_blue(135, 30), "(135,30) is above-right of the boundary");
 }
 
 /// The same box at 135deg — down and to the right — mirrors it.
 #[test]
 fn render_linear_gradient_135deg_line_crosses_the_centre() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>* { margin:0; padding:0 }
         body { background: white }
         .bar { width: 200px; height: 40px;
                background: linear-gradient(135deg, #ff0000 0%, #ff0000 50%,
                                                    #0000ff 50%, #0000ff 100%); }
         </style><div class="bar"></div>
-    "#, 200, 40);
-    let is_red = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); r > 200 && g < 60 && b < 60 };
-    let is_blue = |x, y| { let (r, g, b, _) = pixel(&pm, x, y); b > 200 && r < 60 && g < 60 };
-    assert!(is_red(75, 30),   "(75,30) is above-left of the boundary");
+    "#,
+        200,
+        40,
+    );
+    let is_red = |x, y| {
+        let (r, g, b, _) = pixel(&pm, x, y);
+        r > 200 && g < 60 && b < 60
+    };
+    let is_blue = |x, y| {
+        let (r, g, b, _) = pixel(&pm, x, y);
+        b > 200 && r < 60 && g < 60
+    };
+    assert!(is_red(75, 30), "(75,30) is above-left of the boundary");
     assert!(is_blue(115, 30), "(115,30) is below-right of the boundary");
-    assert!(is_red(105, 10),  "(105,10) is above-left of the boundary");
+    assert!(is_red(105, 10), "(105,10) is above-left of the boundary");
     assert!(is_blue(135, 10), "(135,10) is below-right of the boundary");
 }
 
 /// Axis-aligned gradients, which already worked, must keep working.
 #[test]
 fn render_linear_gradient_axis_aligned_still_spans_the_box() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>* { margin:0; padding:0 }
         body { background: white }
         .bar { width: 200px; height: 40px;
                background: linear-gradient(90deg, #ff0000 0%, #ff0000 50%,
                                                   #0000ff 50%, #0000ff 100%); }
         </style><div class="bar"></div>
-    "#, 200, 40);
+    "#,
+        200,
+        40,
+    );
     let (r, _, b, _) = pixel(&pm, 20, 20);
     assert!(r > 200 && b < 60, "left half is the first colour");
     let (r2, _, b2, _) = pixel(&pm, 180, 20);
@@ -844,30 +1145,41 @@ fn render_linear_gradient_axis_aligned_still_spans_the_box() {
 /// `linear-gradient(red, blue)` lost `red` and painted a flat blue.
 #[test]
 fn render_linear_gradient_without_a_direction_keeps_the_first_stop() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>* { margin:0; padding:0 }
         body { background: white }
         .bar { width: 200px; height: 40px; background: linear-gradient(#ff0000, #0000ff); }
         </style><div class="bar"></div>
-    "#, 200, 40);
+    "#,
+        200,
+        40,
+    );
     let (r, _, b, _) = pixel(&pm, 100, 2);
     assert!(r > 180 && b < 80, "top is red, got #{r:02x}..{b:02x}");
     let (r2, _, b2, _) = pixel(&pm, 100, 37);
-    assert!(b2 > 180 && r2 < 80, "bottom is blue, got #{r2:02x}..{b2:02x}");
+    assert!(
+        b2 > 180 && r2 < 80,
+        "bottom is blue, got #{r2:02x}..{b2:02x}"
+    );
 }
 
 /// A stop written as `rgb(…)` carries commas of its own; splitting the stop list
 /// on every comma tore it into fragments that parsed as nothing.
 #[test]
 fn render_linear_gradient_accepts_functional_colour_stops() {
-    let pm = render_html(r#"
+    let pm = render_html(
+        r#"
         <style>* { margin:0; padding:0 }
         body { background: white }
         .bar { width: 200px; height: 40px;
                background: linear-gradient(90deg, rgb(255, 0, 0) 0%, rgb(255, 0, 0) 50%,
                                                   rgb(0, 0, 255) 50%, rgb(0, 0, 255) 100%); }
         </style><div class="bar"></div>
-    "#, 200, 40);
+    "#,
+        200,
+        40,
+    );
     let (r, _, b, _) = pixel(&pm, 20, 20);
     assert!(r > 200 && b < 60, "left half is red");
     let (r2, _, b2, _) = pixel(&pm, 180, 20);
@@ -884,27 +1196,45 @@ fn render_linear_gradient_accepts_functional_colour_stops() {
 #[test]
 fn a_flex_item_sized_to_max_content_does_not_wrap_its_text() {
     let mut renderer = Renderer::new();
-    let mut doc = renderer.load_html(r#"
+    let mut doc = renderer.load_html(
+        r#"
         <style>* { margin: 0; padding: 0 }
         .row { display: flex; width: 600px }
         #b { white-space: nowrap }
         </style>
         <div class="row"><div id="a">Faire un don</div></div>
         <div class="row"><div id="b">Faire un don</div></div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     let mut pm = tiny_skia::Pixmap::new(800, 200).unwrap();
     renderer.render(&mut doc, &mut pm, 1.0);
     let find = |id: &str| {
         fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
-            if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-            for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+            if n.attributes.get("id").map(String::as_str) == Some(id) {
+                return Some(n);
+            }
+            for c in &n.children {
+                if let Some(f) = walk(c, id) {
+                    return Some(f);
+                }
+            }
             None
         }
         walk(&doc.root, id).unwrap().layout.margin_rect
     };
     let (a, b) = (find("a"), find("b"));
-    assert_eq!(a.h, b.h, "the auto-width item wrapped: {}x{} vs nowrap {}x{}", a.w, a.h, b.w, b.h);
-    assert!((a.w - b.w).abs() < 0.5, "max-content width {} != single-line width {}", a.w, b.w);
+    assert_eq!(
+        a.h, b.h,
+        "the auto-width item wrapped: {}x{} vs nowrap {}x{}",
+        a.w, a.h, b.w, b.h
+    );
+    assert!(
+        (a.w - b.w).abs() < 0.5,
+        "max-content width {} != single-line width {}",
+        a.w,
+        b.w
+    );
 }
 
 /// **Collapsible white space at the end of a block generates no line box.**
@@ -922,19 +1252,36 @@ fn trailing_collapsible_whitespace_adds_no_line_box() {
              <li id=\"li_no\"><a><span>Faire un don</span></a></li></ul>\
          <div id=\"div_ws\"><a><span>Faire un don</span></a>\n</div>\
          <div id=\"div_no\"><a><span>Faire un don</span></a></div>",
-        800.0);
+        800.0,
+    );
     let mut pm = tiny_skia::Pixmap::new(800, 300).unwrap();
     renderer.render(&mut doc, &mut pm, 1.0);
     fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
-        if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-        for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+        if n.attributes.get("id").map(String::as_str) == Some(id) {
+            return Some(n);
+        }
+        for c in &n.children {
+            if let Some(f) = walk(c, id) {
+                return Some(f);
+            }
+        }
         None
     }
     let h = |id: &str| walk(&doc.root, id).unwrap().layout.margin_rect.h;
-    assert_eq!(h("li_ws"), h("li_no"),
-        "the newline gave the list item a second line: {} vs {}", h("li_ws"), h("li_no"));
-    assert_eq!(h("div_ws"), h("div_no"),
-        "the newline gave the block a second line: {} vs {}", h("div_ws"), h("div_no"));
+    assert_eq!(
+        h("li_ws"),
+        h("li_no"),
+        "the newline gave the list item a second line: {} vs {}",
+        h("li_ws"),
+        h("li_no")
+    );
+    assert_eq!(
+        h("div_ws"),
+        h("div_no"),
+        "the newline gave the block a second line: {} vs {}",
+        h("div_ws"),
+        h("div_no")
+    );
 }
 
 /// **A border with no style occupies no space** (CSS Backgrounds §4.3: a
@@ -955,30 +1302,62 @@ fn a_nested_inline_box_adds_no_phantom_border_to_its_line() {
            <li id=\"nested\"><a><span>Faire un don</span></a></li>\
            <li id=\"bare\">Faire un don</li>\
          </ul>",
-        1280.0);
+        1280.0,
+    );
     let mut pm = tiny_skia::Pixmap::new(1280, 200).unwrap();
     renderer.render(&mut doc, &mut pm, 1.0);
     fn walk<'a>(n: &'a crate::types::WebCore, id: &str) -> Option<&'a crate::types::WebCore> {
-        if n.attributes.get("id").map(String::as_str) == Some(id) { return Some(n); }
-        for c in &n.children { if let Some(f) = walk(c, id) { return Some(f); } }
+        if n.attributes.get("id").map(String::as_str) == Some(id) {
+            return Some(n);
+        }
+        for c in &n.children {
+            if let Some(f) = walk(c, id) {
+                return Some(f);
+            }
+        }
         None
     }
-    let line_w = |id: &str| walk(&doc.root, id).unwrap()
-        .layout.line_cache.iter().map(|l| l.width).fold(0.0f32, f32::max);
+    let line_w = |id: &str| {
+        walk(&doc.root, id)
+            .unwrap()
+            .layout
+            .line_cache
+            .iter()
+            .map(|l| l.width)
+            .fold(0.0f32, f32::max)
+    };
     let boxes = |id: &str| walk(&doc.root, id).unwrap().layout.line_cache.len();
-    let (nested, bare) = (walk(&doc.root, "nested").unwrap(), walk(&doc.root, "bare").unwrap());
+    let (nested, bare) = (
+        walk(&doc.root, "nested").unwrap(),
+        walk(&doc.root, "bare").unwrap(),
+    );
 
     assert_eq!(boxes("bare"), 1, "the bare text fits on one line");
-    assert_eq!(boxes("nested"), 1,
+    assert_eq!(
+        boxes("nested"),
+        1,
         "wrapping the same text in <a><span> broke it onto {} lines (widths {:?}, box {})",
         boxes("nested"),
-        nested.layout.line_cache.iter().map(|l| l.width).collect::<Vec<_>>(),
-        nested.layout.content_rect.w);
-    assert!((line_w("nested") - line_w("bare")).abs() < 0.5,
-        "the nested line is {} wide, the bare one {}", line_w("nested"), line_w("bare"));
-    assert!((nested.layout.margin_rect.w - bare.layout.margin_rect.w).abs() < 0.5,
+        nested
+            .layout
+            .line_cache
+            .iter()
+            .map(|l| l.width)
+            .collect::<Vec<_>>(),
+        nested.layout.content_rect.w
+    );
+    assert!(
+        (line_w("nested") - line_w("bare")).abs() < 0.5,
+        "the nested line is {} wide, the bare one {}",
+        line_w("nested"),
+        line_w("bare")
+    );
+    assert!(
+        (nested.layout.margin_rect.w - bare.layout.margin_rect.w).abs() < 0.5,
         "flex bases differ: nested {} vs bare {}",
-        nested.layout.margin_rect.w, bare.layout.margin_rect.w);
+        nested.layout.margin_rect.w,
+        bare.layout.margin_rect.w
+    );
 }
 
 /// **Measuring a string whole must agree with measuring its words and the
@@ -991,15 +1370,27 @@ fn whole_string_and_word_by_word_measurement_agree() {
     let mut renderer = Renderer::new();
     let _doc = renderer.load_html("<div>x</div>", 800.0);
     let engine = renderer.layout_engine();
-    let w = |t: &str| engine.measure_text_cached(
-        t, 14.0, crate::types::FontWeight::Normal, crate::types::FontStyle::Normal, "sans-serif");
+    let w = |t: &str| {
+        engine.measure_text_cached(
+            t,
+            14.0,
+            crate::types::FontWeight::Normal,
+            crate::types::FontStyle::Normal,
+            "sans-serif",
+        )
+    };
     let space = w(" ");
     let parts = w("Faire") + space + w("un") + space + w("don");
     let whole = w("Faire un don");
     assert!(space > 0.5, "a space has a width: {space}");
-    assert!((parts - whole).abs() < 0.5,
+    assert!(
+        (parts - whole).abs() < 0.5,
         "word-by-word {parts} != whole-string {whole} (space={space}, \
-         Faire={}, un={}, don={})", w("Faire"), w("un"), w("don"));
+         Faire={}, un={}, don={})",
+        w("Faire"),
+        w("un"),
+        w("don")
+    );
 }
 
 /// **The measuring and painting font resolvers must agree on generic family
@@ -1013,16 +1404,24 @@ fn the_two_font_resolvers_agree_on_generic_families() {
     let same = |a: &Family, b: &Family| format!("{a:?}") == format!("{b:?}");
     let renderer = Renderer::new();
     let fs = &renderer.font_system;
-    for stack in ["system-ui", "sans-serif", "serif", "monospace", "cursive", "fantasy",
-                  "system-ui, sans-serif"] {
+    for stack in [
+        "system-ui",
+        "sans-serif",
+        "serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui, sans-serif",
+    ] {
         let painted = crate::layout::inline_layout::css_family_to_cosmic(stack);
         let resolved = crate::layout::inline_layout::resolve_css_family(fs, stack);
         let measured = resolved.as_family();
-        assert!(same(&painted, &measured),
-            "{stack:?}: painting picks {painted:?}, measuring picks {measured:?}");
+        assert!(
+            same(&painted, &measured),
+            "{stack:?}: painting picks {painted:?}, measuring picks {measured:?}"
+        );
     }
 }
-
 
 // ── word-spacing and letter-spacing are MEASURED, not just painted ───────────
 //
@@ -1035,43 +1434,65 @@ fn the_two_font_resolvers_agree_on_generic_families() {
 #[test]
 fn word_spacing_widens_the_shrink_to_fit_box() {
     use super::harness::find_box;
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         span { display: inline-block; font-size: 16px; }
         .ws { word-spacing: 10px; }
         </style>
         <div><span id="plain">a b c</span><span id="ws" class="ws">a b c</span></div>
-    "#, 800.0);
-    let w = |id: &str| find_box(&doc.root, &|n| {
-        n.attributes.get("id").map(|c| c == id).unwrap_or(false)
-    }).unwrap_or_else(|| panic!("#{id} not found")).layout.content_rect.w;
+    "#,
+        800.0,
+    );
+    let w = |id: &str| {
+        find_box(&doc.root, &|n| {
+            n.attributes.get("id").map(|c| c == id).unwrap_or(false)
+        })
+        .unwrap_or_else(|| panic!("#{id} not found"))
+        .layout
+        .content_rect
+        .w
+    };
     let (plain, ws) = (w("plain"), w("ws"));
     // Two word separators in "a b c" → exactly two extra 10px gaps.
-    assert!((ws - plain - 20.0).abs() < 0.5,
+    assert!(
+        (ws - plain - 20.0).abs() < 0.5,
         "word-spacing:10px over two separators must widen the box by 20px; \
-         plain={plain} word-spaced={ws}");
+         plain={plain} word-spaced={ws}"
+    );
 }
 
 #[test]
 fn letter_spacing_widens_the_shrink_to_fit_box() {
     use super::harness::find_box;
-    let doc = parse_and_layout(r#"
+    let doc = parse_and_layout(
+        r#"
         <style>
         * { margin: 0; padding: 0; }
         span { display: inline-block; font-size: 16px; }
         .ls { letter-spacing: 4px; }
         </style>
         <div><span id="plain">abcde</span><span id="ls" class="ls">abcde</span></div>
-    "#, 800.0);
-    let w = |id: &str| find_box(&doc.root, &|n| {
-        n.attributes.get("id").map(|c| c == id).unwrap_or(false)
-    }).unwrap_or_else(|| panic!("#{id} not found")).layout.content_rect.w;
+    "#,
+        800.0,
+    );
+    let w = |id: &str| {
+        find_box(&doc.root, &|n| {
+            n.attributes.get("id").map(|c| c == id).unwrap_or(false)
+        })
+        .unwrap_or_else(|| panic!("#{id} not found"))
+        .layout
+        .content_rect
+        .w
+    };
     let (plain, ls) = (w("plain"), w("ls"));
     // Tracking follows every one of the five letters, the last included.
-    assert!((ls - plain - 20.0).abs() < 0.5,
+    assert!(
+        (ls - plain - 20.0).abs() < 0.5,
         "letter-spacing:4px over five letters must widen the box by 20px; \
-         plain={plain} tracked={ls}");
+         plain={plain} tracked={ls}"
+    );
 }
 
 #[test]
@@ -1080,22 +1501,119 @@ fn letter_spacing_moves_the_wrap_point() {
     // Same text, same box width: without tracking both words share one line,
     // with tracking the second no longer fits. A spacing that never reached
     // the item advances could not change the break.
-    let html = |ls: &str| format!(r#"
+    let html = |ls: &str| {
+        format!(
+            r#"
         <style>
         * {{ margin: 0; padding: 0; }}
         .b {{ width: 120px; font-size: 16px; letter-spacing: {ls}; }}
         </style>
         <div class="b">aaaaa bbbbb</div>
-    "#);
+    "#
+        )
+    };
     let lines = |src: &str| {
         let doc = parse_and_layout(src, 400.0);
-        find_box(&doc.root, &|n| n.attributes.get("class").map(|c| c == "b").unwrap_or(false))
-            .expect(".b not found").layout.line_cache.len()
+        find_box(&doc.root, &|n| {
+            n.attributes.get("class").map(|c| c == "b").unwrap_or(false)
+        })
+        .expect(".b not found")
+        .layout
+        .line_cache
+        .len()
     };
     let tight = lines(&html("0"));
     let tracked = lines(&html("6px"));
-    assert_eq!(tight, 1, "without tracking the two words fit on one line, got {tight}");
+    assert_eq!(
+        tight, 1,
+        "without tracking the two words fit on one line, got {tight}"
+    );
     assert_eq!(tracked, 2,
         "letter-spacing:6px over 11 characters adds 66px and must force a second line, got {tracked}");
 }
 
+#[test]
+fn letter_spacing_reaches_painted_glyph_positions() {
+    fn red_text_bounds(pm: &tiny_skia::Pixmap) -> Option<(u32, u32)> {
+        let mut first = None;
+        let mut last = None;
+        for y in 0..80u32 {
+            for x in 0..240u32 {
+                let (r, g, b, a) = pixel(pm, x, y);
+                if a > 10 && r > 130 && g < 90 && b < 90 {
+                    first.get_or_insert(x);
+                    last = Some(x);
+                }
+            }
+        }
+        first.zip(last)
+    }
+
+    let html = |spacing: &str| {
+        format!(
+            r#"
+        <style>
+        * {{ margin: 0; padding: 0; }}
+        body {{ background: white; }}
+        div {{ width: 220px; font-size: 32px; color: red; letter-spacing: {spacing}; }}
+        </style>
+        <div>abcd</div>
+    "#
+        )
+    };
+
+    let plain = render_html(&html("0"), 240, 80);
+    let spaced = render_html(&html("8px"), 240, 80);
+    let (plain_first, plain_last) = red_text_bounds(&plain).expect("plain text painted");
+    let (spaced_first, spaced_last) = red_text_bounds(&spaced).expect("spaced text painted");
+    let plain_width = plain_last.saturating_sub(plain_first);
+    let spaced_width = spaced_last.saturating_sub(spaced_first);
+
+    assert!(
+        spaced_width > plain_width + 16,
+        "letter-spacing should widen the painted glyph bounds; plain={plain_width} spaced={spaced_width}"
+    );
+}
+
+#[test]
+fn word_spacing_reaches_painted_word_positions() {
+    fn red_text_bounds(pm: &tiny_skia::Pixmap) -> Option<(u32, u32)> {
+        let mut first = None;
+        let mut last = None;
+        for y in 0..80u32 {
+            for x in 0..260u32 {
+                let (r, g, b, a) = pixel(pm, x, y);
+                if a > 10 && r > 130 && g < 90 && b < 90 {
+                    first.get_or_insert(x);
+                    last = Some(x);
+                }
+            }
+        }
+        first.zip(last)
+    }
+
+    let html = |spacing: &str| {
+        format!(
+            r#"
+        <style>
+        * {{ margin: 0; padding: 0; }}
+        body {{ background: white; }}
+        div {{ width: 240px; font-size: 32px; color: red; word-spacing: {spacing}; }}
+        </style>
+        <div>a b c</div>
+    "#
+        )
+    };
+
+    let plain = render_html(&html("0"), 260, 80);
+    let spaced = render_html(&html("24px"), 260, 80);
+    let (plain_first, plain_last) = red_text_bounds(&plain).expect("plain text painted");
+    let (spaced_first, spaced_last) = red_text_bounds(&spaced).expect("spaced text painted");
+    let plain_width = plain_last.saturating_sub(plain_first);
+    let spaced_width = spaced_last.saturating_sub(spaced_first);
+
+    assert!(
+        spaced_width > plain_width + 18,
+        "word-spacing should widen the painted word bounds; plain={plain_width} spaced={spaced_width}"
+    );
+}

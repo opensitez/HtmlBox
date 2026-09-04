@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Document ─────────────────────────────────────────────────────────────────
 
@@ -17,13 +17,13 @@ use crate::layout::LayoutEngine;
 #[derive(Debug, Clone)]
 pub struct ScrollbarDrag {
     /// Kind of scrollbar being dragged.
-    pub kind:           ScrollbarDragKind,
+    pub kind: ScrollbarDragKind,
     /// Screen Y at the start of the drag.
-    pub start_mouse_y:  f32,
+    pub start_mouse_y: f32,
     /// Scroll position at the start of the drag.
-    pub start_scroll:   f32,
+    pub start_scroll: f32,
     /// Pixels of scroll per pixel of mouse movement.
-    pub scroll_per_px:  f32,
+    pub scroll_per_px: f32,
 }
 
 /// Which scrollbar is being dragged.

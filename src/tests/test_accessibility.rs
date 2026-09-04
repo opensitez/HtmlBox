@@ -4,14 +4,20 @@
 
 #![cfg(feature = "accessibility")]
 
-use accesskit::{Action, AutoComplete, HasPopup, Invalid, Orientation, Role, SortDirection, Toggled};
-use crate::{load_html, accessibility::build_tree};
+use crate::{accessibility::build_tree, load_html};
+use accesskit::{
+    Action, AutoComplete, HasPopup, Invalid, Orientation, Role, SortDirection, Toggled,
+};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /// Find the first node in the tree whose role matches `role`.
 fn find_role(update: &accesskit::TreeUpdate, role: Role) -> Option<&accesskit::Node> {
-    update.nodes.iter().find(|(_, n)| n.role() == role).map(|(_, n)| n)
+    update
+        .nodes
+        .iter()
+        .find(|(_, n)| n.role() == role)
+        .map(|(_, n)| n)
 }
 
 /// Collect all roles present in the tree.
@@ -32,7 +38,11 @@ fn build_tree_has_window_root() {
     assert_eq!(tree.tree.unwrap().root, root_id);
 
     // The synthetic root must be a Window node.
-    let window = tree.nodes.iter().find(|(id, _)| *id == root_id).map(|(_, n)| n);
+    let window = tree
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == root_id)
+        .map(|(_, n)| n);
     assert!(window.is_some(), "ROOT_ID node must exist");
     assert_eq!(window.unwrap().role(), Role::Window);
 }
@@ -51,21 +61,30 @@ fn build_tree_focus_defaults_to_root_when_none_focused() {
 fn role_button_element() {
     let doc = load_html("<html><body><button>OK</button></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Button), "button element must map to Role::Button");
+    assert!(
+        all_roles(&tree).contains(&Role::Button),
+        "button element must map to Role::Button"
+    );
 }
 
 #[test]
 fn role_link_with_href() {
     let doc = load_html("<html><body><a href=\"/\">Home</a></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Link), "a[href] must map to Role::Link");
+    assert!(
+        all_roles(&tree).contains(&Role::Link),
+        "a[href] must map to Role::Link"
+    );
 }
 
 #[test]
 fn role_a_without_href_is_not_link() {
     let doc = load_html("<html><body><a>Anchor</a></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(!all_roles(&tree).contains(&Role::Link), "a without href must not be Link");
+    assert!(
+        !all_roles(&tree).contains(&Role::Link),
+        "a without href must not be Link"
+    );
 }
 
 #[test]
@@ -89,10 +108,10 @@ fn role_headings() {
 fn role_input_types() {
     let cases = [
         ("checkbox", Role::CheckBox),
-        ("radio",    Role::RadioButton),
-        ("range",    Role::Slider),
-        ("search",   Role::SearchInput),
-        ("email",    Role::EmailInput),
+        ("radio", Role::RadioButton),
+        ("range", Role::Slider),
+        ("search", Role::SearchInput),
+        ("email", Role::EmailInput),
         ("password", Role::PasswordInput),
     ];
     for (input_type, expected_role) in cases {
@@ -122,7 +141,10 @@ fn role_textarea_is_multiline() {
 
 #[test]
 fn role_select_is_combobox() {
-    let doc = load_html("<html><body><select><option>A</option></select></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><select><option>A</option></select></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     assert!(all_roles(&tree).contains(&Role::ComboBox));
 }
@@ -132,7 +154,10 @@ fn role_list_elements() {
     let doc = load_html("<html><body><ul><li>Item</li></ul></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
     assert!(all_roles(&tree).contains(&Role::List), "ul must be List");
-    assert!(all_roles(&tree).contains(&Role::ListItem), "li must be ListItem");
+    assert!(
+        all_roles(&tree).contains(&Role::ListItem),
+        "li must be ListItem"
+    );
 }
 
 #[test]
@@ -145,7 +170,7 @@ fn role_nav_main_header_footer() {
     let roles = all_roles(&tree);
     assert!(roles.contains(&Role::Navigation));
     assert!(roles.contains(&Role::Main));
-    assert!(roles.contains(&Role::Banner));      // header
+    assert!(roles.contains(&Role::Banner)); // header
     assert!(roles.contains(&Role::ContentInfo)); // footer
 }
 
@@ -175,14 +200,23 @@ fn role_img_is_image() {
 #[test]
 fn aria_role_overrides_element_role() {
     // A div with role="button" should be Button, not GenericContainer.
-    let doc = load_html("<html><body><div role=\"button\">Click</div></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><div role=\"button\">Click</div></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Button), "role=button must override div semantics");
+    assert!(
+        all_roles(&tree).contains(&Role::Button),
+        "role=button must override div semantics"
+    );
 }
 
 #[test]
 fn aria_role_none_becomes_generic() {
-    let doc = load_html("<html><body><button role=\"none\">X</button></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><button role=\"none\">X</button></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     // role=none/presentation → GenericContainer; the Button role must not appear
     assert!(
@@ -201,20 +235,34 @@ fn name_from_aria_label() {
     );
     let tree = build_tree(&doc, 1.0);
     let btn = find_role(&tree, Role::Button).expect("button node");
-    assert_eq!(btn.label(), Some("Close dialog"), "aria-label must be used as accessible name");
+    assert_eq!(
+        btn.label(),
+        Some("Close dialog"),
+        "aria-label must be used as accessible name"
+    );
 }
 
 #[test]
 fn name_from_img_alt() {
-    let doc = load_html("<html><body><img alt=\"Company logo\"></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><img alt=\"Company logo\"></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     let img = find_role(&tree, Role::Image).expect("image node");
-    assert_eq!(img.label(), Some("Company logo"), "img alt must be accessible name");
+    assert_eq!(
+        img.label(),
+        Some("Company logo"),
+        "img alt must be accessible name"
+    );
 }
 
 #[test]
 fn name_from_text_content() {
-    let doc = load_html("<html><body><button>Submit form</button></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><button>Submit form</button></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     let btn = find_role(&tree, Role::Button).expect("button node");
     assert_eq!(btn.label(), Some("Submit form"));
@@ -275,8 +323,14 @@ fn button_supports_click_and_focus() {
     let doc = load_html("<html><body><button>OK</button></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
     let btn = find_role(&tree, Role::Button).expect("button node");
-    assert!(btn.supports_action(Action::Click),  "button must support Click");
-    assert!(btn.supports_action(Action::Focus),  "button must support Focus");
+    assert!(
+        btn.supports_action(Action::Click),
+        "button must support Click"
+    );
+    assert!(
+        btn.supports_action(Action::Focus),
+        "button must support Focus"
+    );
 }
 
 #[test]
@@ -299,7 +353,10 @@ fn link_supports_click() {
 
 #[test]
 fn link_url_is_set() {
-    let doc = load_html("<html><body><a href=\"https://example.com\">E</a></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><a href=\"https://example.com\">E</a></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     let link = find_role(&tree, Role::Link).expect("link node");
     assert_eq!(link.url(), Some("https://example.com"));
@@ -368,10 +425,16 @@ fn scale_factor_doubles_bounds() {
 
 #[test]
 fn disabled_attribute_sets_disabled() {
-    let doc = load_html("<html><body><button disabled>No</button></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><button disabled>No</button></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
     let btn = find_role(&tree, Role::Button).expect("button node");
-    assert!(btn.is_disabled(), "disabled attribute must set disabled state");
+    assert!(
+        btn.is_disabled(),
+        "disabled attribute must set disabled state"
+    );
 }
 
 #[test]
@@ -382,61 +445,85 @@ fn aria_required_sets_required() {
     );
     let tree = build_tree(&doc, 1.0);
     let input = find_role(&tree, Role::TextInput).expect("input node");
-    assert!(input.is_required(), "aria-required=true must set required state");
+    assert!(
+        input.is_required(),
+        "aria-required=true must set required state"
+    );
 }
 
 // ── 13. Semantic role mapping — new HTML elements ─────────────────────────────
 
 #[test]
 fn role_time_element() {
-    let doc = load_html("<html><body><time datetime=\"2024-01-01\">Jan 1</time></body></html>", 800.0);
+    let doc = load_html(
+        "<html><body><time datetime=\"2024-01-01\">Jan 1</time></body></html>",
+        800.0,
+    );
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Time), "<time> must map to Role::Time");
+    assert!(
+        all_roles(&tree).contains(&Role::Time),
+        "<time> must map to Role::Time"
+    );
 }
 
 #[test]
 fn role_dfn_is_term() {
     let doc = load_html("<html><body><p><dfn>HTML</dfn></p></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Term), "<dfn> must map to Role::Term");
+    assert!(
+        all_roles(&tree).contains(&Role::Term),
+        "<dfn> must map to Role::Term"
+    );
 }
 
 #[test]
 fn role_pre_element() {
     let doc = load_html("<html><body><pre>code</pre></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Pre), "<pre> must map to Role::Pre");
+    assert!(
+        all_roles(&tree).contains(&Role::Pre),
+        "<pre> must map to Role::Pre"
+    );
 }
 
 #[test]
 fn role_output_is_status() {
     let doc = load_html("<html><body><output>Result</output></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Status), "<output> must map to Role::Status");
+    assert!(
+        all_roles(&tree).contains(&Role::Status),
+        "<output> must map to Role::Status"
+    );
 }
 
 #[test]
 fn role_ruby_element() {
     let doc = load_html("<html><body><ruby>漢字</ruby></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::Ruby), "<ruby> must map to Role::Ruby");
+    assert!(
+        all_roles(&tree).contains(&Role::Ruby),
+        "<ruby> must map to Role::Ruby"
+    );
 }
 
 #[test]
 fn role_input_color_is_color_well() {
     let doc = load_html("<html><body><input type=\"color\"></body></html>", 800.0);
     let tree = build_tree(&doc, 1.0);
-    assert!(all_roles(&tree).contains(&Role::ColorWell), "input[type=color] must be ColorWell");
+    assert!(
+        all_roles(&tree).contains(&Role::ColorWell),
+        "input[type=color] must be ColorWell"
+    );
 }
 
 #[test]
 fn role_input_date_types() {
     let cases = [
-        ("date",           Role::DateInput),
+        ("date", Role::DateInput),
         ("datetime-local", Role::DateTimeInput),
-        ("week",           Role::WeekInput),
-        ("month",          Role::MonthInput),
-        ("time",           Role::TimeInput),
+        ("week", Role::WeekInput),
+        ("month", Role::MonthInput),
+        ("time", Role::TimeInput),
     ];
     for (input_type, expected_role) in cases {
         let html = format!("<html><body><input type=\"{input_type}\"></body></html>");
@@ -453,11 +540,11 @@ fn role_input_date_types() {
 fn aria_role_attribute_additional_roles() {
     let cases = [
         ("radiogroup", Role::RadioGroup),
-        ("toolbar",    Role::Toolbar),
-        ("tooltip",    Role::Tooltip),
-        ("treegrid",   Role::TreeGrid),
-        ("timer",      Role::Timer),
-        ("marquee",    Role::Marquee),
+        ("toolbar", Role::Toolbar),
+        ("tooltip", Role::Tooltip),
+        ("treegrid", Role::TreeGrid),
+        ("timer", Role::Timer),
+        ("marquee", Role::Marquee),
     ];
     for (role_attr, expected) in cases {
         let html = format!("<html><body><div role=\"{role_attr}\"></div></body></html>");
@@ -497,7 +584,11 @@ fn aria_valuetext_overrides_numeric() {
     );
     let tree = build_tree(&doc, 1.0);
     let slider = find_role(&tree, Role::Slider).expect("slider node");
-    assert_eq!(slider.value(), Some("Low"), "aria-valuetext must set value string");
+    assert_eq!(
+        slider.value(),
+        Some("Low"),
+        "aria-valuetext must set value string"
+    );
 }
 
 #[test]
@@ -583,10 +674,11 @@ fn aria_busy() {
     );
     let tree = build_tree(&doc, 1.0);
     // find_role may hit a child text node first; search for the node with is_busy set.
-    let busy_node = tree.nodes.iter()
-        .find(|(_, n)| n.is_busy())
-        .map(|(_, n)| n);
-    assert!(busy_node.is_some(), "a node with aria-busy=true must have is_busy set");
+    let busy_node = tree.nodes.iter().find(|(_, n)| n.is_busy()).map(|(_, n)| n);
+    assert!(
+        busy_node.is_some(),
+        "a node with aria-busy=true must have is_busy set"
+    );
 }
 
 #[test]

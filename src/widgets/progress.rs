@@ -15,7 +15,7 @@
 
 use tiny_skia::{FillRule, Paint, Pixmap, Stroke, Transform};
 
-use super::{WidgetColors, rounded_rect_path};
+use super::{rounded_rect_path, WidgetColors};
 
 /// Which band a `<meter>`'s value falls into, which is what colours it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

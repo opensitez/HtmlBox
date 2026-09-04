@@ -11,14 +11,18 @@ impl Document {
     /// whole point of the attribute: it exists so a control can be associated
     /// with a form it is NOT inside.
     pub fn form_owner(&self, id: u32) -> Option<u32> {
-        if !FORM_ASSOCIATED.contains(&self.tag_name(id)?) { return None; }
+        if !FORM_ASSOCIATED.contains(&self.tag_name(id)?) {
+            return None;
+        }
         if let Some(form_id) = self.get_attribute(id, "form") {
             let named = self.get_element_by_id(&form_id)?;
             return (self.tag_name(named) == Some("form")).then_some(named);
         }
         let mut cursor = self.parent_element(id);
         while let Some(node) = cursor {
-            if self.tag_name(node) == Some("form") { return Some(node); }
+            if self.tag_name(node) == Some("form") {
+                return Some(node);
+            }
             cursor = self.parent_element(node);
         }
         None
@@ -32,10 +36,18 @@ impl Document {
     pub fn form_elements(&self, form: u32) -> Vec<u32> {
         let mut out = Vec::new();
         self.walk_tree(self.root.node_id, &mut |doc, node| {
-            let Some(tag) = doc.tag_name(node) else { return };
-            if !LISTED_ELEMENTS.contains(&tag) { return; }
-            if tag == "input" && doc.input_type(node) == "image" { return; }
-            if doc.form_owner(node) == Some(form) { out.push(node); }
+            let Some(tag) = doc.tag_name(node) else {
+                return;
+            };
+            if !LISTED_ELEMENTS.contains(&tag) {
+                return;
+            }
+            if tag == "input" && doc.input_type(node) == "image" {
+                return;
+            }
+            if doc.form_owner(node) == Some(form) {
+                out.push(node);
+            }
         });
         out
     }
@@ -43,19 +55,29 @@ impl Document {
     /// `element.labels` — every `<label>` that labels this element, in tree
     /// order: the ones whose `for` names it, and any ancestor `<label>`.
     pub fn labels(&self, id: u32) -> Vec<u32> {
-        let Some(tag) = self.tag_name(id) else { return Vec::new() };
-        if !LABELABLE.contains(&tag) { return Vec::new(); }
-        if tag == "input" && self.input_type(id) == "hidden" { return Vec::new(); }
+        let Some(tag) = self.tag_name(id) else {
+            return Vec::new();
+        };
+        if !LABELABLE.contains(&tag) {
+            return Vec::new();
+        }
+        if tag == "input" && self.input_type(id) == "hidden" {
+            return Vec::new();
+        }
         let own_id = self.get_attribute(id, "id").unwrap_or_default();
         let mut out = Vec::new();
         self.walk_tree(self.root.node_id, &mut |doc, node| {
-            if doc.tag_name(node) != Some("label") { return; }
+            if doc.tag_name(node) != Some("label") {
+                return;
+            }
             let explicit = !own_id.is_empty()
                 && doc.get_attribute(node, "for").as_deref() == Some(own_id.as_str());
             // An ancestor label labels its FIRST labelable descendant only.
             let implicit = doc.get_attribute(node, "for").is_none()
                 && doc.first_labelable_descendant(node) == Some(id);
-            if explicit || implicit { out.push(node); }
+            if explicit || implicit {
+                out.push(node);
+            }
         });
         out
     }
@@ -63,9 +85,13 @@ impl Document {
     fn first_labelable_descendant(&self, label: u32) -> Option<u32> {
         let mut found = None;
         self.walk_tree(label, &mut |doc, node| {
-            if found.is_some() || node == label { return; }
+            if found.is_some() || node == label {
+                return;
+            }
             if let Some(tag) = doc.tag_name(node) {
-                if LABELABLE.contains(&tag) { found = Some(node); }
+                if LABELABLE.contains(&tag) {
+                    found = Some(node);
+                }
             }
         });
         found
@@ -74,13 +100,23 @@ impl Document {
     /// `input.type` — the reflected keyword, lowercased, defaulting to `text`
     /// for an absent or unrecognised value, exactly as the IDL getter does.
     pub fn input_type(&self, id: u32) -> String {
-        let raw = self.get_attribute(id, "type").unwrap_or_default().to_ascii_lowercase();
-        if INPUT_TYPES.contains(&raw.as_str()) { raw } else { "text".to_string() }
+        let raw = self
+            .get_attribute(id, "type")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if INPUT_TYPES.contains(&raw.as_str()) {
+            raw
+        } else {
+            "text".to_string()
+        }
     }
 
     /// `button.type` / `input.type` for a `<button>`, defaulting to `submit`.
     pub fn button_type(&self, id: u32) -> String {
-        let raw = self.get_attribute(id, "type").unwrap_or_default().to_ascii_lowercase();
+        let raw = self
+            .get_attribute(id, "type")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         match raw.as_str() {
             "button" | "reset" | "submit" => raw,
             _ => "submit".to_string(),
@@ -112,7 +148,26 @@ const LABELABLE: &[&str] = &[
 ];
 
 const INPUT_TYPES: &[&str] = &[
-    "hidden", "text", "search", "tel", "url", "email", "password", "date", "month",
-    "week", "time", "datetime-local", "number", "range", "color", "checkbox",
-    "radio", "file", "submit", "image", "reset", "button",
+    "hidden",
+    "text",
+    "search",
+    "tel",
+    "url",
+    "email",
+    "password",
+    "date",
+    "month",
+    "week",
+    "time",
+    "datetime-local",
+    "number",
+    "range",
+    "color",
+    "checkbox",
+    "radio",
+    "file",
+    "submit",
+    "image",
+    "reset",
+    "button",
 ];

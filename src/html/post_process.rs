@@ -3,8 +3,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 pub(crate) fn collapse_whitespace(s: &str) -> String {
     // Collapse any run of ASCII whitespace (including newlines) to a single space.
@@ -15,13 +15,20 @@ pub(crate) fn collapse_whitespace(s: &str) -> String {
     let mut in_ws = false;
     for ch in s.chars() {
         if ch.is_ascii_whitespace() {
-            if !in_ws { in_ws = true; }
+            if !in_ws {
+                in_ws = true;
+            }
         } else {
-            if in_ws { out.push(' '); in_ws = false; }
+            if in_ws {
+                out.push(' ');
+                in_ws = false;
+            }
             out.push(ch);
         }
     }
-    if in_ws { out.push(' '); }
+    if in_ws {
+        out.push(' ');
+    }
     out
 }
 
@@ -38,7 +45,9 @@ pub(crate) fn parse_srcset_url(srcset: &str) -> Option<String> {
 
     for entry in srcset.split(',') {
         let entry = entry.trim();
-        if entry.is_empty() { continue; }
+        if entry.is_empty() {
+            continue;
+        }
         let mut parts = entry.split_whitespace();
         let url = match parts.next() {
             Some(u) if !u.is_empty() => u,
@@ -75,7 +84,9 @@ pub(crate) fn parse_srcset_url(srcset: &str) -> Option<String> {
     if best_url.is_none() {
         let entry = srcset.split(',').next()?.trim();
         let url = entry.split_whitespace().next()?;
-        if !url.is_empty() { return Some(url.to_string()); }
+        if !url.is_empty() {
+            return Some(url.to_string());
+        }
     }
 
     best_url
@@ -88,10 +99,14 @@ pub(crate) fn resolve_picture_source(picture: &mut WebCore, base_url: &str, vw: 
     let mut best_width: Option<String> = None;
     let mut best_height: Option<String> = None;
     for child in &picture.children {
-        if child.tag != "source" { continue; }
+        if child.tag != "source" {
+            continue;
+        }
         // Skip image/webp — our image decoder may not support it
         if let Some(typ) = child.attributes.get("type") {
-            if typ.contains("webp") { continue; }
+            if typ.contains("webp") {
+                continue;
+            }
         }
         // Check media query if present
         if let Some(media) = child.attributes.get("media") {
@@ -130,10 +145,18 @@ pub(crate) fn resolve_picture_source(picture: &mut WebCore, base_url: &str, vw: 
                 // than the fallback <img>). Applied to the STYLE, not to the
                 // width/height content attributes, for the same reason.
                 if let Some(ref w) = best_width {
-                    crate::css::apply_property(std::sync::Arc::make_mut(&mut child.style), "width", &format!("{}px", w));
+                    crate::css::apply_property(
+                        std::sync::Arc::make_mut(&mut child.style),
+                        "width",
+                        &format!("{}px", w),
+                    );
                 }
                 if let Some(ref h) = best_height {
-                    crate::css::apply_property(std::sync::Arc::make_mut(&mut child.style), "height", &format!("{}px", h));
+                    crate::css::apply_property(
+                        std::sync::Arc::make_mut(&mut child.style),
+                        "height",
+                        &format!("{}px", h),
+                    );
                 }
                 break;
             }
@@ -171,8 +194,10 @@ impl crate::html::parser::HtmlParser {
     pub(crate) fn post_process_node(node: &mut WebCore, base_url: &str) {
         // Declarative Shadow DOM: <template shadowrootmode="open|closed">
         // Convert the template's children into a shadow root on the parent.
-        let has_shadow_template = node.children.iter().any(|c|
-            c.tag == "template" && c.attributes.contains_key("shadowrootmode"));
+        let has_shadow_template = node
+            .children
+            .iter()
+            .any(|c| c.tag == "template" && c.attributes.contains_key("shadowrootmode"));
         if has_shadow_template {
             let mut shadow_children = Vec::new();
             let mut shadow_css = String::new();
@@ -192,7 +217,9 @@ impl crate::html::parser::HtmlParser {
                                 // Extract style text for scoped stylesheet
                                 shadow_css.push_str(&child.text);
                                 for tc in &child.children {
-                                    if tc.tag == "#text" { shadow_css.push_str(&tc.text); }
+                                    if tc.tag == "#text" {
+                                        shadow_css.push_str(&tc.text);
+                                    }
                                 }
                             } else {
                                 shadow_children.push(child.clone());
@@ -258,14 +285,17 @@ impl crate::html::parser::HtmlParser {
             });
             crate::html::forms::run_selectedness_setting_algorithm(node);
 
-
             // The options are hidden either way: a drop-down shows one label,
             // and a list box's rows are painted by the control itself rather
             // than laid out as boxes.
             fn hide_options(node: &mut WebCore) {
                 for child in &mut node.children {
                     if matches!(child.tag.as_str(), "option" | "optgroup") {
-                        apply_property(std::sync::Arc::make_mut(&mut child.style), "display", "none");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut child.style),
+                            "display",
+                            "none",
+                        );
                         hide_options(child);
                     }
                 }
@@ -283,7 +313,11 @@ impl crate::html::parser::HtmlParser {
             // is also the only reading that tracks a selection the user has
             // changed since parse.
             // Set overflow hidden so options don't leak
-            apply_property(std::sync::Arc::make_mut(&mut node.style), "overflow", "hidden");
+            apply_property(
+                std::sync::Arc::make_mut(&mut node.style),
+                "overflow",
+                "hidden",
+            );
         }
         // <input>: seed the control's state from its content attributes.
         if node.tag == "input" {
@@ -300,16 +334,22 @@ impl crate::html::parser::HtmlParser {
             // step-mismatched or out-of-bounds `value` into the number the
             // control actually holds, before anything paints or reads it.
             crate::html::forms::seed_input_value(node);
-            let input_type = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            let input_type = node
+                .attributes
+                .get("type")
+                .map(|s| s.as_str())
+                .unwrap_or("text");
             match input_type {
                 "submit" | "button" | "reset" => {
-                    let label = node.attributes.get("value")
-                        .cloned()
-                        .unwrap_or_else(|| match input_type {
-                            "submit" => "Submit".to_string(),
-                            "reset"  => "Reset".to_string(),
-                            _ => String::new(),
-                        });
+                    let label =
+                        node.attributes
+                            .get("value")
+                            .cloned()
+                            .unwrap_or_else(|| match input_type {
+                                "submit" => "Submit".to_string(),
+                                "reset" => "Reset".to_string(),
+                                _ => String::new(),
+                            });
                     if !label.is_empty() {
                         node.children.clear();
                         let mut text_node = WebCore::new("#text");
@@ -333,7 +373,11 @@ impl crate::html::parser::HtmlParser {
                 if child.tag == "summary" {
                     // summary always visible
                 } else if !is_open {
-                    apply_property(std::sync::Arc::make_mut(&mut child.style), "display", "none");
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut child.style),
+                        "display",
+                        "none",
+                    );
                 }
             }
         }

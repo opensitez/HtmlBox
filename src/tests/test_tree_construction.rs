@@ -22,10 +22,14 @@ use crate::types::WebCore;
 /// Render one node in the canonical form described above.
 fn canon_into(node: &WebCore, depth: usize, out: &mut String) {
     let pad = "  ".repeat(depth);
-    if node.is_pseudo_element() { return; }          // generated content is not a node
+    if node.is_pseudo_element() {
+        return;
+    } // generated content is not a node
     if node.tag == "#text" {
         let t: Vec<&str> = node.text.split_whitespace().collect();
-        if !t.is_empty() { out.push_str(&format!("{}\"{}\"\n", pad, t.join(" "))); }
+        if !t.is_empty() {
+            out.push_str(&format!("{}\"{}\"\n", pad, t.join(" ")));
+        }
         return;
     }
     if node.tag == "#comment" {
@@ -35,9 +39,17 @@ fn canon_into(node: &WebCore, depth: usize, out: &mut String) {
     }
     let mut attrs: Vec<(&String, &String)> = node.attributes.iter().collect();
     attrs.sort_by(|a, b| a.0.cmp(b.0));
-    let a = if attrs.is_empty() { String::new() } else {
-        format!("[{}]", attrs.iter().map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>().join(","))
+    let a = if attrs.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "[{}]",
+            attrs
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
     };
     out.push_str(&format!("{}{}{}\n", pad, node.tag, a));
     // An element's OWN text is emitted as a text child. webcore keeps the
@@ -52,7 +64,9 @@ fn canon_into(node: &WebCore, depth: usize, out: &mut String) {
             out.push_str(&format!("{}  \"{}\"\n", pad, t.join(" ")));
         }
     }
-    for c in &node.children { canon_into(c, depth + 1, out); }
+    for c in &node.children {
+        canon_into(c, depth + 1, out);
+    }
 }
 
 fn canon(html: &str) -> String {
@@ -1761,12 +1775,19 @@ fn tree_construction_matches_a_browser() {
         if got.trim_end() != expected.trim_end() {
             failed.push(format!(
                 "\n--- input ---\n{}\n--- expected ---\n{}\n--- got ---\n{}",
-                input, expected, got.trim_end()));
+                input,
+                expected,
+                got.trim_end()
+            ));
         }
     }
-    assert!(failed.is_empty(),
+    assert!(
+        failed.is_empty(),
         "{} of {} tree-construction cases differ from the browser:{}",
-        failed.len(), CASES.len(), failed.join("\n"));
+        failed.len(),
+        CASES.len(),
+        failed.join("\n")
+    );
 }
 
 #[test]
@@ -1777,7 +1798,11 @@ fn known_tree_construction_gaps_still_differ() {
             fixed.push(format!("\n  {:?}\n    was: {}", input, why));
         }
     }
-    assert!(fixed.is_empty(),
+    assert!(
+        fixed.is_empty(),
         "{} known gap(s) now MATCH the browser — move them from KNOWN_GAPS to \
-CASES so they stay covered:{}", fixed.len(), fixed.join(""));
+CASES so they stay covered:{}",
+        fixed.len(),
+        fixed.join("")
+    );
 }

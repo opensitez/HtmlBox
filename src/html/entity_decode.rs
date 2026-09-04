@@ -5,8 +5,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── HTML Entities ─────────────────────────────────────────────────────────
 
@@ -19,15 +19,33 @@ use crate::css::*;
 fn numeric_replacement(cp: u32) -> Option<char> {
     Some(match cp {
         0x00 | 0xD800..=0xDFFF => '\u{FFFD}', // null and lone surrogates
-        0x80 => '\u{20AC}', 0x82 => '\u{201A}', 0x83 => '\u{0192}',
-        0x84 => '\u{201E}', 0x85 => '\u{2026}', 0x86 => '\u{2020}',
-        0x87 => '\u{2021}', 0x88 => '\u{02C6}', 0x89 => '\u{2030}',
-        0x8A => '\u{0160}', 0x8B => '\u{2039}', 0x8C => '\u{0152}',
-        0x8E => '\u{017D}', 0x91 => '\u{2018}', 0x92 => '\u{2019}',
-        0x93 => '\u{201C}', 0x94 => '\u{201D}', 0x95 => '\u{2022}',
-        0x96 => '\u{2013}', 0x97 => '\u{2014}', 0x98 => '\u{02DC}',
-        0x99 => '\u{2122}', 0x9A => '\u{0161}', 0x9B => '\u{203A}',
-        0x9C => '\u{0153}', 0x9E => '\u{017E}', 0x9F => '\u{0178}',
+        0x80 => '\u{20AC}',
+        0x82 => '\u{201A}',
+        0x83 => '\u{0192}',
+        0x84 => '\u{201E}',
+        0x85 => '\u{2026}',
+        0x86 => '\u{2020}',
+        0x87 => '\u{2021}',
+        0x88 => '\u{02C6}',
+        0x89 => '\u{2030}',
+        0x8A => '\u{0160}',
+        0x8B => '\u{2039}',
+        0x8C => '\u{0152}',
+        0x8E => '\u{017D}',
+        0x91 => '\u{2018}',
+        0x92 => '\u{2019}',
+        0x93 => '\u{201C}',
+        0x94 => '\u{201D}',
+        0x95 => '\u{2022}',
+        0x96 => '\u{2013}',
+        0x97 => '\u{2014}',
+        0x98 => '\u{02DC}',
+        0x99 => '\u{2122}',
+        0x9A => '\u{0161}',
+        0x9B => '\u{203A}',
+        0x9C => '\u{0153}',
+        0x9E => '\u{017E}',
+        0x9F => '\u{0178}',
         _ if cp > 0x10FFFF => '\u{FFFD}',
         _ => return None,
     })
@@ -56,7 +74,9 @@ fn decode_refs(s: &str, in_attribute: bool) -> String {
         if bytes[i] != b'&' {
             let start = i;
             i += 1;
-            while i < s.len() && bytes[i] != b'&' { i += 1; }
+            while i < s.len() && bytes[i] != b'&' {
+                i += 1;
+            }
             out.push_str(&s[start..i]);
             continue;
         }
@@ -65,11 +85,19 @@ fn decode_refs(s: &str, in_attribute: bool) -> String {
         if after < s.len() && bytes[after] == b'#' {
             let mut j = after + 1;
             let hex = j < s.len() && (bytes[j] | 0x20) == b'x';
-            if hex { j += 1; }
+            if hex {
+                j += 1;
+            }
             let digits_start = j;
             while j < s.len()
-                && (if hex { bytes[j].is_ascii_hexdigit() } else { bytes[j].is_ascii_digit() })
-            { j += 1; }
+                && (if hex {
+                    bytes[j].is_ascii_hexdigit()
+                } else {
+                    bytes[j].is_ascii_digit()
+                })
+            {
+                j += 1;
+            }
             if j > digits_start {
                 let radix = if hex { 16 } else { 10 };
                 let cp = u32::from_str_radix(&s[digits_start..j], radix).unwrap_or(0xFFFD);
@@ -78,7 +106,11 @@ fn decode_refs(s: &str, in_attribute: bool) -> String {
                     .unwrap_or('\u{FFFD}');
                 out.push(ch);
                 // A missing `;` is a parse error, not a reason to keep the text.
-                i = if j < s.len() && bytes[j] == b';' { j + 1 } else { j };
+                i = if j < s.len() && bytes[j] == b';' {
+                    j + 1
+                } else {
+                    j
+                };
                 continue;
             }
             out.push('&');

@@ -3,10 +3,10 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::css::*;
-use std::collections::{HashMap, HashSet};
-use crate::layout::LayoutEngine;
 use crate::dom::*;
 use crate::html::*;
+use crate::layout::LayoutEngine;
+use std::collections::{HashMap, HashSet};
 
 impl Document {
     /// Walk the tree and ensure an `AnimState` exists for every element that
@@ -18,18 +18,22 @@ impl Document {
             for a in &node.style.rare().animations {
                 out.push((id, a.clone()));
             }
-            for child in &node.children { collect(child, out); }
+            for child in &node.children {
+                collect(child, out);
+            }
         }
         collect(&self.root, &mut current);
 
         // Start animations that aren't tracked yet.
         for (id, anim) in &current {
-            let running = self.active_animations.iter()
+            let running = self
+                .active_animations
+                .iter()
                 .any(|s| s.element_id == *id && s.animation.name == anim.name);
             if !running && !anim.name.is_empty() && anim.name != "none" {
                 self.active_animations.push(AnimState {
                     element_id: *id,
-                    animation:  anim.clone(),
+                    animation: anim.clone(),
                     start_time: now,
                 });
             }
@@ -37,7 +41,9 @@ impl Document {
 
         // Remove animations whose element no longer carries that animation name.
         self.active_animations.retain(|s| {
-            current.iter().any(|(id, a)| *id == s.element_id && a.name == s.animation.name)
+            current
+                .iter()
+                .any(|(id, a)| *id == s.element_id && a.name == s.animation.name)
         });
     }
 
@@ -62,7 +68,8 @@ impl Document {
                 let base = if cascade_ran {
                     extract_transitionable(node)
                 } else {
-                    cascade_styles.get(&id)
+                    cascade_styles
+                        .get(&id)
                         .cloned()
                         .unwrap_or_else(|| extract_transitionable(node))
                 };
@@ -71,7 +78,9 @@ impl Document {
                 if hovered != 0 && subtree_contains_id(node, hovered) {
                     if let Some(hs) = &node.style.hover_style {
                         let hover_vals = extract_transitionable_style(hs);
-                        for (k, v) in hover_vals { vals.insert(k, v); }
+                        for (k, v) in hover_vals {
+                            vals.insert(k, v);
+                        }
                     }
                 }
                 out.push((id, node.style.rare().transitions.clone(), vals));
@@ -80,7 +89,13 @@ impl Document {
                 collect(child, hovered, cascade_ran, cascade_styles, out);
             }
         }
-        collect(&self.root, hovered, cascade_ran, &self.cascade_styles, &mut current);
+        collect(
+            &self.root,
+            hovered,
+            cascade_ran,
+            &self.cascade_styles,
+            &mut current,
+        );
 
         // When cascade ran, save the clean base styles for hover-only frames.
         if cascade_ran {
@@ -88,7 +103,9 @@ impl Document {
                 if !node.style.rare().transitions.is_empty() {
                     out.insert(node.node_id, extract_transitionable(node));
                 }
-                for child in &node.children { snapshot(child, out); }
+                for child in &node.children {
+                    snapshot(child, out);
+                }
             }
             snapshot(&self.root, &mut self.cascade_styles);
         }
@@ -97,7 +114,9 @@ impl Document {
             let prev = self.prev_styles.get(elem_id).cloned().unwrap_or_default();
 
             for tr in trs {
-                if tr.duration_ms <= 0.0 { continue; }
+                if tr.duration_ms <= 0.0 {
+                    continue;
+                }
                 let props: Vec<&str> = if tr.property == "all" {
                     cur_vals.keys().map(|s| s.as_str()).collect()
                 } else {
@@ -105,23 +124,37 @@ impl Document {
                 };
 
                 for prop in props {
-                    let cur = match cur_vals.get(prop) { Some(v) => v.as_str(), None => continue };
-                    let prv = match prev.get(prop) { Some(v) => v.as_str(), None => { continue; } };
+                    let cur = match cur_vals.get(prop) {
+                        Some(v) => v.as_str(),
+                        None => continue,
+                    };
+                    let prv = match prev.get(prop) {
+                        Some(v) => v.as_str(),
+                        None => {
+                            continue;
+                        }
+                    };
                     if prv == cur {
                         // Uncomment to debug: eprintln!("[TR-SKIP] {} same={:?}", prop, cur);
                         continue;
                     }
 
                     // Already transitioning to this value?
-                    let already = self.transition_states
-                        .entry(*elem_id).or_default()
-                        .iter().any(|t| t.property == prop && t.to_value == cur);
-                    if already { continue; }
+                    let already = self
+                        .transition_states
+                        .entry(*elem_id)
+                        .or_default()
+                        .iter()
+                        .any(|t| t.property == prop && t.to_value == cur);
+                    if already {
+                        continue;
+                    }
 
                     // If a transition is already running for this property, start the
                     // new one from the current animated value (not from prev_styles) to
                     // avoid a visual jump to the original from/to endpoint.
-                    let from_val = self.animation_overrides
+                    let from_val = self
+                        .animation_overrides
                         .get(elem_id)
                         .and_then(|ov| ov.iter().find(|(p, _)| p == prop))
                         .map(|(_, v)| v.as_str())
@@ -129,13 +162,13 @@ impl Document {
                     let entry = self.transition_states.entry(*elem_id).or_default();
                     entry.retain(|t| t.property != prop);
                     entry.push(TransitionState {
-                        property:    prop.to_string(),
-                        from_value:  from_val.to_string(),
-                        to_value:    cur.to_string(),
-                        start_time:  now,
+                        property: prop.to_string(),
+                        from_value: from_val.to_string(),
+                        to_value: cur.to_string(),
+                        start_time: now,
                         duration_ms: tr.duration_ms,
-                        delay_ms:    tr.delay_ms,
-                        timing_fn:   tr.timing_fn.clone(),
+                        delay_ms: tr.delay_ms,
+                        timing_fn: tr.timing_fn.clone(),
                     });
                 }
             }
@@ -159,10 +192,16 @@ impl Document {
 
             if delayed_ms < 0.0 {
                 // Delay phase: apply backwards fill if needed.
-                if matches!(state.animation.fill_mode, FillMode::Backwards | FillMode::Both) {
+                if matches!(
+                    state.animation.fill_mode,
+                    FillMode::Backwards | FillMode::Both
+                ) {
                     if let Some(kf) = keyframes.get(&state.animation.name) {
                         if let Some(first) = kf.first() {
-                            let entry = self.animation_overrides.entry(state.element_id).or_default();
+                            let entry = self
+                                .animation_overrides
+                                .entry(state.element_id)
+                                .or_default();
                             entry.extend(first.properties.clone());
                         }
                     }
@@ -172,22 +211,57 @@ impl Document {
             }
 
             let duration = state.animation.duration_ms;
-            if duration <= 0.0 { done.push(idx); continue; }
+            if duration <= 0.0 {
+                done.push(idx);
+                continue;
+            }
 
             let total_progress = delayed_ms / duration;
-            let iteration      = total_progress.floor();
-            let t_frac         = total_progress.fract();
+            let iteration = total_progress.floor();
+            let t_frac = total_progress.fract();
+            let iteration_count = state.animation.iteration_count;
 
-            if iteration >= state.animation.iteration_count {
+            if !iteration_count.is_infinite() && delayed_ms >= duration * iteration_count {
                 // Finished: apply forwards fill if needed.
-                if matches!(state.animation.fill_mode, FillMode::Forwards | FillMode::Both) {
+                if matches!(
+                    state.animation.fill_mode,
+                    FillMode::Forwards | FillMode::Both
+                ) {
                     if let Some(kf) = keyframes.get(&state.animation.name) {
+                        let endpoint_frac = iteration_count.fract();
+                        let final_iteration = if endpoint_frac == 0.0 {
+                            (iteration_count - 1.0).max(0.0).floor()
+                        } else {
+                            iteration_count.floor()
+                        };
+                        let base_t = if endpoint_frac == 0.0 {
+                            1.0
+                        } else {
+                            endpoint_frac
+                        };
                         let final_t = match state.animation.direction {
-                            AnimDirection::Reverse | AnimDirection::AlternateReverse => 0.0,
-                            _ => 1.0,
+                            AnimDirection::Normal => base_t,
+                            AnimDirection::Reverse => 1.0 - base_t,
+                            AnimDirection::Alternate => {
+                                if (final_iteration as u32) % 2 == 0 {
+                                    base_t
+                                } else {
+                                    1.0 - base_t
+                                }
+                            }
+                            AnimDirection::AlternateReverse => {
+                                if (final_iteration as u32) % 2 == 0 {
+                                    1.0 - base_t
+                                } else {
+                                    base_t
+                                }
+                            }
                         };
                         let props = interpolate_keyframe_stops(kf, final_t);
-                        let entry = self.animation_overrides.entry(state.element_id).or_default();
+                        let entry = self
+                            .animation_overrides
+                            .entry(state.element_id)
+                            .or_default();
                         entry.extend(props);
                     }
                 }
@@ -197,20 +271,37 @@ impl Document {
             still_running = true;
 
             let effective_t = match state.animation.direction {
-                AnimDirection::Normal          => t_frac,
-                AnimDirection::Reverse         => 1.0 - t_frac,
-                AnimDirection::Alternate       => if (iteration as u32) % 2 == 0 { t_frac } else { 1.0 - t_frac },
-                AnimDirection::AlternateReverse => if (iteration as u32) % 2 == 0 { 1.0 - t_frac } else { t_frac },
+                AnimDirection::Normal => t_frac,
+                AnimDirection::Reverse => 1.0 - t_frac,
+                AnimDirection::Alternate => {
+                    if (iteration as u32) % 2 == 0 {
+                        t_frac
+                    } else {
+                        1.0 - t_frac
+                    }
+                }
+                AnimDirection::AlternateReverse => {
+                    if (iteration as u32) % 2 == 0 {
+                        1.0 - t_frac
+                    } else {
+                        t_frac
+                    }
+                }
             };
             let eased = apply_easing(&state.animation.timing_fn, effective_t);
 
             if let Some(kf) = keyframes.get(&state.animation.name) {
                 let props = interpolate_keyframe_stops(kf, eased);
-                let entry = self.animation_overrides.entry(state.element_id).or_default();
+                let entry = self
+                    .animation_overrides
+                    .entry(state.element_id)
+                    .or_default();
                 entry.extend(props);
             }
         }
-        for idx in done.into_iter().rev() { self.active_animations.remove(idx); }
+        for idx in done.into_iter().rev() {
+            self.active_animations.remove(idx);
+        }
 
         // ── CSS Transitions ──────────────────────────────────────────────────
         let mut empty_elems: Vec<u32> = Vec::new();
@@ -227,7 +318,10 @@ impl Document {
                     still_running = true;
                     continue;
                 }
-                if tr.duration_ms <= 0.0 { done_trs.push(i); continue; }
+                if tr.duration_ms <= 0.0 {
+                    done_trs.push(i);
+                    continue;
+                }
 
                 let progress = (delayed_ms / tr.duration_ms).min(1.0);
                 if progress >= 1.0 {
@@ -239,19 +333,27 @@ impl Document {
                     // correctly-reverted base color.
                     let entry = self.animation_overrides.entry(*elem_id).or_default();
                     entry.push((tr.property.clone(), tr.to_value.clone()));
-                    done_trs.push(i); continue;
+                    done_trs.push(i);
+                    continue;
                 }
 
                 still_running = true;
-                let eased  = apply_easing(&tr.timing_fn, progress);
-                let interp = interpolate_value(&tr.from_value, &tr.to_value, eased);
-                let entry  = self.animation_overrides.entry(*elem_id).or_default();
+                let eased = apply_easing(&tr.timing_fn, progress);
+                let interp =
+                    interpolate_property_value(&tr.property, &tr.from_value, &tr.to_value, eased);
+                let entry = self.animation_overrides.entry(*elem_id).or_default();
                 entry.push((tr.property.clone(), interp));
             }
-            for idx in done_trs.into_iter().rev() { trs.remove(idx); }
-            if trs.is_empty() { empty_elems.push(*elem_id); }
+            for idx in done_trs.into_iter().rev() {
+                trs.remove(idx);
+            }
+            if trs.is_empty() {
+                empty_elems.push(*elem_id);
+            }
         }
-        for eid in empty_elems { self.transition_states.remove(&eid); }
+        for eid in empty_elems {
+            self.transition_states.remove(&eid);
+        }
 
         self.needs_animation_frame = still_running;
 

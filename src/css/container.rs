@@ -1,19 +1,20 @@
 //! Container queries — evaluation and the container cascade pass.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Container Cascade Pass ───────────────────────────────────────────────────
 
 /// An entry on the container ancestor stack built during `apply_container_cascade_tree`.
 #[derive(Clone)]
 pub struct ContainerEntry {
-    pub width:  f32,
+    pub width: f32,
     pub height: f32,
-    pub name:   String,
+    pub container_type: crate::types::ContainerType,
+    pub name: String,
 }
 
 /// Walk `node` and all its descendants applying any `@container` rules whose
@@ -41,12 +42,22 @@ pub fn apply_container_cascade_tree(
 ) -> bool {
     // Create owned Vecs once at the top level; the recursive inner function
     // reuses them via push/pop so no per-node heap allocation is needed.
-    let mut cs  = container_stack.to_vec();
+    let mut cs = container_stack.to_vec();
     let mut anc = ancestors.to_vec();
     apply_container_cascade_inner(
-        node, stylesheet, &mut cs, &mut anc,
-        child_index, sibling_count, type_child_index, type_sibling_count,
-        root_font_px, vw, vh, focused_box, keyboard_focus,
+        node,
+        stylesheet,
+        &mut cs,
+        &mut anc,
+        child_index,
+        sibling_count,
+        type_child_index,
+        type_sibling_count,
+        root_font_px,
+        vw,
+        vh,
+        focused_box,
+        keyboard_focus,
     )
 }
 
@@ -81,25 +92,59 @@ fn apply_container_cascade_inner(
             hover_chain: &empty_hover,
             element_id: node.node_id,
             prev_siblings: &[],
+            next_siblings: &[],
         };
         let mut cont_matched: Vec<(u32, Declarations)> = Vec::new();
         for rule in &stylesheet.rules {
-            if rule.container_condition.is_empty() { continue; }
-            if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) { continue; }
+            if rule.container_condition.is_empty() {
+                continue;
+            }
+            if !rule.media_condition.is_empty() && !evaluate_media(&rule.media_condition, vw, vh) {
+                continue;
+            }
             // Find nearest container that matches the rule's name
             let ctx = if rule.container_name.is_empty() {
                 container_stack.last()
             } else {
-                container_stack.iter().rev().find(|c| c.name == rule.container_name)
+                container_stack
+                    .iter()
+                    .rev()
+                    .find(|c| c.name == rule.container_name)
             };
-            let ctx = match ctx { Some(c) => c, None => continue };
-            if !evaluate_container(&rule.container_condition, ctx.width, ctx.height) { continue; }
+            let ctx = match ctx {
+                Some(c) => c,
+                None => continue,
+            };
+            if !evaluate_container_for_type(
+                &rule.container_condition,
+                ctx.width,
+                ctx.height,
+                ctx.container_type,
+            ) {
+                continue;
+            }
             // Full selector matching (same logic as apply_cascade_inner)
-            let has_hover   = rule.selectors.iter().any(|s| s.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover")));
-            let has_active  = rule.selectors.iter().any(|s| s.parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active")));
-            if has_hover || has_active { continue; }  // state pseudo-class rules are handled separately
+            let has_hover = rule.selectors.iter().any(|s| {
+                s.parts
+                    .iter()
+                    .any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"))
+            });
+            let has_active = rule.selectors.iter().any(|s| {
+                s.parts
+                    .iter()
+                    .any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"))
+            });
+            if has_hover || has_active {
+                continue;
+            } // state pseudo-class rules are handled separately
             for sel in &rule.selectors {
-                if sel.matches_with_ancestors_ctx(node, child_index, sibling_count, ancestors, &match_ctx) {
+                if sel.matches_with_ancestors_ctx(
+                    node,
+                    child_index,
+                    sibling_count,
+                    ancestors,
+                    &match_ctx,
+                ) {
                     if rule.pseudo_element == PseudoElement::None {
                         let mut merged = rule.declarations.clone();
                         for (k, v) in &rule.important_declarations {
@@ -131,57 +176,84 @@ fn apply_container_cascade_inner(
     let pushed_container = !matches!(node.style.container_type, ContainerType::Normal);
     if pushed_container {
         container_stack.push(ContainerEntry {
-            width:  node.layout.content_rect.w,
+            width: node.layout.content_rect.w,
             height: node.layout.content_rect.h,
-            name:   node.style.container_name.clone(),
+            container_type: node.style.container_type,
+            name: node.style.container_name.clone(),
         });
     }
 
     let n_children = node.children.len();
     if n_children == 0 {
-        if pushed_container { container_stack.pop(); }
+        if pushed_container {
+            container_stack.pop();
+        }
         return changed;
     }
 
     // Push this element as an ancestor for children (mirrors apply_cascade_inner).
     ancestors.push(AncestorInfo {
-        tag:              node.tag.clone(),
-        attributes:       node.attributes.clone(),
+        tag: node.tag.clone(),
+        attributes: node.attributes.clone(),
         child_index,
         sibling_count,
         type_child_index,
         type_sibling_count,
-        node_id:          node.node_id,
+        node_id: node.node_id,
     });
 
     // O(n) type counting (was O(n²) with per-child filter passes).
-    let child_tags: Vec<String> = node.children.iter().map(|c| c.tag.to_ascii_lowercase()).collect();
+    let child_tags: Vec<String> = node
+        .children
+        .iter()
+        .map(|c| c.tag.to_ascii_lowercase())
+        .collect();
     let mut type_running: HashMap<&str, usize> = HashMap::new();
-    let type_counts: Vec<usize> = child_tags.iter().map(|tag| {
-        let slot = type_running.entry(tag.as_str()).or_insert(0);
-        let idx  = *slot;
-        *slot += 1;
-        idx
-    }).collect();
-    let type_totals: Vec<usize> = child_tags.iter().map(|tag| {
-        *type_running.get(tag.as_str()).unwrap_or(&0)
-    }).collect();
+    let type_counts: Vec<usize> = child_tags
+        .iter()
+        .map(|tag| {
+            let slot = type_running.entry(tag.as_str()).or_insert(0);
+            let idx = *slot;
+            *slot += 1;
+            idx
+        })
+        .collect();
+    let type_totals: Vec<usize> = child_tags
+        .iter()
+        .map(|tag| *type_running.get(tag.as_str()).unwrap_or(&0))
+        .collect();
 
     for (i, child) in node.children.iter_mut().enumerate() {
         let c = apply_container_cascade_inner(
-            child, stylesheet, container_stack, ancestors,
-            i, n_children, type_counts[i], type_totals[i],
-            root_font_px, vw, vh, focused_box, keyboard_focus,
+            child,
+            stylesheet,
+            container_stack,
+            ancestors,
+            i,
+            n_children,
+            type_counts[i],
+            type_totals[i],
+            root_font_px,
+            vw,
+            vh,
+            focused_box,
+            keyboard_focus,
         );
-        if c { changed = true; }
+        if c {
+            changed = true;
+        }
     }
 
     // If any descendant changed, mark this node dirty too.
     // This prevents the layout subtree pruning from skipping an ancestor whose
     // content width is unchanged while a child still needs re-layout.
-    if changed { node.layout.layout_dirty = true; }
+    if changed {
+        node.layout.layout_dirty = true;
+    }
 
     ancestors.pop();
-    if pushed_container { container_stack.pop(); }
+    if pushed_container {
+        container_stack.pop();
+    }
     changed
 }

@@ -7,8 +7,8 @@
 //! This makes scroll instant: we just composite pre-rasterized tiles at
 //! new offsets instead of re-rendering the entire page.
 
-use std::collections::HashMap;
 use crate::types::Rect;
+use std::collections::HashMap;
 
 /// Tile size in logical pixels.
 pub const TILE_SIZE: f32 = 512.0;
@@ -157,7 +157,9 @@ impl TileManager {
         let phys_tile = (TILE_SIZE * scale).ceil() as i32;
 
         for ((tx, ty), tile) in &self.tiles {
-            if tile.dirty { continue; } // skip unrasterized tiles
+            if tile.dirty {
+                continue;
+            } // skip unrasterized tiles
 
             // Tile position in physical pixels, adjusted for scroll
             let px = (*tx as f32 * TILE_SIZE - scroll_x) * scale;
@@ -183,7 +185,9 @@ impl TileManager {
             let copy_w = (tile_w - src_x0).min(out_w - dst_x0);
             let copy_h = (tile_h - src_y0).min(out_h - dst_y0);
 
-            if copy_w <= 0 || copy_h <= 0 { continue; }
+            if copy_w <= 0 || copy_h <= 0 {
+                continue;
+            }
 
             for row in 0..copy_h {
                 let src_offset = ((src_y0 + row) * tile_w + src_x0) as usize * 4;
@@ -209,7 +213,9 @@ impl TileManager {
 }
 
 impl Default for TileManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

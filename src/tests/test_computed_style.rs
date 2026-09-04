@@ -18,15 +18,18 @@ const PAGE: &str = r#"<style>
      z-index: 5; overflow: hidden; box-sizing: border-box; width: 50px; height: 10px;
      min-width: 5px; max-width: 100px; font-style: italic; }
 #d { position: relative; }
+#z { position: relative; z-index: 0; }
 </style>
 <div id=a>A</div><div id=b>B</div><div id=c style="display:none">C</div>
-<div id=d>D</div><span id=e>E</span>"#;
+<div id=d>D</div><span id=e>E</span><div id=z>Z</div>"#;
 
 fn page() -> Document {
     let mut renderer = crate::Renderer::new();
     renderer.load_html(PAGE, 800.0)
 }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 /// (id, property, expected) — every row measured.
 fn check(rows: &[(&str, &str, &str)]) {
@@ -86,6 +89,20 @@ fn font_weight_serializes_as_a_number_not_a_keyword() {
 }
 
 #[test]
+fn relative_font_weight_uses_the_inherited_weight_table() {
+    let mut renderer = crate::Renderer::new();
+    let mut d = renderer.load_html(
+        "<div style='font-weight:400'><b id='bolder' style='font-weight:bolder'>x</b></div>\
+         <div style='font-weight:700'><b id='lighter' style='font-weight:lighter'>x</b></div>",
+        800.0,
+    );
+    let bolder = d.get_element_by_id("bolder").unwrap();
+    let lighter = d.get_element_by_id("lighter").unwrap();
+    assert_eq!(d.computed_style_property(bolder, "font-weight"), "700");
+    assert_eq!(d.computed_style_property(lighter, "font-weight"), "400");
+}
+
+#[test]
 fn lengths_resolve_against_the_elements_own_font_size() {
     // `margin-top: 1em` on a 20px font is 20px, not 16px.
     check(&[
@@ -114,12 +131,31 @@ fn max_uses_none_where_min_uses_a_length() {
 }
 
 #[test]
+fn flex_item_auto_min_size_serializes_as_auto() {
+    let mut renderer = crate::Renderer::new();
+    let mut d = renderer.load_html(
+        r#"<style>
+        #f { display: flex; }
+        #item { min-width: auto; min-height: auto; }
+        </style>
+        <div id=f><div id=item>wide text</div></div><div id=plain></div>"#,
+        800.0,
+    );
+    let item = el(&d, "item");
+    let plain = el(&d, "plain");
+
+    assert_eq!(d.computed_style_property(item, "min-width"), "auto");
+    assert_eq!(d.computed_style_property(item, "min-height"), "auto");
+    assert_eq!(d.computed_style_property(plain, "min-width"), "0px");
+}
+
+#[test]
 fn z_index_answers_auto_when_unset_and_the_number_when_set() {
-    // ⛔ The one knowingly wrong case is documented at the implementation: the
-    // field is a bare `i32`, so a DECLARED `z-index: 0` also reads `"auto"`.
-    // Answering `"0"` instead would be wrong for every element that never set
-    // one.
-    check(&[("a", "z-index", "5"), ("b", "z-index", "auto")]);
+    check(&[
+        ("a", "z-index", "5"),
+        ("b", "z-index", "auto"),
+        ("z", "z-index", "0"),
+    ]);
 }
 
 #[test]
@@ -148,8 +184,16 @@ fn an_uncovered_property_still_falls_back_to_the_inline_style() {
     );
     let inline = d.get_element_by_id("inline").unwrap();
     let sheet = d.get_element_by_id("sheet").unwrap();
-    assert_eq!(d.computed_style_property(inline, "float"), "left", "the inline value");
-    assert_eq!(d.computed_style_property(sheet, "float"), "", "and nothing otherwise");
+    assert_eq!(
+        d.computed_style_property(inline, "float"),
+        "left",
+        "the inline value"
+    );
+    assert_eq!(
+        d.computed_style_property(sheet, "float"),
+        "",
+        "and nothing otherwise"
+    );
 }
 
 #[test]
@@ -163,17 +207,28 @@ fn width_and_height_are_the_used_value_for_a_block_and_auto_otherwise() {
     let c = el(&d, "c");
     let e = el(&d, "e");
 
-    assert_eq!(d.computed_style_property(a, "width"), "50px", "a declared width");
+    assert_eq!(
+        d.computed_style_property(a, "width"),
+        "50px",
+        "a declared width"
+    );
     assert_eq!(d.computed_style_property(a, "height"), "10px");
 
     // A block with no declared width takes its containing block's — a real
     // number, not the keyword.
     let bw = d.computed_style_property(b, "width");
-    assert!(bw.ends_with("px") && bw != "0px", "a block resolves to a used px width, got {bw:?}");
+    assert!(
+        bw.ends_with("px") && bw != "0px",
+        "a block resolves to a used px width, got {bw:?}"
+    );
 
     // An INLINE box has no used width, and neither has an unrendered one.
     assert_eq!(d.computed_style_property(e, "width"), "auto", "inline");
-    assert_eq!(d.computed_style_property(c, "width"), "auto", "display:none");
+    assert_eq!(
+        d.computed_style_property(c, "width"),
+        "auto",
+        "display:none"
+    );
     assert_eq!(d.computed_style_property(c, "height"), "auto");
 }
 
@@ -194,22 +249,34 @@ fn a_replaced_inline_does_have_a_used_size() {
     // Chrome lays `<img>` out as `display: inline` and this crate uses
     // `inline-block`. Either way it has a used size, so the ANSWER agrees —
     // but the branch it arrives through does not.
-    assert_eq!(d.computed_style_property(img, "display"), "inline-block",
-        "Chrome says `inline` here");
-    assert_ne!(d.computed_style_property(img, "width"), "auto", "and it has a used width");
-    assert_eq!(d.computed_style_property(span, "width"), "auto",
-        "a non-replaced inline does not");
+    assert_eq!(
+        d.computed_style_property(img, "display"),
+        "inline-block",
+        "Chrome says `inline` here"
+    );
+    assert_ne!(
+        d.computed_style_property(img, "width"),
+        "auto",
+        "and it has a used width"
+    );
+    assert_eq!(
+        d.computed_style_property(span, "width"),
+        "auto",
+        "a non-replaced inline does not"
+    );
 
     // `<embed>` and `<object>` ARE `display: inline` in this crate, so they
     // are what actually exercises the replaced-element branch.
-    let mut d2 = renderer.load_html(
-        "<embed id=e src=x><span id=s2>t</span>", 800.0);
+    let mut d2 = renderer.load_html("<embed id=e src=x><span id=s2>t</span>", 800.0);
     let embed = d2.get_element_by_id("e").unwrap();
     let span2 = d2.get_element_by_id("s2").unwrap();
     assert_eq!(d2.computed_style_property(embed, "display"), "inline");
     assert_eq!(d2.computed_style_property(span2, "display"), "inline");
-    assert_ne!(d2.computed_style_property(embed, "width"), "auto",
-        "a replaced INLINE has a used width");
+    assert_ne!(
+        d2.computed_style_property(embed, "width"),
+        "auto",
+        "a replaced INLINE has a used width"
+    );
     assert_eq!(d2.computed_style_property(span2, "width"), "auto");
 }
 
@@ -228,7 +295,10 @@ fn every_display_variant_serializes_rather_than_falling_through() {
         let e = d.get_element_by_id(id).unwrap();
         let got = d.computed_style_property(e, "display");
         assert!(!got.is_empty(), "#{id} display answered nothing");
-        assert!(!got.contains(char::is_uppercase), "#{id} answered {got:?}, not a CSS keyword");
+        assert!(
+            !got.contains(char::is_uppercase),
+            "#{id} answered {got:?}, not a CSS keyword"
+        );
     }
 }
 

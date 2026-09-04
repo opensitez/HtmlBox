@@ -1,7 +1,7 @@
 //! Select/dropdown widget — standalone tiny-skia rendered select box.
 
-use tiny_skia::*;
 use super::WidgetColors;
+use tiny_skia::*;
 
 pub struct Select {
     pub options: Vec<String>,
@@ -29,7 +29,10 @@ impl Select {
     }
 
     pub fn selected_text(&self) -> &str {
-        self.options.get(self.selected_index).map(|s| s.as_str()).unwrap_or("")
+        self.options
+            .get(self.selected_index)
+            .map(|s| s.as_str())
+            .unwrap_or("")
     }
 
     /// Paint the select box (closed state). Draws border + dropdown arrow.
@@ -47,7 +50,11 @@ impl Select {
         }
 
         // Border
-        let (r, g, b, a) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+        let (r, g, b, a) = if self.focused {
+            self.colors.focus_ring
+        } else {
+            self.colors.border
+        };
         paint.set_color_rgba8(r, g, b, a);
         let mut stroke = Stroke::default();
         stroke.width = if self.focused { 2.0 } else { 1.0 };
@@ -75,7 +82,9 @@ impl Select {
     }
 
     pub fn click(&mut self, _x: f32, _y: f32) -> bool {
-        if self.disabled { return false; }
+        if self.disabled {
+            return false;
+        }
         self.open = !self.open;
         true
     }

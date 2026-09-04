@@ -1,7 +1,7 @@
 //! Checkbox widget — standalone tiny-skia rendered checkbox.
 
+use super::{rounded_rect_path, WidgetColors};
 use tiny_skia::*;
-use super::{WidgetColors, rounded_rect_path};
 
 pub struct Checkbox {
     pub checked: bool,
@@ -39,7 +39,11 @@ impl Checkbox {
         }
 
         // Border
-        let (r, g, b, a) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+        let (r, g, b, a) = if self.focused {
+            self.colors.focus_ring
+        } else {
+            self.colors.border
+        };
         paint.set_color_rgba8(r, g, b, a);
         let mut stroke = Stroke::default();
         stroke.width = if self.focused { 2.0 } else { 1.0 };
@@ -73,7 +77,9 @@ impl Checkbox {
     /// Handle a click at (x, y) relative to the widget's origin.
     /// Returns true if the checkbox was toggled.
     pub fn click(&mut self, x: f32, y: f32) -> bool {
-        if self.disabled { return false; }
+        if self.disabled {
+            return false;
+        }
         if x >= 0.0 && y >= 0.0 && x <= self.size && y <= self.size {
             self.checked = !self.checked;
             return true;
@@ -83,6 +89,8 @@ impl Checkbox {
 
     /// Toggle the checked state.
     pub fn toggle(&mut self) {
-        if !self.disabled { self.checked = !self.checked; }
+        if !self.disabled {
+            self.checked = !self.checked;
+        }
     }
 }

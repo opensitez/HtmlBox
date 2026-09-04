@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Canvas 2D Context ──────────────────────────────────────────────────────
 
@@ -16,8 +16,14 @@ pub struct CanvasContext {
     pub height: u32,
     /// RGBA pixel buffer (premultiplied alpha, row-major).
     pub pixels: Vec<u8>,
-    fill_r: u8, fill_g: u8, fill_b: u8, fill_a: u8,
-    stroke_r: u8, stroke_g: u8, stroke_b: u8, stroke_a: u8,
+    fill_r: u8,
+    fill_g: u8,
+    fill_b: u8,
+    fill_a: u8,
+    stroke_r: u8,
+    stroke_g: u8,
+    stroke_b: u8,
+    stroke_a: u8,
     line_width: f32,
     font_size: f32,
 }
@@ -25,10 +31,17 @@ pub struct CanvasContext {
 impl CanvasContext {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            width, height,
+            width,
+            height,
             pixels: vec![0u8; (width * height * 4) as usize],
-            fill_r: 0, fill_g: 0, fill_b: 0, fill_a: 255,
-            stroke_r: 0, stroke_g: 0, stroke_b: 0, stroke_a: 255,
+            fill_r: 0,
+            fill_g: 0,
+            fill_b: 0,
+            fill_a: 255,
+            stroke_r: 0,
+            stroke_g: 0,
+            stroke_b: 0,
+            stroke_a: 255,
             line_width: 1.0,
             font_size: 16.0,
         }
@@ -37,19 +50,29 @@ impl CanvasContext {
     /// Set fill color from CSS-style string: "#rgb", "#rrggbb", "rgb(r,g,b)", or named colors.
     pub fn set_fill_style(&mut self, color: &str) {
         if let Some(c) = crate::css::parse_color(color) {
-            self.fill_r = c.r; self.fill_g = c.g; self.fill_b = c.b; self.fill_a = c.a;
+            self.fill_r = c.r;
+            self.fill_g = c.g;
+            self.fill_b = c.b;
+            self.fill_a = c.a;
         }
     }
 
     /// Set stroke color.
     pub fn set_stroke_style(&mut self, color: &str) {
         if let Some(c) = crate::css::parse_color(color) {
-            self.stroke_r = c.r; self.stroke_g = c.g; self.stroke_b = c.b; self.stroke_a = c.a;
+            self.stroke_r = c.r;
+            self.stroke_g = c.g;
+            self.stroke_b = c.b;
+            self.stroke_a = c.a;
         }
     }
 
-    pub fn set_line_width(&mut self, w: f32) { self.line_width = w; }
-    pub fn set_font_size(&mut self, px: f32) { self.font_size = px; }
+    pub fn set_line_width(&mut self, w: f32) {
+        self.line_width = w;
+    }
+    pub fn set_font_size(&mut self, px: f32) {
+        self.font_size = px;
+    }
 
     /// Fill a rectangle.
     pub fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
@@ -68,15 +91,20 @@ impl CanvasContext {
                 let i = py as usize * stride + px as usize * 4;
                 if i + 3 < self.pixels.len() {
                     if a == 255 {
-                        self.pixels[i] = r; self.pixels[i+1] = g; self.pixels[i+2] = b; self.pixels[i+3] = 255;
+                        self.pixels[i] = r;
+                        self.pixels[i + 1] = g;
+                        self.pixels[i + 2] = b;
+                        self.pixels[i + 3] = 255;
                     } else {
                         // Alpha blend (premultiplied)
-                        let da = self.pixels[i+3] as u16;
+                        let da = self.pixels[i + 3] as u16;
                         let ia = 255 - a as u16;
-                        self.pixels[i]   = (pr as u16 + self.pixels[i] as u16 * ia / 255) as u8;
-                        self.pixels[i+1] = (pg as u16 + self.pixels[i+1] as u16 * ia / 255) as u8;
-                        self.pixels[i+2] = (pb as u16 + self.pixels[i+2] as u16 * ia / 255) as u8;
-                        self.pixels[i+3] = (a as u16 + da * ia / 255) as u8;
+                        self.pixels[i] = (pr as u16 + self.pixels[i] as u16 * ia / 255) as u8;
+                        self.pixels[i + 1] =
+                            (pg as u16 + self.pixels[i + 1] as u16 * ia / 255) as u8;
+                        self.pixels[i + 2] =
+                            (pb as u16 + self.pixels[i + 2] as u16 * ia / 255) as u8;
+                        self.pixels[i + 3] = (a as u16 + da * ia / 255) as u8;
                     }
                 }
             }
@@ -95,7 +123,10 @@ impl CanvasContext {
             for px in x0..x1 {
                 let i = row + px as usize * 4;
                 if i + 3 < self.pixels.len() {
-                    self.pixels[i] = 0; self.pixels[i+1] = 0; self.pixels[i+2] = 0; self.pixels[i+3] = 0;
+                    self.pixels[i] = 0;
+                    self.pixels[i + 1] = 0;
+                    self.pixels[i + 2] = 0;
+                    self.pixels[i + 3] = 0;
                 }
             }
         }
@@ -105,13 +136,18 @@ impl CanvasContext {
     pub fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
         let lw = self.line_width;
         let saved = (self.fill_r, self.fill_g, self.fill_b, self.fill_a);
-        self.fill_r = self.stroke_r; self.fill_g = self.stroke_g;
-        self.fill_b = self.stroke_b; self.fill_a = self.stroke_a;
-        self.fill_rect(x, y, w, lw);           // top
-        self.fill_rect(x, y + h - lw, w, lw);  // bottom
-        self.fill_rect(x, y, lw, h);            // left
-        self.fill_rect(x + w - lw, y, lw, h);  // right
-        self.fill_r = saved.0; self.fill_g = saved.1; self.fill_b = saved.2; self.fill_a = saved.3;
+        self.fill_r = self.stroke_r;
+        self.fill_g = self.stroke_g;
+        self.fill_b = self.stroke_b;
+        self.fill_a = self.stroke_a;
+        self.fill_rect(x, y, w, lw); // top
+        self.fill_rect(x, y + h - lw, w, lw); // bottom
+        self.fill_rect(x, y, lw, h); // left
+        self.fill_rect(x + w - lw, y, lw, h); // right
+        self.fill_r = saved.0;
+        self.fill_g = saved.1;
+        self.fill_b = saved.2;
+        self.fill_a = saved.3;
     }
 
     /// Fill a circle.
@@ -128,8 +164,10 @@ impl CanvasContext {
                 if dx * dx + dy * dy <= r2 {
                     let i = (py as usize * self.width as usize + px as usize) * 4;
                     if i + 3 < self.pixels.len() {
-                        self.pixels[i] = self.fill_r; self.pixels[i+1] = self.fill_g;
-                        self.pixels[i+2] = self.fill_b; self.pixels[i+3] = self.fill_a;
+                        self.pixels[i] = self.fill_r;
+                        self.pixels[i + 1] = self.fill_g;
+                        self.pixels[i + 2] = self.fill_b;
+                        self.pixels[i + 3] = self.fill_a;
                     }
                 }
             }
@@ -149,14 +187,24 @@ impl CanvasContext {
             if x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height {
                 let i = (y as usize * self.width as usize + x as usize) * 4;
                 if i + 3 < self.pixels.len() {
-                    self.pixels[i] = self.stroke_r; self.pixels[i+1] = self.stroke_g;
-                    self.pixels[i+2] = self.stroke_b; self.pixels[i+3] = self.stroke_a;
+                    self.pixels[i] = self.stroke_r;
+                    self.pixels[i + 1] = self.stroke_g;
+                    self.pixels[i + 2] = self.stroke_b;
+                    self.pixels[i + 3] = self.stroke_a;
                 }
             }
-            if x == ex && y == ey { break; }
+            if x == ex && y == ey {
+                break;
+            }
             let e2 = 2 * err;
-            if e2 >= dy { err += dy; x += sx; }
-            if e2 <= dx { err += dx; y += sy; }
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
         }
     }
 
@@ -254,19 +302,19 @@ impl WebCore {
             children: Vec::new(),
             layout: LayoutBox::default(),
 
-            component_width:  0.0,
+            component_width: 0.0,
             component_height: 0.0,
 
             resolved_src: String::new(),
-            image_data:   None,
-            image_width:  0,
+            image_data: None,
+            image_width: 0,
             image_height: 0,
 
-            bg_image_data:   None,
-            mask_image_data:   None,
-            mask_image_width:  0,
+            bg_image_data: None,
+            mask_image_data: None,
+            mask_image_width: 0,
             mask_image_height: 0,
-            bg_image_width:  0,
+            bg_image_width: 0,
             bg_image_height: 0,
 
             svg_markup: None,
@@ -302,7 +350,10 @@ impl WebCore {
         // other node.
         let node_id = crate::dom::arena::next_shadow_node_id();
         self.shadow_root = Some(Box::new(ShadowRoot {
-            children, stylesheet, mode, node_id,
+            children,
+            stylesheet,
+            mode,
+            node_id,
             delegates_focus: false,
             slot_assignment: SlotAssignment::Named,
             clonable: false,
@@ -355,7 +406,9 @@ impl WebCore {
             if c.tag == "style" {
                 styles_css.push_str(&c.text);
                 for ch in &c.children {
-                    if ch.tag == "#text" { styles_css.push_str(&ch.text); }
+                    if ch.tag == "#text" {
+                        styles_css.push_str(&ch.text);
+                    }
                 }
                 false
             } else {
@@ -382,9 +435,13 @@ impl WebCore {
         // from it can never be an arena node's.
         fn renumber(node: &mut WebCore) {
             node.node_id = crate::dom::arena::next_shadow_node_id();
-            for child in &mut node.children { renumber(child); }
+            for child in &mut node.children {
+                renumber(child);
+            }
         }
-        for child in &mut children { renumber(child); }
+        for child in &mut children {
+            renumber(child);
+        }
         (children, stylesheet)
     }
 
@@ -434,9 +491,22 @@ impl WebCore {
     }
 
     pub fn is_void(&self) -> bool {
-        matches!(self.tag.as_str(),
-            "br" | "hr" | "img" | "input" | "meta" | "link" | "col" |
-            "area" | "base" | "embed" | "param" | "source" | "track" | "wbr")
+        matches!(
+            self.tag.as_str(),
+            "br" | "hr"
+                | "img"
+                | "input"
+                | "meta"
+                | "link"
+                | "col"
+                | "area"
+                | "base"
+                | "embed"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
+        )
     }
 
     /// Returns the effective children for layout/render: shadow children if a
@@ -461,7 +531,9 @@ impl WebCore {
     /// Resolve `<slot>` elements in the shadow tree by projecting light DOM children.
     /// Must be called before layout when a shadow root is present.
     pub fn resolve_slots(&mut self) {
-        if self.shadow_root.is_none() { return; }
+        if self.shadow_root.is_none() {
+            return;
+        }
         let light_children = self.children.clone();
         let sr = self.shadow_root.as_mut().unwrap();
         resolve_slots_inner(&mut sr.children, &light_children);
@@ -500,7 +572,8 @@ impl WebCore {
             self.attributes.get("id").map(|s| s.as_str()) == Some(&selector[1..])
         } else if selector.starts_with('.') {
             let cls = &selector[1..];
-            self.attributes.get("class")
+            self.attributes
+                .get("class")
                 .map(|s| s.split_whitespace().any(|c| c == cls))
                 .unwrap_or(false)
         } else {

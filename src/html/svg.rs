@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── SVG extraction ────────────────────────────────────────────────────────
 
@@ -14,8 +14,16 @@ use crate::css::*;
 
 /// Parse leading integer pixels from a string like "20px", "512", "20px;height:10px".
 pub(crate) fn parse_px(s: &str) -> Option<u32> {
-    let num: String = s.trim().chars().take_while(|c| c.is_ascii_digit()).collect();
-    if num.is_empty() { None } else { num.parse().ok() }
+    let num: String = s
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if num.is_empty() {
+        None
+    } else {
+        num.parse().ok()
+    }
 }
 
 /// Extract a CSS pixel value for `prop` from an inline style string (e.g. "width:20px;height:20px").
@@ -50,8 +58,8 @@ pub fn load_background_images(node: &mut WebCore, base_url: &str) {
     if node.bg_image_data.is_none() && !node.style.background_image_url.is_empty() {
         let url = node.style.background_image_url.clone();
         if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
-            node.bg_image_data   = Some(data);
-            node.bg_image_width  = w;
+            node.bg_image_data = Some(data);
+            node.bg_image_width = w;
             node.bg_image_height = h;
         }
     }
@@ -59,8 +67,8 @@ pub fn load_background_images(node: &mut WebCore, base_url: &str) {
     if node.mask_image_data.is_none() && !node.style.rare().mask_image_url.is_empty() {
         let url = node.style.rare().mask_image_url.clone();
         if let Some((data, w, h)) = load_image_from_src(&url, base_url) {
-            node.mask_image_data   = Some(data);
-            node.mask_image_width  = w;
+            node.mask_image_data = Some(data);
+            node.mask_image_width = w;
             node.mask_image_height = h;
         }
     }
@@ -68,7 +76,6 @@ pub fn load_background_images(node: &mut WebCore, base_url: &str) {
         load_background_images(child, base_url);
     }
 }
-
 
 /// Rasterize an SVG string to RGBA pixel data using resvg.
 pub fn rasterize_svg_to_rgba(svg: &str, width: u32, height: u32) -> Option<Vec<u8>> {

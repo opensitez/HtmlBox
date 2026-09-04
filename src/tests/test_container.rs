@@ -1,8 +1,10 @@
-use crate::tests::harness::{parse_and_layout, find_box};
+use crate::tests::harness::{find_box, parse_and_layout};
 use crate::types::*;
 
 fn find_by_id<'a>(node: &'a WebCore, id: &str) -> Option<&'a WebCore> {
-    find_box(node, &|b| b.attributes.get("id").map(|s| s == id).unwrap_or(false))
+    find_box(node, &|b| {
+        b.attributes.get("id").map(|s| s == id).unwrap_or(false)
+    })
 }
 
 // ── container-type / container-name parsing ───────────────────────────────────
@@ -62,26 +64,37 @@ fn container_shorthand_parsed() {
 fn container_rule_parsed_in_stylesheet() {
     use crate::css::Stylesheet;
     let mut ss = Stylesheet::default();
-    ss.parse_and_add(r#"
+    ss.parse_and_add(
+        r#"
         .card { container-type: inline-size; }
         @container (min-width: 300px) {
             .inner { font-size: 20px; }
         }
-    "#);
+    "#,
+    );
     let has_container_rule = ss.rules.iter().any(|r| !r.container_condition.is_empty());
-    assert!(has_container_rule, "stylesheet should have at least one @container rule");
+    assert!(
+        has_container_rule,
+        "stylesheet should have at least one @container rule"
+    );
 }
 
 #[test]
 fn named_container_rule_parsed() {
     use crate::css::Stylesheet;
     let mut ss = Stylesheet::default();
-    ss.parse_and_add(r#"
+    ss.parse_and_add(
+        r#"
         @container sidebar (min-width: 200px) {
             .item { color: red; }
         }
-    "#);
-    let rule = ss.rules.iter().find(|r| !r.container_condition.is_empty()).expect("rule");
+    "#,
+    );
+    let rule = ss
+        .rules
+        .iter()
+        .find(|r| !r.container_condition.is_empty())
+        .expect("rule");
     assert_eq!(rule.container_name, "sidebar");
     assert!(rule.container_condition.contains("min-width"));
 }
@@ -91,34 +104,46 @@ fn named_container_rule_parsed() {
 #[test]
 fn evaluate_container_min_width() {
     use crate::css::evaluate_container;
-    assert!( evaluate_container("(min-width: 300px)", 400.0, 200.0));
+    assert!(evaluate_container("(min-width: 300px)", 400.0, 200.0));
     assert!(!evaluate_container("(min-width: 300px)", 200.0, 200.0));
-    assert!( evaluate_container("(min-width: 300px)", 300.0, 200.0)); // equal = true
+    assert!(evaluate_container("(min-width: 300px)", 300.0, 200.0)); // equal = true
 }
 
 #[test]
 fn evaluate_container_max_width() {
     use crate::css::evaluate_container;
-    assert!( evaluate_container("(max-width: 500px)", 400.0, 200.0));
+    assert!(evaluate_container("(max-width: 500px)", 400.0, 200.0));
     assert!(!evaluate_container("(max-width: 500px)", 600.0, 200.0));
 }
 
 #[test]
 fn evaluate_container_range_syntax() {
     use crate::css::evaluate_container;
-    assert!( evaluate_container("(width > 200px)", 300.0, 100.0));
+    assert!(evaluate_container("(width > 200px)", 300.0, 100.0));
     assert!(!evaluate_container("(width > 200px)", 100.0, 100.0));
-    assert!( evaluate_container("(width >= 300px)", 300.0, 100.0));
-    assert!( evaluate_container("(width < 400px)", 300.0, 100.0));
+    assert!(evaluate_container("(width >= 300px)", 300.0, 100.0));
+    assert!(evaluate_container("(width < 400px)", 300.0, 100.0));
     assert!(!evaluate_container("(width < 400px)", 500.0, 100.0));
 }
 
 #[test]
 fn evaluate_container_and_combinator() {
     use crate::css::evaluate_container;
-    assert!( evaluate_container("(min-width: 200px) and (max-width: 600px)", 400.0, 100.0));
-    assert!(!evaluate_container("(min-width: 200px) and (max-width: 600px)", 100.0, 100.0));
-    assert!(!evaluate_container("(min-width: 200px) and (max-width: 600px)", 700.0, 100.0));
+    assert!(evaluate_container(
+        "(min-width: 200px) and (max-width: 600px)",
+        400.0,
+        100.0
+    ));
+    assert!(!evaluate_container(
+        "(min-width: 200px) and (max-width: 600px)",
+        100.0,
+        100.0
+    ));
+    assert!(!evaluate_container(
+        "(min-width: 200px) and (max-width: 600px)",
+        700.0,
+        100.0
+    ));
 }
 
 // ── Layout effect of @container rules ─────────────────────────────────────────
@@ -142,8 +167,11 @@ fn container_query_applies_style_when_wide() {
     let inner = find_by_id(&doc.root, "inner").expect("inner");
     // font_size is stored as CssLength; we check font_size_px resolves to ~24px
     let font_px = inner.style.font_size.resolve(16.0, 0.0, 16.0);
-    assert!((font_px - 24.0).abs() < 1.0,
-        "font-size should be 24px when container is wide, got {}", font_px);
+    assert!(
+        (font_px - 24.0).abs() < 1.0,
+        "font-size should be 24px when container is wide, got {}",
+        font_px
+    );
 }
 
 #[test]
@@ -165,8 +193,11 @@ fn container_query_does_not_apply_when_narrow() {
     let inner = find_by_id(&doc.root, "inner").expect("inner");
     let font_px = inner.style.font_size.resolve(16.0, 0.0, 16.0);
     // Default font-size is 16px; should NOT be 32px
-    assert!((font_px - 32.0).abs() > 1.0,
-        "font-size should NOT be 32px when container is narrow, got {}", font_px);
+    assert!(
+        (font_px - 32.0).abs() > 1.0,
+        "font-size should NOT be 32px when container is narrow, got {}",
+        font_px
+    );
 }
 
 #[test]
@@ -186,8 +217,62 @@ fn container_query_width_changes_box_size() {
         800.0,
     );
     let inner = find_by_id(&doc.root, "inner").expect("inner");
-    assert!((inner.layout.border_rect.w - 200.0).abs() < 2.0,
-        "inner width should be 200px, got {}", inner.layout.border_rect.w);
+    assert!(
+        (inner.layout.border_rect.w - 200.0).abs() < 2.0,
+        "inner width should be 200px, got {}",
+        inner.layout.border_rect.w
+    );
+}
+
+#[test]
+fn inline_size_container_does_not_answer_height_queries() {
+    let doc = parse_and_layout(
+        r#"<html><head><style>
+          .outer { container-type: inline-size; width: 300px; height: 400px; }
+          @container (min-height: 300px) {
+            .inner { background: red; }
+          }
+          @container (min-width: 200px) {
+            .inner { color: blue; }
+          }
+        </style></head><body style="margin:0">
+          <div class="outer">
+            <div id="inner" class="inner">x</div>
+          </div>
+        </body></html>"#,
+        800.0,
+    );
+    let inner = find_by_id(&doc.root, "inner").expect("inner");
+    assert_eq!(
+        inner.style.color.b, 255,
+        "inline-size container should still answer inline/width queries"
+    );
+    assert_eq!(
+        inner.style.background_color.a, 0,
+        "inline-size container must not answer block/height queries"
+    );
+}
+
+#[test]
+fn unsupported_container_style_queries_fail_closed() {
+    let html = r#"
+        <style>
+          .outer { container-type: size; width: 300px; height: 200px; }
+          .target { color: red; }
+          @container style(color: red) {
+            .target { color: green; }
+          }
+        </style>
+        <div class="outer"><div id="target" class="target">x</div></div>
+    "#;
+    let doc = parse_and_layout(html, 800.0);
+    let target = find_by_id(&doc.root, "target").expect("target");
+
+    assert_eq!(
+        target.style.color,
+        Color::rgb(255, 0, 0),
+        "unsupported style queries must not fail open and apply inner rules"
+    );
 }
 
 #[test]
@@ -208,8 +293,10 @@ fn container_query_max_width_applies_when_narrow() {
     );
     let inner = find_by_id(&doc.root, "inner").expect("inner");
     // Red background = rgba(255,0,0,255)
-    assert_eq!(inner.style.background_color.r, 255,
-        "background should be red when container is narrow");
+    assert_eq!(
+        inner.style.background_color.r, 255,
+        "background should be red when container is narrow"
+    );
 }
 
 #[test]
@@ -233,8 +320,10 @@ fn named_container_query_matches_correct_ancestor() {
         800.0,
     );
     let target = find_by_id(&doc.root, "target").expect("target");
-    assert_eq!(target.style.background_color.b, 255,
-        "background should be blue via named container 'main'");
+    assert_eq!(
+        target.style.background_color.b, 255,
+        "background should be blue via named container 'main'"
+    );
 }
 
 #[test]
@@ -255,6 +344,8 @@ fn named_container_query_does_not_match_wrong_name() {
     );
     let target = find_by_id(&doc.root, "target").expect("target");
     // Green background = rgba(0,128,0,255)
-    assert!(target.style.background_color.g < 200,
-        "background should NOT be green: sidebar is only 100px, rule needs 300px");
+    assert!(
+        target.style.background_color.g < 200,
+        "background should NOT be green: sidebar is only 100px, rule needs 300px"
+    );
 }

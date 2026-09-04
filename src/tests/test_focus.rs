@@ -1,10 +1,10 @@
 // Tests for Tab/focus keyboard navigation and :focus visual indicator.
 
+use crate::css::apply_cascade_vp;
 use crate::html::parse_html;
 use crate::layout::LayoutEngine;
-use crate::types::{Document, Color};
 use crate::types::BorderStyle;
-use crate::css::apply_cascade_vp;
+use crate::types::{Color, Document};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,17 +30,26 @@ fn tab_focus_advances_in_document_order() {
 
     // Tab → first focusable (button A).
     assert!(doc.focus_next(), "first Tab must return true");
-    let a_id = crate::dom::query_selector(&doc.root, "#a").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, a_id, "focus must be on button A after first Tab");
+    let a_id = crate::dom::query_selector(&doc.root, "#a")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, a_id,
+        "focus must be on button A after first Tab"
+    );
 
     // Tab → second (B).
     assert!(doc.focus_next());
-    let b_id = crate::dom::query_selector(&doc.root, "#b").map(|n| n.node_id).unwrap();
+    let b_id = crate::dom::query_selector(&doc.root, "#b")
+        .map(|n| n.node_id)
+        .unwrap();
     assert_eq!(doc.focused_box, b_id, "focus must be on button B");
 
     // Tab → third (C).
     assert!(doc.focus_next());
-    let c_id = crate::dom::query_selector(&doc.root, "#c").map(|n| n.node_id).unwrap();
+    let c_id = crate::dom::query_selector(&doc.root, "#c")
+        .map(|n| n.node_id)
+        .unwrap();
     assert_eq!(doc.focused_box, c_id, "focus must be on button C");
 
     // Tab → wraps back to A.
@@ -56,8 +65,13 @@ fn shift_tab_reverses_focus() {
     // Focus A, then Shift+Tab should go to B (wrap).
     doc.focus_next();
     doc.focus_prev();
-    let b_id = crate::dom::query_selector(&doc.root, "#b").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, b_id, "Shift+Tab from first element must wrap to last");
+    let b_id = crate::dom::query_selector(&doc.root, "#b")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, b_id,
+        "Shift+Tab from first element must wrap to last"
+    );
 }
 
 #[test]
@@ -81,7 +95,11 @@ fn tab_includes_inputs_and_anchors() {
             }
         }
     }
-    assert_eq!(visited_ids.len(), 3, "Tab must visit input, link, and textarea");
+    assert_eq!(
+        visited_ids.len(),
+        3,
+        "Tab must visit input, link, and textarea"
+    );
 }
 
 // ── 2. tabindex=-1 excluded, tabindex=0 included in normal order ──────────────
@@ -97,8 +115,13 @@ fn tabindex_minus1_excluded_from_tab_order() {
     );
     doc.focus_next(); // → A
     doc.focus_next(); // → C (B is skipped)
-    let c_id = crate::dom::query_selector(&doc.root, "#c").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, c_id, "tabindex=-1 element must be skipped in Tab order");
+    let c_id = crate::dom::query_selector(&doc.root, "#c")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, c_id,
+        "tabindex=-1 element must be skipped in Tab order"
+    );
 }
 
 #[test]
@@ -110,8 +133,13 @@ fn tabindex_zero_included_in_normal_order() {
         </body></html>",
     );
     doc.focus_next(); // → div (tabindex=0, first in document order)
-    let d_id = crate::dom::query_selector(&doc.root, "#d").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, d_id, "tabindex=0 element must be in tab order");
+    let d_id = crate::dom::query_selector(&doc.root, "#d")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, d_id,
+        "tabindex=0 element must be in tab order"
+    );
 }
 
 // ── 3. Positive tabindex ordering ─────────────────────────────────────────────
@@ -127,15 +155,27 @@ fn positive_tabindex_sorted_before_normal_focusable() {
     );
     // Tab order: tabindex=1 → tabindex=3 → natural (no tabindex)
     doc.focus_next();
-    let low_id  = crate::dom::query_selector(&doc.root, "#low").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, low_id, "tabindex=1 must be first in tab order");
+    let low_id = crate::dom::query_selector(&doc.root, "#low")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, low_id,
+        "tabindex=1 must be first in tab order"
+    );
 
     doc.focus_next();
-    let high_id = crate::dom::query_selector(&doc.root, "#high").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, high_id, "tabindex=3 must come before natural focusable");
+    let high_id = crate::dom::query_selector(&doc.root, "#high")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, high_id,
+        "tabindex=3 must come before natural focusable"
+    );
 
     doc.focus_next();
-    let first_id = crate::dom::query_selector(&doc.root, "#first").map(|n| n.node_id).unwrap();
+    let first_id = crate::dom::query_selector(&doc.root, "#first")
+        .map(|n| n.node_id)
+        .unwrap();
     assert_eq!(doc.focused_box, first_id, "natural button must come last");
 }
 
@@ -166,27 +206,37 @@ fn tab_fires_focus_event() {
     // fires on the focused element itself.
     for id in doc.query_selector_all("button") {
         let c = fc.clone();
-        doc.add_event_listener(id, "focus",
-            Box::new(move |_evt, _d| { *c.lock().unwrap() += 1; }),
-            crate::dom::events::ListenerOptions::default());
+        doc.add_event_listener(
+            id,
+            "focus",
+            Box::new(move |_evt, _d| {
+                *c.lock().unwrap() += 1;
+            }),
+            crate::dom::events::ListenerOptions::default(),
+        );
     }
 
     doc.focus_next(); // A gets focus → Focus fires on A
     doc.focus_next(); // B gets focus → Focus fires on B
 
-    assert_eq!(*focused_count.lock().unwrap(), 2, "each Tab must fire a Focus event on the target");
+    assert_eq!(
+        *focused_count.lock().unwrap(),
+        2,
+        "each Tab must fire a Focus event on the target"
+    );
 }
 
 // ── 6. :focus-visible indicator — keyboard only, not mouse ───────────────────
 
 #[test]
 fn keyboard_focused_element_has_ua_outline() {
-    let mut doc = parse_and_layout(
-        "<html><body><button id=btn>Click</button></body></html>",
-    );
+    let mut doc = parse_and_layout("<html><body><button id=btn>Click</button></body></html>");
     // Tab = keyboard focus → :focus-visible fires → UA outline appears.
     doc.focus_next();
-    assert!(doc.keyboard_focus, "focus_next must set keyboard_focus=true");
+    assert!(
+        doc.keyboard_focus,
+        "focus_next must set keyboard_focus=true"
+    );
 
     let btn = crate::dom::query_selector(&doc.root, "#btn").unwrap();
     assert!(
@@ -202,9 +252,7 @@ fn keyboard_focused_element_has_ua_outline() {
 
 #[test]
 fn unfocused_element_has_no_ua_outline() {
-    let doc = parse_and_layout(
-        "<html><body><button id=btn>Click</button></body></html>",
-    );
+    let doc = parse_and_layout("<html><body><button id=btn>Click</button></body></html>");
     let btn = crate::dom::query_selector(&doc.root, "#btn").unwrap();
     assert_eq!(
         btn.style.outline_style,
@@ -217,18 +265,24 @@ fn unfocused_element_has_no_ua_outline() {
 fn mouse_focus_does_not_show_outline() {
     // Simulate what happens after a mouse click sets focus (keyboard_focus = false).
     // :focus-visible must NOT match, so no UA outline.
-    let mut doc = parse_and_layout(
-        "<html><body><button id=btn>Click</button></body></html>",
-    );
+    let mut doc = parse_and_layout("<html><body><button id=btn>Click</button></body></html>");
     // Manually set focus as if from mouse (keyboard_focus stays false).
-    let btn_id = crate::dom::query_selector(&doc.root, "#btn").map(|n| n.node_id).unwrap();
+    let btn_id = crate::dom::query_selector(&doc.root, "#btn")
+        .map(|n| n.node_id)
+        .unwrap();
     doc.focused_box = btn_id;
     doc.keyboard_focus = false;
     // Recascade with keyboard_focus=false.
     doc.stylesheet.rebuild_index();
     crate::css::apply_cascade_vp(
-        &mut doc.root, &doc.stylesheet, None, 16.0,
-        doc.viewport_w, doc.viewport_h, doc.focused_box, false,
+        &mut doc.root,
+        &doc.stylesheet,
+        None,
+        16.0,
+        doc.viewport_w,
+        doc.viewport_h,
+        doc.focused_box,
+        false,
     );
 
     let btn = crate::dom::query_selector(&doc.root, "#btn").unwrap();
@@ -280,16 +334,22 @@ fn author_can_suppress_focus_outline() {
 fn mouse_focused_text_input_shows_outline() {
     // <input type="text"> is a text-entry control: :focus-visible must match
     // even when keyboard_focus=false (mouse click).
-    let mut doc = parse_and_layout(
-        "<html><body><input type=\"text\" id=inp></body></html>",
-    );
-    let inp_id = crate::dom::query_selector(&doc.root, "#inp").map(|n| n.node_id).unwrap();
+    let mut doc = parse_and_layout("<html><body><input type=\"text\" id=inp></body></html>");
+    let inp_id = crate::dom::query_selector(&doc.root, "#inp")
+        .map(|n| n.node_id)
+        .unwrap();
     doc.focused_box = inp_id;
     doc.keyboard_focus = false;
     doc.stylesheet.rebuild_index();
     apply_cascade_vp(
-        &mut doc.root, &doc.stylesheet, None, 16.0,
-        doc.viewport_w, doc.viewport_h, doc.focused_box, false,
+        &mut doc.root,
+        &doc.stylesheet,
+        None,
+        16.0,
+        doc.viewport_w,
+        doc.viewport_h,
+        doc.focused_box,
+        false,
     );
 
     let inp = crate::dom::query_selector(&doc.root, "#inp").unwrap();
@@ -302,16 +362,22 @@ fn mouse_focused_text_input_shows_outline() {
 #[test]
 fn mouse_focused_button_no_outline() {
     // <button> is not text-entry: no :focus-visible on mouse click.
-    let mut doc = parse_and_layout(
-        "<html><body><button id=btn>Click</button></body></html>",
-    );
-    let btn_id = crate::dom::query_selector(&doc.root, "#btn").map(|n| n.node_id).unwrap();
+    let mut doc = parse_and_layout("<html><body><button id=btn>Click</button></body></html>");
+    let btn_id = crate::dom::query_selector(&doc.root, "#btn")
+        .map(|n| n.node_id)
+        .unwrap();
     doc.focused_box = btn_id;
     doc.keyboard_focus = false;
     doc.stylesheet.rebuild_index();
     apply_cascade_vp(
-        &mut doc.root, &doc.stylesheet, None, 16.0,
-        doc.viewport_w, doc.viewport_h, doc.focused_box, false,
+        &mut doc.root,
+        &doc.stylesheet,
+        None,
+        16.0,
+        doc.viewport_w,
+        doc.viewport_h,
+        doc.focused_box,
+        false,
     );
 
     let btn = crate::dom::query_selector(&doc.root, "#btn").unwrap();
@@ -330,8 +396,13 @@ fn contenteditable_is_focusable() {
         "<html><body><div id=ed contenteditable=\"true\">Edit me</div></body></html>",
     );
     doc.focus_next();
-    let ed_id = crate::dom::query_selector(&doc.root, "#ed").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, ed_id, "contenteditable must be in tab order");
+    let ed_id = crate::dom::query_selector(&doc.root, "#ed")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, ed_id,
+        "contenteditable must be in tab order"
+    );
 }
 
 // ── 8. display:none elements skipped ─────────────────────────────────────────
@@ -343,6 +414,11 @@ fn display_none_element_skipped_in_tab_order() {
          <body><button id=hidden>Hidden</button><button id=vis>Visible</button></body></html>",
     );
     doc.focus_next();
-    let vis_id = crate::dom::query_selector(&doc.root, "#vis").map(|n| n.node_id).unwrap();
-    assert_eq!(doc.focused_box, vis_id, "display:none button must not be in tab order");
+    let vis_id = crate::dom::query_selector(&doc.root, "#vis")
+        .map(|n| n.node_id)
+        .unwrap();
+    assert_eq!(
+        doc.focused_box, vis_id,
+        "display:none button must not be in tab order"
+    );
 }

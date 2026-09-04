@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── CSS Enums ───────────────────────────────────────────────────────────────
 
@@ -37,7 +37,9 @@ pub enum Display {
 }
 
 impl Default for Display {
-    fn default() -> Self { Self::Inline }
+    fn default() -> Self {
+        Self::Inline
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,7 +52,9 @@ pub enum Position {
 }
 
 impl Default for Position {
-    fn default() -> Self { Self::Static }
+    fn default() -> Self {
+        Self::Static
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,10 +62,14 @@ pub enum Float {
     None,
     Left,
     Right,
+    InlineStart,
+    InlineEnd,
 }
 
 impl Default for Float {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,10 +78,14 @@ pub enum Clear {
     Left,
     Right,
     Both,
+    InlineStart,
+    InlineEnd,
 }
 
 impl Default for Clear {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,7 +95,9 @@ pub enum Direction {
 }
 
 impl Default for Direction {
-    fn default() -> Self { Self::LTR }
+    fn default() -> Self {
+        Self::LTR
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,7 +115,9 @@ pub enum BorderStyle {
 }
 
 impl Default for BorderStyle {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,7 +129,9 @@ pub enum Overflow {
 }
 
 impl Default for Overflow {
-    fn default() -> Self { Self::Visible }
+    fn default() -> Self {
+        Self::Visible
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,7 +144,9 @@ pub enum WhiteSpace {
 }
 
 impl Default for WhiteSpace {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,7 +158,9 @@ pub enum WordBreak {
 }
 
 impl Default for WordBreak {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,9 +170,10 @@ pub enum OverflowWrap {
     Anywhere,
 }
 
-
 impl Default for OverflowWrap {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -161,18 +184,22 @@ pub enum FontWeight {
 }
 
 impl Default for FontWeight {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl FontWeight {
     pub fn value(&self) -> u16 {
         match self {
             FontWeight::Normal => 400,
-            FontWeight::Bold   => 700,
+            FontWeight::Bold => 700,
             FontWeight::Value(v) => *v,
         }
     }
-    pub fn is_bold(&self) -> bool { self.value() >= 600 }
+    pub fn is_bold(&self) -> bool {
+        self.value() >= 600
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -183,7 +210,9 @@ pub enum FontStyle {
 }
 
 impl Default for FontStyle {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -197,7 +226,9 @@ pub enum TextAlign {
 }
 
 impl Default for TextAlign {
-    fn default() -> Self { Self::Left }
+    fn default() -> Self {
+        Self::Left
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,7 +244,9 @@ pub enum VerticalAlign {
 }
 
 impl Default for VerticalAlign {
-    fn default() -> Self { Self::Baseline }
+    fn default() -> Self {
+        Self::Baseline
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -224,8 +257,25 @@ pub enum TextTransform {
     Capitalize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextUnderlinePosition {
+    Auto,
+    FromFont,
+    Under,
+    Left,
+    Right,
+}
+
+impl Default for TextUnderlinePosition {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 impl Default for TextTransform {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -242,15 +292,29 @@ pub enum ListStyleType {
     Circle,
     Square,
     Decimal,
+    DecimalLeadingZero,
     LowerAlpha,
     UpperAlpha,
+    LowerLatin,
+    UpperLatin,
     LowerRoman,
     UpperRoman,
+    LowerGreek,
+    Armenian,
+    Georgian,
+    Hebrew,
+    Hiragana,
+    Katakana,
+    HiraganaIroha,
+    KatakanaIroha,
+    CjkDecimal,
     Disclosure,
 }
 
 impl Default for ListStyleType {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -260,5 +324,7 @@ pub enum ListStylePosition {
 }
 
 impl Default for ListStylePosition {
-    fn default() -> Self { Self::Outside }
+    fn default() -> Self {
+        Self::Outside
+    }
 }

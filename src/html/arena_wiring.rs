@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Arena wiring ────────────────────────────────────────────────────────────
 
@@ -12,14 +12,19 @@ use crate::css::*;
 pub(crate) fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root: &mut WebCore) {
     use crate::dom::arena::NodeId;
     let root_id = NodeId(root.node_id);
-    if root_id.is_none() || !arena.is_alive(root_id) { return; }
+    if root_id.is_none() || !arena.is_alive(root_id) {
+        return;
+    }
     // ⛔ THIS node's own attributes, before its children's. The loop below used
     // to be the only place attributes were copied, so the node it was first
     // called on — `<html>` — never got its own: `documentElement`'s `lang`,
     // `class` and everything else were missing from the arena on 10 of the 24
     // example pages.
     for (k, v) in root.attributes.iter() {
-        arena.get_mut(root_id).attributes.insert(k.clone(), v.clone());
+        arena
+            .get_mut(root_id)
+            .attributes
+            .insert(k.clone(), v.clone());
     }
     for child in &mut root.children {
         let mut child_id = NodeId(child.node_id);
@@ -45,7 +50,10 @@ pub(crate) fn wire_arena_children(arena: &mut crate::dom::arena::DomArena, root:
         }
         // Copy attributes to arena node
         for (k, v) in &child.attributes {
-            arena.get_mut(child_id).attributes.insert(k.clone(), v.clone());
+            arena
+                .get_mut(child_id)
+                .attributes
+                .insert(k.clone(), v.clone());
         }
         arena.append_child(root_id, child_id);
         wire_arena_children(arena, child);
@@ -113,7 +121,9 @@ pub fn rebuild_arena_recursive_pub(
 pub(crate) fn resync_subtree(arena: &mut crate::dom::arena::DomArena, root: &mut WebCore) {
     use crate::dom::arena::NodeId;
     let root_id = NodeId(root.node_id);
-    if root_id.is_none() || !arena.is_alive(root_id) { return; }
+    if root_id.is_none() || !arena.is_alive(root_id) {
+        return;
+    }
 
     let existing: Vec<NodeId> = arena.children(root_id).collect();
     for child in existing {

@@ -2,22 +2,22 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Parser ─────────────────────────────────────────────────────────────────
 
 pub(crate) struct HtmlParser {
-    pub(crate) tokens:             Vec<Token>,
-    pub(crate) pos:                usize,
-    pub(crate) stylesheet:         Stylesheet,
-    pub(crate) title:              String,
-    pub(crate) base_url:           String,
-    pub(crate) linked_stylesheets: Vec<(String, String)>,  // (href, media)
+    pub(crate) tokens: Vec<Token>,
+    pub(crate) pos: usize,
+    pub(crate) stylesheet: Stylesheet,
+    pub(crate) title: String,
+    pub(crate) base_url: String,
+    pub(crate) linked_stylesheets: Vec<(String, String)>, // (href, media)
     /// Monotonically increasing counter for assigning stable node_ids.
-    pub(crate) next_node_id:       u32,
+    pub(crate) next_node_id: u32,
     /// Arena-based DOM being built in parallel with the WebCore tree.
-    pub(crate) arena:              crate::dom::arena::DomArena,
+    pub(crate) arena: crate::dom::arena::DomArena,
     /// Optional host-registered hook, fired for every open tag as it is parsed.
     /// Receives the tag name and its attribute map.
     pub(crate) on_open_tag: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap) + 'static>>,
@@ -25,7 +25,8 @@ pub(crate) struct HtmlParser {
     /// Receives (tag, attrs, raw_content) and returns true if the host handled it.
     /// If None or returns false: `<noscript>` content is parsed as HTML (shown to
     /// the user as fallback), `<script>` is discarded.
-    pub(crate) on_script: Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static>>,
+    pub(crate) on_script:
+        Option<Box<dyn FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static>>,
     /// Whether the head has been closed — the one bit of HTML §13.2.6's
     /// insertion-mode state this parser needs.
     ///
@@ -94,8 +95,15 @@ impl HtmlParser {
     /// can CREATE the pending entry itself — `</section>` in
     /// `<section><b>x</section>` closes the `<b>` — and the element it closed
     /// must not then be wrapped in a copy of it.
-    pub(crate) fn reconstruct_into(&mut self, children: &mut Vec<WebCore>, from: usize, had_pending: bool) {
-        if !had_pending || self.pending_format.is_empty() || children.len() <= from { return; }
+    pub(crate) fn reconstruct_into(
+        &mut self,
+        children: &mut Vec<WebCore>,
+        from: usize,
+        had_pending: bool,
+    ) {
+        if !had_pending || self.pending_format.is_empty() || children.len() <= from {
+            return;
+        }
         let inner: Vec<WebCore> = children.drain(from..).collect();
         let mut wrapped = inner;
         for tpl in std::mem::take(&mut self.pending_format).into_iter().rev() {
@@ -106,7 +114,12 @@ impl HtmlParser {
         children.extend(wrapped);
     }
 
-    pub(crate) fn push_head_node(&mut self, tag: &str, attrs: crate::dom::attrs::AttrMap, text: String) {
+    pub(crate) fn push_head_node(
+        &mut self,
+        tag: &str,
+        attrs: crate::dom::attrs::AttrMap,
+        text: String,
+    ) {
         let mut node = self.new_box(tag);
         node.attributes = attrs;
         node.text = text;
@@ -159,7 +172,7 @@ impl HtmlParser {
         // Each frame represents one nesting level.
         struct Frame {
             parent_tag: String,
-            node:       WebCore,   // the element whose children we're collecting
+            node: WebCore, // the element whose children we're collecting
             ol_counter: i32,
         }
 
@@ -171,7 +184,11 @@ impl HtmlParser {
         /// `<i>`. Outermost first, which is the order `pending` is built in.
         fn reconstruct(stack: &mut Vec<Frame>, pending: &mut Vec<WebCore>) {
             for tpl in pending.drain(..) {
-                stack.push(Frame { parent_tag: tpl.tag.clone(), node: tpl, ol_counter: 0 });
+                stack.push(Frame {
+                    parent_tag: tpl.tag.clone(),
+                    node: tpl,
+                    ol_counter: 0,
+                });
             }
         }
 
@@ -179,13 +196,16 @@ impl HtmlParser {
         let mut stack: Vec<Frame> = Vec::new();
         stack.push(Frame {
             parent_tag: parent_tag.to_string(),
-            node:       WebCore::new("__root__"),  // temporary container, no arena node needed
+            node: WebCore::new("__root__"), // temporary container, no arena node needed
             ol_counter: *ol_counter,
         });
 
         loop {
             let cur_tag = &stack.last().unwrap().parent_tag;
-            let preserve_ws = matches!(cur_tag.as_str(), "pre" | "textarea" | "listing" | "xmp" | "plaintext");
+            let preserve_ws = matches!(
+                cur_tag.as_str(),
+                "pre" | "textarea" | "listing" | "xmp" | "plaintext"
+            );
 
             match self.tokens.get(self.pos).cloned() {
                 None => break, // EOF
@@ -207,9 +227,13 @@ impl HtmlParser {
                     // content it already had. Closing normally instead nested
                     // the block inside `<b>` and left `3` outside the `<p>`
                     // entirely.
-                    let furthest_block = match_idx.filter(|_| is_formatting_element(&tag))
+                    let furthest_block = match_idx
+                        .filter(|_| is_formatting_element(&tag))
                         .and_then(|idx| {
-                            stack.iter().enumerate().skip(idx + 1)
+                            stack
+                                .iter()
+                                .enumerate()
+                                .skip(idx + 1)
                                 .find(|(_, f)| is_special_element(&f.parent_tag))
                                 .map(|(i, _)| i)
                         });
@@ -298,7 +322,11 @@ impl HtmlParser {
                         // EMPTY paragraph after the div. Every browser has it.
                         self.pos += 1;
                         let mut node = self.new_box("p");
-                        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display("p"));
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut node.style),
+                            "display",
+                            default_display("p"),
+                        );
                         stack.last_mut().unwrap().node.children.push(node);
                     } else {
                         // Stray close tag with no matching open — ignore it.
@@ -329,15 +357,17 @@ impl HtmlParser {
                 Some(Token::Text(t)) => {
                     self.pos += 1;
                     let text_val = if preserve_ws {
-                        if t.starts_with('\n') { t[1..].to_string() } else { t }
+                        if t.starts_with('\n') {
+                            t[1..].to_string()
+                        } else {
+                            t
+                        }
                     } else if t.trim().is_empty() && t.contains('\n') {
                         "\n".to_string()
                     } else {
                         collapse_whitespace(&t)
                     };
-                    let keep = !text_val.trim().is_empty()
-                        || text_val == " "
-                        || text_val == "\n";
+                    let keep = !text_val.trim().is_empty() || text_val == " " || text_val == "\n";
                     if keep {
                         // Content arriving is what makes a pending formatting
                         // element real — see `reconstruct`.
@@ -348,7 +378,11 @@ impl HtmlParser {
                     }
                 }
 
-                Some(Token::OpenTag { tag, attrs, self_closing }) => {
+                Some(Token::OpenTag {
+                    tag,
+                    attrs,
+                    self_closing,
+                }) => {
                     // The BOTTOM frame is the element the CALLER already opened,
                     // so this call cannot pop it — closing it means returning and
                     // letting the caller finish the node and re-read this token at
@@ -372,7 +406,11 @@ impl HtmlParser {
                     // If the host doesn't handle it: noscript content is shown
                     // as fallback HTML, script is discarded.
                     if matches!(tag.as_str(), "script" | "noscript") {
-                        let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
+                        let content = if !self_closing {
+                            self.collect_raw_text_until(&tag)
+                        } else {
+                            String::new()
+                        };
                         // The ELEMENT stays in the DOM with its source as a text
                         // child, whatever the host does with the content.
                         // Dropping it meant `document.scripts` was empty and a
@@ -381,25 +419,39 @@ impl HtmlParser {
                         let mut script_node = self.new_box(&tag);
                         script_node.attributes = attrs.clone();
                         script_node.text = content.clone();
-                        apply_property(std::sync::Arc::make_mut(&mut script_node.style), "display", "none");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut script_node.style),
+                            "display",
+                            "none",
+                        );
                         stack.last_mut().unwrap().node.children.push(script_node);
                         let host_handled = if let Some(ref mut f) = self.on_script {
                             f(&tag, &attrs, &content)
-                        } else { false };
+                        } else {
+                            false
+                        };
                         // Scripting is ENABLED, so `<noscript>` is RAWTEXT: its
                         // content is the text above and is NOT parsed. Parsing
                         // it as fallback markup is the scripting-DISABLED
                         // behaviour, and doing both put the same content in the
                         // tree twice — once as text, once as elements.
                         let parse_noscript_fallback = false;
-                        if parse_noscript_fallback && !host_handled && tag == "noscript" && !content.is_empty() {
+                        if parse_noscript_fallback
+                            && !host_handled
+                            && tag == "noscript"
+                            && !content.is_empty()
+                        {
                             // Parse noscript content as HTML and insert into current frame
                             let inner_tokens = tokenize(&content);
                             let mut inner_parser = HtmlParser::new(inner_tokens);
                             inner_parser.base_url = self.base_url.clone();
                             let mut inner_children = Vec::new();
                             let mut inner_ol = 0i32;
-                            inner_parser.parse_children_into("", &mut inner_children, &mut inner_ol);
+                            inner_parser.parse_children_into(
+                                "",
+                                &mut inner_children,
+                                &mut inner_ol,
+                            );
                             for child in inner_children {
                                 stack.last_mut().unwrap().node.children.push(child);
                             }
@@ -413,7 +465,11 @@ impl HtmlParser {
 
                     // SVG: collect raw markup and rasterize to an <img> node.
                     if tag == "svg" {
-                        let svg_body = if !self_closing { self.collect_raw_text_until("svg") } else { String::new() };
+                        let svg_body = if !self_closing {
+                            self.collect_raw_text_until("svg")
+                        } else {
+                            String::new()
+                        };
                         // Rebuild full SVG markup with attributes
                         let mut svg_tag_str = String::from("<svg");
                         for (k, v) in &attrs {
@@ -434,12 +490,22 @@ impl HtmlParser {
                         let (vb_w, vb_h) = vb.unwrap_or((0, 0));
 
                         // Check for explicit dimensions from HTML attributes or inline style
-                        let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
-                        let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
+                        let explicit_w = attrs
+                            .get("style")
+                            .and_then(|s| style_px(s, "width"))
+                            .or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
+                        let explicit_h = attrs
+                            .get("style")
+                            .and_then(|s| style_px(s, "height"))
+                            .or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
 
                         let mut node = self.new_box("svg");
                         node.attributes = attrs;
-                        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "inline-block");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut node.style),
+                            "display",
+                            "inline-block",
+                        );
                         node.svg_markup = Some(svg_markup);
                         node.svg_viewbox_w = vb_w as f32;
                         node.svg_viewbox_h = vb_h as f32;
@@ -448,10 +514,18 @@ impl HtmlParser {
                         // CSS cascade will override these. If no explicit dimensions,
                         // the layout engine uses svg_viewbox_w/h.
                         if let Some(w) = explicit_w {
-                            apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", w));
+                            apply_property(
+                                std::sync::Arc::make_mut(&mut node.style),
+                                "width",
+                                &format!("{}px", w),
+                            );
                         }
                         if let Some(h) = explicit_h {
-                            apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", h));
+                            apply_property(
+                                std::sync::Arc::make_mut(&mut node.style),
+                                "height",
+                                &format!("{}px", h),
+                            );
                         }
 
                         // Don't rasterize here — deferred to render time at the correct display size.
@@ -481,7 +555,9 @@ impl HtmlParser {
 
                     // Skip non-visual tags entirely
                     if is_non_visual(&tag) {
-                        if !self_closing { self.skip_until_close(&tag); }
+                        if !self_closing {
+                            self.skip_until_close(&tag);
+                        }
                         continue;
                     }
                     // Style block: the CSS goes to the cascade AND the element
@@ -505,13 +581,20 @@ impl HtmlParser {
                         // and a serialize/reparse round-trip rewrote the page's
                         // own stylesheet.
                         let css = self.collect_raw_text_until("style");
-                        let cur_parent = stack.last().map(|f| f.parent_tag.as_str()).unwrap_or(parent_tag);
+                        let cur_parent = stack
+                            .last()
+                            .map(|f| f.parent_tag.as_str())
+                            .unwrap_or(parent_tag);
                         if cur_parent != "template" {
                             self.stylesheet.parse_and_add(&normalize_css_text(&css));
                         }
                         let mut style_node = self.new_box("style");
                         style_node.text = css;
-                        apply_property(std::sync::Arc::make_mut(&mut style_node.style), "display", "none");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut style_node.style),
+                            "display",
+                            "none",
+                        );
                         stack.last_mut().unwrap().node.children.push(style_node);
                         continue;
                     }
@@ -530,7 +613,11 @@ impl HtmlParser {
                     // Build the node
                     let mut node = self.new_box(&tag);
                     node.attributes = attrs;
-                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display(&tag));
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut node.style),
+                        "display",
+                        default_display(&tag),
+                    );
                     apply_presentational_attrs(&mut node);
 
                     // <img> handling
@@ -543,9 +630,12 @@ impl HtmlParser {
                         }
                         if let Some(src) = node.attributes.get("src").cloned() {
                             let resolved = resolve_url(&src, &self.base_url);
-                            let is_remote = resolved.starts_with("http://") || resolved.starts_with("https://");
+                            let is_remote =
+                                resolved.starts_with("http://") || resolved.starts_with("https://");
                             if !is_remote {
-                                if let Some((data, w, h)) = load_image_from_src(&src, &self.base_url) {
+                                if let Some((data, w, h)) =
+                                    load_image_from_src(&src, &self.base_url)
+                                {
                                     set_image_on_node(&mut node, data, w, h);
                                 }
                             }
@@ -556,8 +646,8 @@ impl HtmlParser {
                     if !node.style.background_image_url.is_empty() {
                         let url = node.style.background_image_url.clone();
                         if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
-                            node.bg_image_data   = Some(data);
-                            node.bg_image_width  = w;
+                            node.bg_image_data = Some(data);
+                            node.bg_image_width = w;
                             node.bg_image_height = h;
                         }
                     }
@@ -565,7 +655,9 @@ impl HtmlParser {
                     // List counter (uses the CURRENT frame's counter)
                     {
                         let frame = stack.last_mut().unwrap();
-                        if tag == "ol" { frame.ol_counter = 0; }
+                        if tag == "ol" {
+                            frame.ol_counter = 0;
+                        }
                         if tag == "li" {
                             frame.ol_counter += 1;
                             std::sync::Arc::make_mut(&mut node.style).list_index = frame.ol_counter;
@@ -575,7 +667,8 @@ impl HtmlParser {
                     // Summary: always list-item + Disclosure marker
                     if tag == "summary" {
                         std::sync::Arc::make_mut(&mut node.style).display = Display::ListItem;
-                        std::sync::Arc::make_mut(&mut node.style).list_style_type = ListStyleType::Disclosure;
+                        std::sync::Arc::make_mut(&mut node.style).list_style_type =
+                            ListStyleType::Disclosure;
                     }
 
                     // `<a>` and `<nobr>` close a still-open element of their own
@@ -592,7 +685,10 @@ impl HtmlParser {
                     // handled as `</select>`, so the element lands AFTER the
                     // select rather than inside it. Only those four — a `<div>`
                     // in a select stays where it was written.
-                    if stack.last().map(|f| f.parent_tag == "select").unwrap_or(false)
+                    if stack
+                        .last()
+                        .map(|f| f.parent_tag == "select")
+                        .unwrap_or(false)
                         && closes_select(&tag)
                     {
                         // The `stack.len() == 1` case was handled before the
@@ -635,7 +731,8 @@ impl HtmlParser {
                             if idx > 0 {
                                 while stack.len() > idx {
                                     let frame = stack.pop().unwrap();
-                                    if stack.len() > idx && is_formatting_element(&frame.parent_tag) {
+                                    if stack.len() > idx && is_formatting_element(&frame.parent_tag)
+                                    {
                                         let mut fresh = self.new_box(&frame.parent_tag);
                                         fresh.attributes = frame.node.attributes.clone();
                                         fresh.style = frame.node.style.clone();
@@ -701,7 +798,6 @@ impl HtmlParser {
         }
     }
 
-
     /// Handle a single open tag: create its node, parse its children (iteratively),
     /// apply post-processing, and push the finished node to `children`.
     /// Called from the top-level html/head/body skeleton parser for stray tags.
@@ -722,10 +818,16 @@ impl HtmlParser {
 
         // Script/noscript: give host first chance, else show noscript as HTML.
         if matches!(tag.as_str(), "script" | "noscript") {
-            let content = if !self_closing { self.collect_raw_text_until(&tag) } else { String::new() };
+            let content = if !self_closing {
+                self.collect_raw_text_until(&tag)
+            } else {
+                String::new()
+            };
             let host_handled = if let Some(ref mut f) = self.on_script {
                 f(&tag, &attrs, &content)
-            } else { false };
+            } else {
+                false
+            };
             if !host_handled && tag == "noscript" && !content.is_empty() {
                 let inner_tokens = tokenize(&content);
                 let mut inner_parser = HtmlParser::new(inner_tokens);
@@ -759,11 +861,15 @@ impl HtmlParser {
                 }
                 self.linked_stylesheets.push((href, media.to_string()));
             }
-            if !self_closing { self.skip_until_close(&tag); }
+            if !self_closing {
+                self.skip_until_close(&tag);
+            }
             return;
         }
         if is_non_visual(&tag) {
-            if !self_closing { self.skip_until_close(&tag); }
+            if !self_closing {
+                self.skip_until_close(&tag);
+            }
             return;
         }
         if tag == "style" {
@@ -773,7 +879,11 @@ impl HtmlParser {
             // `parse_children_into`.
             let mut style_node = self.new_box("style");
             style_node.text = css;
-            apply_property(std::sync::Arc::make_mut(&mut style_node.style), "display", "none");
+            apply_property(
+                std::sync::Arc::make_mut(&mut style_node.style),
+                "display",
+                "none",
+            );
             children.push(style_node);
             return;
         }
@@ -787,10 +897,18 @@ impl HtmlParser {
 
         // SVG: collect raw markup and parse viewBox for intrinsic sizing
         if tag == "svg" {
-            let svg_body = if !self_closing { self.collect_raw_text_until("svg") } else { String::new() };
+            let svg_body = if !self_closing {
+                self.collect_raw_text_until("svg")
+            } else {
+                String::new()
+            };
             let mut svg_tag_str = String::from("<svg");
-            for (k, v) in &attrs { svg_tag_str.push_str(&format!(" {}=\"{}\"", k, v)); }
-            if !svg_tag_str.contains("xmlns=") { svg_tag_str.push_str(" xmlns=\"http://www.w3.org/2000/svg\""); }
+            for (k, v) in &attrs {
+                svg_tag_str.push_str(&format!(" {}=\"{}\"", k, v));
+            }
+            if !svg_tag_str.contains("xmlns=") {
+                svg_tag_str.push_str(" xmlns=\"http://www.w3.org/2000/svg\"");
+            }
             if svg_body.contains("xlink:") && !svg_tag_str.contains("xmlns:xlink") {
                 svg_tag_str.push_str(" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
             }
@@ -799,16 +917,38 @@ impl HtmlParser {
             let vb_str = attrs.get("viewBox").or_else(|| attrs.get("viewbox"));
             let vb = parse_viewbox_value(vb_str.map(|s| s.as_str()));
             let (vb_w, vb_h) = vb.unwrap_or((0, 0));
-            let explicit_w = attrs.get("style").and_then(|s| style_px(s, "width")).or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
-            let explicit_h = attrs.get("style").and_then(|s| style_px(s, "height")).or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
+            let explicit_w = attrs
+                .get("style")
+                .and_then(|s| style_px(s, "width"))
+                .or_else(|| attrs.get("width").and_then(|s| parse_px(s)));
+            let explicit_h = attrs
+                .get("style")
+                .and_then(|s| style_px(s, "height"))
+                .or_else(|| attrs.get("height").and_then(|s| parse_px(s)));
             let mut node = self.new_box("svg");
             node.attributes = attrs;
-            apply_property(std::sync::Arc::make_mut(&mut node.style), "display", "inline-block");
+            apply_property(
+                std::sync::Arc::make_mut(&mut node.style),
+                "display",
+                "inline-block",
+            );
             node.svg_markup = Some(svg_markup);
             node.svg_viewbox_w = vb_w as f32;
             node.svg_viewbox_h = vb_h as f32;
-            if let Some(w) = explicit_w { apply_property(std::sync::Arc::make_mut(&mut node.style), "width", &format!("{}px", w)); }
-            if let Some(h) = explicit_h { apply_property(std::sync::Arc::make_mut(&mut node.style), "height", &format!("{}px", h)); }
+            if let Some(w) = explicit_w {
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "width",
+                    &format!("{}px", w),
+                );
+            }
+            if let Some(h) = explicit_h {
+                apply_property(
+                    std::sync::Arc::make_mut(&mut node.style),
+                    "height",
+                    &format!("{}px", h),
+                );
+            }
             apply_presentational_attrs(&mut node);
             children.push(node);
             return;
@@ -816,7 +956,11 @@ impl HtmlParser {
 
         let mut node = self.new_box(&tag);
         node.attributes = attrs;
-        apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display(&tag));
+        apply_property(
+            std::sync::Arc::make_mut(&mut node.style),
+            "display",
+            default_display(&tag),
+        );
         apply_presentational_attrs(&mut node);
 
         if tag == "img" {
@@ -841,13 +985,23 @@ impl HtmlParser {
         if matches!(tag.as_str(), "canvas" | "video" | "audio") {
             let default_w: u32 = if tag == "canvas" { 300 } else { 300 };
             let default_h: u32 = if tag == "canvas" { 150 } else { 150 };
-            let w = node.attributes.get("width").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_w);
-            let h = node.attributes.get("height").and_then(|s| s.parse::<u32>().ok()).unwrap_or(default_h);
+            let w = node
+                .attributes
+                .get("width")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(default_w);
+            let h = node
+                .attributes
+                .get("height")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(default_h);
             if node.style.width.is_auto() {
-                std::sync::Arc::make_mut(&mut node.style).width = crate::types::CssLength::Px(w as f32);
+                std::sync::Arc::make_mut(&mut node.style).width =
+                    crate::types::CssLength::Px(w as f32);
             }
             if node.style.height.is_auto() {
-                std::sync::Arc::make_mut(&mut node.style).height = crate::types::CssLength::Px(h as f32);
+                std::sync::Arc::make_mut(&mut node.style).height =
+                    crate::types::CssLength::Px(h as f32);
             }
             if tag == "canvas" {
                 node.image_width = w;
@@ -859,12 +1013,14 @@ impl HtmlParser {
         if !node.style.background_image_url.is_empty() {
             let url = node.style.background_image_url.clone();
             if let Some((data, w, h)) = load_image_from_src(&url, &self.base_url) {
-                node.bg_image_data   = Some(data);
-                node.bg_image_width  = w;
+                node.bg_image_data = Some(data);
+                node.bg_image_width = w;
                 node.bg_image_height = h;
             }
         }
-        if tag == "ol" { *ol_counter = 0; }
+        if tag == "ol" {
+            *ol_counter = 0;
+        }
         if tag == "li" {
             *ol_counter += 1;
             std::sync::Arc::make_mut(&mut node.style).list_index = *ol_counter;
@@ -896,7 +1052,9 @@ impl HtmlParser {
                     out.push_str(&t);
                     self.pos += 1;
                 }
-                _ => { self.pos += 1; }
+                _ => {
+                    self.pos += 1;
+                }
             }
         }
         out
@@ -908,25 +1066,26 @@ impl HtmlParser {
             match self.tokens.get(self.pos).cloned() {
                 None => break,
                 Some(Token::OpenTag { tag, .. }) => {
-                    if tag == end_tag { depth += 1; }
+                    if tag == end_tag {
+                        depth += 1;
+                    }
                     self.pos += 1;
                 }
                 Some(Token::CloseTag { tag }) => {
                     if tag == end_tag {
                         depth -= 1;
                         self.pos += 1;
-                        if depth == 0 { break; }
+                        if depth == 0 {
+                            break;
+                        }
                     } else {
                         self.pos += 1;
                     }
                 }
-                _ => { self.pos += 1; }
+                _ => {
+                    self.pos += 1;
+                }
             }
         }
     }
 }
-
-
-
-
-

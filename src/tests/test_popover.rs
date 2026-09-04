@@ -22,7 +22,9 @@ fn page() -> Document {
     let mut renderer = crate::Renderer::new();
     renderer.load_html(PAGE, 400.0)
 }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 // ─── the popover attribute ──────────────────────────────────────────────────
 
@@ -31,12 +33,24 @@ fn the_invalid_value_default_is_manual_and_a_bare_attribute_is_auto() {
     // ⛔ `bogus` is `manual`, not `auto` — and those are opposite ends of the
     // light-dismiss rule, so collapsing them is not cosmetic.
     let d = page();
-    assert_eq!(d.popover(el(&d, "pa")).as_deref(), Some("auto"), "a bare attribute");
+    assert_eq!(
+        d.popover(el(&d, "pa")).as_deref(),
+        Some("auto"),
+        "a bare attribute"
+    );
     assert_eq!(d.popover(el(&d, "pa2")).as_deref(), Some("auto"));
     assert_eq!(d.popover(el(&d, "ph")).as_deref(), Some("hint"));
     assert_eq!(d.popover(el(&d, "pm")).as_deref(), Some("manual"));
-    assert_eq!(d.popover(el(&d, "pb")).as_deref(), Some("manual"), "invalid → manual");
-    assert_eq!(d.popover(el(&d, "plain")), None, "absent is null, not a keyword");
+    assert_eq!(
+        d.popover(el(&d, "pb")).as_deref(),
+        Some("manual"),
+        "invalid → manual"
+    );
+    assert_eq!(
+        d.popover(el(&d, "plain")),
+        None,
+        "absent is null, not a keyword"
+    );
 }
 
 #[test]
@@ -98,7 +112,10 @@ fn toggle_returns_whether_it_ends_up_showing() {
     assert!(d.toggle_popover(m, None));
     assert!(!d.toggle_popover(m, None));
     assert!(d.toggle_popover(m, Some(true)));
-    assert!(d.toggle_popover(m, Some(true)), "forcing twice keeps it showing");
+    assert!(
+        d.toggle_popover(m, Some(true)),
+        "forcing twice keeps it showing"
+    );
     assert!(!d.toggle_popover(m, Some(false)));
 }
 
@@ -165,15 +182,22 @@ fn before_toggle_is_cancelable_and_cancelling_it_stops_the_show() {
     d.add_event_listener(
         m,
         "beforetoggle",
-        Box::new(move |ev: &mut crate::dom::events::DomEvent, _: &mut Document| {
-            rec.lock().unwrap().push((ev.old_state.clone(), ev.new_state.clone()));
-            ev.prevent_default();
-        }),
+        Box::new(
+            move |ev: &mut crate::dom::events::DomEvent, _: &mut Document| {
+                rec.lock()
+                    .unwrap()
+                    .push((ev.old_state.clone(), ev.new_state.clone()));
+                ev.prevent_default();
+            },
+        ),
         Default::default(),
     );
     assert!(!d.show_popover(m), "the listener cancelled it");
     assert!(!d.popover_open(m));
-    assert_eq!(*seen.lock().unwrap(), [("closed".to_string(), "open".to_string())]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [("closed".to_string(), "open".to_string())]
+    );
 }
 
 #[test]
@@ -186,9 +210,13 @@ fn before_toggle_reports_both_states_when_it_is_not_cancelled() {
     d.add_event_listener(
         m,
         "beforetoggle",
-        Box::new(move |ev: &mut crate::dom::events::DomEvent, _: &mut Document| {
-            rec.lock().unwrap().push((ev.old_state.clone(), ev.new_state.clone()));
-        }),
+        Box::new(
+            move |ev: &mut crate::dom::events::DomEvent, _: &mut Document| {
+                rec.lock()
+                    .unwrap()
+                    .push((ev.old_state.clone(), ev.new_state.clone()));
+            },
+        ),
         Default::default(),
     );
     d.show_popover(m);
@@ -217,8 +245,11 @@ fn popover_open_now_matches_and_drives_the_ua_display_rule() {
         Some(crate::types::Display::None),
         "`[popover]:not(:popover-open)` hides it"
     );
-    assert_eq!(d.get_computed_style(m).map(|s| s.position), Some(Position::Fixed),
-        "and `[popover]` positions it");
+    assert_eq!(
+        d.get_computed_style(m).map(|s| s.position),
+        Some(Position::Fixed),
+        "and `[popover]` positions it"
+    );
 
     d.show_popover(m);
     d.recascade();
@@ -236,17 +267,33 @@ fn modal_matches_show_modal_and_not_show() {
     let plain = el(&d, "dlg2");
     d.show_dialog(modal, true);
     d.show_dialog(plain, false);
-    assert!(d.dialog_open(modal) && d.dialog_open(plain), "both are open");
-    assert_eq!(d.top_layer_nodes(), &[modal], "only one is in the top layer");
+    assert!(
+        d.dialog_open(modal) && d.dialog_open(plain),
+        "both are open"
+    );
+    assert_eq!(
+        d.top_layer_nodes(),
+        &[modal],
+        "only one is in the top layer"
+    );
     d.recascade();
-    assert_eq!(d.get_computed_style(modal).map(|s| s.position), Some(Position::Fixed));
-    assert_ne!(d.get_computed_style(plain).map(|s| s.position), Some(Position::Fixed));
+    assert_eq!(
+        d.get_computed_style(modal).map(|s| s.position),
+        Some(Position::Fixed)
+    );
+    assert_ne!(
+        d.get_computed_style(plain).map(|s| s.position),
+        Some(Position::Fixed)
+    );
 
     d.close_dialog(modal);
     d.recascade();
     assert!(d.top_layer_nodes().is_empty());
-    assert_ne!(d.get_computed_style(modal).map(|s| s.position), Some(Position::Fixed),
-        "closing drops the rule with the membership");
+    assert_ne!(
+        d.get_computed_style(modal).map(|s| s.position),
+        Some(Position::Fixed),
+        "closing drops the rule with the membership"
+    );
 }
 
 // ─── the two halves of the state must agree ─────────────────────────────────
@@ -283,7 +330,11 @@ fn the_ordered_list_and_the_node_flag_never_drift() {
     check(&d, "after showPopover(manual)");
     d.show_popover(a);
     check(&d, "after showPopover(auto)");
-    assert_eq!(d.top_layer_nodes(), &[dlg, m, a], "bottom-first, in entry order");
+    assert_eq!(
+        d.top_layer_nodes(),
+        &[dlg, m, a],
+        "bottom-first, in entry order"
+    );
     d.close_dialog(dlg);
     check(&d, "after close");
     d.hide_popover(a);
@@ -339,8 +390,11 @@ fn the_two_kinds_do_not_answer_each_others_pseudo_class() {
         Some(crate::types::Display::None),
         "a modal in the layer must not keep `:popover-open` true"
     );
-    assert_eq!(d.get_computed_style(modal).map(|s| s.position), Some(Position::Fixed),
-        "and the modal is still modal");
+    assert_eq!(
+        d.get_computed_style(modal).map(|s| s.position),
+        Some(Position::Fixed),
+        "and the modal is still modal"
+    );
 }
 
 #[test]
@@ -379,12 +433,28 @@ fn the_pseudo_classes_are_keyed_on_the_kind_not_on_membership() {
     d.recascade();
 
     let colour = |d: &Document, id: u32| d.get_computed_style(id).map(|s| s.color);
-    let modal_colour = crate::types::Color { r: 1, g: 2, b: 3, a: 255 };
-    let popover_colour = crate::types::Color { r: 4, g: 5, b: 6, a: 255 };
-    assert_ne!(colour(&d, pop), Some(modal_colour),
-        "a showing POPOVER is in the top layer and is not `:modal`");
-    assert_ne!(colour(&d, dlg), Some(popover_colour),
-        "a modal DIALOG is in the top layer and is not `:popover-open`");
+    let modal_colour = crate::types::Color {
+        r: 1,
+        g: 2,
+        b: 3,
+        a: 255,
+    };
+    let popover_colour = crate::types::Color {
+        r: 4,
+        g: 5,
+        b: 6,
+        a: 255,
+    };
+    assert_ne!(
+        colour(&d, pop),
+        Some(modal_colour),
+        "a showing POPOVER is in the top layer and is not `:modal`"
+    );
+    assert_ne!(
+        colour(&d, dlg),
+        Some(popover_colour),
+        "a modal DIALOG is in the top layer and is not `:popover-open`"
+    );
 
     // And the same selectors DO match the right element, so the rules are not
     // merely inert — the check above would pass against a broken selector.
@@ -397,6 +467,14 @@ fn the_pseudo_classes_are_keyed_on_the_kind_not_on_membership() {
     d2.show_dialog(dlg2, true);
     assert!(d2.show_popover(pop2));
     d2.recascade();
-    assert_eq!(colour(&d2, pop2), Some(popover_colour), "`:popover-open` matches the popover");
-    assert_eq!(colour(&d2, dlg2), Some(modal_colour), "`:modal` matches the dialog");
+    assert_eq!(
+        colour(&d2, pop2),
+        Some(popover_colour),
+        "`:popover-open` matches the popover"
+    );
+    assert_eq!(
+        colour(&d2, dlg2),
+        Some(modal_colour),
+        "`:modal` matches the dialog"
+    );
 }

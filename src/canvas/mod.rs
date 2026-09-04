@@ -64,7 +64,6 @@ pub use effects::{apply_filter_list, apply_filter_op, blur_pixmap, shadow_layer}
 
 pub use recording::{DrawCmd, RecordingCanvas};
 pub use surface::CanvasSurfaces;
-pub use tinyskia::{CanvasState, TinySkiaCanvas};
 /// The drawing state HTML §4.12.5.1.2 defines — every attribute a page can set
 /// and read back, in one place.
 ///
@@ -72,6 +71,7 @@ pub use tinyskia::{CanvasState, TinySkiaCanvas};
 /// the attribute getters below be written once as defaults instead of twice as
 /// overrides that could disagree.
 pub use tinyskia::PaintState as DrawingState;
+pub use tinyskia::{CanvasState, TinySkiaCanvas};
 
 /// Parse a CSS `<color>` the way this engine parses one.
 ///
@@ -411,7 +411,10 @@ pub trait Canvas {
             return;
         }
         let centre_distance = radius / sin_half;
-        let (cx, cy) = (x1 + bx / blen * centre_distance, y1 + by / blen * centre_distance);
+        let (cx, cy) = (
+            x1 + bx / blen * centre_distance,
+            y1 + by / blen * centre_distance,
+        );
         let start = (t1y - cy).atan2(t1x - cx);
         let end = (t2y - cy).atan2(t2x - cx);
         self.line_to(t1x, t1y);
@@ -455,15 +458,10 @@ pub trait Canvas {
         let [mut tl, mut tr, mut br, mut bl] = radii.map(|r| r.max(0.0));
         // Each edge can hold the two radii that meet on it. The tightest of the
         // four ratios is the factor every radius shrinks by.
-        let scale = [
-            w / (tl + tr),
-            w / (bl + br),
-            h / (tl + bl),
-            h / (tr + br),
-        ]
-        .into_iter()
-        .filter(|s| s.is_finite())
-        .fold(1.0f32, f32::min);
+        let scale = [w / (tl + tr), w / (bl + br), h / (tl + bl), h / (tr + br)]
+            .into_iter()
+            .filter(|s| s.is_finite())
+            .fold(1.0f32, f32::min);
         if scale < 1.0 {
             tl *= scale;
             tr *= scale;
@@ -1242,5 +1240,4 @@ pub trait Canvas {
     fn lang(&self) -> String {
         self.drawing_state().lang.clone()
     }
-
 }

@@ -46,10 +46,10 @@ const VIEWPORT_H: f32 = 600.0;
 /// One element's expectations, as the harness would read them.
 struct Expect {
     id: u32,
-    width:  Option<f32>,
+    width: Option<f32>,
     height: Option<f32>,
-    off_x:  Option<f32>,
-    off_y:  Option<f32>,
+    off_x: Option<f32>,
+    off_y: Option<f32>,
 }
 
 fn num(doc: &crate::types::Document, id: u32, attr: &str) -> Option<f32> {
@@ -58,26 +58,41 @@ fn num(doc: &crate::types::Document, id: u32, attr: &str) -> Option<f32> {
 
 /// Run one test file. Returns (checks, failures).
 fn run_one(path: &std::path::Path) -> (usize, Vec<String>) {
-    let Ok(raw) = std::fs::read_to_string(path) else { return (0, Vec::new()) };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return (0, Vec::new());
+    };
     let html = resolve_wpt_roots(&raw, &corpus_root());
-    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
-    let base = format!("file://{}", path.parent().unwrap_or(std::path::Path::new("")).display());
+    let base = format!(
+        "file://{}",
+        path.parent().unwrap_or(std::path::Path::new("")).display()
+    );
     let mut r = crate::Renderer::new();
     let mut doc = r.load_html_with_base(&html, &base, VIEWPORT_W, VIEWPORT_H);
 
     // Every element carrying an expectation, in document order.
     let mut wanted: Vec<Expect> = Vec::new();
-    for attr in ["[data-expected-width]", "[data-expected-height]",
-                 "[data-offset-x]", "[data-offset-y]"] {
+    for attr in [
+        "[data-expected-width]",
+        "[data-expected-height]",
+        "[data-offset-x]",
+        "[data-offset-y]",
+    ] {
         for id in crate::dom::query_selector_all_ids(&doc.root, attr) {
-            if wanted.iter().any(|e| e.id == id) { continue; }
+            if wanted.iter().any(|e| e.id == id) {
+                continue;
+            }
             wanted.push(Expect {
                 id,
-                width:  num(&doc, id, "data-expected-width"),
+                width: num(&doc, id, "data-expected-width"),
                 height: num(&doc, id, "data-expected-height"),
-                off_x:  num(&doc, id, "data-offset-x"),
-                off_y:  num(&doc, id, "data-offset-y"),
+                off_x: num(&doc, id, "data-offset-x"),
+                off_y: num(&doc, id, "data-offset-y"),
             });
         }
     }
@@ -95,7 +110,7 @@ fn run_one(path: &std::path::Path) -> (usize, Vec<String>) {
                 out.push(format!("{name}: {what} {} != {want}", got.round()));
             }
         };
-        check("width",  doc.offset_width(e.id),  e.width,  &mut fails);
+        check("width", doc.offset_width(e.id), e.width, &mut fails);
         check("height", doc.offset_height(e.id), e.height, &mut fails);
         let (ox, oy) = (doc.offset_left(e.id), doc.offset_top(e.id));
         check("offset-x", ox, e.off_x, &mut fails);
@@ -130,16 +145,26 @@ fn wpt_css_flexbox_check_layout() {
     let mut failing: Vec<(String, usize, String)> = Vec::new();
 
     for path in &files {
-        let Ok(src) = std::fs::read_to_string(path) else { continue };
-        if !src.contains("data-expected-") && !src.contains("data-offset-") { continue }
+        let Ok(src) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if !src.contains("data-expected-") && !src.contains("data-offset-") {
+            continue;
+        }
         let (checks, fails) = run_one(path);
-        if checks == 0 { continue }
+        if checks == 0 {
+            continue;
+        }
         tests += 1;
         total_checks += checks;
         match fails.first() {
             None => passed += 1,
             Some(first) => {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 failing.push((name, fails.len(), first.clone()));
             }
         }
@@ -147,20 +172,29 @@ fn wpt_css_flexbox_check_layout() {
 
     let failed_checks: usize = failing.iter().map(|(_, n, _)| n).sum();
     let ok_checks = total_checks - failed_checks;
-    eprintln!("\nWPT css-flexbox (check-layout): {passed}/{tests} tests, \
+    eprintln!(
+        "\nWPT css-flexbox (check-layout): {passed}/{tests} tests, \
                {ok_checks}/{total_checks} assertions ({:.1}%)",
-              100.0 * ok_checks as f64 / total_checks.max(1) as f64);
+        100.0 * ok_checks as f64 / total_checks.max(1) as f64
+    );
     if !failing.is_empty() {
         // Fewest failures first: the tests closest to passing are the ones
         // whose cause is easiest to isolate.
         failing.sort_by_key(|(_, n, _)| *n);
         eprintln!("failing ({}), nearest first:", failing.len());
         for (name, n, first) in &failing {
-            eprintln!("  {n:>4} × {name}  — {}", first.split_once(": ").map(|(_, r)| r).unwrap_or(first));
+            eprintln!(
+                "  {n:>4} × {name}  — {}",
+                first.split_once(": ").map(|(_, r)| r).unwrap_or(first)
+            );
         }
     }
 
-    assert!(tests > 0, "corpus present but no check-layout tests found in {}", dir.display());
+    assert!(
+        tests > 0,
+        "corpus present but no check-layout tests found in {}",
+        dir.display()
+    );
 
     // A ratchet, not a target. It only ever moves up: fixing a bug raises the
     // floor, and a regression that drops the count fails here with the tests
@@ -170,8 +204,12 @@ fn wpt_css_flexbox_check_layout() {
     // moves hundreds of assertions without flipping a single test.
     const TEST_FLOOR: usize = 11;
     const CHECK_FLOOR: usize = 2000;
-    assert!(passed >= TEST_FLOOR,
-            "WPT css-flexbox regressed: {passed}/{tests} tests pass, floor is {TEST_FLOOR}");
-    assert!(ok_checks >= CHECK_FLOOR,
-            "WPT css-flexbox regressed: {ok_checks}/{total_checks} assertions, floor is {CHECK_FLOOR}");
+    assert!(
+        passed >= TEST_FLOOR,
+        "WPT css-flexbox regressed: {passed}/{tests} tests pass, floor is {TEST_FLOOR}"
+    );
+    assert!(
+        ok_checks >= CHECK_FLOOR,
+        "WPT css-flexbox regressed: {ok_checks}/{total_checks} assertions, floor is {CHECK_FLOOR}"
+    );
 }

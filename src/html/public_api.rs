@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -65,7 +65,12 @@ where
     F: FnMut(&str, &crate::dom::attrs::AttrMap) + 'static,
     S: FnMut(&str, &crate::dom::attrs::AttrMap, &str) -> bool + 'static,
 {
-    parse_html_full(html, base_url, Some(Box::new(hook)), Some(Box::new(on_script)))
+    parse_html_full(
+        html,
+        base_url,
+        Some(Box::new(hook)),
+        Some(Box::new(on_script)),
+    )
 }
 
 fn parse_html_full(
@@ -83,10 +88,18 @@ fn parse_html_full(
 
     // Always create html > body structure
     let mut html_box = parser.new_box("html");
-    apply_property(std::sync::Arc::make_mut(&mut html_box.style), "display", "block");
+    apply_property(
+        std::sync::Arc::make_mut(&mut html_box.style),
+        "display",
+        "block",
+    );
 
     let mut body_box = parser.new_box("body");
-    apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
+    apply_property(
+        std::sync::Arc::make_mut(&mut body_box.style),
+        "display",
+        "block",
+    );
 
     let mut body_children: Vec<WebCore> = Vec::new();
     let mut ol_counter = 0i32;
@@ -99,7 +112,9 @@ fn parse_html_full(
                 // sits before `<html>`, so the element-level arm never sees
                 // it. Only the FIRST counts; a second anywhere is a parse
                 // error the spec ignores.
-                if parser.doctype.is_none() { parser.doctype = Some(dt); }
+                if parser.doctype.is_none() {
+                    parser.doctype = Some(dt);
+                }
                 parser.pos += 1;
             }
             Some(Token::Comment(data)) => {
@@ -135,24 +150,38 @@ fn parse_html_full(
             }
             Some(Token::CloseTag { tag }) => {
                 parser.pos += 1;
-                if tag == "html" || tag == "body" { break; }
+                if tag == "html" || tag == "body" {
+                    break;
+                }
                 // `</p>` with nothing open inserts an empty paragraph — the
                 // same rule as inside an element, and documents hit it at top
                 // level too (`<p>a</p></p>` ends with an empty `<p>`).
                 if tag == "p" {
                     parser.head_closed = true;
                     let mut node = parser.new_box("p");
-                    apply_property(std::sync::Arc::make_mut(&mut node.style), "display", default_display("p"));
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut node.style),
+                        "display",
+                        default_display("p"),
+                    );
                     body_children.push(node);
                 }
             }
-            Some(Token::OpenTag { tag, attrs, self_closing }) => {
+            Some(Token::OpenTag {
+                tag,
+                attrs,
+                self_closing,
+            }) => {
                 parser.pos += 1;
                 match tag.as_str() {
                     "html" => {
                         // Apply attrs to html box
                         html_box.attributes = attrs;
-                        apply_property(std::sync::Arc::make_mut(&mut html_box.style), "display", "block");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut html_box.style),
+                            "display",
+                            "block",
+                        );
                         apply_presentational_attrs(&mut html_box);
                         // Continue parsing html children
                         if !self_closing {
@@ -180,7 +209,11 @@ fn parse_html_full(
                         parser.head_closed = true;
                         // Apply attrs to body box
                         body_box.attributes = attrs;
-                        apply_property(std::sync::Arc::make_mut(&mut body_box.style), "display", "block");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut body_box.style),
+                            "display",
+                            "block",
+                        );
                         apply_presentational_attrs(&mut body_box);
                         // Parse body children
                         if !self_closing {
@@ -201,7 +234,13 @@ fn parse_html_full(
                         parser.head_closed = true;
                         let had_pending = !parser.pending_format.is_empty();
                         let from = body_children.len();
-                        parser.handle_tag(tag, attrs, self_closing, &mut body_children, &mut ol_counter);
+                        parser.handle_tag(
+                            tag,
+                            attrs,
+                            self_closing,
+                            &mut body_children,
+                            &mut ol_counter,
+                        );
                         parser.reconstruct_into(&mut body_children, from, had_pending);
                     }
                 }
@@ -224,7 +263,11 @@ fn parse_html_full(
     // cascade — so this adds the container the spec requires without changing
     // what is rendered.
     let mut head_box = parser.new_box("head");
-    apply_property(std::sync::Arc::make_mut(&mut head_box.style), "display", default_display("head"));
+    apply_property(
+        std::sync::Arc::make_mut(&mut head_box.style),
+        "display",
+        default_display("head"),
+    );
     head_box.children = std::mem::take(&mut parser.head_children);
 
     // §13.2.6.4.19 "in frameset" — a `<frameset>` REPLACES the body: the
@@ -282,10 +325,12 @@ fn parse_html_full(
     // everything else, and `document.childNodes` can put it before `<html>`.
     let quirks = crate::html::doctype::quirks_mode(parser.doctype.as_ref());
     let doctype_id = match &parser.doctype {
-        Some(dt) => parser
-            .arena
-            .create_doctype(&dt.name, &dt.public_id, &dt.system_id)
-            .0,
+        Some(dt) => {
+            parser
+                .arena
+                .create_doctype(&dt.name, &dt.public_id, &dt.system_id)
+                .0
+        }
         None => 0,
     };
 
@@ -316,43 +361,50 @@ fn parse_html_full(
         scroll_x: 0.0,
         scroll_y: 0.0,
         scrollbar_drag: None,
-        hovered_box:       0,
+        hovered_box: 0,
         hover_suppress_count: 0,
-        active_box:        0,
-        focused_box:       0,
-        mousedown_target:  0,
+        active_box: 0,
+        focused_box: 0,
+        mousedown_target: 0,
         last_click_target: 0,
-        last_click_time:   None,
-        drag_source:       0,
+        last_click_time: None,
+        drag_source: 0,
         drag_start_doc_pt: (0.0, 0.0),
-        drag_active:       false,
-        visited_urls:      std::collections::HashSet::new(),
-        custom_validity:   std::collections::HashMap::new(),
-        viewport_w:        0.0,
-        viewport_h:        0.0,
-        keyboard_focus:    false,
-        caret_blink_epoch: std::time::Instant::now(), open_select: 0,
-        open_picker: 0, dropdown_hover_idx: -1,
+        drag_active: false,
+        visited_urls: std::collections::HashSet::new(),
+        custom_validity: std::collections::HashMap::new(),
+        viewport_w: 0.0,
+        viewport_h: 0.0,
+        keyboard_focus: false,
+        caret_blink_epoch: std::time::Instant::now(),
+        open_select: 0,
+        open_picker: 0,
+        dropdown_hover_idx: -1,
         // Transient interaction state, like the two popups beside it: a freshly
         // parsed document is holding nothing.
-        dragging_range: 0, range_drag_origin: String::new(),
-        active_animations:     Vec::new(),
-        transition_states:     std::collections::HashMap::new(),
-        prev_styles:           std::collections::HashMap::new(),
-        animation_overrides:   std::collections::HashMap::new(),
+        dragging_range: 0,
+        range_drag_origin: String::new(),
+        active_animations: Vec::new(),
+        transition_states: std::collections::HashMap::new(),
+        prev_styles: std::collections::HashMap::new(),
+        animation_overrides: std::collections::HashMap::new(),
         needs_animation_frame: false,
-        hover_changed:         false,
-            hover_sensitive_nodes: std::collections::HashSet::new(),
-        style_dirty:           false,
-        prev_hovered_box:      0,
-        cascade_styles:        std::collections::HashMap::new(),
-        pending_announcements:    Vec::new(),
-        live_region_snapshots:    std::collections::HashMap::new(),
+        hover_changed: false,
+        hover_sensitive_nodes: std::collections::HashSet::new(),
+        style_dirty: false,
+        prev_hovered_box: 0,
+        cascade_styles: std::collections::HashMap::new(),
+        pending_announcements: Vec::new(),
+        live_region_snapshots: std::collections::HashMap::new(),
         live_regions_initialized: false,
-        layout_generation:   0,
-        pending_images:      None,
-        images_in_flight:    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        on_form_event: None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None,
+        layout_generation: 0,
+        pending_images: None,
+        images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        on_form_event: None,
+        on_navigate: None,
+        on_title_change: None,
+        on_dom_mutation: None,
+        on_visibility_change: None,
     };
 
     // NOTE: External CSS fetching, cascade, layout, and image loading are
@@ -364,7 +416,9 @@ fn parse_html_full(
     // Remote stylesheets are handled by lib.rs in parallel.
     for (href, media) in &doc.linked_stylesheets.clone() {
         // Skip print-only stylesheets for screen rendering
-        if media.eq_ignore_ascii_case("print") { continue; }
+        if media.eq_ignore_ascii_case("print") {
+            continue;
+        }
         let url = resolve_url(href, base_url);
         if !url.starts_with("http://") && !url.starts_with("https://") && !url.is_empty() {
             if let Ok(css_text) = std::fs::read_to_string(&url) {

@@ -13,10 +13,10 @@ use crate::Renderer;
 
 /// One document and every id'd element's border box, as `(id, x, y, w, h)`.
 struct Case {
-    name:   &'static str,
+    name: &'static str,
     /// The spec sections the case covers, for the reader who has to fix it.
-    spec:   &'static str,
-    html:   &'static str,
+    spec: &'static str,
+    html: &'static str,
     expect: &'static [(&'static str, f32, f32, f32, f32)],
 }
 
@@ -737,39 +737,65 @@ fn flex_compliance_corpus_matches_a_browser() {
                 continue;
             };
             checked += 1;
-            if (b.x - ex).abs() > TOL || (b.y - ey).abs() > TOL
-                || (b.w - ew).abs() > TOL || (b.h - eh).abs() > TOL
+            if (b.x - ex).abs() > TOL
+                || (b.y - ey).abs() > TOL
+                || (b.w - ew).abs() > TOL
+                || (b.h - eh).abs() > TOL
             {
                 failures.push(format!(
                     "{} [{}]: #{} is {}x{} at {},{} — a browser gives {}x{} at {},{}",
-                    case.name, case.spec, id,
-                    b.w.round(), b.h.round(), b.x.round(), b.y.round(),
-                    ew, eh, ex, ey));
+                    case.name,
+                    case.spec,
+                    id,
+                    b.w.round(),
+                    b.h.round(),
+                    b.x.round(),
+                    b.y.round(),
+                    ew,
+                    eh,
+                    ex,
+                    ey
+                ));
             }
         }
     }
 
-    assert!(checked > 300, "the corpus should cover 300+ boxes, checked {checked}");
-    assert!(failures.is_empty(),
-            "{} of {} boxes disagree with a browser:\n  {}",
-            failures.len(), checked, failures.join("\n  "));
+    assert!(
+        checked > 300,
+        "the corpus should cover 300+ boxes, checked {checked}"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {} boxes disagree with a browser:\n  {}",
+        failures.len(),
+        checked,
+        failures.join("\n  ")
+    );
 }
 
 // TEMPORARY DIAGNOSTIC — remove before finishing.
 #[test]
 fn zz_probe_one_wpt() {
     let name = std::env::var("WPTONE").unwrap_or_default();
-    if name.is_empty() { return; }
+    if name.is_empty() {
+        return;
+    }
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/wpt");
     let path = root.join("css-flexbox").join(&name);
     let raw = std::fs::read_to_string(&path).unwrap();
     let base = format!("file://{}", root.display());
-    let html = raw.replace("href=\"/", &format!("href=\"{base}/"))
-                  .replace("src=\"/", &format!("src=\"{base}/"));
+    let html = raw
+        .replace("href=\"/", &format!("href=\"{base}/"))
+        .replace("src=\"/", &format!("src=\"{base}/"));
     let pbase = format!("file://{}", path.parent().unwrap().display());
     let mut r = crate::Renderer::new();
     let mut doc = r.load_html_with_base(&html, &pbase, 800.0, 600.0);
-    for attr in ["data-expected-width", "data-expected-height", "data-offset-x", "data-offset-y"] {
+    for attr in [
+        "data-expected-width",
+        "data-expected-height",
+        "data-offset-x",
+        "data-offset-y",
+    ] {
         for id in crate::dom::query_selector_all_ids(&doc.root, &format!("[{attr}]")) {
             let want: f32 = doc.get_attribute(id, attr).unwrap().trim().parse().unwrap();
             let got = match attr {
@@ -778,7 +804,11 @@ fn zz_probe_one_wpt() {
                 "data-offset-x" => doc.offset_left(id),
                 _ => doc.offset_top(id),
             };
-            let mark = if (got - want).abs() > 1.0 { "FAIL" } else { "ok  " };
+            let mark = if (got - want).abs() > 1.0 {
+                "FAIL"
+            } else {
+                "ok  "
+            };
             eprintln!("{mark} #{id} {attr} got {got} want {want}");
         }
     }

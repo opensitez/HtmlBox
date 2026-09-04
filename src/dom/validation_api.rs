@@ -1,7 +1,7 @@
 //! Constraint validation — HTML §4.10.19.
 
-use crate::types::Document;
 use crate::html::validity::ValidityState;
+use crate::types::Document;
 
 // ─── Constraint validation — HTML §4.10.19 ──────────────────────────────────
 impl Document {
@@ -14,16 +14,26 @@ impl Document {
     /// `<input required readonly value="">` answers `willValidate=false` and
     /// `valid=true` — the `required` is simply not in force.
     pub fn will_validate(&self, id: u32) -> bool {
-        let Some(tag) = self.tag_name(id) else { return false };
+        let Some(tag) = self.tag_name(id) else {
+            return false;
+        };
         // Listed but never candidates.
-        if matches!(tag, "output" | "fieldset" | "object") { return false; }
-        if !matches!(tag, "input" | "select" | "textarea" | "button") { return false; }
+        if matches!(tag, "output" | "fieldset" | "object") {
+            return false;
+        }
+        if !matches!(tag, "input" | "select" | "textarea" | "button") {
+            return false;
+        }
 
-        if self.is_actually_disabled(id) { return false; }
+        if self.is_actually_disabled(id) {
+            return false;
+        }
         // A control inside a `<datalist>` is a suggestion, not an entry.
         let mut cursor = self.parent_element(id);
         while let Some(node) = cursor {
-            if self.tag_name(node) == Some("datalist") { return false; }
+            if self.tag_name(node) == Some("datalist") {
+                return false;
+            }
             cursor = self.parent_element(node);
         }
         match tag {
@@ -44,14 +54,24 @@ impl Document {
     /// `element.validity`.
     pub fn validity(&self, id: u32) -> ValidityState {
         let mut v = ValidityState::default();
-        if !self.will_validate(id) { return v; }
-        let Some(tag) = self.tag_name(id) else { return v };
+        if !self.will_validate(id) {
+            return v;
+        }
+        let Some(tag) = self.tag_name(id) else {
+            return v;
+        };
 
         v.custom_error = self.custom_validity.get(&id).is_some_and(|m| !m.is_empty());
-        if tag == "button" { return v; }
+        if tag == "button" {
+            return v;
+        }
 
         let value = self.value(id);
-        let input_type = if tag == "input" { self.input_type(id) } else { String::new() };
+        let input_type = if tag == "input" {
+            self.input_type(id)
+        } else {
+            String::new()
+        };
 
         // ── valueMissing ──
         if self.has_attribute(id, "required") {
@@ -71,13 +91,17 @@ impl Document {
         // Every constraint below is on the VALUE, and an empty value has
         // nothing to violate — that is why `required` is the only one that
         // fires on an empty field.
-        if value.is_empty() { return v; }
+        if value.is_empty() {
+            return v;
+        }
 
         // ── typeMismatch ──
         v.type_mismatch = match input_type.as_str() {
             "email" => {
                 if self.has_attribute(id, "multiple") {
-                    value.split(',').any(|a| !crate::html::validity::is_valid_email(a.trim()))
+                    value
+                        .split(',')
+                        .any(|a| !crate::html::validity::is_valid_email(a.trim()))
                 } else {
                     !crate::html::validity::is_valid_email(&value)
                 }
@@ -101,8 +125,7 @@ impl Document {
         // ⛔ Both apply only to a value the USER edited. Chrome on
         // `<input maxlength=3 value="abcdef">` answers VALID — the dirty value
         // flag is part of the constraint, not an implementation shortcut.
-        let length_constrained =
-            tag == "textarea" || LENGTH_TYPES.contains(&input_type.as_str());
+        let length_constrained = tag == "textarea" || LENGTH_TYPES.contains(&input_type.as_str());
         if length_constrained && self.value_is_dirty(id) {
             let len = value.encode_utf16().count() as i64;
             if let Some(max) = self.numeric_attribute(id, "maxlength") {
@@ -118,12 +141,18 @@ impl Document {
             match crate::html::forms::parse_floating_point(&value) {
                 None => v.bad_input = true,
                 Some(n) => {
-                    let min = self.get_attribute(id, "min")
+                    let min = self
+                        .get_attribute(id, "min")
                         .and_then(|s| crate::html::forms::parse_floating_point(&s));
-                    let max = self.get_attribute(id, "max")
+                    let max = self
+                        .get_attribute(id, "max")
                         .and_then(|s| crate::html::forms::parse_floating_point(&s));
-                    if let Some(min) = min { v.range_underflow = n < min; }
-                    if let Some(max) = max { v.range_overflow = n > max; }
+                    if let Some(min) = min {
+                        v.range_underflow = n < min;
+                    }
+                    if let Some(max) = max {
+                        v.range_overflow = n > max;
+                    }
 
                     let step = match self.get_attribute(id, "step") {
                         Some(s) if s.trim().eq_ignore_ascii_case("any") => None,
@@ -151,9 +180,13 @@ impl Document {
     /// suitably descriptive message. A custom message wins over every built-in
     /// one, which is what makes `setCustomValidity` useful.
     pub fn validation_message(&self, id: u32) -> String {
-        if !self.will_validate(id) { return String::new(); }
+        if !self.will_validate(id) {
+            return String::new();
+        }
         let v = self.validity(id);
-        if v.valid() { return String::new(); }
+        if v.valid() {
+            return String::new();
+        }
         if v.custom_error {
             return self.custom_validity.get(&id).cloned().unwrap_or_default();
         }
@@ -170,9 +203,15 @@ impl Document {
                 _ => "Please enter a URL.".into(),
             };
         }
-        if v.pattern_mismatch { return "Please match the requested format.".into(); }
-        if v.too_long { return "Please shorten this text.".into(); }
-        if v.too_short { return "Please lengthen this text.".into(); }
+        if v.pattern_mismatch {
+            return "Please match the requested format.".into();
+        }
+        if v.too_long {
+            return "Please shorten this text.".into();
+        }
+        if v.too_short {
+            return "Please lengthen this text.".into();
+        }
         if v.range_underflow {
             let min = self.get_attribute(id, "min").unwrap_or_default();
             return format!("Value must be greater than or equal to {}.", min);
@@ -181,8 +220,12 @@ impl Document {
             let max = self.get_attribute(id, "max").unwrap_or_default();
             return format!("Value must be less than or equal to {}.", max);
         }
-        if v.step_mismatch { return "Please enter a valid value.".into(); }
-        if v.bad_input { return "Please enter a number.".into(); }
+        if v.step_mismatch {
+            return "Please enter a valid value.".into();
+        }
+        if v.bad_input {
+            return "Please enter a number.".into();
+        }
         String::new()
     }
 
@@ -207,12 +250,18 @@ impl Document {
         if self.tag_name(id) == Some("form") {
             let mut all_valid = true;
             for control in self.form_elements(id) {
-                if !self.check_validity(control) { all_valid = false; }
+                if !self.check_validity(control) {
+                    all_valid = false;
+                }
             }
             return all_valid;
         }
-        if !self.will_validate(id) { return true; }
-        if self.validity(id).valid() { return true; }
+        if !self.will_validate(id) {
+            return true;
+        }
+        if self.validity(id).valid() {
+            return true;
+        }
         self.fire_invalid_event(id);
         false
     }
@@ -227,13 +276,15 @@ impl Document {
         let valid = self.check_validity(id);
         if !valid {
             let target = if self.tag_name(id) == Some("form") {
-                self.form_elements(id).into_iter().find(|c| {
-                    self.will_validate(*c) && !self.validity(*c).valid()
-                })
+                self.form_elements(id)
+                    .into_iter()
+                    .find(|c| self.will_validate(*c) && !self.validity(*c).valid())
             } else {
                 Some(id)
             };
-            if let Some(t) = target { self.focus(t); }
+            if let Some(t) = target {
+                self.focus(t);
+            }
         }
         valid
     }
@@ -247,15 +298,21 @@ impl Document {
     /// Disabled, or inside a disabled `<fieldset>` that is not shielding it
     /// through the fieldset's first `<legend>`.
     fn is_actually_disabled(&self, id: u32) -> bool {
-        if self.has_attribute(id, "disabled") { return true; }
+        if self.has_attribute(id, "disabled") {
+            return true;
+        }
         let mut child = id;
         let mut cursor = self.parent_element(id);
         while let Some(node) = cursor {
             if self.tag_name(node) == Some("fieldset") && self.has_attribute(node, "disabled") {
                 // The first `<legend>` of a disabled fieldset is NOT disabled.
-                let first_legend = self.children(node).into_iter()
+                let first_legend = self
+                    .children(node)
+                    .into_iter()
                     .find(|c| self.tag_name(*c) == Some("legend"));
-                if first_legend != Some(child) { return true; }
+                if first_legend != Some(child) {
+                    return true;
+                }
             }
             child = node;
             cursor = self.parent_element(node);
@@ -267,8 +324,18 @@ impl Document {
     fn readonly_applies(&self, id: u32) -> bool {
         matches!(
             self.input_type(id).as_str(),
-            "text" | "search" | "url" | "tel" | "email" | "password" | "date" | "month"
-                | "week" | "time" | "datetime-local" | "number"
+            "text"
+                | "search"
+                | "url"
+                | "tel"
+                | "email"
+                | "password"
+                | "date"
+                | "month"
+                | "week"
+                | "time"
+                | "datetime-local"
+                | "number"
         )
     }
 
@@ -282,16 +349,30 @@ impl Document {
 
     fn radio_group_has_a_checked_member(&self, id: u32) -> bool {
         let name = self.get_attribute(id, "name").unwrap_or_default();
-        if name.is_empty() { return self.checked(id); }
+        if name.is_empty() {
+            return self.checked(id);
+        }
         let owner = self.form_owner(id);
         let mut any = false;
         self.walk_tree(self.root.node_id, &mut |doc, node| {
-            if any { return; }
-            if doc.tag_name(node) != Some("input") { return; }
-            if doc.input_type(node) != "radio" { return; }
-            if doc.get_attribute(node, "name").unwrap_or_default() != name { return; }
-            if doc.form_owner(node) != owner { return; }
-            if doc.checked(node) { any = true; }
+            if any {
+                return;
+            }
+            if doc.tag_name(node) != Some("input") {
+                return;
+            }
+            if doc.input_type(node) != "radio" {
+                return;
+            }
+            if doc.get_attribute(node, "name").unwrap_or_default() != name {
+                return;
+            }
+            if doc.form_owner(node) != owner {
+                return;
+            }
+            if doc.checked(node) {
+                any = true;
+            }
         });
         any
     }
@@ -307,12 +388,10 @@ impl Document {
 }
 
 /// The input types `pattern` applies to (HTML §4.10.5.3.6).
-const PATTERN_TYPES: &[&str] =
-    &["text", "search", "url", "tel", "email", "password"];
+const PATTERN_TYPES: &[&str] = &["text", "search", "url", "tel", "email", "password"];
 
 /// The input types `maxlength`/`minlength` apply to (HTML §4.10.5.3.3).
-const LENGTH_TYPES: &[&str] =
-    &["text", "search", "url", "tel", "email", "password"];
+const LENGTH_TYPES: &[&str] = &["text", "search", "url", "tel", "email", "password"];
 
 /// The input types whose value is a NUMBER, for range and step constraints.
 ///

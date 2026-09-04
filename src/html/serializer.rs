@@ -1,9 +1,9 @@
+use crate::css::{ua_stylesheet, Combinator, CssRule, CssSelector, SelectorPart};
 use crate::types::{
-    AlignItems, BorderStyle, Color, ComputedStyle, CssLength, Display, Document, Float,
-    FlexDirection, FlexWrap, FontStyle, FontWeight, WebCore, JustifyContent, Position,
-    TextAlign, TextTransform, WhiteSpace,
+    AlignItems, BorderStyle, Color, ComputedStyle, CssLength, Display, Document, FlexDirection,
+    FlexWrap, Float, FontStyle, FontWeight, JustifyContent, Position, TextAlign, TextTransform,
+    WebCore, WhiteSpace,
 };
-use crate::css::{CssRule, CssSelector, SelectorPart, Combinator, ua_stylesheet};
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -12,12 +12,12 @@ pub fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
-            '&'  => out.push_str("&amp;"),
-            '<'  => out.push_str("&lt;"),
-            '>'  => out.push_str("&gt;"),
-            '"'  => out.push_str("&quot;"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
             '\u{00A0}' => out.push_str("&nbsp;"),
-            _    => out.push(ch),
+            _ => out.push(ch),
         }
     }
     out
@@ -29,7 +29,9 @@ pub fn escape_html(text: &str) -> String {
 /// escapes those two as well. We follow Blink, because the difference is not
 /// observable — `&lt;` inside an attribute value parses back to `<` either
 /// way — and it keeps the Chrome differential exact.
-pub fn escape_attr(value: &str) -> String { escape_html(value) }
+pub fn escape_attr(value: &str) -> String {
+    escape_html(value)
+}
 
 // ─── Length serialization ─────────────────────────────────────────────────────
 
@@ -37,29 +39,35 @@ pub fn escape_attr(value: &str) -> String { escape_html(value) }
 /// Returns an empty string when the length should not be emitted.
 pub fn serialize_length(len: &CssLength) -> String {
     match len {
-        CssLength::Auto    => String::new(),  // auto == default, skip
+        CssLength::Auto => String::new(), // auto == default, skip
         CssLength::Content => "content".to_string(),
         CssLength::MinContent => "min-content".to_string(),
         CssLength::MaxContent => "max-content".to_string(),
         CssLength::FitContent => "fit-content".to_string(),
-        CssLength::None    => String::new(),
-        CssLength::Zero    => String::new(),
-        CssLength::Px(v)   => format!("{}px", *v as i32),
-        CssLength::Em(v)   => format!("{}em", v),
-        CssLength::Rem(v)  => format!("{}rem", v),
+        CssLength::FitContentArg(a) => format!("fit-content({})", serialize_length(a)),
+        CssLength::None => String::new(),
+        CssLength::Zero => String::new(),
+        CssLength::Px(v) => format!("{}px", *v as i32),
+        CssLength::Em(v) => format!("{}em", v),
+        CssLength::Rem(v) => format!("{}rem", v),
         CssLength::Percent(v) => format!("{}%", v),
-        CssLength::Vw(v)      => format!("{}vw", v),
-        CssLength::Vmin(v)    => format!("{}vmin", v),
-        CssLength::Vmax(v)    => format!("{}vmax", v),
-        CssLength::Vh(v)      => format!("{}vh", v),
+        CssLength::Vw(v) => format!("{}vw", v),
+        CssLength::Vmin(v) => format!("{}vmin", v),
+        CssLength::Vmax(v) => format!("{}vmax", v),
+        CssLength::Vh(v) => format!("{}vh", v),
         CssLength::Calc(c) => {
             let labels = ["%", "px", "em", "rem", "vw", "vh"];
-            let parts: Vec<String> = c.iter().zip(labels.iter())
+            let parts: Vec<String> = c
+                .iter()
+                .zip(labels.iter())
                 .filter(|(v, _)| **v != 0.0)
                 .map(|(v, u)| format!("{}{}", v, u))
                 .collect();
-            if parts.is_empty() { "0px".to_string() }
-            else { format!("calc({})", parts.join(" + ")) }
+            if parts.is_empty() {
+                "0px".to_string()
+            } else {
+                format!("calc({})", parts.join(" + "))
+            }
         }
         CssLength::Min(vals) => {
             let inner: Vec<String> = vals.iter().map(|v| serialize_length(v)).collect();
@@ -71,7 +79,12 @@ pub fn serialize_length(len: &CssLength) -> String {
         }
         CssLength::Clamp(parts) => {
             let (min, val, max) = (&parts[0], &parts[1], &parts[2]);
-            format!("clamp({}, {}, {})", serialize_length(min), serialize_length(val), serialize_length(max))
+            format!(
+                "clamp({}, {}, {})",
+                serialize_length(min),
+                serialize_length(val),
+                serialize_length(max)
+            )
         }
         CssLength::CalcExpr(_) => "calc(...)".to_string(),
     }
@@ -83,21 +96,13 @@ fn color_to_css(c: Color) -> String {
     if c.a == 255 {
         format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
     } else {
-        format!(
-            "rgba({},{},{},{:.3})",
-            c.r, c.g, c.b,
-            c.a as f32 / 255.0
-        )
+        format!("rgba({},{},{},{:.3})", c.r, c.g, c.b, c.a as f32 / 255.0)
     }
 }
 
 // ─── Border side ──────────────────────────────────────────────────────────────
 
-fn serialize_border_side(
-    width: &CssLength,
-    style: BorderStyle,
-    color: Color,
-) -> String {
+fn serialize_border_side(width: &CssLength, style: BorderStyle, color: Color) -> String {
     if style == BorderStyle::None || style == BorderStyle::Hidden {
         return String::new();
     }
@@ -106,15 +111,15 @@ fn serialize_border_side(
         _ => return String::new(),
     };
     let style_str = match style {
-        BorderStyle::Solid  => "solid",
+        BorderStyle::Solid => "solid",
         BorderStyle::Dashed => "dashed",
         BorderStyle::Dotted => "dotted",
         BorderStyle::Double => "double",
-        BorderStyle::Inset  => "inset",
+        BorderStyle::Inset => "inset",
         BorderStyle::Outset => "outset",
         BorderStyle::Groove => "groove",
-        BorderStyle::Ridge  => "ridge",
-        _                   => "solid",
+        BorderStyle::Ridge => "ridge",
+        _ => "solid",
     };
     format!("{}px {} {}", w, style_str, color_to_css(color))
 }
@@ -141,10 +146,18 @@ fn serialize_edge(
     if !t.is_empty() && t == r && r == b && b == l {
         parts.push((name.to_string(), t));
     } else {
-        if !t.is_empty() { parts.push((format!("{}-top",    name), t)); }
-        if !r.is_empty() { parts.push((format!("{}-right",  name), r)); }
-        if !b.is_empty() { parts.push((format!("{}-bottom", name), b)); }
-        if !l.is_empty() { parts.push((format!("{}-left",   name), l)); }
+        if !t.is_empty() {
+            parts.push((format!("{}-top", name), t));
+        }
+        if !r.is_empty() {
+            parts.push((format!("{}-right", name), r));
+        }
+        if !b.is_empty() {
+            parts.push((format!("{}-bottom", name), b));
+        }
+        if !l.is_empty() {
+            parts.push((format!("{}-left", name), l));
+        }
     }
 }
 
@@ -157,11 +170,11 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── Position ──────────────────────────────────────────────────────────────
     let pos_str = match style.position {
-        Position::Static   => "",
+        Position::Static => "",
         Position::Relative => "relative",
         Position::Absolute => "absolute",
-        Position::Fixed    => "fixed",
-        Position::Sticky   => "sticky",
+        Position::Fixed => "fixed",
+        Position::Sticky => "sticky",
     };
     if !pos_str.is_empty() {
         parts.push(("position".into(), pos_str.into()));
@@ -169,9 +182,11 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── Float ─────────────────────────────────────────────────────────────────
     let float_str = match style.float {
-        Float::None  => "",
-        Float::Left  => "left",
+        Float::None => "",
+        Float::Left => "left",
         Float::Right => "right",
+        Float::InlineStart => "inline-start",
+        Float::InlineEnd => "inline-end",
     };
     if !float_str.is_empty() {
         parts.push(("float".into(), float_str.into()));
@@ -180,51 +195,82 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
     // ── Dimensions ────────────────────────────────────────────────────────────
     if !style.width.is_auto() {
         let s = serialize_length(&style.width);
-        if !s.is_empty() { parts.push(("width".into(), s)); }
+        if !s.is_empty() {
+            parts.push(("width".into(), s));
+        }
     }
     if !style.height.is_auto() {
         let s = serialize_length(&style.height);
-        if !s.is_empty() { parts.push(("height".into(), s)); }
+        if !s.is_empty() {
+            parts.push(("height".into(), s));
+        }
     }
 
     // ── Margin ────────────────────────────────────────────────────────────────
     serialize_edge(
         "margin",
-        &style.margin_top, &style.margin_right,
-        &style.margin_bottom, &style.margin_left,
+        &style.margin_top,
+        &style.margin_right,
+        &style.margin_bottom,
+        &style.margin_left,
         &mut parts,
     );
 
     // ── Padding ───────────────────────────────────────────────────────────────
     serialize_edge(
         "padding",
-        &style.padding_top, &style.padding_right,
-        &style.padding_bottom, &style.padding_left,
+        &style.padding_top,
+        &style.padding_right,
+        &style.padding_bottom,
+        &style.padding_left,
         &mut parts,
     );
 
     // ── Border ────────────────────────────────────────────────────────────────
     let bt = serialize_border_side(
-        &style.border_top_width, style.border_top_style, style.border_top_color);
+        &style.border_top_width,
+        style.border_top_style,
+        style.border_top_color,
+    );
     let br = serialize_border_side(
-        &style.border_right_width, style.border_right_style, style.border_right_color);
+        &style.border_right_width,
+        style.border_right_style,
+        style.border_right_color,
+    );
     let bb = serialize_border_side(
-        &style.border_bottom_width, style.border_bottom_style, style.border_bottom_color);
+        &style.border_bottom_width,
+        style.border_bottom_style,
+        style.border_bottom_color,
+    );
     let bl = serialize_border_side(
-        &style.border_left_width, style.border_left_style, style.border_left_color);
+        &style.border_left_width,
+        style.border_left_style,
+        style.border_left_color,
+    );
 
     if !bt.is_empty() && bt == br && br == bb && bb == bl {
         parts.push(("border".into(), bt));
     } else {
-        if !bt.is_empty() { parts.push(("border-top".into(),    bt)); }
-        if !br.is_empty() { parts.push(("border-right".into(),  br)); }
-        if !bb.is_empty() { parts.push(("border-bottom".into(), bb)); }
-        if !bl.is_empty() { parts.push(("border-left".into(),   bl)); }
+        if !bt.is_empty() {
+            parts.push(("border-top".into(), bt));
+        }
+        if !br.is_empty() {
+            parts.push(("border-right".into(), br));
+        }
+        if !bb.is_empty() {
+            parts.push(("border-bottom".into(), bb));
+        }
+        if !bl.is_empty() {
+            parts.push(("border-left".into(), bl));
+        }
     }
 
     // ── Background color ──────────────────────────────────────────────────────
     if style.background_color.a > 0 {
-        parts.push(("background-color".into(), color_to_css(style.background_color)));
+        parts.push((
+            "background-color".into(),
+            color_to_css(style.background_color),
+        ));
     }
 
     // ── Text color ────────────────────────────────────────────────────────────
@@ -233,12 +279,12 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── Text alignment ────────────────────────────────────────────────────────
     let align_str = match style.text_align {
-        TextAlign::Left    => "",
-        TextAlign::Right   => "right",
-        TextAlign::Center  => "center",
+        TextAlign::Left => "",
+        TextAlign::Right => "right",
+        TextAlign::Center => "center",
         TextAlign::Justify => "justify",
-        TextAlign::Start   => "start",
-        TextAlign::End     => "end",
+        TextAlign::Start => "start",
+        TextAlign::End => "end",
     };
     if !align_str.is_empty() {
         parts.push(("text-align".into(), align_str.into()));
@@ -246,7 +292,7 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── Font weight ───────────────────────────────────────────────────────────
     match style.font_weight {
-        FontWeight::Bold        => parts.push(("font-weight".into(), "bold".into())),
+        FontWeight::Bold => parts.push(("font-weight".into(), "bold".into())),
         FontWeight::Value(v) if v != 400 => parts.push(("font-weight".into(), v.to_string())),
         _ => {}
     }
@@ -259,21 +305,28 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
     }
 
     // ── Text decoration ───────────────────────────────────────────────────────
-    if style.text_decoration.underline || style.text_decoration.overline
+    if style.text_decoration.underline
+        || style.text_decoration.overline
         || style.text_decoration.strikethrough
     {
         let mut decorations = Vec::new();
-        if style.text_decoration.underline    { decorations.push("underline"); }
-        if style.text_decoration.overline     { decorations.push("overline"); }
-        if style.text_decoration.strikethrough { decorations.push("line-through"); }
+        if style.text_decoration.underline {
+            decorations.push("underline");
+        }
+        if style.text_decoration.overline {
+            decorations.push("overline");
+        }
+        if style.text_decoration.strikethrough {
+            decorations.push("line-through");
+        }
         parts.push(("text-decoration".into(), decorations.join(" ")));
     }
 
     // ── Text transform ────────────────────────────────────────────────────────
     let tt_str = match style.text_transform {
-        TextTransform::None       => "",
-        TextTransform::Uppercase  => "uppercase",
-        TextTransform::Lowercase  => "lowercase",
+        TextTransform::None => "",
+        TextTransform::Uppercase => "uppercase",
+        TextTransform::Lowercase => "lowercase",
         TextTransform::Capitalize => "capitalize",
     };
     if !tt_str.is_empty() {
@@ -282,9 +335,9 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── White space ───────────────────────────────────────────────────────────
     let ws_str = match style.white_space {
-        WhiteSpace::Normal  => "",
-        WhiteSpace::Nowrap  => "nowrap",
-        WhiteSpace::Pre     => "pre",
+        WhiteSpace::Normal => "",
+        WhiteSpace::Nowrap => "nowrap",
+        WhiteSpace::Pre => "pre",
         WhiteSpace::PreWrap => "pre-wrap",
         WhiteSpace::PreLine => "pre-line",
     };
@@ -294,13 +347,13 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
 
     // ── Display (flex / grid / inline-* variants) ─────────────────────────────
     let display_str = match style.display {
-        Display::Flex        => "flex",
-        Display::InlineFlex  => "inline-flex",
-        Display::Grid        => "grid",
-        Display::InlineGrid  => "inline-grid",
+        Display::Flex => "flex",
+        Display::InlineFlex => "inline-flex",
+        Display::Grid => "grid",
+        Display::InlineGrid => "inline-grid",
         Display::InlineBlock => "inline-block",
-        Display::None        => "none",
-        _                    => "",
+        Display::None => "none",
+        _ => "",
     };
     if !display_str.is_empty() {
         parts.push(("display".into(), display_str.into()));
@@ -309,9 +362,9 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
     // ── Flex container properties ─────────────────────────────────────────────
     if matches!(style.display, Display::Flex | Display::InlineFlex) {
         let dir_str = match style.flex_direction {
-            FlexDirection::Row           => "",
-            FlexDirection::RowReverse    => "row-reverse",
-            FlexDirection::Column        => "column",
+            FlexDirection::Row => "",
+            FlexDirection::RowReverse => "row-reverse",
+            FlexDirection::Column => "column",
             FlexDirection::ColumnReverse => "column-reverse",
         };
         if !dir_str.is_empty() {
@@ -325,25 +378,25 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
         }
 
         let jc_str = match style.justify_content {
-            JustifyContent::FlexStart    => "",
-            JustifyContent::FlexEnd      => "flex-end",
-            JustifyContent::Center       => "center",
+            JustifyContent::FlexStart => "",
+            JustifyContent::FlexEnd => "flex-end",
+            JustifyContent::Center => "center",
             JustifyContent::SpaceBetween => "space-between",
-            JustifyContent::SpaceAround  => "space-around",
-            JustifyContent::SpaceEvenly  => "space-evenly",
-            JustifyContent::Left         => "left",
-            JustifyContent::Right        => "right",
+            JustifyContent::SpaceAround => "space-around",
+            JustifyContent::SpaceEvenly => "space-evenly",
+            JustifyContent::Left => "left",
+            JustifyContent::Right => "right",
         };
         if !jc_str.is_empty() {
             parts.push(("justify-content".into(), jc_str.into()));
         }
 
         let ai_str = match style.align_items {
-            AlignItems::Stretch   => "",
+            AlignItems::Stretch => "",
             AlignItems::FlexStart => "flex-start",
-            AlignItems::FlexEnd   => "flex-end",
-            AlignItems::Center    => "center",
-            AlignItems::Baseline  => "baseline",
+            AlignItems::FlexEnd => "flex-end",
+            AlignItems::Center => "center",
+            AlignItems::Baseline => "baseline",
             AlignItems::LastBaseline => "last baseline",
         };
         if !ai_str.is_empty() {
@@ -365,14 +418,22 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
         let right_s = serialize_length(&style.right);
         let bottom_s = serialize_length(&style.bottom);
         let left_s = serialize_length(&style.left);
-        if !top_s.is_empty()    { parts.push(("top".into(),    top_s)); }
-        if !right_s.is_empty()  { parts.push(("right".into(),  right_s)); }
-        if !bottom_s.is_empty() { parts.push(("bottom".into(), bottom_s)); }
-        if !left_s.is_empty()   { parts.push(("left".into(),   left_s)); }
+        if !top_s.is_empty() {
+            parts.push(("top".into(), top_s));
+        }
+        if !right_s.is_empty() {
+            parts.push(("right".into(), right_s));
+        }
+        if !bottom_s.is_empty() {
+            parts.push(("bottom".into(), bottom_s));
+        }
+        if !left_s.is_empty() {
+            parts.push(("left".into(), left_s));
+        }
     }
 
     // ── z-index ───────────────────────────────────────────────────────────────
-    if style.z_index != 0 {
+    if !style.z_index_is_auto {
         parts.push(("z-index".into(), style.z_index.to_string()));
     }
 
@@ -382,7 +443,8 @@ pub fn serialize_style_to_css(style: &ComputedStyle, _tag: &str) -> String {
     }
 
     // ── Assemble ──────────────────────────────────────────────────────────────
-    parts.iter()
+    parts
+        .iter()
         .map(|(k, v)| format!("{}: {}", k, v))
         .collect::<Vec<_>>()
         .join("; ")
@@ -400,10 +462,16 @@ pub fn serialize_selector(sel: &CssSelector) -> String {
     let mut out = String::new();
     for part in &sel.parts {
         match part {
-            SelectorPart::Tag(t)       => out.push_str(t),
-            SelectorPart::Id(id)       => { out.push('#'); out.push_str(id); }
-            SelectorPart::Class(cls)   => { out.push('.'); out.push_str(cls); }
-            SelectorPart::Universal    => out.push('*'),
+            SelectorPart::Tag(t) => out.push_str(t),
+            SelectorPart::Id(id) => {
+                out.push('#');
+                out.push_str(id);
+            }
+            SelectorPart::Class(cls) => {
+                out.push('.');
+                out.push_str(cls);
+            }
+            SelectorPart::Universal => out.push('*'),
             SelectorPart::PseudoClass(pc) => {
                 out.push(':');
                 out.push_str(pc);
@@ -412,37 +480,66 @@ pub fn serialize_selector(sel: &CssSelector) -> String {
                 out.push_str("::");
                 out.push_str(pe);
             }
-            SelectorPart::Attribute { name, op, value, case_sensitive } => {
+            SelectorPart::Attribute {
+                name,
+                op,
+                value,
+                case_sensitive,
+            } => {
                 use crate::css::AttrOp;
                 out.push('[');
                 out.push_str(name);
                 match op {
-                    AttrOp::Exists     => {}
-                    AttrOp::Eq         => { out.push('=');  out.push('"'); out.push_str(value); out.push('"'); }
-                    AttrOp::Includes   => { out.push_str("~=\""); out.push_str(value); out.push('"'); }
-                    AttrOp::StartsWith => { out.push_str("^=\""); out.push_str(value); out.push('"'); }
-                    AttrOp::EndsWith   => { out.push_str("$=\""); out.push_str(value); out.push('"'); }
-                    AttrOp::Contains   => { out.push_str("*=\""); out.push_str(value); out.push('"'); }
-                    AttrOp::DashMatch  => { out.push_str("|=\""); out.push_str(value); out.push('"'); }
+                    AttrOp::Exists => {}
+                    AttrOp::Eq => {
+                        out.push('=');
+                        out.push('"');
+                        out.push_str(value);
+                        out.push('"');
+                    }
+                    AttrOp::Includes => {
+                        out.push_str("~=\"");
+                        out.push_str(value);
+                        out.push('"');
+                    }
+                    AttrOp::StartsWith => {
+                        out.push_str("^=\"");
+                        out.push_str(value);
+                        out.push('"');
+                    }
+                    AttrOp::EndsWith => {
+                        out.push_str("$=\"");
+                        out.push_str(value);
+                        out.push('"');
+                    }
+                    AttrOp::Contains => {
+                        out.push_str("*=\"");
+                        out.push_str(value);
+                        out.push('"');
+                    }
+                    AttrOp::DashMatch => {
+                        out.push_str("|=\"");
+                        out.push_str(value);
+                        out.push('"');
+                    }
                 }
                 // Selectors §6.3 — a selector that was written with a flag has
                 // to come back out with it, or a reserialized stylesheet quietly
                 // means something narrower than the one that went in.
                 match case_sensitive {
                     Some(false) => out.push_str(" i"),
-                    Some(true)  => out.push_str(" s"),
-                    None        => {}
+                    Some(true) => out.push_str(" s"),
+                    None => {}
                 }
                 out.push(']');
             }
-            SelectorPart::Combinator(c) => {
-                match c {
-                    Combinator::Descendant      => out.push(' '),
-                    Combinator::Child           => out.push_str(" > "),
-                    Combinator::AdjacentSibling => out.push_str(" + "),
-                    Combinator::GeneralSibling  => out.push_str(" ~ "),
-                }
-            }
+            SelectorPart::Combinator(c) => match c {
+                Combinator::Descendant => out.push(' '),
+                Combinator::Child => out.push_str(" > "),
+                Combinator::AdjacentSibling => out.push_str(" + "),
+                Combinator::GeneralSibling => out.push_str(" ~ "),
+                Combinator::Column => out.push_str(" || "),
+            },
             SelectorPart::Not(inner) => {
                 out.push_str(":not(");
                 out.push_str(&serialize_selector(inner));
@@ -451,7 +548,9 @@ pub fn serialize_selector(sel: &CssSelector) -> String {
             SelectorPart::Is(list) => {
                 out.push_str(":is(");
                 for (i, s) in list.iter().enumerate() {
-                    if i > 0 { out.push_str(", "); }
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
                     out.push_str(&serialize_selector(s));
                 }
                 out.push(')');
@@ -459,14 +558,17 @@ pub fn serialize_selector(sel: &CssSelector) -> String {
             SelectorPart::Where(list) => {
                 out.push_str(":where(");
                 for (i, s) in list.iter().enumerate() {
-                    if i > 0 { out.push_str(", "); }
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
                     out.push_str(&serialize_selector(s));
                 }
                 out.push(')');
             }
             SelectorPart::Has(inner) => {
                 out.push_str(":has(");
-                out.push_str(&serialize_selector(inner));
+                let parts: Vec<String> = inner.iter().map(serialize_selector).collect();
+                out.push_str(&parts.join(", "));
                 out.push(')');
             }
         }
@@ -487,7 +589,8 @@ pub fn serialize_rule(rule: &CssRule) -> String {
     let sel_text = if !rule.original_selector.is_empty() {
         rule.original_selector.clone()
     } else {
-        rule.selectors.iter()
+        rule.selectors
+            .iter()
             .map(serialize_selector)
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
@@ -498,7 +601,7 @@ pub fn serialize_rule(rule: &CssRule) -> String {
         return String::new();
     }
 
-    let mut decls = String::new();
+    let mut decls = Vec::new();
     // SOURCE ORDER, not alphabetical. The sort here used to be the only thing
     // making the output deterministic, because the block was a HashMap — but
     // alphabetical order is a different stylesheet: it puts `border-top` before
@@ -506,13 +609,17 @@ pub fn serialize_rule(rule: &CssRule) -> String {
     // override it. Now that a block keeps the order it was parsed in, emitting
     // it in that order is both stable AND meaning-preserving.
     for (prop, val) in rule.declarations.iter() {
-        decls.push_str(&format!("  {}: {};\n", prop, val));
+        decls.push(format!("{}: {};", prop, val));
     }
     for (prop, val) in rule.important_declarations.iter() {
-        decls.push_str(&format!("  {}: {} !important;\n", prop, val));
+        decls.push(format!("{}: {} !important;", prop, val));
     }
 
-    format!("{} {{\n{}}}\n", sel_text, decls)
+    if decls.is_empty() {
+        format!("{} {{ }}", sel_text)
+    } else {
+        format!("{} {{ {} }}", sel_text, decls.join(" "))
+    }
 }
 
 /// CSSOM serialization of a document's AUTHOR rules — the text form of
@@ -555,7 +662,9 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
     // Generated content is not markup. `::before`/`::after` are boxes the
     // cascade adds so layout can measure them; writing them out produced
     // `<::after>!</::after>`, which is not a tag and does not parse back.
-    if node.is_pseudo_element() { return; }
+    if node.is_pseudo_element() {
+        return;
+    }
     // Text nodes
     if node.tag == "#text" {
         out.push_str(&escape_html(&node.text));
@@ -570,7 +679,11 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
         return;
     }
 
-    let tag = if node.tag.is_empty() { "div" } else { node.tag.as_str() };
+    let tag = if node.tag.is_empty() {
+        "div"
+    } else {
+        node.tag.as_str()
+    };
 
     // Open tag
     out.push('<');
@@ -607,10 +720,14 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
     // is eaten a little more on every serialize → reparse cycle.
     if matches!(tag, "pre" | "textarea" | "listing") {
         let starts_with_newline = node.text.starts_with('\n')
-            || node.children.first()
+            || node
+                .children
+                .first()
                 .map(|c| c.is_text_node() && c.text.starts_with('\n'))
                 .unwrap_or(false);
-        if starts_with_newline { out.push('\n'); }
+        if starts_with_newline {
+            out.push('\n');
+        }
     }
 
     // Own text (block-level text content stored directly on the node).
@@ -639,11 +756,13 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
             continue;
         }
 
-        let has_bold      = run.style.font_weight.is_bold();
-        let has_italic    = run.style.font_style == FontStyle::Italic;
+        let has_bold = run.style.font_weight.is_bold();
+        let has_italic = run.style.font_style == FontStyle::Italic;
         let has_underline = run.style.text_decoration.underline;
-        let has_strike    = run.style.text_decoration.strikethrough;
-        let has_link      = node.attributes.get("href")
+        let has_strike = run.style.text_decoration.strikethrough;
+        let has_link = node
+            .attributes
+            .get("href")
             .map(|s| !s.is_empty())
             .unwrap_or(false);
 
@@ -654,18 +773,36 @@ fn serialize_box_inner(node: &WebCore, out: &mut String) {
                 out.push_str("\">");
             }
         }
-        if has_bold      { out.push_str("<b>"); }
-        if has_italic    { out.push_str("<i>"); }
-        if has_underline && !has_link { out.push_str("<u>"); }
-        if has_strike    { out.push_str("<s>"); }
+        if has_bold {
+            out.push_str("<b>");
+        }
+        if has_italic {
+            out.push_str("<i>");
+        }
+        if has_underline && !has_link {
+            out.push_str("<u>");
+        }
+        if has_strike {
+            out.push_str("<s>");
+        }
 
         out.push_str(&escape_html(segment));
 
-        if has_strike    { out.push_str("</s>"); }
-        if has_underline && !has_link { out.push_str("</u>"); }
-        if has_italic    { out.push_str("</i>"); }
-        if has_bold      { out.push_str("</b>"); }
-        if has_link      { out.push_str("</a>"); }
+        if has_strike {
+            out.push_str("</s>");
+        }
+        if has_underline && !has_link {
+            out.push_str("</u>");
+        }
+        if has_italic {
+            out.push_str("</i>");
+        }
+        if has_bold {
+            out.push_str("</b>");
+        }
+        if has_link {
+            out.push_str("</a>");
+        }
     }
 
     // Children (depth-first).

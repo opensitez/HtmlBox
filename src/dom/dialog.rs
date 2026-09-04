@@ -30,7 +30,9 @@ use crate::types::Document;
 impl Document {
     /// `dialog.show()` / `dialog.showModal()`.
     pub fn show_dialog(&mut self, id: u32, modal: bool) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         self.set_attribute(id, "open", "");
         // ⛔ The `position: fixed` INLINE style that used to live here is gone.
         // A modal is in the TOP LAYER, and the UA sheet's `dialog:modal` rule
@@ -43,7 +45,9 @@ impl Document {
 
     /// `dialog.close()`.
     pub fn close_dialog(&mut self, id: u32) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         self.remove_attribute(id, "open");
         // Leaving the top layer is the whole of it: the `position` override a
         // modal used to carry was an inline style, and the UA sheet's

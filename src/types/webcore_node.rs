@@ -2,18 +2,18 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── HTML Box (DOM node) ─────────────────────────────────────────────────────
 
 /// A box/node in the box tree.  Mirrors the C++ `Box` struct.
 #[derive(Clone, Debug)]
 pub struct WebCore {
-    pub tag:        String,
-    pub node_id:    u32,                // Stable identity — this node's `DomArena` id
+    pub tag: String,
+    pub node_id: u32, // Stable identity — this node's `DomArena` id
     /// The cascaded style, SHARED — `arenaplan.md` item 1.
     ///
     /// Elements do not need their own style, they need *a* style: real pages
@@ -22,9 +22,9 @@ pub struct WebCore {
     ///
     /// ⛔ `Arc`, not `Rc` as the plan wrote: the parallel cascade hands parts
     /// of the tree to rayon, and `Rc` is neither `Send` nor `Sync`.
-    pub style:      std::sync::Arc<ComputedStyle>,
+    pub style: std::sync::Arc<ComputedStyle>,
     pub attributes: crate::dom::attrs::AttrMap,
-    pub text:       String,             // Own text content
+    pub text: String, // Own text content
 
     /// This box's children, in render order.
     ///
@@ -33,7 +33,7 @@ pub struct WebCore {
     /// a different tree, not a copy of one. DOM structure is `Document::arena`,
     /// which every WHATWG accessor reads; `node_id` is the link between them,
     /// and is 0 for a box with no DOM node behind it.
-    pub children:   Vec<WebCore>,
+    pub children: Vec<WebCore>,
 
     /// Layout geometry — all layout-computed fields live here.
     pub layout: LayoutBox,
@@ -41,7 +41,7 @@ pub struct WebCore {
     // Custom component cached dimensions (set once by measure(), stable across relayouts).
     // Like replaced elements, components control their own size — the engine only
     // re-measures when the component is explicitly marked dirty.
-    pub component_width:  f32,
+    pub component_width: f32,
     pub component_height: f32,
 
     // Image pixel data for <img> and replaced elements (RGBA8, row-major)
@@ -53,18 +53,18 @@ pub struct WebCore {
     /// was serialized into the markup. Internal state may look however it
     /// likes, but not by pretending to be a content attribute.
     pub resolved_src: String,
-    pub image_data:   Option<Vec<u8>>,
-    pub image_width:  u32,
+    pub image_data: Option<Vec<u8>>,
+    pub image_width: u32,
     pub image_height: u32,
 
     // Background image pixel data (RGBA8, row-major)
-    pub bg_image_data:   Option<Vec<u8>>,
-    pub bg_image_width:  u32,
+    pub bg_image_data: Option<Vec<u8>>,
+    pub bg_image_width: u32,
     pub bg_image_height: u32,
 
     // CSS mask-image data (SVG rasterized to alpha mask)
-    pub mask_image_data:   Option<Vec<u8>>,
-    pub mask_image_width:  u32,
+    pub mask_image_data: Option<Vec<u8>>,
+    pub mask_image_width: u32,
     pub mask_image_height: u32,
 
     // SVG source markup (for round-trip and re-rasterization)
@@ -240,7 +240,10 @@ impl WebCore {
             self.top_layer_kind,
             self.checkedness,
             self.value_state.as_deref().unwrap_or(""),
-            self.data.get("indeterminate").map(String::as_str).unwrap_or(""),
+            self.data
+                .get("indeterminate")
+                .map(String::as_str)
+                .unwrap_or(""),
             self.node_id != 0 && self.node_id == focused_box,
         )
     }

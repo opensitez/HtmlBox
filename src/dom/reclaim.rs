@@ -105,9 +105,7 @@ impl crate::types::Document {
     pub fn detached_candidates(&self) -> Vec<u32> {
         let named = self.retained_ids();
         (1..self.arena.len() as u32)
-            .filter(|id| {
-                self.arena.is_alive(crate::dom::arena::NodeId(*id)) && !named.contains(id)
-            })
+            .filter(|id| self.arena.is_alive(crate::dom::arena::NodeId(*id)) && !named.contains(id))
             .collect()
     }
 }

@@ -6,10 +6,10 @@
 //! problem as a `mod.rs` that holds everything.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Bloom filter for fast ancestor rejection ────────────────────────────────
 
@@ -23,7 +23,9 @@ pub struct AncestorBloom {
 }
 
 impl AncestorBloom {
-    pub fn new() -> Self { Self { bits: [0; 4] } }
+    pub fn new() -> Self {
+        Self { bits: [0; 4] }
+    }
 
     #[inline]
     fn hash(s: &str) -> (usize, usize) {
@@ -48,61 +50,74 @@ impl AncestorBloom {
     pub fn add_element(&mut self, tag: &str, attrs: &std::collections::HashMap<String, String>) {
         self.add(tag);
         if let Some(cls) = attrs.get("class") {
-            for c in cls.split_whitespace() { self.add(c); }
+            for c in cls.split_whitespace() {
+                self.add(c);
+            }
         }
-        if let Some(id) = attrs.get("id") { self.add(id); }
+        if let Some(id) = attrs.get("id") {
+            self.add(id);
+        }
     }
 
     #[inline]
     pub fn might_contain(&self, s: &str) -> bool {
         let (h1, h2) = Self::hash(s);
-        (self.bits[h1 / 64] & (1 << (h1 % 64))) != 0
-            && (self.bits[h2 / 64] & (1 << (h2 % 64))) != 0
+        (self.bits[h1 / 64] & (1 << (h1 % 64))) != 0 && (self.bits[h2 / 64] & (1 << (h2 % 64))) != 0
     }
 }
 
-impl Default for AncestorBloom { fn default() -> Self { Self::new() } }
+impl Default for AncestorBloom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl std::fmt::Debug for AncestorBloom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AncestorBloom({} bits set)", self.bits.iter().map(|w| w.count_ones()).sum::<u32>())
+        write!(
+            f,
+            "AncestorBloom({} bits set)",
+            self.bits.iter().map(|w| w.count_ones()).sum::<u32>()
+        )
     }
 }
 
 /// Info about one ancestor box, threaded through the cascade for selector matching.
 #[derive(Clone, Debug, Default)]
 pub struct AncestorInfo {
-    pub tag:                String,
-    pub attributes:         crate::dom::attrs::AttrMap,
-    pub child_index:        usize,   // 0-based position among parent's children
-    pub sibling_count:      usize,   // total children of parent
-    pub type_child_index:   usize,   // 0-based among same-tag siblings
-    pub type_sibling_count: usize,   // count of same-tag siblings
-    pub node_id:            u32,  // stable node id for hover chain check
+    pub tag: String,
+    pub attributes: crate::dom::attrs::AttrMap,
+    pub child_index: usize,        // 0-based position among parent's children
+    pub sibling_count: usize,      // total children of parent
+    pub type_child_index: usize,   // 0-based among same-tag siblings
+    pub type_sibling_count: usize, // count of same-tag siblings
+    pub node_id: u32,              // stable node id for hover chain check
 }
 
 /// Extra context passed down through selector matching.
 #[derive(Clone, Copy, Debug)]
 pub struct MatchContext<'a> {
     /// Node ID of the focused element (0 = none).
-    pub focused_box:        u32,
+    pub focused_box: u32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
-    pub keyboard_focus:     bool,
+    pub keyboard_focus: bool,
     /// 0-based position among same-tag siblings.
-    pub type_child_index:   usize,
+    pub type_child_index: usize,
     /// Count of same-tag siblings (including this element).
     pub type_sibling_count: usize,
     /// Raw pointer to the WebCore being matched (for :has()).
-    pub html_box:           Option<&'a crate::types::WebCore>,
+    pub html_box: Option<&'a crate::types::WebCore>,
     /// Set of node IDs on the hover chain (hovered element + all ancestors).
     /// When non-empty, :hover pseudo-class matches elements in this set.
-    pub hover_chain:        &'a std::collections::HashSet<u32>,
+    pub hover_chain: &'a std::collections::HashSet<u32>,
     /// Node ID of the element currently being matched (for :hover on ancestors).
-    pub element_id:         u32,
+    pub element_id: u32,
     /// Previous non-text sibling info for `+` and `~` combinators.
     /// Each entry: (tag, id, classes) of preceding element siblings.
-    pub prev_siblings:      &'a [(String, String, String)],
+    pub prev_siblings: &'a [(String, String, String)],
+    /// Following non-text sibling info for right-to-left selectors such as
+    /// `:nth-last-child(An+B of S)`.
+    pub next_siblings: &'a [(String, String, String)],
 }
-
 
 /// Recursively match a selector (parts slice) against a subject element + its ancestor chain.
 /// Works right-to-left: the last segment matches the subject, preceding segments
@@ -116,26 +131,34 @@ pub fn matches_selector_with_ancestors(
     ancestors: &[AncestorInfo],
     ctx: &MatchContext<'_>,
 ) -> bool {
-    if parts.is_empty() { return true; }
+    if parts.is_empty() {
+        return true;
+    }
 
     // Find the rightmost combinator in `parts`
-    let last_comb_pos = parts.iter().rposition(|p| matches!(p, SelectorPart::Combinator(_)));
+    let last_comb_pos = parts
+        .iter()
+        .rposition(|p| matches!(p, SelectorPart::Combinator(_)));
 
     match last_comb_pos {
         None => {
             // No combinator — all parts must match the subject
-            parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx))
+            parts.iter().all(|p| {
+                matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx)
+            })
         }
         Some(pos) => {
             let combinator = match &parts[pos] {
                 SelectorPart::Combinator(c) => c.clone(),
                 _ => unreachable!(),
             };
-            let left_parts  = &parts[..pos];
+            let left_parts = &parts[..pos];
             let right_parts = &parts[pos + 1..];
 
             // Right parts must all match the subject
-            if !right_parts.iter().all(|p| matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx)) {
+            if !right_parts.iter().all(|p| {
+                matches_part_with_context(p, tag, attrs, child_index, sibling_count, ancestors, ctx)
+            }) {
                 return false;
             }
 
@@ -151,12 +174,15 @@ pub fn matches_selector_with_ancestors(
                             html_box: None,
                             hover_chain: ctx.hover_chain,
                             element_id: anc.node_id,
-            prev_siblings: &[],
+                            prev_siblings: &[],
+                            next_siblings: &[],
                         };
                         if matches_selector_with_ancestors(
                             left_parts,
-                            &anc.tag, &anc.attributes,
-                            anc.child_index, anc.sibling_count,
+                            &anc.tag,
+                            &anc.attributes,
+                            anc.child_index,
+                            anc.sibling_count,
                             &ancestors[..i],
                             &anc_ctx,
                         ) {
@@ -177,12 +203,15 @@ pub fn matches_selector_with_ancestors(
                             html_box: None,
                             hover_chain: ctx.hover_chain,
                             element_id: parent.node_id,
-            prev_siblings: &[],
+                            prev_siblings: &[],
+                            next_siblings: &[],
                         };
                         matches_selector_with_ancestors(
                             left_parts,
-                            &parent.tag, &parent.attributes,
-                            parent.child_index, parent.sibling_count,
+                            &parent.tag,
+                            &parent.attributes,
+                            parent.child_index,
+                            parent.sibling_count,
                             parent_ancestors,
                             &parent_ctx,
                         )
@@ -202,23 +231,30 @@ pub fn matches_selector_with_ancestors(
                 // and `#p > i + i` did not — so `.container > li + li` and
                 // `.card h2 + p`, which are everyday selectors, silently never
                 // applied.
-                Combinator::AdjacentSibling => {
-                    match ctx.prev_siblings.split_last() {
-                        Some((last, before)) => matches_sibling(
-                            left_parts, last, before, ancestors, ctx),
-                        None => false,
+                Combinator::AdjacentSibling => match ctx.prev_siblings.split_last() {
+                    Some((last, before)) => {
+                        matches_sibling(left_parts, last, before, ancestors, ctx)
                     }
-                }
+                    None => false,
+                },
                 Combinator::GeneralSibling => {
                     // Any previous sibling, each seen with only ITS OWN
                     // preceding siblings — so a nested `a ~ b + c` is judged
                     // against the right list rather than the subject's.
                     (0..ctx.prev_siblings.len()).any(|i| {
                         matches_sibling(
-                            left_parts, &ctx.prev_siblings[i], &ctx.prev_siblings[..i],
-                            ancestors, ctx)
+                            left_parts,
+                            &ctx.prev_siblings[i],
+                            &ctx.prev_siblings[..i],
+                            ancestors,
+                            ctx,
+                        )
                     })
                 }
+                // Column combinators need table-column association data in the
+                // match context. Until that exists, fail closed instead of
+                // degrading `col || td` to `col td` and styling every cell.
+                Combinator::Column => false,
             }
         }
     }
@@ -238,8 +274,12 @@ fn matches_sibling(
     ctx: &MatchContext<'_>,
 ) -> bool {
     let mut attrs = crate::dom::attrs::AttrMap::new();
-    if !sib.1.is_empty() { attrs.insert("id".to_string(), sib.1.clone()); }
-    if !sib.2.is_empty() { attrs.insert("class".to_string(), sib.2.clone()); }
+    if !sib.1.is_empty() {
+        attrs.insert("id".to_string(), sib.1.clone());
+    }
+    if !sib.2.is_empty() {
+        attrs.insert("class".to_string(), sib.2.clone());
+    }
     let sib_ctx = MatchContext {
         focused_box: ctx.focused_box,
         keyboard_focus: ctx.keyboard_focus,
@@ -251,9 +291,17 @@ fn matches_sibling(
         hover_chain: ctx.hover_chain,
         element_id: 0,
         prev_siblings: sib_prev,
+        next_siblings: &[],
     };
     matches_selector_with_ancestors(
-        left_parts, &sib.0, &attrs, sib_prev.len(), 0, ancestors, &sib_ctx)
+        left_parts,
+        &sib.0,
+        &attrs,
+        sib_prev.len(),
+        0,
+        ancestors,
+        &sib_ctx,
+    )
 }
 
 pub(crate) fn matches_part_with_context(
@@ -267,12 +315,18 @@ pub(crate) fn matches_part_with_context(
 ) -> bool {
     match part {
         SelectorPart::Universal => true,
-        SelectorPart::Tag(t)    => tag.eq_ignore_ascii_case(t),
-        SelectorPart::Id(id)    => attrs.get("id").map(|s| s == id).unwrap_or(false),
-        SelectorPart::Class(cls) => attrs.get("class")
+        SelectorPart::Tag(t) => tag.eq_ignore_ascii_case(t),
+        SelectorPart::Id(id) => attrs.get("id").map(|s| s == id).unwrap_or(false),
+        SelectorPart::Class(cls) => attrs
+            .get("class")
             .map(|s| s.split_whitespace().any(|c| c == cls))
             .unwrap_or(false),
-        SelectorPart::Attribute { name, op, value, case_sensitive } => {
+        SelectorPart::Attribute {
+            name,
+            op,
+            value,
+            case_sensitive,
+        } => {
             // **An attribute NAME in a selector is ASCII case-insensitive for
             // an HTML document.** HTML folds attribute names on the way in, so
             // `[DATA-Foo]` and `[data-foo]` name the same attribute — and a
@@ -302,35 +356,58 @@ pub(crate) fn matches_part_with_context(
             let (av_cmp, val_cmp): (&str, &str) = match found {
                 None => return false,
                 Some(av) if fold => {
-                    av_owned  = av.to_ascii_lowercase();
+                    av_owned = av.to_ascii_lowercase();
                     val_owned = value.to_ascii_lowercase();
                     (&av_owned, &val_owned)
                 }
                 Some(av) => (av.as_str(), value.as_str()),
             };
             match op {
-                AttrOp::Exists     => true,
-                AttrOp::Eq         => av_cmp == val_cmp,
-                AttrOp::Includes   => av_cmp.split_whitespace().any(|w| w == val_cmp),
+                AttrOp::Exists => true,
+                AttrOp::Eq => av_cmp == val_cmp,
+                AttrOp::Includes => av_cmp.split_whitespace().any(|w| w == val_cmp),
                 AttrOp::StartsWith => av_cmp.starts_with(val_cmp),
-                AttrOp::EndsWith   => av_cmp.ends_with(val_cmp),
-                AttrOp::Contains   => av_cmp.contains(val_cmp),
-                AttrOp::DashMatch  => av_cmp == val_cmp || av_cmp.starts_with(&format!("{}-", val_cmp)),
+                AttrOp::EndsWith => av_cmp.ends_with(val_cmp),
+                AttrOp::Contains => av_cmp.contains(val_cmp),
+                AttrOp::DashMatch => {
+                    av_cmp == val_cmp || av_cmp.starts_with(&format!("{}-", val_cmp))
+                }
             }
         }
-        SelectorPart::Not(inner) => {
-            !inner.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx)
-        }
-        SelectorPart::Is(list) => {
-            list.iter().any(|sel| sel.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx))
-        }
-        SelectorPart::Where(list) => {
-            list.iter().any(|sel| sel.matches_with_ancestors_ctx_raw(tag, attrs, child_index, sibling_count, ancestors, ctx))
-        }
+        SelectorPart::Not(inner) => !inner.matches_with_ancestors_ctx_raw(
+            tag,
+            attrs,
+            child_index,
+            sibling_count,
+            ancestors,
+            ctx,
+        ),
+        SelectorPart::Is(list) => list.iter().any(|sel| {
+            sel.matches_with_ancestors_ctx_raw(
+                tag,
+                attrs,
+                child_index,
+                sibling_count,
+                ancestors,
+                ctx,
+            )
+        }),
+        SelectorPart::Where(list) => list.iter().any(|sel| {
+            sel.matches_with_ancestors_ctx_raw(
+                tag,
+                attrs,
+                child_index,
+                sibling_count,
+                ancestors,
+                ctx,
+            )
+        }),
         SelectorPart::Has(inner) => {
             // Check if any descendant of the current element matches inner
             if let Some(b) = ctx.html_box {
-                has_descendant_matching(b, inner, ctx.focused_box)
+                inner
+                    .iter()
+                    .any(|sel| has_descendant_matching(b, sel, ctx.focused_box))
             } else {
                 false
             }
@@ -338,13 +415,13 @@ pub(crate) fn matches_part_with_context(
         SelectorPart::PseudoClass(pc) => {
             let pc = pc.as_str();
             match pc {
-                "first-child"  => child_index == 0,
-                "last-child"   => child_index + 1 == sibling_count,
-                "only-child"   => sibling_count == 1,
+                "first-child" => child_index == 0,
+                "last-child" => child_index + 1 == sibling_count,
+                "only-child" => sibling_count == 1,
                 "first-of-type" => ctx.type_child_index == 0,
-                "last-of-type"  => ctx.type_child_index + 1 == ctx.type_sibling_count,
-                "only-of-type"  => ctx.type_sibling_count == 1,
-                "root"         => tag.eq_ignore_ascii_case("html"),
+                "last-of-type" => ctx.type_child_index + 1 == ctx.type_sibling_count,
+                "only-of-type" => ctx.type_sibling_count == 1,
+                "root" => tag.eq_ignore_ascii_case("html"),
                 // Selectors §14.3 — no element children and no TEXT children.
                 // Comments and processing instructions do not count, which is
                 // why this asks `is_element`/`is_text_node` rather than
@@ -356,8 +433,10 @@ pub(crate) fn matches_part_with_context(
                 // there: an `:empty` element has no descendants for the rest of
                 // the selector to have matched.
                 "empty" => match ctx.html_box {
-                    Some(b) => !b.children.iter().any(|c|
-                        c.is_element() || (c.is_text_node() && !c.text.is_empty())),
+                    Some(b) => !b
+                        .children
+                        .iter()
+                        .any(|c| c.is_element() || (c.is_text_node() && !c.text.is_empty())),
                     None => false,
                 },
                 // Focus
@@ -365,14 +444,20 @@ pub(crate) fn matches_part_with_context(
                     if ctx.focused_box != 0 {
                         if let Some(b) = ctx.html_box {
                             b.node_id != 0 && b.node_id == ctx.focused_box
-                        } else { false }
-                    } else { false }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 }
                 // :focus-visible matches when focus arrived via keyboard, OR when the
                 // element is a text-entry control (input, textarea, contenteditable) —
                 // matching browser behaviour where the caret always needs a visible ring.
                 "focus-visible" => {
-                    if ctx.focused_box == 0 { return false; }
+                    if ctx.focused_box == 0 {
+                        return false;
+                    }
                     if let Some(b) = ctx.html_box {
                         if b.node_id == 0 || b.node_id != ctx.focused_box {
                             return false;
@@ -380,7 +465,9 @@ pub(crate) fn matches_part_with_context(
                         ctx.keyboard_focus || is_text_entry(b)
                     } else {
                         // Fallback: use element_id when html_box not available
-                        ctx.element_id != 0 && ctx.element_id == ctx.focused_box && ctx.keyboard_focus
+                        ctx.element_id != 0
+                            && ctx.element_id == ctx.focused_box
+                            && ctx.keyboard_focus
                     }
                 }
                 "focus-within" => {
@@ -389,8 +476,12 @@ pub(crate) fn matches_part_with_context(
                             // Is this box itself focused, or does it contain the focused element?
                             (b.node_id != 0 && b.node_id == ctx.focused_box)
                                 || is_or_contains_focused(b, ctx.focused_box)
-                        } else { false }
-                    } else { false }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 }
                 // Form state
                 // `:checked` matches CHECKEDNESS (Selectors §11.1: "elements
@@ -410,12 +501,23 @@ pub(crate) fn matches_part_with_context(
                     ctx.html_box.and_then(|b| b.top_layer_kind),
                     Some(crate::types::TopLayerKind::Popover)
                 ),
-                "checked"    => {
+                "open" => {
+                    attrs.contains_key("open")
+                        || matches!(ctx.html_box.and_then(|b| b.top_layer_kind), Some(_))
+                }
+                "closed" => {
+                    matches!(tag, "details" | "dialog")
+                        && !attrs.contains_key("open")
+                        && ctx.html_box.and_then(|b| b.top_layer_kind).is_none()
+                }
+                "checked" => {
                     // The BOX's state when the matcher was given one; the
                     // attribute is the fallback for the paths that match
                     // against a bare tag+attrs (an `<option selected>` has no
                     // checkedness of its own).
-                    ctx.html_box.map(|b| b.checkedness).unwrap_or_else(|| attrs.contains_key("checked"))
+                    ctx.html_box
+                        .map(|b| b.checkedness)
+                        .unwrap_or_else(|| attrs.contains_key("checked"))
                         || attrs.contains_key("selected")
                 }
                 // Disabledness is INHERITED from a disabled `<fieldset>`
@@ -423,10 +525,16 @@ pub(crate) fn matches_part_with_context(
                 // only half the question. The ancestor chain carries each
                 // ancestor's attributes, which is what makes the second half
                 // answerable on the raw tag+attrs path as well as the box path.
-                "disabled"   => is_actually_disabled(tag, attrs, ancestors),
-                "enabled"    => is_form_control(tag) && !is_actually_disabled(tag, attrs, ancestors),
-                "read-only"  => attrs.contains_key("readonly") || !matches!(tag, "input" | "textarea" | "select" | "button"),
-                "read-write" => !attrs.contains_key("readonly") && matches!(tag, "input" | "textarea" | "select" | "button"),
+                "disabled" => is_actually_disabled(tag, attrs, ancestors),
+                "enabled" => is_form_control(tag) && !is_actually_disabled(tag, attrs, ancestors),
+                "read-only" => {
+                    attrs.contains_key("readonly")
+                        || !matches!(tag, "input" | "textarea" | "select" | "button")
+                }
+                "read-write" => {
+                    !attrs.contains_key("readonly")
+                        && matches!(tag, "input" | "textarea" | "select" | "button")
+                }
                 // Link
                 "any-link" | "link" => {
                     attrs.contains_key("href") && matches!(tag, "a" | "area" | "link")
@@ -450,19 +558,29 @@ pub(crate) fn matches_part_with_context(
                 // is empty. The box carries the live value; `value` is the
                 // fallback for the paths that match on bare tag+attrs.
                 "placeholder-shown" => {
-                    let has_placeholder = attrs.get("placeholder")
-                        .map(|p| !p.is_empty()).unwrap_or(false);
-                    if !has_placeholder || !matches!(tag, "input" | "textarea") { return false; }
+                    let has_placeholder = attrs
+                        .get("placeholder")
+                        .map(|p| !p.is_empty())
+                        .unwrap_or(false);
+                    if !has_placeholder || !matches!(tag, "input" | "textarea") {
+                        return false;
+                    }
                     match ctx.html_box.and_then(|b| b.value_state.as_ref()) {
                         Some(v) => v.is_empty(),
-                        None    => attrs.get("value").map(|v| v.is_empty()).unwrap_or(true),
+                        None => attrs.get("value").map(|v| v.is_empty()).unwrap_or(true),
                     }
                 }
                 // A checkbox or radio put in the indeterminate state by script.
                 // It is NOT the `indeterminate` content attribute — there isn't
                 // one — so a box is the only place the answer can come from.
-                "indeterminate" => ctx.html_box
-                    .map(|b| b.data.get("indeterminate").map(|v| v == "true").unwrap_or(false))
+                "indeterminate" => ctx
+                    .html_box
+                    .map(|b| {
+                        b.data
+                            .get("indeterminate")
+                            .map(|v| v == "true")
+                            .unwrap_or(false)
+                    })
                     .unwrap_or(false),
                 // `:default` covers two things, and only one of them is
                 // answerable here. A checkbox, radio or option that was checked
@@ -479,20 +597,34 @@ pub(crate) fn matches_part_with_context(
                 // missing one. It is left out until the match context can carry
                 // the form.
                 "default" => match tag {
-                    "input"  => attrs.contains_key("checked"),
+                    "input" => attrs.contains_key("checked"),
                     "option" => attrs.contains_key("selected"),
                     _ => false,
                 },
-                // Constraint validation is not implemented, so every one of
-                // these answers "no". They are RECOGNISED (see
-                // `is_known_pseudo_class`) so that `input:invalid { … }` keeps
-                // its rule instead of having it dropped as a syntax error —
-                // a missing feature, not an invalid selector.
-                "valid" | "invalid" | "in-range" | "out-of-range"
-                | "user-valid" | "user-invalid" | "blank" | "autofill" => false,
+                "valid" => {
+                    selector_validity(tag, attrs, ctx.html_box, ancestors).is_some_and(|v| v.valid)
+                }
+                "invalid" => {
+                    selector_validity(tag, attrs, ctx.html_box, ancestors).is_some_and(|v| !v.valid)
+                }
+                "in-range" => selector_validity(tag, attrs, ctx.html_box, ancestors)
+                    .is_some_and(|v| v.range_applicable && v.valid),
+                "out-of-range" => selector_validity(tag, attrs, ctx.html_box, ancestors)
+                    .is_some_and(|v| v.range_underflow || v.range_overflow),
+                // These require user-interaction and autofill state that is
+                // not carried in the selector context yet.
+                "user-valid" | "user-invalid" | "autofill" => false,
+                "blank" => ctx
+                    .html_box
+                    .map(selector_box_value)
+                    .unwrap_or_default()
+                    .is_empty(),
                 _ => {
                     // nth-child(expr) / nth-of-type(expr)
-                    if let Some(inner) = pc.strip_prefix("nth-child(").and_then(|s| s.strip_suffix(')')) {
+                    if let Some(inner) = pc
+                        .strip_prefix("nth-child(")
+                        .and_then(|s| s.strip_suffix(')'))
+                    {
                         // `An+B of S` — Selectors 4 §9.3. The index counts only
                         // siblings matching S, and the element itself must
                         // match S too. Without this the whole argument was
@@ -500,32 +632,102 @@ pub(crate) fn matches_part_with_context(
                         // `2 of .pick` and answered no-match for everything.
                         if let Some((nth, sel_src)) = split_nth_of(inner) {
                             let sel = crate::css::parser::parse_selector(&sel_src);
-                            if !sel.valid { return false; }
-                            if !simple_matches(&sel, tag, attrs) { return false; }
-                            let index = ctx.prev_siblings.iter()
+                            if !sel.valid {
+                                return false;
+                            }
+                            if !simple_matches(&sel, tag, attrs) {
+                                return false;
+                            }
+                            let index = ctx
+                                .prev_siblings
+                                .iter()
                                 .filter(|(t, i, c)| simple_matches_raw(&sel, t, i, c))
                                 .count();
                             return nth_matches(&nth, index + 1);
                         }
                         return nth_matches(inner, child_index + 1); // CSS is 1-based
                     }
-                    if let Some(inner) = pc.strip_prefix("nth-last-child(").and_then(|s| s.strip_suffix(')')) {
-                        // ⛔ The `of S` form needs the FOLLOWING siblings to
-                        // count from the end, and only the preceding ones are
-                        // in scope here. Answers false rather than counting the
-                        // wrong set.
-                        if split_nth_of(inner).is_some() { return false; }
+                    if let Some(inner) = pc
+                        .strip_prefix("nth-last-child(")
+                        .and_then(|s| s.strip_suffix(')'))
+                    {
+                        if let Some((nth, sel_src)) = split_nth_of(inner) {
+                            let sel = crate::css::parser::parse_selector(&sel_src);
+                            if !sel.valid {
+                                return false;
+                            }
+                            if !simple_matches(&sel, tag, attrs) {
+                                return false;
+                            }
+                            let after = ctx
+                                .next_siblings
+                                .iter()
+                                .filter(|(t, i, c)| simple_matches_raw(&sel, t, i, c))
+                                .count();
+                            return nth_matches(&nth, after + 1);
+                        }
                         let from_end = sibling_count - child_index; // 1-based from end
                         return nth_matches(inner, from_end);
                     }
-                    if let Some(inner) = pc.strip_prefix("nth-of-type(").and_then(|s| s.strip_suffix(')')) {
+                    if let Some(inner) = pc
+                        .strip_prefix("nth-of-type(")
+                        .and_then(|s| s.strip_suffix(')'))
+                    {
                         return nth_matches(inner, ctx.type_child_index + 1);
                     }
-                    if let Some(inner) = pc.strip_prefix("nth-last-of-type(").and_then(|s| s.strip_suffix(')')) {
+                    if let Some(inner) = pc
+                        .strip_prefix("nth-last-of-type(")
+                        .and_then(|s| s.strip_suffix(')'))
+                    {
                         let from_end = ctx.type_sibling_count - ctx.type_child_index;
                         return nth_matches(inner, from_end);
                     }
                     // Shadow DOM pseudo-classes: never match in non-shadow context
+                    // ⛔ ANSWERED, not assumed false. `:lang()` and `:dir()`
+                    // parsed as valid pseudo-classes and then always lost, so
+                    // every language- and direction-conditional rule was dead.
+                    // Both read an ATTRIBUTE that inherits down the tree, so the
+                    // nearest one on the element or an ancestor wins.
+                    if let Some(want) = pc.strip_prefix("lang(").and_then(|s| s.strip_suffix(')')) {
+                        let want = want
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_ascii_lowercase();
+                        let found = attrs.get("lang").cloned().or_else(|| {
+                            ancestors
+                                .iter()
+                                .rev()
+                                .find_map(|a| a.attributes.get("lang").cloned())
+                        });
+                        return match found {
+                            // A language range matches a prefix at a hyphen
+                            // boundary: `:lang(en)` matches `en-GB`.
+                            Some(l) => {
+                                let l = l.trim().to_ascii_lowercase();
+                                l == want
+                                    || l.strip_prefix(&want)
+                                        .map(|r| r.starts_with('-'))
+                                        .unwrap_or(false)
+                            }
+                            None => false,
+                        };
+                    }
+                    if let Some(want) = pc.strip_prefix("dir(").and_then(|s| s.strip_suffix(')')) {
+                        let want = want.trim().to_ascii_lowercase();
+                        let found = attrs.get("dir").cloned().or_else(|| {
+                            ancestors
+                                .iter()
+                                .rev()
+                                .find_map(|a| a.attributes.get("dir").cloned())
+                        });
+                        // The default directionality is ltr.
+                        let dir = found
+                            .map(|d| d.trim().to_ascii_lowercase())
+                            .filter(|d| d == "rtl" || d == "ltr")
+                            .unwrap_or_else(|| "ltr".to_string());
+                        return dir == want;
+                    }
                     if pc.starts_with("host(") || pc.starts_with("host-context(") || pc == "host" {
                         return false;
                     }
@@ -545,15 +747,17 @@ pub(crate) fn matches_part_with_context(
             }
         }
         SelectorPart::PseudoElement(_) => false, // pseudo-elements never match real elements
-        SelectorPart::Combinator(_)    => true,
+        SelectorPart::Combinator(_) => true,
     }
 }
 
 /// The elements `:enabled` / `:disabled` are defined over (HTML §4.16.3):
 /// form controls, plus `<fieldset>`, `<optgroup>` and `<option>`.
 fn is_form_control(tag: &str) -> bool {
-    matches!(tag, "input" | "button" | "select" | "textarea"
-                | "fieldset" | "optgroup" | "option")
+    matches!(
+        tag,
+        "input" | "button" | "select" | "textarea" | "fieldset" | "optgroup" | "option"
+    )
 }
 
 /// Is this element disabled, counting a disabled `<fieldset>` ancestor?
@@ -562,9 +766,17 @@ fn is_form_control(tag: &str) -> bool {
 /// disabled, unless it sits in that fieldset's FIRST `<legend>`. The legend
 /// exemption needs to know which legend is first among its siblings, which the
 /// ancestor chain does record — `child_index` on the legend's own entry.
-fn is_actually_disabled(tag: &str, attrs: &crate::dom::attrs::AttrMap, ancestors: &[AncestorInfo]) -> bool {
-    if !is_form_control(tag) { return false; }
-    if attrs.contains_key("disabled") { return true; }
+fn is_actually_disabled(
+    tag: &str,
+    attrs: &crate::dom::attrs::AttrMap,
+    ancestors: &[AncestorInfo],
+) -> bool {
+    if !is_form_control(tag) {
+        return false;
+    }
+    if attrs.contains_key("disabled") {
+        return true;
+    }
     // Walk from the element outwards. A `<legend>` seen on the way up shields
     // the element from the fieldset that legend belongs to — but only if it is
     // that fieldset's first legend, and only for the fieldset immediately
@@ -594,11 +806,109 @@ fn is_requirable(tag: &str, attrs: &crate::dom::attrs::AttrMap) -> bool {
         "select" | "textarea" => true,
         "input" => !matches!(
             attrs.get("type").map(|s| s.to_ascii_lowercase()).as_deref(),
-            Some("hidden") | Some("range") | Some("color") | Some("submit")
-            | Some("image") | Some("reset") | Some("button")
+            Some("hidden")
+                | Some("range")
+                | Some("color")
+                | Some("submit")
+                | Some("image")
+                | Some("reset")
+                | Some("button")
         ),
         _ => false,
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SelectorValidity {
+    valid: bool,
+    range_applicable: bool,
+    range_underflow: bool,
+    range_overflow: bool,
+}
+
+fn selector_validity(
+    tag: &str,
+    attrs: &crate::dom::attrs::AttrMap,
+    html_box: Option<&crate::types::WebCore>,
+    ancestors: &[AncestorInfo],
+) -> Option<SelectorValidity> {
+    if !is_form_control(tag) || is_actually_disabled(tag, attrs, ancestors) {
+        return None;
+    }
+    let input_type = if tag == "input" {
+        attrs
+            .get("type")
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "text".to_string())
+    } else {
+        String::new()
+    };
+    if matches!(
+        input_type.as_str(),
+        "hidden" | "button" | "submit" | "reset" | "image" | "color"
+    ) {
+        return None;
+    }
+
+    let value = html_box
+        .map(selector_box_value)
+        .or_else(|| attrs.get("value").cloned())
+        .unwrap_or_default();
+    let mut out = SelectorValidity {
+        valid: true,
+        ..SelectorValidity::default()
+    };
+    if attrs.contains_key("required") {
+        let missing = match input_type.as_str() {
+            "checkbox" | "radio" => !html_box.map(|b| b.checkedness).unwrap_or(false),
+            _ => value.is_empty(),
+        };
+        if missing {
+            out.valid = false;
+        }
+    }
+    if value.is_empty() {
+        return Some(out);
+    }
+    if matches!(input_type.as_str(), "number" | "range") {
+        out.range_applicable = true;
+        match crate::html::forms::parse_floating_point(&value) {
+            Some(n) => {
+                if let Some(min) = attrs
+                    .get("min")
+                    .and_then(|s| crate::html::forms::parse_floating_point(s))
+                {
+                    out.range_underflow = n < min;
+                }
+                if let Some(max) = attrs
+                    .get("max")
+                    .and_then(|s| crate::html::forms::parse_floating_point(s))
+                {
+                    out.range_overflow = n > max;
+                }
+                if out.range_underflow || out.range_overflow {
+                    out.valid = false;
+                }
+            }
+            None => out.valid = false,
+        }
+    }
+    Some(out)
+}
+
+fn selector_box_value(b: &crate::types::WebCore) -> String {
+    if let Some(value) = &b.value_state {
+        return value.clone();
+    }
+    if b.tag == "textarea" {
+        return b
+            .children
+            .iter()
+            .filter(|c| c.tag == "#text")
+            .map(|c| c.text.as_str())
+            .collect::<String>();
+    }
+    b.attributes.get("value").cloned().unwrap_or_default()
 }
 
 /// Returns true for text-entry controls — these always show :focus-visible even
@@ -608,11 +918,15 @@ fn is_text_entry(b: &crate::types::WebCore) -> bool {
         "textarea" => true,
         "input" => !matches!(
             b.attributes.get("type").map(|s| s.as_str()),
-            Some("button" | "submit" | "reset" | "checkbox" | "radio" | "range" | "color" | "hidden")
+            Some(
+                "button" | "submit" | "reset" | "checkbox" | "radio" | "range" | "color" | "hidden"
+            )
         ),
-        _ => b.attributes.get("contenteditable")
-                .map(|v| v == "true" || v.is_empty())
-                .unwrap_or(false),
+        _ => b
+            .attributes
+            .get("contenteditable")
+            .map(|v| v == "true" || v.is_empty())
+            .unwrap_or(false),
     }
 }
 
@@ -650,25 +964,39 @@ fn has_descendant_matching(
             Combinator::Child => {
                 let rest = &sel.parts[1..];
                 let empty_hover = std::collections::HashSet::new();
-                return node.children.iter().filter(|c| c.is_element()).any(|child| {
-                    let ctx = MatchContext {
-                        focused_box,
-                        keyboard_focus: false,
-                        type_child_index: 0,
-                        type_sibling_count: 1,
-                        html_box: Some(child),
-                        hover_chain: &empty_hover,
-                        element_id: child.node_id,
-                        prev_siblings: &[],
-                    };
-                    matches_selector_with_ancestors(
-                        rest, &child.tag, &child.attributes, 0, 1, &[], &ctx)
-                });
+                return node
+                    .children
+                    .iter()
+                    .filter(|c| c.is_element())
+                    .any(|child| {
+                        let ctx = MatchContext {
+                            focused_box,
+                            keyboard_focus: false,
+                            type_child_index: 0,
+                            type_sibling_count: 1,
+                            html_box: Some(child),
+                            hover_chain: &empty_hover,
+                            element_id: child.node_id,
+                            prev_siblings: &[],
+                            next_siblings: &[],
+                        };
+                        matches_selector_with_ancestors(
+                            rest,
+                            &child.tag,
+                            &child.attributes,
+                            0,
+                            1,
+                            &[],
+                            &ctx,
+                        )
+                    });
             }
             // ⛔ A leading `+`/`~` relates to the anchor's SIBLINGS, which are
             // not reachable from here — this function only sees the subtree.
             // Not supported; it answers false rather than pretending.
-            Combinator::AdjacentSibling | Combinator::GeneralSibling => return false,
+            Combinator::AdjacentSibling | Combinator::GeneralSibling | Combinator::Column => {
+                return false
+            }
             Combinator::Descendant => {
                 let mut stripped = sel.clone();
                 stripped.parts.remove(0);
@@ -687,8 +1015,17 @@ fn has_descendant_matching(
             hover_chain: &empty_hover,
             element_id: child.node_id,
             prev_siblings: &[],
+            next_siblings: &[],
         };
-        if matches_selector_with_ancestors(&sel.parts, &child.tag, &child.attributes, 0, 1, &[], &ctx) {
+        if matches_selector_with_ancestors(
+            &sel.parts,
+            &child.tag,
+            &child.attributes,
+            0,
+            1,
+            &[],
+            &ctx,
+        ) {
             return true;
         }
         if has_descendant_matching(child, sel, focused_box) {
@@ -702,7 +1039,7 @@ fn has_descendant_matching(
 fn nth_matches(expr: &str, pos: usize) -> bool {
     let expr = expr.trim();
     match expr {
-        "odd"  => pos % 2 == 1,
+        "odd" => pos % 2 == 1,
         "even" => pos % 2 == 0,
         _ => {
             if let Ok(n) = expr.parse::<i32>() {
@@ -713,8 +1050,11 @@ fn nth_matches(expr: &str, pos: usize) -> bool {
                 return pos as i32 == b;
             }
             let diff = pos as i32 - b;
-            if a > 0 { diff >= 0 && diff % a == 0 }
-            else     { diff <= 0 && diff % a == 0 }
+            if a > 0 {
+                diff >= 0 && diff % a == 0
+            } else {
+                diff <= 0 && diff % a == 0
+            }
         }
     }
 }
@@ -725,16 +1065,19 @@ fn parse_nth_ab(expr: &str) -> (i32, i32) {
         let b_str = expr[n_pos + 1..].trim();
         let a: i32 = match a_str {
             "" | "+" => 1,
-            "-"      => -1,
-            s        => s.parse().unwrap_or(0),
+            "-" => -1,
+            s => s.parse().unwrap_or(0),
         };
-        let b: i32 = if b_str.is_empty() { 0 } else { b_str.parse().unwrap_or(0) };
+        let b: i32 = if b_str.is_empty() {
+            0
+        } else {
+            b_str.parse().unwrap_or(0)
+        };
         (a, b)
     } else {
         (0, expr.parse().unwrap_or(0))
     }
 }
-
 
 /// Split `"2 of .pick"` into `("2", ".pick")`. `None` when there is no `of`.
 ///
@@ -750,14 +1093,21 @@ fn split_nth_of(inner: &str) -> Option<(String, String)> {
         let before_ok = p > 0 && (bytes[p - 1] as char).is_ascii_whitespace();
         let after = p + 2;
         let after_ok = after < bytes.len() && (bytes[after] as char).is_ascii_whitespace();
-        if before_ok && after_ok { at = Some(p); break; }
+        if before_ok && after_ok {
+            at = Some(p);
+            break;
+        }
         i = p + 2;
-        if i >= lower.len() { break; }
+        if i >= lower.len() {
+            break;
+        }
     }
     let at = at?;
     let nth = inner[..at].trim().to_string();
     let sel = inner[at + 2..].trim().to_string();
-    if nth.is_empty() || sel.is_empty() { return None; }
+    if nth.is_empty() || sel.is_empty() {
+        return None;
+    }
     Some((nth, sel))
 }
 

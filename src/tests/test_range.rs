@@ -12,8 +12,12 @@ use crate::types::Document;
 
 const PAGE: &str = "<div id=r><p id=p1>Hello<b id=b1>World</b>Tail</p><p id=p2>Second</p></div>";
 
-fn page() -> Document { parse_html(PAGE) }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn page() -> Document {
+    parse_html(PAGE)
+}
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 /// The four text nodes: "Hello", "World", "Tail", "Second".
 fn texts(d: &Document) -> (u32, u32, u32, u32) {
     let p1 = el(d, "p1");
@@ -22,7 +26,9 @@ fn texts(d: &Document) -> (u32, u32, u32, u32) {
     let k = d.child_nodes(p1);
     (k[0], d.child_nodes(b1)[0], k[2], d.child_nodes(p2)[0])
 }
-fn html(d: &Document, id: u32) -> String { d.inner_html(id) }
+fn html(d: &Document, id: u32) -> String {
+    d.inner_html(id)
+}
 
 // ─── boundary points ────────────────────────────────────────────────────────
 
@@ -54,13 +60,19 @@ fn a_boundary_that_crosses_the_other_one_drags_it_along() {
     let r = d.create_range();
     d.range_set_start(r, t1, 3);
     d.range_set_end(r, t1, 1);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(1), Some(1)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(1), Some(1))
+    );
 
     let r = d.create_range();
     d.range_set_start(r, t1, 1);
     d.range_set_end(r, t1, 3);
     d.range_set_start(r, t1, 4);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(4), Some(4)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(4), Some(4))
+    );
 }
 
 #[test]
@@ -88,17 +100,31 @@ fn select_node_spans_the_node_and_select_node_contents_spans_its_insides() {
 
     let r = d.create_range();
     assert!(d.range_select_node(r, b1));
-    assert_eq!(d.range_start_container(r), Some(p1), "both boundaries sit in the PARENT");
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(1), Some(2)));
+    assert_eq!(
+        d.range_start_container(r),
+        Some(p1),
+        "both boundaries sit in the PARENT"
+    );
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(1), Some(2))
+    );
     assert!(!d.range_collapsed(r));
 
     let r = d.create_range();
     d.range_select_node_contents(r, p1);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(3)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(3))
+    );
 
     let r = d.create_range();
     d.range_select_node_contents(r, t1);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(5)), "a text node's LENGTH");
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(5)),
+        "a text node's LENGTH"
+    );
 }
 
 #[test]
@@ -110,7 +136,10 @@ fn set_start_before_and_after_address_the_node_from_its_parent() {
     assert!(d.range_set_start_before(r, b1));
     assert!(d.range_set_end_after(r, b1));
     assert_eq!(d.range_start_container(r), Some(p1));
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(1), Some(2)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(1), Some(2))
+    );
 }
 
 #[test]
@@ -120,12 +149,18 @@ fn collapse_defaults_to_the_end_not_the_start() {
     let r = d.create_range();
     d.range_select_node_contents(r, p1);
     d.range_collapse(r, true);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(0)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(0))
+    );
 
     let r = d.create_range();
     d.range_select_node_contents(r, p1);
     d.range_collapse(r, false);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(3), Some(3)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(3), Some(3))
+    );
 }
 
 #[test]
@@ -138,7 +173,11 @@ fn the_common_ancestor_rises_only_as_far_as_it_must() {
     let r = d.create_range();
     d.range_set_start(r, t1, 1);
     d.range_set_end(r, t1, 3);
-    assert_eq!(d.common_ancestor_container(r), Some(t1), "the text node itself");
+    assert_eq!(
+        d.common_ancestor_container(r),
+        Some(t1),
+        "the text node itself"
+    );
 
     let r = d.create_range();
     d.range_set_start(r, t1, 1);
@@ -166,15 +205,27 @@ fn compare_boundary_points_reads_its_operands_in_the_opposite_order_to_its_name(
     d.range_set_start(b, t1, 2);
     d.range_set_end(b, t1, 4);
     assert_eq!(d.compare_boundary_points(a, START_TO_START, b), Some(-1));
-    assert_eq!(d.compare_boundary_points(a, START_TO_END, b), Some(1), "a.END vs b.START");
+    assert_eq!(
+        d.compare_boundary_points(a, START_TO_END, b),
+        Some(1),
+        "a.END vs b.START"
+    );
     assert_eq!(d.compare_boundary_points(a, END_TO_END, b), Some(-1));
-    assert_eq!(d.compare_boundary_points(a, END_TO_START, b), Some(-1), "a.START vs b.END");
+    assert_eq!(
+        d.compare_boundary_points(a, END_TO_START, b),
+        Some(-1),
+        "a.START vs b.END"
+    );
 
     let c = d.create_range();
     d.range_set_start(c, t1, 1);
     d.range_set_end(c, t1, 3);
     assert_eq!(d.compare_boundary_points(a, START_TO_START, c), Some(0));
-    assert_eq!(d.compare_boundary_points(a, 9, c), None, "NotSupportedError");
+    assert_eq!(
+        d.compare_boundary_points(a, 9, c),
+        None,
+        "NotSupportedError"
+    );
 }
 
 #[test]
@@ -194,7 +245,11 @@ fn compare_points_and_is_point_in_range_agree_on_the_boundaries() {
     assert!(d.is_point_in_range(r, t1, 3));
 
     let loose = d.create_element("div");
-    assert_eq!(d.range_compare_point(r, loose, 0), None, "WrongDocumentError");
+    assert_eq!(
+        d.range_compare_point(r, loose, 0),
+        None,
+        "WrongDocumentError"
+    );
 }
 
 #[test]
@@ -210,7 +265,10 @@ fn intersects_node_covers_ancestors_and_stops_at_untouched_siblings() {
     assert!(d.range_intersects_node(r, p1));
     assert!(d.range_intersects_node(r, b1));
     assert!(d.range_intersects_node(r, t1));
-    assert!(!d.range_intersects_node(r, p2), "the second paragraph is untouched");
+    assert!(
+        !d.range_intersects_node(r, p2),
+        "the second paragraph is untouched"
+    );
 }
 
 #[test]
@@ -244,7 +302,11 @@ fn to_string_collects_the_text_between_the_boundaries() {
     let r = d.create_range();
     d.range_set_start(r, t1, 2);
     d.range_set_end(r, t3, 2);
-    assert_eq!(d.range_to_string(r), "lloWorldTa", "through the <b> in the middle");
+    assert_eq!(
+        d.range_to_string(r),
+        "lloWorldTa",
+        "through the <b> in the middle"
+    );
 
     let r = d.create_range();
     d.range_select_node_contents(r, p1);
@@ -253,7 +315,11 @@ fn to_string_collects_the_text_between_the_boundaries() {
     let r = d.create_range();
     d.range_set_start(r, p1, 0);
     d.range_set_end(r, p1, 2);
-    assert_eq!(d.range_to_string(r), "HelloWorld", "element boundaries take whole children");
+    assert_eq!(
+        d.range_to_string(r),
+        "HelloWorld",
+        "element boundaries take whole children"
+    );
 }
 
 // ─── the mutating members ───────────────────────────────────────────────────
@@ -268,7 +334,10 @@ fn delete_contents_inside_one_text_node_is_a_data_edit() {
     d.range_set_end(r, t1, 3);
     d.delete_contents(r);
     assert!(html(&d, r_).contains("Hlo"), "{}", html(&d, r_));
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(1), Some(1)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(1), Some(1))
+    );
     assert!(d.range_collapsed(r));
 }
 
@@ -284,7 +353,12 @@ fn delete_contents_across_nodes_leaves_two_adjacent_text_nodes() {
     d.range_set_end(r, t3, 2);
     d.delete_contents(r);
     let kids = d.child_nodes(p1);
-    assert_eq!(kids.len(), 2, "two text nodes, not one: {:?}", kids.iter().map(|k| d.text_data(*k)).collect::<Vec<_>>());
+    assert_eq!(
+        kids.len(),
+        2,
+        "two text nodes, not one: {:?}",
+        kids.iter().map(|k| d.text_data(*k)).collect::<Vec<_>>()
+    );
     assert_eq!(d.text_data(kids[0]), "He");
     assert_eq!(d.text_data(kids[1]), "il");
 }
@@ -314,7 +388,11 @@ fn clone_contents_leaves_the_tree_alone_and_extract_does_not() {
     d.range_set_start(r, t1, 2);
     d.range_set_end(r, t3, 2);
     let frag = d.clone_contents(r).unwrap();
-    assert_eq!(html(&d, r_), before, "cloneContents does not touch the tree");
+    assert_eq!(
+        html(&d, r_),
+        before,
+        "cloneContents does not touch the tree"
+    );
     assert_eq!(d.text_content(frag), "lloWorldTa");
     assert_eq!(d.node_type(frag), 11, "a DocumentFragment");
 
@@ -339,7 +417,11 @@ fn extracting_across_paragraphs_clones_the_partially_covered_parents() {
     let kids = d.child_nodes(frag);
     assert_eq!(kids.len(), 2, "two cloned paragraphs");
     assert_eq!(d.tag_name(kids[0]), Some("p"));
-    assert_eq!(d.get_attribute(kids[0], "id").as_deref(), Some("p1"), "the clone kept the id");
+    assert_eq!(
+        d.get_attribute(kids[0], "id").as_deref(),
+        Some("p1"),
+        "the clone kept the id"
+    );
     assert_eq!(d.text_content(kids[0]), "lloWorldTail");
     assert_eq!(d.text_content(kids[1]), "Sec");
     // The originals are still the ones in the document.
@@ -384,7 +466,11 @@ fn insert_node_at_an_element_offset_needs_no_split() {
     d.append_child(i, it);
     assert!(d.insert_node(r, i));
     let kids = d.child_nodes(p1);
-    assert_eq!(d.tag_name(kids[1]), Some("i"), "between the text and the <b>");
+    assert_eq!(
+        d.tag_name(kids[1]),
+        Some("i"),
+        "between the text and the <b>"
+    );
 }
 
 #[test]
@@ -397,7 +483,11 @@ fn surround_contents_wraps_and_refuses_a_partially_covered_element() {
     d.range_set_end(r, t1, 3);
     let u = d.create_element("u");
     assert!(d.surround_contents(r, u));
-    assert_eq!(d.text_content(p1), "HelloWorldTail", "the text is unchanged");
+    assert_eq!(
+        d.text_content(p1),
+        "HelloWorldTail",
+        "the text is unchanged"
+    );
     assert_eq!(d.range_to_string(r), "el");
     assert_eq!(d.text_content(u), "el");
 
@@ -439,7 +529,10 @@ fn an_insertion_before_the_start_shifts_both_offsets() {
     let i = d.create_element("i");
     let first = d.child_nodes(p1)[0];
     d.insert_before(p1, i, first);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(2), Some(3)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(2), Some(3))
+    );
 }
 
 #[test]
@@ -451,7 +544,10 @@ fn a_removal_before_the_start_shifts_both_offsets_back() {
     d.range_set_start(r, p1, 1);
     d.range_set_end(r, p1, 3);
     d.remove_child(t1);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(2)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(2))
+    );
 }
 
 #[test]
@@ -466,8 +562,15 @@ fn removing_the_containers_ancestor_moves_the_container_itself() {
     d.range_set_start(r, t2, 1);
     d.range_set_end(r, t2, 3);
     d.remove_child(b1);
-    assert_eq!(d.range_start_container(r), Some(p1), "no longer the text node");
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(1), Some(1)));
+    assert_eq!(
+        d.range_start_container(r),
+        Some(p1),
+        "no longer the text node"
+    );
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(1), Some(1))
+    );
     assert!(d.range_collapsed(r));
 }
 
@@ -481,7 +584,10 @@ fn replacing_character_data_moves_a_boundary_inside_the_replaced_run_to_its_star
     d.range_set_start(r, t1, 1);
     d.range_set_end(r, t1, 4);
     d.set_text_data(t1, "Hi");
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(0)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(0))
+    );
 }
 
 #[test]
@@ -494,7 +600,10 @@ fn the_three_character_data_mutators_each_move_the_offsets_differently() {
     d.range_set_start(r, t1, 2);
     d.range_set_end(r, t1, 4);
     d.insert_data(t1, 0, "XX");
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(4), Some(6)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(4), Some(6))
+    );
     assert_eq!(d.text_data(t1), "XXHello");
 
     let mut d = page();
@@ -503,7 +612,10 @@ fn the_three_character_data_mutators_each_move_the_offsets_differently() {
     d.range_set_start(r, t1, 2);
     d.range_set_end(r, t1, 5);
     d.delete_data(t1, 0, 2);
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(0), Some(3)));
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(0), Some(3))
+    );
     assert_eq!(d.text_data(t1), "llo");
 
     let mut d = page();
@@ -512,7 +624,11 @@ fn the_three_character_data_mutators_each_move_the_offsets_differently() {
     d.range_set_start(r, t1, 2);
     d.range_set_end(r, t1, 4);
     d.append_data(t1, "ZZ");
-    assert_eq!((d.range_start_offset(r), d.range_end_offset(r)), (Some(2), Some(4)), "untouched");
+    assert_eq!(
+        (d.range_start_offset(r), d.range_end_offset(r)),
+        (Some(2), Some(4)),
+        "untouched"
+    );
 }
 
 #[test]
@@ -527,7 +643,11 @@ fn splitting_a_text_node_moves_a_boundary_past_the_cut_into_the_new_node() {
     d.range_set_start(r, t1, 1);
     d.range_set_end(r, t1, 4);
     let new = d.split_text(t1, 2).unwrap();
-    assert_eq!(d.range_start_container(r), Some(t1), "before the cut: stays put");
+    assert_eq!(
+        d.range_start_container(r),
+        Some(t1),
+        "before the cut: stays put"
+    );
     assert_eq!(d.range_start_offset(r), Some(1));
     assert_eq!(d.range_end_container(r), Some(new), "past the cut: moves");
     assert_eq!(d.range_end_offset(r), Some(2));

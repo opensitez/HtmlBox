@@ -6,10 +6,12 @@
 //! and the attribute handed back by `removeAttributeNode` has a null
 //! `ownerElement`.
 
-use crate::html::parse_html;
 use crate::dom::attrs::Attr;
+use crate::html::parse_html;
 
-fn doc(html: &str) -> crate::types::Document { parse_html(html) }
+fn doc(html: &str) -> crate::types::Document {
+    parse_html(html)
+}
 
 #[test]
 fn attributes_is_an_indexed_list_in_source_order() {
@@ -18,12 +20,20 @@ fn attributes_is_an_indexed_list_in_source_order() {
 
     assert_eq!(d.attributes_length(el), 3, "Chrome: length=3");
     let names: Vec<String> = d.attributes(el).iter().map(|a| a.name.clone()).collect();
-    assert_eq!(names, vec!["id", "title", "data-x"], "source order, name folded");
+    assert_eq!(
+        names,
+        vec!["id", "title", "data-x"],
+        "source order, name folded"
+    );
 
     let first = d.attributes_item(el, 0).unwrap();
     assert_eq!(first.name, "id");
     assert_eq!(first.value, "d");
-    assert_eq!(d.attributes_item(el, 3), None, "past the end is None, not a panic");
+    assert_eq!(
+        d.attributes_item(el, 3),
+        None,
+        "past the end is None, not a panic"
+    );
 }
 
 #[test]
@@ -37,7 +47,11 @@ fn an_attr_answers_the_node_members() {
     assert_eq!(a.node_value(), "t");
     assert_eq!(a.local_name(), "title");
     assert_eq!(a.prefix(), None, "Chrome: prefix=null");
-    assert_eq!(a.namespace_uri(), None, "Chrome: ns=null — HTML attributes have none");
+    assert_eq!(
+        a.namespace_uri(),
+        None,
+        "Chrome: ns=null — HTML attributes have none"
+    );
     assert!(a.specified(), "Chrome: specified=true, always");
     assert_eq!(a.owner_element(), Some(el), "Chrome: ownerElement.id=d");
 }
@@ -48,11 +62,20 @@ fn a_qualified_name_lookup_folds_but_a_namespaced_one_does_not() {
     let el = d.get_element_by_id("d").unwrap();
 
     // Chrome: getNamedItem('TITLE')=t
-    assert_eq!(d.get_named_item(el, "TITLE").map(|a| a.value), Some("t".into()));
+    assert_eq!(
+        d.get_named_item(el, "TITLE").map(|a| a.value),
+        Some("t".into())
+    );
     // Chrome: getNamedItemNS(null,'title')=t
-    assert_eq!(d.get_named_item_ns(el, None, "title").map(|a| a.value), Some("t".into()));
+    assert_eq!(
+        d.get_named_item_ns(el, None, "title").map(|a| a.value),
+        Some("t".into())
+    );
     // …and a null namespace is not a wildcard.
-    assert_eq!(d.get_named_item_ns(el, Some("http://example.com/ns"), "title"), None);
+    assert_eq!(
+        d.get_named_item_ns(el, Some("http://example.com/ns"), "title"),
+        None
+    );
 }
 
 #[test]
@@ -61,7 +84,10 @@ fn set_attribute_node_appends_and_reports_what_it_replaced() {
     let el = d.get_element_by_id("d").unwrap();
 
     let mut fresh = d.create_attribute("Foo");
-    assert_eq!(fresh.name, "foo", "Chrome folds createAttribute in an HTML document");
+    assert_eq!(
+        fresh.name, "foo",
+        "Chrome folds createAttribute in an HTML document"
+    );
     fresh.value = "bar".into();
 
     let previous = d.set_attribute_node(el, fresh);
@@ -74,7 +100,10 @@ fn set_attribute_node_appends_and_reports_what_it_replaced() {
     assert_eq!(d.get_attribute(el, "foo").as_deref(), Some("bar"));
 
     let replaced = d.set_attribute_node(el, Attr::new("foo", "baz")).unwrap();
-    assert_eq!(replaced.value, "bar", "the SECOND set reports the value it displaced");
+    assert_eq!(
+        replaced.value, "bar",
+        "the SECOND set reports the value it displaced"
+    );
     assert_eq!(d.get_attribute(el, "foo").as_deref(), Some("baz"));
 }
 
@@ -88,7 +117,11 @@ fn remove_attribute_node_hands_back_a_detached_attribute() {
 
     assert_eq!(removed.name, "data-x");
     assert_eq!(removed.value, "1");
-    assert_eq!(removed.owner_element(), None, "Chrome: owner=null after removal");
+    assert_eq!(
+        removed.owner_element(),
+        None,
+        "Chrome: owner=null after removal"
+    );
     assert_eq!(d.get_attribute_names(el), vec!["id", "title"]);
 }
 
@@ -129,7 +162,10 @@ fn a_namespaced_attribute_keeps_its_prefix_and_namespace() {
 fn create_attribute_ns_keeps_its_case() {
     let d = doc("<div id=d></div>");
     let a = d.create_attribute_ns(Some("http://example.com/ns"), "ex:MixedCase");
-    assert_eq!(a.name, "ex:MixedCase", "only HTML folds; a namespaced name does not");
+    assert_eq!(
+        a.name, "ex:MixedCase",
+        "only HTML folds; a namespaced name does not"
+    );
     assert_eq!(a.local_name(), "MixedCase");
     assert_eq!(a.owner_element(), None, "a fresh attribute has no owner");
 }

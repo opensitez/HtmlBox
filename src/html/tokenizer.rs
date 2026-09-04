@@ -2,16 +2,22 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Tokenizer ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub(crate) enum Token {
     Text(String),
-    OpenTag  { tag: String, attrs: crate::dom::attrs::AttrMap, self_closing: bool },
-    CloseTag { tag: String },
+    OpenTag {
+        tag: String,
+        attrs: crate::dom::attrs::AttrMap,
+        self_closing: bool,
+    },
+    CloseTag {
+        tag: String,
+    },
     /// Comment DATA, `<!--` and `-->` already stripped.
     Comment(String),
     Doctype(crate::html::doctype::Doctype),
@@ -29,9 +35,13 @@ fn tag_slice(html: &str, start: usize, end: usize) -> &str {
     let end = end.max(start).min(html.len());
     // Both ends must sit on a char boundary or the slice panics on UTF-8.
     let mut s = start;
-    while s < html.len() && !html.is_char_boundary(s) { s += 1; }
+    while s < html.len() && !html.is_char_boundary(s) {
+        s += 1;
+    }
     let mut e = end.max(s);
-    while e < html.len() && !html.is_char_boundary(e) { e += 1; }
+    while e < html.len() && !html.is_char_boundary(e) {
+        e += 1;
+    }
     &html[s..e]
 }
 
@@ -63,14 +73,14 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
                 } else {
                     match rest.find("-->") {
                         Some(e) => (rest[..e].to_string(), i + 4 + e + 3),
-                        None    => (rest.to_string(), html.len()),
+                        None => (rest.to_string(), html.len()),
                     }
                 };
                 tokens.push(Token::Comment(data));
                 i = end;
                 continue;
             }
-            if i + 9 <= bytes.len() && bytes[i..i+9].eq_ignore_ascii_case(b"<!doctype") {
+            if i + 9 <= bytes.len() && bytes[i..i + 9].eq_ignore_ascii_case(b"<!doctype") {
                 let found = html[i..].find('>').map(|e| i + e + 1);
                 let end = found.unwrap_or(html.len());
                 // The token used to be a unit variant — the name and the two
@@ -106,7 +116,9 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
                 // in the wild write it, and dropping it lost the line break.
                 if tag == "br" {
                     tokens.push(Token::OpenTag {
-                        tag, attrs: crate::dom::attrs::AttrMap::new(), self_closing: true,
+                        tag,
+                        attrs: crate::dom::attrs::AttrMap::new(),
+                        self_closing: true,
                     });
                 } else {
                     tokens.push(Token::CloseTag { tag });
@@ -122,7 +134,11 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
             // HTML §13.2.6.4.7 in full: "A start tag whose tag name is
             // 'image' — change the token's tag name to 'img' and reprocess."
             // It is not an alias, it is a rename, and pages rely on it.
-            let tag = if tag == "image" { "img".to_string() } else { tag };
+            let tag = if tag == "image" {
+                "img".to_string()
+            } else {
+                tag
+            };
             let is_void = is_void_element(&tag);
             // A trailing `/` on a non-void HTML element is IGNORED — `<div/>x`
             // opens a div and `x` goes INSIDE it. Only foreign content (SVG,
@@ -131,7 +147,11 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
             // `<div/>` an empty element and put the rest of the document beside
             // it instead of within.
             let self_closing = is_void || (had_slash && is_foreign_content_tag(&tag));
-            tokens.push(Token::OpenTag { tag: tag.clone(), attrs, self_closing });
+            tokens.push(Token::OpenTag {
+                tag: tag.clone(),
+                attrs,
+                self_closing,
+            });
             i = end;
             // Raw text / foreign content elements: content must not be parsed as HTML.
             // <svg> is foreign content — collect everything until </svg> as raw text
@@ -140,9 +160,11 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
             // has no `<b>` element in it, and `<textarea><p>x</p>` holds the
             // literal markup as its value — parsing them as HTML built elements
             // no browser has and lost the characters that made up the tags.
-            if matches!(tag.as_str(),
-                        "style" | "script" | "noscript" | "svg" | "title" | "textarea")
-                && !(self_closing || is_void) {
+            if matches!(
+                tag.as_str(),
+                "style" | "script" | "noscript" | "svg" | "title" | "textarea"
+            ) && !(self_closing || is_void)
+            {
                 let close_pat = format!("</{}", tag);
                 let raw_end = crate::css::find_case_insensitive(&html[i..], &close_pat)
                     .map(|e| i + e)
@@ -163,7 +185,9 @@ pub(crate) fn tokenize(html: &str) -> Vec<Token> {
             }
         } else {
             let start = i;
-            while i < bytes.len() && bytes[i] != b'<' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'<' {
+                i += 1;
+            }
             let text = &html[start..i];
             if !text.is_empty() {
                 tokens.push(Token::Text(decode_entities(text)));
@@ -181,7 +205,9 @@ fn find_tag_end(html: &str, start: usize) -> usize {
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = in_q {
-            if b == q { in_q = None; }
+            if b == q {
+                in_q = None;
+            }
         } else if (b == b'"' || b == b'\'') && prev_meaningful == b'=' {
             // Only enter quoted mode for attribute values (after '=').
             // Stray quotes (e.g. <div " class="...">) must not toggle
@@ -190,7 +216,9 @@ fn find_tag_end(html: &str, start: usize) -> usize {
         } else if b == b'>' {
             return i + 1;
         }
-        if !b.is_ascii_whitespace() { prev_meaningful = b; }
+        if !b.is_ascii_whitespace() {
+            prev_meaningful = b;
+        }
         i += 1;
     }
     html.len()
@@ -209,13 +237,28 @@ fn parse_attrs(s: &str) -> crate::dom::attrs::AttrMap {
     let mut i = 0;
     let bytes = s.as_bytes();
     while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        if i >= bytes.len() { break; }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
         let name_start = i;
-        while i < bytes.len() && bytes[i] != b'=' && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' { i += 1; }
+        while i < bytes.len()
+            && bytes[i] != b'='
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'/'
+        {
+            i += 1;
+        }
         let name = s[name_start..i].to_ascii_lowercase();
-        if name.is_empty() { i += 1; continue; }
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+        if name.is_empty() {
+            i += 1;
+            continue;
+        }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
         if i >= bytes.len() || bytes[i] != b'=' {
             // FIRST occurrence wins. The tokenizer's attribute-name state drops
             // a duplicate rather than overwriting, so `<div CLASS=x class=y>`
@@ -224,18 +267,26 @@ fn parse_attrs(s: &str) -> crate::dom::attrs::AttrMap {
             continue;
         }
         i += 1;
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
         let value = if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
             let q = bytes[i];
             i += 1;
             let start = i;
-            while i < bytes.len() && bytes[i] != q { i += 1; }
+            while i < bytes.len() && bytes[i] != q {
+                i += 1;
+            }
             let v = decode_entities_attr(&s[start..i]);
-            if i < bytes.len() { i += 1; }
+            if i < bytes.len() {
+                i += 1;
+            }
             v
         } else {
             let start = i;
-            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' { i += 1; }
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                i += 1;
+            }
             decode_entities_attr(&s[start..i])
         };
         map.or_insert(name, value);
@@ -244,11 +295,14 @@ fn parse_attrs(s: &str) -> crate::dom::attrs::AttrMap {
 }
 
 fn is_void_element(tag: &str) -> bool {
-    matches!(tag, "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
+    matches!(
+        tag,
+        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
         | "link" | "meta" | "param" | "source" | "track" | "wbr"
         // SVG void elements — never have child content
         | "path" | "circle" | "rect" | "line" | "polygon" | "polyline"
-        | "ellipse" | "use" | "image" | "stop")
+        | "ellipse" | "use" | "image" | "stop"
+    )
 }
 
 /// Elements whose content should be completely suppressed (no box, no text)
@@ -262,28 +316,114 @@ fn is_void_element(tag: &str) -> bool {
 /// behaves that way — `<section><span>x</section>y` leaves `y` unwrapped,
 /// because `span` is not on this list.
 pub(crate) fn is_formatting_element(tag: &str) -> bool {
-    matches!(tag,
-        "a" | "b" | "big" | "code" | "em" | "font" | "i" | "nobr"
-        | "s" | "small" | "strike" | "strong" | "tt" | "u")
+    matches!(
+        tag,
+        "a" | "b"
+            | "big"
+            | "code"
+            | "em"
+            | "font"
+            | "i"
+            | "nobr"
+            | "s"
+            | "small"
+            | "strike"
+            | "strong"
+            | "tt"
+            | "u"
+    )
 }
 
 /// HTML §13.2.4.2's "special" category — the elements that break out of a
 /// formatting element rather than nest inside it. Used to find the adoption
 /// agency's furthest block.
 pub(crate) fn is_special_element(tag: &str) -> bool {
-    matches!(tag,
-        "address" | "applet" | "area" | "article" | "aside" | "base" | "basefont"
-        | "bgsound" | "blockquote" | "body" | "br" | "button" | "caption" | "center"
-        | "col" | "colgroup" | "dd" | "details" | "dir" | "div" | "dl" | "dt"
-        | "embed" | "fieldset" | "figcaption" | "figure" | "footer" | "form"
-        | "frame" | "frameset" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head"
-        | "header" | "hgroup" | "hr" | "html" | "iframe" | "img" | "input"
-        | "keygen" | "li" | "link" | "listing" | "main" | "marquee" | "menu"
-        | "meta" | "nav" | "noembed" | "noframes" | "noscript" | "object" | "ol"
-        | "p" | "param" | "plaintext" | "pre" | "script" | "search" | "section"
-        | "select" | "source" | "style" | "summary" | "table" | "tbody" | "td"
-        | "template" | "textarea" | "tfoot" | "th" | "thead" | "title" | "tr"
-        | "track" | "ul" | "wbr" | "xmp")
+    matches!(
+        tag,
+        "address"
+            | "applet"
+            | "area"
+            | "article"
+            | "aside"
+            | "base"
+            | "basefont"
+            | "bgsound"
+            | "blockquote"
+            | "body"
+            | "br"
+            | "button"
+            | "caption"
+            | "center"
+            | "col"
+            | "colgroup"
+            | "dd"
+            | "details"
+            | "dir"
+            | "div"
+            | "dl"
+            | "dt"
+            | "embed"
+            | "fieldset"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "form"
+            | "frame"
+            | "frameset"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "head"
+            | "header"
+            | "hgroup"
+            | "hr"
+            | "html"
+            | "iframe"
+            | "img"
+            | "input"
+            | "keygen"
+            | "li"
+            | "link"
+            | "listing"
+            | "main"
+            | "marquee"
+            | "menu"
+            | "meta"
+            | "nav"
+            | "noembed"
+            | "noframes"
+            | "noscript"
+            | "object"
+            | "ol"
+            | "p"
+            | "param"
+            | "plaintext"
+            | "pre"
+            | "script"
+            | "search"
+            | "section"
+            | "select"
+            | "source"
+            | "style"
+            | "summary"
+            | "table"
+            | "tbody"
+            | "td"
+            | "template"
+            | "textarea"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "title"
+            | "tr"
+            | "track"
+            | "ul"
+            | "wbr"
+            | "xmp"
+    )
 }
 
 /// Elements whose subtree is FOREIGN content, where XML self-closing syntax
@@ -301,19 +441,53 @@ fn is_foreign_content_tag(tag: &str) -> bool {
 pub(crate) fn should_auto_close(current: &str, new_tag: &str) -> bool {
     match current {
         // <p> closes when a block-level element opens
-        "p" => matches!(new_tag,
-            "address" | "article" | "aside" | "blockquote" | "center" |
-            "details" | "dialog" | "dir" | "div" | "dl" | "fieldset" |
-            "figcaption" | "figure" | "footer" | "form" | "h1" | "h2" |
-            "h3" | "h4" | "h5" | "h6" | "header" | "hgroup" | "hr" |
-            "li" | "listing" | "main" | "menu" | "nav" | "ol" | "p" |
-            "plaintext" | "pre" | "search" | "section" | "summary" |
-            "table" | "ul" | "xmp"
+        "p" => matches!(
+            new_tag,
+            "address"
+                | "article"
+                | "aside"
+                | "blockquote"
+                | "center"
+                | "details"
+                | "dialog"
+                | "dir"
+                | "div"
+                | "dl"
+                | "fieldset"
+                | "figcaption"
+                | "figure"
+                | "footer"
+                | "form"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "header"
+                | "hgroup"
+                | "hr"
+                | "li"
+                | "listing"
+                | "main"
+                | "menu"
+                | "nav"
+                | "ol"
+                | "p"
+                | "plaintext"
+                | "pre"
+                | "search"
+                | "section"
+                | "summary"
+                | "table"
+                | "ul"
+                | "xmp"
         ),
         // A heading closes on another heading (HTML §13.2.6.4.7: an h1-h6 start
         // tag while one is open is a parse error that pops it).
-        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" =>
-            matches!(new_tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"),
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            matches!(new_tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+        }
         // <li> closes on another <li>
         "li" => new_tag == "li",
         // <dt> closes on <dt> or <dd>

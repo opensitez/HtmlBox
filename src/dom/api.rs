@@ -13,18 +13,28 @@
 //! Every mutation goes through these methods, which update both the arena and the
 //! WebCore tree (bridge period), and set dirty flags for incremental re-style/layout.
 
-use crate::types::{Document, WebCore, Rect};
-use crate::dom::arena::NodeId;
 use crate::css::apply_property;
+use crate::dom::arena::NodeId;
+use crate::types::{Document, Overflow, Rect, WebCore};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaQueryList {
+    pub media: String,
+    pub matches: bool,
+}
 
 // ─── Read ───────────────────────────────────────────────────────────────────
 
 impl Document {
     /// `element.tagName`.
     pub fn tag_name(&self, id: u32) -> Option<&str> {
-        if id == 0 { return None; }
+        if id == 0 {
+            return None;
+        }
         if let Some(node) = self.arena.try_get(NodeId(id)) {
-            if !node.tag.is_empty() { return Some(node.tag.as_str()); }
+            if !node.tag.is_empty() {
+                return Some(node.tag.as_str());
+            }
         }
         // Shadow nodes have no arena entry — the render tree answers for them.
         self.find_webcore(id).map(|n| n.tag.as_str())
@@ -32,9 +42,15 @@ impl Document {
 
     /// Get an attribute value.
     pub fn get_attribute(&self, id: u32, key: &str) -> Option<String> {
-        if id == 0 { return None; }
+        if id == 0 {
+            return None;
+        }
         let folded = self.fold_name(key);
-        if let Some(v) = self.arena.try_get(NodeId(id)).and_then(|n| n.attributes.get(&folded)) {
+        if let Some(v) = self
+            .arena
+            .try_get(NodeId(id))
+            .and_then(|n| n.attributes.get(&folded))
+        {
             return Some(v.clone());
         }
         // Shadow-tree nodes are not mirrored into the arena, so the arena has
@@ -47,7 +63,9 @@ impl Document {
 
     /// Get the text content of a node and all its descendants.
     pub fn text_content(&self, id: u32) -> String {
-        if id == 0 { return String::new(); }
+        if id == 0 {
+            return String::new();
+        }
         let mut out = String::new();
         // ⛔ A shadow node is not in the arena — its id comes from a separate
         // descending space — so `collect_text`'s `arena.get` PANICKED on
@@ -117,16 +135,24 @@ impl Document {
 
     /// `node.parentNode` — 0 when there is none.
     pub fn parent_node(&self, id: u32) -> u32 {
-        if id == 0 || crate::dom::events::is_document_target(id) { return 0; }
+        if id == 0 || crate::dom::events::is_document_target(id) {
+            return 0;
+        }
         // `<html>`'s parent is the DOCUMENT, not nothing. It read as an orphan,
         // which is why `getRootNode()` stopped at the document element.
-        if id == self.root.node_id { return crate::dom::events::DOCUMENT_TARGET; }
+        if id == self.root.node_id {
+            return crate::dom::events::DOCUMENT_TARGET;
+        }
         // The doctype hangs off the document, not off any element.
-        if id != 0 && id == self.doctype { return crate::dom::events::DOCUMENT_TARGET; }
+        if id != 0 && id == self.doctype {
+            return crate::dom::events::DOCUMENT_TARGET;
+        }
         let p = self.arena.try_get(NodeId(id)).map_or(0, |n| n.parent.0);
         if p == 0 && self.find_webcore(id).is_some() && id != self.root.node_id {
             // A shadow-tree node has no arena parent; its parent is its host.
-            if let Some(h) = self.shadow_host_of_child(id) { return h; }
+            if let Some(h) = self.shadow_host_of_child(id) {
+                return h;
+            }
         }
         p
     }
@@ -141,10 +167,18 @@ impl Document {
     fn shadow_host_of_child(&self, id: u32) -> Option<u32> {
         fn walk(n: &WebCore, id: u32) -> Option<u32> {
             if let Some(sr) = &n.shadow_root {
-                if sr.children.iter().any(|c| c.node_id == id) { return Some(sr.node_id); }
-                for c in &sr.children { if let Some(f) = walk(c, id) { return Some(f); } }
+                if sr.children.iter().any(|c| c.node_id == id) {
+                    return Some(sr.node_id);
+                }
+                for c in &sr.children {
+                    if let Some(f) = walk(c, id) {
+                        return Some(f);
+                    }
+                }
             }
-            if n.children.iter().any(|c| c.node_id == id) { return Some(n.node_id); }
+            if n.children.iter().any(|c| c.node_id == id) {
+                return Some(n.node_id);
+            }
             n.children.iter().find_map(|c| walk(c, id))
         }
         walk(&self.root, id)
@@ -169,7 +203,9 @@ impl Document {
                     return Some(n.node_id);
                 }
                 for c in &sr.children {
-                    if let Some(h) = walk(c, id) { return Some(h); }
+                    if let Some(h) = walk(c, id) {
+                        return Some(h);
+                    }
                 }
             }
             n.children.iter().find_map(|c| walk(c, id))
@@ -178,12 +214,15 @@ impl Document {
     }
 
     /// `document` — the id of the document node itself.
-    pub fn document_node(&self) -> u32 { crate::dom::events::DOCUMENT_TARGET }
-
+    pub fn document_node(&self) -> u32 {
+        crate::dom::events::DOCUMENT_TARGET
+    }
 
     /// `node.childNodes` — every child, of every kind, in tree order.
     pub fn child_nodes(&self, id: u32) -> Vec<u32> {
-        if id == 0 { return Vec::new(); }
+        if id == 0 {
+            return Vec::new();
+        }
         // A shadow root's children are its tree's top level; a node INSIDE a
         // shadow tree has children of its own that the arena never saw. Both
         // are answered from the render tree, which is where a shadow tree
@@ -192,7 +231,8 @@ impl Document {
             if let Some(root) = self.shadow_root_by_id(id) {
                 return root.children.iter().map(|c| c.node_id).collect();
             }
-            return self.find_webcore(id)
+            return self
+                .find_webcore(id)
                 .map(|n| n.children.iter().map(|c| c.node_id).collect())
                 .unwrap_or_default();
         }
@@ -202,24 +242,38 @@ impl Document {
         // in that order (measured: `document.firstChild === document.doctype`).
         if crate::dom::events::is_document_target(id) {
             let mut kids = Vec::new();
-            if self.doctype != 0 { kids.push(self.doctype); }
-            if self.root.node_id != 0 { kids.push(self.root.node_id); }
+            if self.doctype != 0 {
+                kids.push(self.doctype);
+            }
+            if self.root.node_id != 0 {
+                kids.push(self.root.node_id);
+            }
             return kids;
         }
-        if !self.arena.is_alive(NodeId(id)) { return Vec::new(); }
+        if !self.arena.is_alive(NodeId(id)) {
+            return Vec::new();
+        }
         self.arena.children(NodeId(id)).map(|c| c.0).collect()
     }
 
     /// Get the next sibling node_id (0 if none).
     pub fn next_sibling(&self, id: u32) -> u32 {
-        if id == 0 { return 0; }
-        self.arena.try_get(NodeId(id)).map_or(0, |n| n.next_sibling.0)
+        if id == 0 {
+            return 0;
+        }
+        self.arena
+            .try_get(NodeId(id))
+            .map_or(0, |n| n.next_sibling.0)
     }
 
     /// `node.previousSibling` — 0 when there is none.
     pub fn previous_sibling(&self, id: u32) -> u32 {
-        if id == 0 { return 0; }
-        self.arena.try_get(NodeId(id)).map_or(0, |n| n.prev_sibling.0)
+        if id == 0 {
+            return 0;
+        }
+        self.arena
+            .try_get(NodeId(id))
+            .map_or(0, |n| n.prev_sibling.0)
     }
 }
 
@@ -255,7 +309,10 @@ impl Document {
         type Snapshot = (u32, Option<String>, Option<String>, Option<String>);
         fn walk(node: &WebCore, out: &mut Vec<Snapshot>) {
             if node.node_id != 0
-                && matches!(node.tag.as_str(), "input" | "textarea" | "select" | "option")
+                && matches!(
+                    node.tag.as_str(),
+                    "input" | "textarea" | "select" | "option"
+                )
             {
                 out.push((
                     node.node_id,
@@ -285,7 +342,11 @@ impl Document {
             // Absent is meaningful: `checked` is a boolean attribute, so
             // REMOVING it is how "unticked" is spelled. A set-only sync would
             // make unticking a no-op.
-            for (key, val) in [("checked", checked), ("value", value), ("selected", selected)] {
+            for (key, val) in [
+                ("checked", checked),
+                ("value", value),
+                ("selected", selected),
+            ] {
                 match val {
                     Some(v) => {
                         attrs.insert(key.to_string(), v);
@@ -306,7 +367,9 @@ impl Document {
     /// not of the node itself. `serialize_box` already knew how to write a
     /// subtree; the only thing missing was the DOM spelling in front of it.
     pub fn inner_html(&self, id: u32) -> String {
-        if id == 0 { return String::new(); }
+        if id == 0 {
+            return String::new();
+        }
         let node = match self.find_webcore(id) {
             Some(n) => n,
             // A node created but never inserted still has an `innerHTML`.
@@ -326,7 +389,9 @@ impl Document {
     /// parent — so it lands in `pending_nodes` exactly like a freshly created
     /// node, and the same `dom_append_child` attaches it.
     pub fn clone_node(&mut self, id: u32, deep: bool) -> u32 {
-        if id == 0 { return 0; }
+        if id == 0 {
+            return 0;
+        }
         // Cloned out of the tree FIRST so the recursion below owns its source.
         // `clone_subtree` needs `&mut self` for the arena, which it could not
         // have while still borrowing a box out of `self.root`.
@@ -354,7 +419,10 @@ impl Document {
             _ => {
                 let a = self.arena.create_element(&src.tag);
                 for (k, v) in &src.attributes {
-                    self.arena.get_mut(a).attributes.insert(k.clone(), v.clone());
+                    self.arena
+                        .get_mut(a)
+                        .attributes
+                        .insert(k.clone(), v.clone());
                 }
                 a
             }
@@ -384,10 +452,16 @@ impl Document {
     /// node, then remove it. A hand-rolled version would be a third place that
     /// has to remember the arena, the render tree AND the dirty flags.
     pub fn replace_child(&mut self, parent: u32, new_child: u32, old_child: u32) -> bool {
-        if parent == 0 || new_child == 0 || old_child == 0 { return false; }
-        if !self.arena.is_alive(NodeId(old_child)) { return false; }
+        if parent == 0 || new_child == 0 || old_child == 0 {
+            return false;
+        }
+        if !self.arena.is_alive(NodeId(old_child)) {
+            return false;
+        }
         // WHATWG throws NotFoundError when `old` is not a child of `parent`.
-        if self.arena.get(NodeId(old_child)).parent.0 != parent { return false; }
+        if self.arena.get(NodeId(old_child)).parent.0 != parent {
+            return false;
+        }
         self.insert_before(parent, new_child, old_child);
         self.remove_child(old_child);
         true
@@ -483,7 +557,9 @@ impl Document {
     /// runs past the end is clamped, exactly as the spec says.
     pub fn substring_data(&self, id: u32, offset: usize, count: usize) -> Option<String> {
         let units: Vec<u16> = self.text_data(id).encode_utf16().collect();
-        if offset > units.len() { return None; }
+        if offset > units.len() {
+            return None;
+        }
         let end = offset.saturating_add(count).min(units.len());
         Some(String::from_utf16_lossy(&units[offset..end]))
     }
@@ -492,7 +568,9 @@ impl Document {
     /// other four mutators are defined in terms of (DOM §4.10).
     pub fn replace_data(&mut self, id: u32, offset: usize, count: usize, data: &str) -> bool {
         let units: Vec<u16> = self.text_data(id).encode_utf16().collect();
-        if offset > units.len() { return false; }
+        if offset > units.len() {
+            return false;
+        }
         let end = offset.saturating_add(count).min(units.len());
         let mut out: Vec<u16> = units[..offset].to_vec();
         out.extend(data.encode_utf16());
@@ -528,7 +606,9 @@ impl Document {
     /// Returns `None` for a bad offset or a non-text node; the spec throws
     /// `IndexSizeError` for the former.
     pub fn split_text(&mut self, id: u32, offset: usize) -> Option<u32> {
-        if self.node_type(id) != 3 { return None; }
+        if self.node_type(id) != 3 {
+            return None;
+        }
         let tail = self.substring_data(id, offset, usize::MAX)?;
         let new_id = self.create_text_node(&tail);
         // ⛔ A split is not a delete plus an insert as far as a live range is
@@ -556,16 +636,29 @@ impl Document {
     /// `Text.wholeText` — the concatenated data of this node and the run of
     /// text-node siblings it sits in, with no element between them.
     pub fn whole_text(&self, id: u32) -> String {
-        if self.node_type(id) != 3 { return String::new(); }
+        if self.node_type(id) != 3 {
+            return String::new();
+        }
         let parent = self.parent_node(id);
-        if parent == 0 { return self.text_data(id); }
+        if parent == 0 {
+            return self.text_data(id);
+        }
         let sibs = self.child_nodes(parent);
-        let Some(at) = sibs.iter().position(|n| *n == id) else { return self.text_data(id) };
+        let Some(at) = sibs.iter().position(|n| *n == id) else {
+            return self.text_data(id);
+        };
         let mut start = at;
-        while start > 0 && self.node_type(sibs[start - 1]) == 3 { start -= 1; }
+        while start > 0 && self.node_type(sibs[start - 1]) == 3 {
+            start -= 1;
+        }
         let mut end = at + 1;
-        while end < sibs.len() && self.node_type(sibs[end]) == 3 { end += 1; }
-        sibs[start..end].iter().map(|n| self.text_data(*n)).collect()
+        while end < sibs.len() && self.node_type(sibs[end]) == 3 {
+            end += 1;
+        }
+        sibs[start..end]
+            .iter()
+            .map(|n| self.text_data(*n))
+            .collect()
     }
 
     /// `node.getRootNode()` — the topmost ancestor.
@@ -580,8 +673,12 @@ impl Document {
     /// `composed` follows a shadow root out to its host; without it the walk
     /// stops at the shadow boundary, which is the point of a shadow root.
     pub fn get_root_node(&self, id: u32, composed: bool) -> u32 {
-        if crate::dom::events::is_document_target(id) { return id; }
-        if id == 0 { return 0; }
+        if crate::dom::events::is_document_target(id) {
+            return id;
+        }
+        if id == 0 {
+            return 0;
+        }
         let mut cur = id;
         loop {
             // A shadow root is the root of its tree unless `composed` asks to
@@ -591,11 +688,15 @@ impl Document {
                     let _ = host;
                     // The shadow tree's root is its topmost node; without a
                     // ShadowRoot node to name, the host stands in for it.
-                    if let Some(h) = self.shadow_host(cur) { return h; }
+                    if let Some(h) = self.shadow_host(cur) {
+                        return h;
+                    }
                 }
             }
             let parent = self.parent_node(cur);
-            if parent == 0 { return cur; }
+            if parent == 0 {
+                return cur;
+            }
             cur = parent;
         }
     }
@@ -609,10 +710,14 @@ impl Document {
     /// answers `null` for `document.ownerDocument`; we answer the `<html>`
     /// element for it.
     pub fn owner_document(&self, id: u32) -> Option<u32> {
-        if id == 0 { return None; }
+        if id == 0 {
+            return None;
+        }
         // Null for the document itself (DOM §4.4) — now reachable, because
         // there is a document node to be.
-        if crate::dom::events::is_document_target(id) { return None; }
+        if crate::dom::events::is_document_target(id) {
+            return None;
+        }
         Some(crate::dom::events::DOCUMENT_TARGET)
     }
 
@@ -648,7 +753,9 @@ impl Document {
     /// form reset restores to. They start equal and part company the moment
     /// anything ticks the box.
     pub fn checked(&self, id: u32) -> bool {
-        self.find_webcore(id).map(|n| n.checkedness).unwrap_or(false)
+        self.find_webcore(id)
+            .map(|n| n.checkedness)
+            .unwrap_or(false)
     }
 
     /// `input.checked = b` — the IDL setter.
@@ -688,7 +795,9 @@ impl Document {
         // focus, and Chrome's answer when it refuses is that `activeElement`
         // stays exactly where it was — focus does NOT fall back to the nearest
         // focusable ancestor (measured: it remained on the body).
-        if self.is_inert(id) { return; }
+        if self.is_inert(id) {
+            return;
+        }
         self.focused_box = id;
     }
 
@@ -732,8 +841,6 @@ impl Document {
         }
         (0.0, 0.0)
     }
-
-
 }
 
 // ─── Node and Element traversal ─────────────────────────────────────────────
@@ -817,7 +924,11 @@ impl Document {
         let parent = self.parent_node(id);
         let siblings = self.children(parent);
         let at = siblings.iter().position(|n| *n == id)?;
-        if at == 0 { None } else { siblings.get(at - 1).copied() }
+        if at == 0 {
+            None
+        } else {
+            siblings.get(at - 1).copied()
+        }
     }
 
     // ─── EventTarget / event handler IDL (DOM §2.7, HTML §8.1.7.2) ──────────
@@ -830,7 +941,8 @@ impl Document {
         handler: crate::dom::events::EventHandler,
         options: crate::dom::events::ListenerOptions,
     ) -> u32 {
-        self.event_targets.add_event_listener_with(id, event_type, handler, options)
+        self.event_targets
+            .add_event_listener_with(id, event_type, handler, options)
     }
 
     /// `target.removeEventListener(...)`, by the id `add_event_listener` gave.
@@ -854,7 +966,6 @@ impl Document {
         !event.default_prevented()
     }
 
-
     /// `el.onclick = handler` and friends. `None` if `handler_name` is not an
     /// event handler attribute a browser has.
     pub fn set_event_handler(
@@ -863,7 +974,8 @@ impl Document {
         handler_name: &str,
         handler: crate::dom::events::EventHandler,
     ) -> Option<u32> {
-        self.event_targets.set_event_handler(id, handler_name, handler)
+        self.event_targets
+            .set_event_handler(id, handler_name, handler)
     }
 
     /// `el.onclick = null`.
@@ -892,8 +1004,12 @@ impl Document {
     /// `None` if the element already has one — `attachShadow` throws
     /// `NotSupportedError` there rather than replacing it.
     pub fn attach_shadow(&mut self, id: u32, mode: crate::types::ShadowMode) -> Option<u32> {
-        if id == 0 { return None; }
-        if self.has_shadow_root(id) { return None; }
+        if id == 0 {
+            return None;
+        }
+        if self.has_shadow_root(id) {
+            return None;
+        }
         let node = self.find_webcore_mut(id)?;
         node.attach_shadow(mode, "");
         // Returns the SHADOW ROOT, as the IDL says — not the host.
@@ -904,8 +1020,14 @@ impl Document {
     fn host_of_shadow_root(&self, shadow_id: u32) -> Option<u32> {
         fn walk(n: &WebCore, sid: u32) -> Option<u32> {
             if let Some(sr) = &n.shadow_root {
-                if sr.node_id == sid { return Some(n.node_id); }
-                for c in &sr.children { if let Some(f) = walk(c, sid) { return Some(f); } }
+                if sr.node_id == sid {
+                    return Some(n.node_id);
+                }
+                for c in &sr.children {
+                    if let Some(f) = walk(c, sid) {
+                        return Some(f);
+                    }
+                }
             }
             n.children.iter().find_map(|c| walk(c, sid))
         }
@@ -935,46 +1057,66 @@ impl Document {
 
     /// `shadowRoot.delegatesFocus`.
     pub fn shadow_delegates_focus(&self, shadow_id: u32) -> bool {
-        self.shadow_root_by_id(shadow_id).map(|sr| sr.delegates_focus).unwrap_or(false)
+        self.shadow_root_by_id(shadow_id)
+            .map(|sr| sr.delegates_focus)
+            .unwrap_or(false)
     }
     pub fn set_shadow_delegates_focus(&mut self, shadow_id: u32, v: bool) {
-        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) { sr.delegates_focus = v; }
+        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) {
+            sr.delegates_focus = v;
+        }
     }
 
     /// `shadowRoot.slotAssignment`.
     pub fn shadow_slot_assignment(&self, shadow_id: u32) -> crate::types::SlotAssignment {
-        self.shadow_root_by_id(shadow_id).map(|sr| sr.slot_assignment).unwrap_or_default()
+        self.shadow_root_by_id(shadow_id)
+            .map(|sr| sr.slot_assignment)
+            .unwrap_or_default()
     }
     pub fn set_shadow_slot_assignment(&mut self, shadow_id: u32, v: crate::types::SlotAssignment) {
-        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) { sr.slot_assignment = v; }
+        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) {
+            sr.slot_assignment = v;
+        }
     }
 
     /// `shadowRoot.clonable`.
     pub fn shadow_clonable(&self, shadow_id: u32) -> bool {
-        self.shadow_root_by_id(shadow_id).map(|sr| sr.clonable).unwrap_or(false)
+        self.shadow_root_by_id(shadow_id)
+            .map(|sr| sr.clonable)
+            .unwrap_or(false)
     }
     pub fn set_shadow_clonable(&mut self, shadow_id: u32, v: bool) {
-        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) { sr.clonable = v; }
+        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) {
+            sr.clonable = v;
+        }
     }
 
     /// `shadowRoot.serializable`.
     pub fn shadow_serializable(&self, shadow_id: u32) -> bool {
-        self.shadow_root_by_id(shadow_id).map(|sr| sr.serializable).unwrap_or(false)
+        self.shadow_root_by_id(shadow_id)
+            .map(|sr| sr.serializable)
+            .unwrap_or(false)
     }
     pub fn set_shadow_serializable(&mut self, shadow_id: u32, v: bool) {
-        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) { sr.serializable = v; }
+        if let Some(sr) = self.shadow_root_by_id_mut(shadow_id) {
+            sr.serializable = v;
+        }
     }
 
     /// `shadowRoot.adoptedStyleSheets` — constructed sheets applied to the
     /// tree, held as their source text.
     pub fn shadow_adopted_stylesheets(&self, shadow_id: u32) -> Vec<String> {
-        self.shadow_root_by_id(shadow_id).map(|sr| sr.adopted_stylesheets.clone()).unwrap_or_default()
+        self.shadow_root_by_id(shadow_id)
+            .map(|sr| sr.adopted_stylesheets.clone())
+            .unwrap_or_default()
     }
 
     /// Replace `adoptedStyleSheets` and fold the rules into the scoped sheet,
     /// so adopting one actually STYLES the tree rather than only recording it.
     pub fn set_shadow_adopted_stylesheets(&mut self, shadow_id: u32, sheets: Vec<String>) {
-        let Some(sr) = self.shadow_root_by_id_mut(shadow_id) else { return };
+        let Some(sr) = self.shadow_root_by_id_mut(shadow_id) else {
+            return;
+        };
         sr.adopted_stylesheets = sheets.clone();
         for css in &sheets {
             sr.stylesheet.parse_and_add_author(css);
@@ -986,13 +1128,21 @@ impl Document {
     /// shadow tree. Focus outside it is not this root's business.
     pub fn shadow_active_element(&self, shadow_id: u32) -> Option<u32> {
         let focused = self.focused_box;
-        if focused == 0 { return None; }
+        if focused == 0 {
+            return None;
+        }
         let host = self.host_of_shadow_root(shadow_id)?;
         let sr = self.find_webcore(host)?.shadow_root.as_ref()?;
         fn contains(nodes: &[WebCore], id: u32) -> bool {
-            nodes.iter().any(|n| n.node_id == id || contains(&n.children, id))
+            nodes
+                .iter()
+                .any(|n| n.node_id == id || contains(&n.children, id))
         }
-        if contains(&sr.children, focused) { Some(focused) } else { None }
+        if contains(&sr.children, focused) {
+            Some(focused)
+        } else {
+            None
+        }
     }
 
     /// `element.shadowRoot` — present only for an OPEN root. A closed root is
@@ -1008,7 +1158,9 @@ impl Document {
 
     /// Does this element have a shadow root, open or closed?
     pub fn has_shadow_root(&self, id: u32) -> bool {
-        self.find_webcore(id).map(|n| n.shadow_root.is_some()).unwrap_or(false)
+        self.find_webcore(id)
+            .map(|n| n.shadow_root.is_some())
+            .unwrap_or(false)
     }
 
     /// `shadowRoot.host` — the element a shadow tree is attached to.
@@ -1016,23 +1168,33 @@ impl Document {
         fn walk(n: &WebCore, target: u32) -> Option<u32> {
             if let Some(sr) = &n.shadow_root {
                 for c in &sr.children {
-                    if contains(c, target) { return Some(n.node_id); }
+                    if contains(c, target) {
+                        return Some(n.node_id);
+                    }
                 }
             }
             for c in &n.children {
-                if let Some(h) = walk(c, target) { return Some(h); }
+                if let Some(h) = walk(c, target) {
+                    return Some(h);
+                }
             }
             if let Some(sr) = &n.shadow_root {
                 for c in &sr.children {
-                    if let Some(h) = walk(c, target) { return Some(h); }
+                    if let Some(h) = walk(c, target) {
+                        return Some(h);
+                    }
                 }
             }
             None
         }
         fn contains(n: &WebCore, target: u32) -> bool {
-            if n.node_id == target { return true; }
+            if n.node_id == target {
+                return true;
+            }
             if let Some(sr) = &n.shadow_root {
-                if sr.children.iter().any(|c| contains(c, target)) { return true; }
+                if sr.children.iter().any(|c| contains(c, target)) {
+                    return true;
+                }
             }
             n.children.iter().any(|c| contains(c, target))
         }
@@ -1043,7 +1205,13 @@ impl Document {
     pub fn shadow_children(&self, id: u32) -> Vec<u32> {
         self.find_webcore(id)
             .and_then(|n| n.shadow_root.as_ref())
-            .map(|sr| sr.children.iter().filter(|c| c.is_element()).map(|c| c.node_id).collect())
+            .map(|sr| {
+                sr.children
+                    .iter()
+                    .filter(|c| c.is_element())
+                    .map(|c| c.node_id)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -1053,13 +1221,19 @@ impl Document {
     /// the way in, and without it a shadow tree was unreachable through any
     /// API at all.
     pub fn shadow_query_selector(&self, host: u32, selector: &str) -> Option<u32> {
-        self.shadow_query_selector_all(host, selector).first().copied()
+        self.shadow_query_selector_all(host, selector)
+            .first()
+            .copied()
     }
 
     /// `shadowRoot.querySelectorAll(sel)`.
     pub fn shadow_query_selector_all(&self, host: u32, selector: &str) -> Vec<u32> {
-        let Some(node) = self.find_webcore(host) else { return Vec::new() };
-        let Some(sr) = node.shadow_root.as_ref() else { return Vec::new() };
+        let Some(node) = self.find_webcore(host) else {
+            return Vec::new();
+        };
+        let Some(sr) = node.shadow_root.as_ref() else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for child in &sr.children {
             out.extend(crate::dom::query::matching_ids_from(child, selector, false));
@@ -1083,17 +1257,27 @@ impl Document {
     /// as FALLBACK instead. `flatten` is not modelled separately: nested slots
     /// are projected during `resolve_slots`, so the answer is already flat.
     pub fn assigned_nodes(&self, slot_id: u32) -> Vec<u32> {
-        let Some(host) = self.shadow_host(slot_id) else { return Vec::new() };
-        let Some(slot) = self.find_webcore(slot_id) else { return Vec::new() };
-        if slot.tag != "slot" { return Vec::new(); }
+        let Some(host) = self.shadow_host(slot_id) else {
+            return Vec::new();
+        };
+        let Some(slot) = self.find_webcore(slot_id) else {
+            return Vec::new();
+        };
+        if slot.tag != "slot" {
+            return Vec::new();
+        }
         let name = slot.attributes.get("name").cloned().unwrap_or_default();
-        let Some(host_node) = self.find_webcore(host) else { return Vec::new() };
-        host_node.children.iter()
+        let Some(host_node) = self.find_webcore(host) else {
+            return Vec::new();
+        };
+        host_node
+            .children
+            .iter()
             .filter(|c| {
                 let assigned = c.attributes.get("slot").cloned().unwrap_or_default();
                 if name.is_empty() {
-                    assigned.is_empty() && (c.is_element()
-                        || (c.is_text_node() && !c.text.trim().is_empty()))
+                    assigned.is_empty()
+                        && (c.is_element() || (c.is_text_node() && !c.text.trim().is_empty()))
                 } else {
                     assigned == name
                 }
@@ -1104,8 +1288,13 @@ impl Document {
 
     /// `slot.assignedElements()` — `assignedNodes` without the text nodes.
     pub fn assigned_elements(&self, slot_id: u32) -> Vec<u32> {
-        self.assigned_nodes(slot_id).into_iter()
-            .filter(|id| self.find_webcore(*id).map(|n| n.is_element()).unwrap_or(false))
+        self.assigned_nodes(slot_id)
+            .into_iter()
+            .filter(|id| {
+                self.find_webcore(*id)
+                    .map(|n| n.is_element())
+                    .unwrap_or(false)
+            })
             .collect()
     }
 
@@ -1113,15 +1302,26 @@ impl Document {
     /// or `None` when it is not slotted.
     pub fn assigned_slot(&self, id: u32) -> Option<u32> {
         let parent = self.parent_node(id);
-        if parent == 0 || !self.has_shadow_root(parent) { return None; }
-        let want = self.find_webcore(id)?.attributes.get("slot").cloned().unwrap_or_default();
+        if parent == 0 || !self.has_shadow_root(parent) {
+            return None;
+        }
+        let want = self
+            .find_webcore(id)?
+            .attributes
+            .get("slot")
+            .cloned()
+            .unwrap_or_default();
         fn find_slot(nodes: &[WebCore], want: &str) -> Option<u32> {
             for n in nodes {
                 if n.tag == "slot" {
                     let name = n.attributes.get("name").map(|s| s.as_str()).unwrap_or("");
-                    if name == want { return Some(n.node_id); }
+                    if name == want {
+                        return Some(n.node_id);
+                    }
                 }
-                if let Some(f) = find_slot(&n.children, want) { return Some(f); }
+                if let Some(f) = find_slot(&n.children, want) {
+                    return Some(f);
+                }
             }
             None
         }
@@ -1131,11 +1331,17 @@ impl Document {
 
     /// Every `<slot>` in an element's shadow tree, in tree order.
     pub fn shadow_slots(&self, host: u32) -> Vec<u32> {
-        let Some(node) = self.find_webcore(host) else { return Vec::new() };
-        let Some(sr) = node.shadow_root.as_ref() else { return Vec::new() };
+        let Some(node) = self.find_webcore(host) else {
+            return Vec::new();
+        };
+        let Some(sr) = node.shadow_root.as_ref() else {
+            return Vec::new();
+        };
         fn collect(nodes: &[WebCore], out: &mut Vec<u32>) {
             for n in nodes {
-                if n.tag == "slot" { out.push(n.node_id); }
+                if n.tag == "slot" {
+                    out.push(n.node_id);
+                }
                 collect(&n.children, out);
             }
         }
@@ -1325,13 +1531,17 @@ impl Document {
     pub fn node_type(&self, id: u32) -> u16 {
         // DOCUMENT_NODE. The document is not in the arena — it is a reserved
         // id — so this answers before the liveness check, which would reject it.
-        if crate::dom::events::is_document_target(id) { return 9; }
+        if crate::dom::events::is_document_target(id) {
+            return 9;
+        }
         // A `ShadowRoot` IS a `DocumentFragment` (DOM §4.8) — but only the
         // ROOT. Every node INSIDE a shadow tree is numbered from the same
         // descending id space, so "is a shadow id" would call a shadow `<p>` a
         // fragment; the question is whether this id names a shadow root.
         if crate::dom::arena::is_shadow_node_id(id) {
-            if self.shadow_root_by_id(id).is_some() { return 11; }
+            if self.shadow_root_by_id(id).is_some() {
+                return 11;
+            }
             return match self.find_webcore(id) {
                 Some(n) if n.tag == "#text" => 3,
                 Some(n) if n.tag == "#comment" => 8,
@@ -1339,13 +1549,15 @@ impl Document {
                 None => 0,
             };
         }
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return 0; }
+        if id == 0 || !self.arena.is_alive(NodeId(id)) {
+            return 0;
+        }
         match self.arena.get(NodeId(id)).node_type {
-            crate::dom::arena::NodeType::Element  => 1,
-            crate::dom::arena::NodeType::Text     => 3,
-            crate::dom::arena::NodeType::CData    => 4,
+            crate::dom::arena::NodeType::Element => 1,
+            crate::dom::arena::NodeType::Text => 3,
+            crate::dom::arena::NodeType::CData => 4,
             crate::dom::arena::NodeType::ProcessingInstruction => 7,
-            crate::dom::arena::NodeType::Comment  => 8,
+            crate::dom::arena::NodeType::Comment => 8,
             crate::dom::arena::NodeType::Document => 9,
             crate::dom::arena::NodeType::DocumentType => 10,
             crate::dom::arena::NodeType::DocumentFragment => 11,
@@ -1361,7 +1573,9 @@ impl Document {
     /// engine that upper-cased here would answer differently from the engine
     /// it is meant to replace.
     pub fn node_name(&self, id: u32) -> String {
-        if id == 0 { return String::new(); }
+        if id == 0 {
+            return String::new();
+        }
         // A `ShadowRoot` IS a `DocumentFragment` (DOM §4.8), and every node
         // answers a `nodeName` — a fragment's is `#document-fragment`. Shadow
         // nodes are not arena nodes, so the arena guard below answered `""`
@@ -1409,7 +1623,9 @@ impl Document {
     /// `node.nodeValue` — the data of a text or comment node. `None` for an
     /// element and for the document, per DOM §4.4.
     pub fn node_value(&self, id: u32) -> Option<String> {
-        if id == 0 || !self.arena.is_alive(NodeId(id)) { return None; }
+        if id == 0 || !self.arena.is_alive(NodeId(id)) {
+            return None;
+        }
         let node = self.arena.get(NodeId(id));
         // DOM §4.4: `nodeValue` is non-null for text, CDATA, comment and
         // processing-instruction nodes — everything that carries DATA. It is
@@ -1430,7 +1646,9 @@ impl Document {
     /// sitting in `pending_nodes` was created but never inserted, so it is
     /// disconnected by construction.
     pub fn is_connected(&self, id: u32) -> bool {
-        if id == 0 { return false; }
+        if id == 0 {
+            return false;
+        }
         // DOM §4.4: connected means the SHADOW-INCLUDING root is the document.
         // A node in a shadow tree is connected exactly when its host is, and
         // it is not an arena node — so the guard below called every one of
@@ -1441,13 +1659,19 @@ impl Document {
             }
             return false;
         }
-        if self.pending_nodes.contains_key(&id) { return false; }
+        if self.pending_nodes.contains_key(&id) {
+            return false;
+        }
         let root = self.root.node_id;
-        if id == root { return true; }
+        if id == root {
+            return true;
+        }
         let mut cur = NodeId(id);
         while cur.is_some() {
             let parent = self.arena.get(cur).parent;
-            if parent.0 == root { return true; }
+            if parent.0 == root {
+                return true;
+            }
             cur = parent;
         }
         false
@@ -1458,14 +1682,19 @@ impl Document {
     /// arbitrary. WHATWG specifies document order; callers that care must
     /// sort. Named here rather than silently differing.
     pub fn get_attribute_names(&self, id: u32) -> Vec<String> {
-        if id == 0 { return Vec::new(); }
+        if id == 0 {
+            return Vec::new();
+        }
         // DOM §4.9: "the qualified names of the attributes in this element's
         // attribute list, in order" — the list order, not a hash order.
         //
         // Through `attribute_entries`, so a SHADOW element answers too: it has
         // no arena entry, and reading the arena directly returned an empty
         // list for every node in a shadow tree.
-        self.attribute_entries(id).into_iter().map(|(k, _)| k).collect()
+        self.attribute_entries(id)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
     }
 
     /// `document.getElementsByTagName()` — tree order, ASCII case-insensitive
@@ -1533,7 +1762,11 @@ impl Document {
         let arena_id = self.arena.create_element(tag);
         let mut b = WebCore::new(tag);
         b.node_id = arena_id.0;
-        apply_property(std::sync::Arc::make_mut(&mut b.style), "display", crate::html::default_display(tag));
+        apply_property(
+            std::sync::Arc::make_mut(&mut b.style),
+            "display",
+            crate::html::default_display(tag),
+        );
         self.pending_nodes.insert(arena_id.0, b);
         self.next_node_id = self.next_node_id.max(arena_id.0 + 1);
         arena_id.0
@@ -1571,7 +1804,9 @@ impl Document {
     /// If child is in pending_nodes (just created), it's moved into the tree.
     /// If child is already in the tree, it's detached from its current parent first.
     pub fn append_child(&mut self, parent_id: u32, child_id: u32) {
-        if parent_id == 0 || child_id == 0 { return; }
+        if parent_id == 0 || child_id == 0 {
+            return;
+        }
 
         // **A fragment inserts its CHILDREN and not itself** (DOM §4.2.1).
         // Appending the fragment node would put a `#document-fragment` box in
@@ -1588,7 +1823,9 @@ impl Document {
         let insert_index = self.child_nodes(parent_id).len();
 
         // Update arena
-        let arena_parent = self.arena.try_get(NodeId(child_id))
+        let arena_parent = self
+            .arena
+            .try_get(NodeId(child_id))
             .map_or(crate::dom::arena::NodeId::NONE, |n| n.parent);
         if arena_parent.is_some() {
             self.arena.remove_child(NodeId(child_id));
@@ -1599,7 +1836,8 @@ impl Document {
         let child_box = if let Some(b) = self.pending_nodes.remove(&child_id) {
             b
         } else {
-            self.detach_webcore(child_id).unwrap_or_else(|| WebCore::new("#error"))
+            self.detach_webcore(child_id)
+                .unwrap_or_else(|| WebCore::new("#error"))
         };
 
         if let Some(parent) = self.find_webcore_mut(parent_id) {
@@ -1613,7 +1851,9 @@ impl Document {
 
     /// Insert a child before a reference node.
     pub fn insert_before(&mut self, parent_id: u32, child_id: u32, reference_id: u32) {
-        if parent_id == 0 || child_id == 0 || reference_id == 0 { return; }
+        if parent_id == 0 || child_id == 0 || reference_id == 0 {
+            return;
+        }
 
         // A fragment splices its children in — see `append_child`. Each goes
         // before the SAME reference, which is what keeps them in order.
@@ -1631,22 +1871,28 @@ impl Document {
             .unwrap_or(0);
 
         // Update arena
-        let arena_parent = self.arena.try_get(NodeId(child_id))
+        let arena_parent = self
+            .arena
+            .try_get(NodeId(child_id))
             .map_or(crate::dom::arena::NodeId::NONE, |n| n.parent);
         if arena_parent.is_some() {
             self.arena.remove_child(NodeId(child_id));
         }
-        self.arena.insert_before(NodeId(parent_id), NodeId(child_id), NodeId(reference_id));
+        self.arena
+            .insert_before(NodeId(parent_id), NodeId(child_id), NodeId(reference_id));
 
         // Update WebCore tree
         let child_box = if let Some(b) = self.pending_nodes.remove(&child_id) {
             b
         } else {
-            self.detach_webcore(child_id).unwrap_or_else(|| WebCore::new("#error"))
+            self.detach_webcore(child_id)
+                .unwrap_or_else(|| WebCore::new("#error"))
         };
 
         if let Some(parent) = self.find_webcore_mut(parent_id) {
-            let idx = parent.children.iter()
+            let idx = parent
+                .children
+                .iter()
                 .position(|c| c.node_id == reference_id)
                 .unwrap_or(parent.children.len());
             parent.children.insert(idx, child_box);
@@ -1660,9 +1906,14 @@ impl Document {
     /// Remove a child from its parent. The node is dropped from the WebCore tree
     /// and freed in the arena.
     pub fn remove_child(&mut self, child_id: u32) {
-        if child_id == 0 { return; }
+        if child_id == 0 {
+            return;
+        }
         // Get parent before removing
-        let parent_id = self.arena.try_get(NodeId(child_id)).map_or(0, |n| n.parent.0);
+        let parent_id = self
+            .arena
+            .try_get(NodeId(child_id))
+            .map_or(0, |n| n.parent.0);
         // DOM §6.1: every live `NodeIterator` is told BEFORE the node leaves,
         // because the rule needs the tree it is about to lose — the reference
         // moves to what precedes or follows the removed subtree, and neither
@@ -1705,7 +1956,9 @@ impl Document {
 
     /// Set an attribute on an element. Sets STYLE dirty flag + layout dirty.
     pub fn set_attribute(&mut self, id: u32, key: &str, value: &str) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         let key = &self.fold_name(key);
         self.arena.set_attribute(NodeId(id), key, value);
         let mut canvas_resized = None;
@@ -1792,7 +2045,9 @@ impl Document {
 
     /// Remove an attribute from an element. Sets STYLE dirty flag.
     pub fn remove_attribute(&mut self, id: u32, key: &str) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
         let key = &self.fold_name(key);
         self.arena.remove_attribute(NodeId(id), key);
         if let Some(node) = self.find_webcore_mut(id) {
@@ -1809,7 +2064,9 @@ impl Document {
 
     /// Set the text content of a node, replacing all children.
     pub fn set_text_content(&mut self, id: u32, text: &str) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
 
         // **A replaced child is DETACHED, not destroyed** — the rule
         // `remove_child` already states for DOM §4.2.3, and this is the same
@@ -1857,7 +2114,9 @@ impl Document {
 
     /// Parse HTML and replace the children of the given node.
     pub fn set_inner_html(&mut self, id: u32, html: &str) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
 
         // Parse HTML fragment
         let fragment = crate::html::parse_html(html);
@@ -1865,18 +2124,14 @@ impl Document {
         // `innerHTML` means the CONTENT. Take the body's children by finding
         // body, not by indexing: this used to check `children[0]`, which the
         // synthesised `<head>` displaced.
-        let new_children: Vec<WebCore> = match fragment
-            .root
-            .children
-            .iter()
-            .position(|c| c.tag == "body")
-        {
-            Some(at) => {
-                let mut children = fragment.root.children;
-                std::mem::take(&mut children[at].children)
-            }
-            None => fragment.root.children,
-        };
+        let new_children: Vec<WebCore> =
+            match fragment.root.children.iter().position(|c| c.tag == "body") {
+                Some(at) => {
+                    let mut children = fragment.root.children;
+                    std::mem::take(&mut children[at].children)
+                }
+                None => fragment.root.children,
+            };
 
         // Detached, not destroyed — see `set_text_content`, which this is the
         // markup-shaped twin of. A freed id gets RECYCLED, and every map keyed
@@ -1903,9 +2158,13 @@ impl Document {
 
     /// Add a class to the element's class list.
     pub fn class_list_add(&mut self, id: u32, class: &str) {
-        if id == 0 || class.is_empty() { return; }
+        if id == 0 || class.is_empty() {
+            return;
+        }
         let current = self.get_attribute(id, "class").unwrap_or_default();
-        if current.split_whitespace().any(|c| c == class) { return; }
+        if current.split_whitespace().any(|c| c == class) {
+            return;
+        }
         let new_val = if current.is_empty() {
             class.to_string()
         } else {
@@ -1916,7 +2175,9 @@ impl Document {
 
     /// Remove a class from the element's class list.
     pub fn class_list_remove(&mut self, id: u32, class: &str) {
-        if id == 0 || class.is_empty() { return; }
+        if id == 0 || class.is_empty() {
+            return;
+        }
         let current = self.get_attribute(id, "class").unwrap_or_default();
         let new_val: Vec<&str> = current.split_whitespace().filter(|&c| c != class).collect();
         let joined = new_val.join(" ");
@@ -1940,8 +2201,11 @@ impl Document {
 
     /// Check if an element has a class.
     pub fn class_list_contains(&self, id: u32, class: &str) -> bool {
-        if id == 0 { return false; }
-        self.get_attribute(id, "class").as_deref()
+        if id == 0 {
+            return false;
+        }
+        self.get_attribute(id, "class")
+            .as_deref()
             .map(|c| c.split_whitespace().any(|cl| cl == class))
             .unwrap_or(false)
     }
@@ -1950,26 +2214,49 @@ impl Document {
 
     /// Set a single CSS property in the element's inline style.
     pub fn set_style_property(&mut self, id: u32, prop: &str, value: &str) {
-        if id == 0 { return; }
+        if id == 0 {
+            return;
+        }
+        let prop_lower = prop.to_ascii_lowercase();
+        if !prop_lower.starts_with("--")
+            && crate::css::properties::resolve(&prop_lower)
+                == crate::css::properties::PropertyId::Unknown
+        {
+            return;
+        }
         let current = self.get_attribute(id, "style").unwrap_or_default();
         let mut props = parse_inline_style(&current);
-        let prop_lower = prop.to_ascii_lowercase();
         // CSSOM §6.7.2: `setProperty(prop, "")` REMOVES the declaration. It
         // used to store the empty string, which serialized as a malformed
         // `position: ` — a declaration the parser then dropped, so the property
         // looked removed while `style` carried a syntax error that any
         // round-trip through `cssText` would preserve.
         if value.trim().is_empty() {
-            props.retain(|(k, _)| k != &prop_lower);
-        } else if let Some(entry) = props.iter_mut().find(|(k, _)| k == &prop_lower) {
-            entry.1 = value.to_string();
+            props.retain(|decl| decl.name != prop_lower);
+            if let Some(longhands) = inline_shorthand_longhands(&prop_lower) {
+                props.retain(|decl| !longhands.contains(&decl.name.as_str()));
+            }
+        } else if let Some(expanded) = expand_inline_shorthand(&prop_lower, value) {
+            props.retain(|decl| {
+                decl.name != prop_lower
+                    && inline_shorthand_longhands(&prop_lower)
+                        .map(|longhands| !longhands.contains(&decl.name.as_str()))
+                        .unwrap_or(true)
+            });
+            props.extend(expanded);
+        } else if let Some(entry) = props.iter_mut().find(|decl| decl.name == prop_lower) {
+            let (new_value, important) = split_important_suffix(value);
+            entry.value = new_value;
+            entry.important = important;
         } else {
-            props.push((prop_lower, value.to_string()));
+            let (new_value, important) = split_important_suffix(value);
+            props.push(InlineStyleDecl {
+                name: prop_lower,
+                value: new_value,
+                important,
+            });
         }
-        let new_style = props.iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
-            .collect::<Vec<_>>()
-            .join("; ");
+        let new_style = serialize_inline_style(&props);
         self.set_attribute(id, "style", &new_style);
     }
 
@@ -1979,34 +2266,83 @@ impl Document {
         let prop_lower = prop.to_ascii_lowercase();
         parse_inline_style(&style_attr)
             .into_iter()
-            .find(|(k, _)| k == &prop_lower)
-            .map(|(_, v)| v)
+            .find(|decl| decl.name == prop_lower)
+            .map(|decl| decl.value)
+    }
+
+    /// Get a single CSS property's priority from the element's inline style.
+    pub fn get_style_property_priority(&self, id: u32, prop: &str) -> Option<String> {
+        let style_attr = self.get_attribute(id, "style")?;
+        let prop_lower = prop.to_ascii_lowercase();
+        parse_inline_style(&style_attr)
+            .into_iter()
+            .find(|decl| decl.name == prop_lower)
+            .map(|decl| {
+                if decl.important {
+                    "important".to_string()
+                } else {
+                    String::new()
+                }
+            })
+    }
+
+    /// Count declarations in the element's inline style.
+    pub fn style_property_len(&self, id: u32) -> usize {
+        self.get_attribute(id, "style")
+            .map(|style| parse_inline_style(&style).len())
+            .unwrap_or(0)
+    }
+
+    /// Return the declaration name at `index` in the element's inline style.
+    pub fn style_property_item(&self, id: u32, index: usize) -> Option<String> {
+        self.get_attribute(id, "style")
+            .and_then(|style| parse_inline_style(&style).into_iter().nth(index))
+            .map(|decl| decl.name)
     }
 
     /// Remove a CSS property from the element's inline style.
-    pub fn remove_style_property(&mut self, id: u32, prop: &str) {
-        if id == 0 { return; }
+    pub fn remove_style_property(&mut self, id: u32, prop: &str) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
         let current = self.get_attribute(id, "style").unwrap_or_default();
         let prop_lower = prop.to_ascii_lowercase();
-        let props: Vec<(String, String)> = parse_inline_style(&current)
+        let mut removed = None;
+        let props: Vec<InlineStyleDecl> = parse_inline_style(&current)
             .into_iter()
-            .filter(|(k, _)| k != &prop_lower)
+            .filter(|decl| {
+                if decl.name == prop_lower {
+                    if removed.is_none() {
+                        removed = Some(decl.value.clone());
+                    }
+                    false
+                } else {
+                    true
+                }
+            })
             .collect();
         if props.is_empty() {
             self.remove_attribute(id, "style");
         } else {
-            let new_style = props.iter()
-                .map(|(k, v)| format!("{}: {}", k, v))
-                .collect::<Vec<_>>()
-                .join("; ");
+            let new_style = serialize_inline_style(&props);
             self.set_attribute(id, "style", &new_style);
         }
+        removed
     }
 
     // ── Layout queries ──
 
-    /// Get the bounding rect of a node (border box in document coordinates).
-    pub fn get_bounding_client_rect(&self, id: u32) -> Option<Rect> {
+    fn raw_border_rect_document(&self, id: u32) -> Option<Rect> {
+        let node = self.get_node(id).or_else(|| self.find_webcore(id))?;
+        Some(node.layout.border_rect)
+    }
+
+    fn raw_padding_rect_document(&self, id: u32) -> Option<Rect> {
+        let node = self.get_node(id).or_else(|| self.find_webcore(id))?;
+        Some(node.layout.padding_rect)
+    }
+
+    fn bounding_border_rect_document(&self, id: u32) -> Option<Rect> {
         // `get_node` walks the LIGHT tree only. A shadow node is a real box
         // with a real rect — it is just not reachable from `root.children` —
         // so the shadow-aware lookup is the fallback rather than a second
@@ -2025,7 +2361,15 @@ impl Document {
             return Some(rect);
         }
         let m = crate::renderer::display_list_builder::compute_transform_matrix(
-            &node.style, &rect);
+            &node.style,
+            &rect,
+            &crate::types::TransformCtx {
+                font_px: node.style.font_size_px(16.0, 16.0),
+                root_font_px: 16.0,
+                viewport_w: self.viewport_w,
+                viewport_h: self.viewport_h,
+            },
+        );
         let pt = |x: f32, y: f32| (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]);
         let corners = [
             pt(rect.x, rect.y),
@@ -2036,20 +2380,145 @@ impl Document {
         let (mut x0, mut y0) = (f32::INFINITY, f32::INFINITY);
         let (mut x1, mut y1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
         for (x, y) in corners {
-            x0 = x0.min(x); y0 = y0.min(y);
-            x1 = x1.max(x); y1 = y1.max(y);
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
         }
         Some(Rect::new(x0, y0, x1 - x0, y1 - y0))
     }
 
+    /// Get the bounding rect of a node (border box in viewport coordinates).
+    pub fn get_bounding_client_rect(&self, id: u32) -> Option<Rect> {
+        self.bounding_border_rect_document(id).map(|mut rect| {
+            rect.x -= self.scroll_x;
+            rect.y -= self.scroll_y;
+            rect
+        })
+    }
+
     /// Get the offset width (border box width).
     pub fn offset_width(&self, id: u32) -> f32 {
-        self.get_bounding_client_rect(id).map(|r| r.w).unwrap_or(0.0)
+        self.raw_border_rect_document(id)
+            .map(|r| r.w)
+            .unwrap_or(0.0)
     }
 
     /// Get the offset height (border box height).
     pub fn offset_height(&self, id: u32) -> f32 {
-        self.get_bounding_client_rect(id).map(|r| r.h).unwrap_or(0.0)
+        self.raw_border_rect_document(id)
+            .map(|r| r.h)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.clientTop` — top border width.
+    pub fn client_top(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.resolved_border_top)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.clientLeft` — left border width.
+    pub fn client_left(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.resolved_border_left)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.clientWidth` — padding box width, excluding borders.
+    pub fn client_width(&self, id: u32) -> f32 {
+        self.raw_padding_rect_document(id)
+            .map(|r| r.w)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.clientHeight` — padding box height, excluding borders.
+    pub fn client_height(&self, id: u32) -> f32 {
+        self.raw_padding_rect_document(id)
+            .map(|r| r.h)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.scrollTop`.
+    pub fn element_scroll_top(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.scroll_top)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.scrollLeft`.
+    pub fn element_scroll_left(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.scroll_left)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.scrollWidth`.
+    pub fn element_scroll_width(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.scroll_width)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.scrollHeight`.
+    pub fn element_scroll_height(&self, id: u32) -> f32 {
+        self.find_webcore(id)
+            .map(|node| node.layout.scroll_height)
+            .unwrap_or(0.0)
+    }
+
+    /// `element.scrollTo(x, y)`.
+    pub fn element_scroll_to(&mut self, id: u32, x: f32, y: f32) {
+        let max_x = (self.element_scroll_width(id) - self.client_width(id)).max(0.0);
+        let max_y = (self.element_scroll_height(id) - self.client_height(id)).max(0.0);
+        let old_x = self.element_scroll_left(id);
+        let old_y = self.element_scroll_top(id);
+        if let Some(node) = self.find_webcore_mut(id) {
+            node.layout.scroll_left = if x.is_finite() {
+                x.clamp(0.0, max_x)
+            } else {
+                0.0
+            };
+            node.layout.scroll_top = if y.is_finite() {
+                y.clamp(0.0, max_y)
+            } else {
+                0.0
+            };
+        }
+        if (self.element_scroll_left(id) - old_x).abs() > 0.01
+            || (self.element_scroll_top(id) - old_y).abs() > 0.01
+        {
+            let mut event = crate::dom::events::DomEvent::new("scroll", id);
+            self.dispatch_dom_event(&mut event);
+        }
+    }
+
+    /// `element.scrollBy(dx, dy)`.
+    pub fn element_scroll_by(&mut self, id: u32, dx: f32, dy: f32) {
+        let x = self.element_scroll_left(id) + dx;
+        let y = self.element_scroll_top(id) + dy;
+        self.element_scroll_to(id, x, y);
+    }
+
+    /// `document.elementFromPoint(x, y)` — viewport coordinates to topmost element.
+    pub fn element_from_point(&self, x: f32, y: f32) -> Option<u32> {
+        if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
+            return None;
+        }
+        crate::layout::hit_test::point_to_hit(&self.root, (x + self.scroll_x, y + self.scroll_y), 0)
+            .map(|hit| hit.node_id)
+    }
+
+    /// `window.matchMedia(query)`/`MediaQueryList.matches`.
+    pub fn match_media(&self, query: &str) -> MediaQueryList {
+        MediaQueryList {
+            media: query.to_string(),
+            matches: crate::css::media_query::evaluate_media(
+                query,
+                self.viewport_w,
+                self.viewport_h,
+            ),
+        }
     }
 
     // ── Internal helpers ──
@@ -2112,14 +2581,20 @@ impl Document {
         // miss as the detached-subtree case above: a node that is genuinely in
         // the tree, reached by a link the walk did not follow.
         fn walk(node: &WebCore, id: u32) -> Option<&WebCore> {
-            if node.node_id == id { return Some(node); }
+            if node.node_id == id {
+                return Some(node);
+            }
             if let Some(sr) = &node.shadow_root {
                 for child in &sr.children {
-                    if let Some(found) = walk(child, id) { return Some(found); }
+                    if let Some(found) = walk(child, id) {
+                        return Some(found);
+                    }
                 }
             }
             for child in &node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
+                if let Some(found) = walk(child, id) {
+                    return Some(found);
+                }
             }
             None
         }
@@ -2137,14 +2612,20 @@ impl Document {
         }
         // Shadow trees too — see the note in `find_webcore`.
         fn walk(node: &mut WebCore, id: u32) -> Option<&mut WebCore> {
-            if node.node_id == id { return Some(node); }
+            if node.node_id == id {
+                return Some(node);
+            }
             if let Some(sr) = node.shadow_root.as_mut() {
                 for child in &mut sr.children {
-                    if let Some(found) = walk(child, id) { return Some(found); }
+                    if let Some(found) = walk(child, id) {
+                        return Some(found);
+                    }
                 }
             }
             for child in &mut node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
+                if let Some(found) = walk(child, id) {
+                    return Some(found);
+                }
             }
             None
         }
@@ -2157,7 +2638,9 @@ impl Document {
         // before the map can be borrowed mutably to walk into it.
         fn contains(node: &WebCore, id: u32) -> bool {
             node.node_id == id
-                || node.shadow_root.as_ref()
+                || node
+                    .shadow_root
+                    .as_ref()
                     .map(|sr| sr.children.iter().any(|c| contains(c, id)))
                     .unwrap_or(false)
                 || node.children.iter().any(|child| contains(child, id))
@@ -2183,7 +2666,9 @@ impl Document {
                 return Some(node.children.remove(idx));
             }
             for child in &mut node.children {
-                if let Some(found) = walk(child, id) { return Some(found); }
+                if let Some(found) = walk(child, id) {
+                    return Some(found);
+                }
             }
             None
         }
@@ -2193,17 +2678,221 @@ impl Document {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn parse_inline_style(style: &str) -> Vec<(String, String)> {
-    style.split(';')
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InlineStyleDecl {
+    name: String,
+    value: String,
+    important: bool,
+}
+
+fn parse_inline_style(style: &str) -> Vec<InlineStyleDecl> {
+    crate::css::parser::split_declarations(style)
+        .into_iter()
         .filter_map(|decl| {
             let decl = decl.trim();
-            if decl.is_empty() { return None; }
+            if decl.is_empty() {
+                return None;
+            }
             let colon = decl.find(':')?;
-            let key = decl[..colon].trim().to_ascii_lowercase();
-            let val = decl[colon + 1..].trim().to_string();
-            Some((key, val))
+            let name = decl[..colon].trim().to_ascii_lowercase();
+            let (value, important) = split_important_suffix(decl[colon + 1..].trim());
+            Some(InlineStyleDecl {
+                name,
+                value,
+                important,
+            })
         })
         .collect()
+}
+
+fn split_important_suffix(value: &str) -> (String, bool) {
+    let value = value.trim();
+    let suffix = "!important";
+    if value.len() >= suffix.len()
+        && value[value.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+    {
+        (
+            value[..value.len() - suffix.len()].trim_end().to_string(),
+            true,
+        )
+    } else {
+        (value.to_string(), false)
+    }
+}
+
+fn serialize_inline_style(props: &[InlineStyleDecl]) -> String {
+    props
+        .iter()
+        .map(|decl| {
+            if decl.important {
+                format!("{}: {} !important;", decl.name, decl.value)
+            } else {
+                format!("{}: {};", decl.name, decl.value)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn inline_shorthand_longhands(prop: &str) -> Option<&'static [&'static str]> {
+    const BORDER_LONGHANDS: &[&str] = &[
+        "border-top-width",
+        "border-right-width",
+        "border-bottom-width",
+        "border-left-width",
+        "border-top-style",
+        "border-right-style",
+        "border-bottom-style",
+        "border-left-style",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color",
+    ];
+    Some(match prop {
+        "margin" => &["margin-top", "margin-right", "margin-bottom", "margin-left"],
+        "padding" => &[
+            "padding-top",
+            "padding-right",
+            "padding-bottom",
+            "padding-left",
+        ],
+        "inset" => &["top", "right", "bottom", "left"],
+        "gap" => &["row-gap", "column-gap"],
+        "border" => BORDER_LONGHANDS,
+        "border-top" => &["border-top-width", "border-top-style", "border-top-color"],
+        "border-right" => &[
+            "border-right-width",
+            "border-right-style",
+            "border-right-color",
+        ],
+        "border-bottom" => &[
+            "border-bottom-width",
+            "border-bottom-style",
+            "border-bottom-color",
+        ],
+        "border-left" => &[
+            "border-left-width",
+            "border-left-style",
+            "border-left-color",
+        ],
+        _ => return None,
+    })
+}
+
+fn expand_inline_shorthand(prop: &str, value: &str) -> Option<Vec<InlineStyleDecl>> {
+    let (value, important) = split_important_suffix(value);
+    let toks = crate::css::split_shorthand_values(&value);
+    if toks.is_empty() {
+        return None;
+    }
+    let make = |name: &str, value: &str| InlineStyleDecl {
+        name: name.to_string(),
+        value: value.to_string(),
+        important,
+    };
+    Some(match prop {
+        "margin" | "padding" | "inset" => {
+            if toks.len() > 4 {
+                return None;
+            }
+            let top = toks[0];
+            let right = toks.get(1).copied().unwrap_or(top);
+            let bottom = toks.get(2).copied().unwrap_or(top);
+            let left = toks.get(3).copied().unwrap_or(right);
+            let names = inline_shorthand_longhands(prop)?;
+            vec![
+                make(names[0], top),
+                make(names[1], right),
+                make(names[2], bottom),
+                make(names[3], left),
+            ]
+        }
+        "gap" => {
+            if toks.len() > 2 {
+                return None;
+            }
+            vec![
+                make("row-gap", toks[0]),
+                make("column-gap", toks.get(1).copied().unwrap_or(toks[0])),
+            ]
+        }
+        "border" => {
+            let (width, style, color) = parse_inline_border_components(&toks);
+            let sides = ["top", "right", "bottom", "left"];
+            let mut decls = Vec::with_capacity(12);
+            for part in ["width", "style", "color"] {
+                let value = match part {
+                    "width" => width,
+                    "style" => style,
+                    _ => color,
+                };
+                for side in sides {
+                    decls.push(make(&format!("border-{side}-{part}"), value));
+                }
+            }
+            decls
+        }
+        "border-top" | "border-right" | "border-bottom" | "border-left" => {
+            let (width, style, color) = parse_inline_border_components(&toks);
+            let side = prop.trim_start_matches("border-");
+            vec![
+                make(&format!("border-{side}-width"), width),
+                make(&format!("border-{side}-style"), style),
+                make(&format!("border-{side}-color"), color),
+            ]
+        }
+        _ => return None,
+    })
+}
+
+fn parse_inline_border_components<'a>(tokens: &[&'a str]) -> (&'a str, &'a str, &'a str) {
+    let mut width = None;
+    let mut style = None;
+    let mut color = None;
+    for token in tokens {
+        if width.is_none() && is_inline_border_width(token) {
+            width = Some(*token);
+        } else if style.is_none() && is_inline_border_style(token) {
+            style = Some(*token);
+        } else if color.is_none() && crate::css::parse_color(token).is_some() {
+            color = Some(*token);
+        }
+    }
+    (
+        width.unwrap_or("medium"),
+        style.unwrap_or("none"),
+        color.unwrap_or("currentcolor"),
+    )
+}
+
+fn is_inline_border_width(token: &str) -> bool {
+    matches!(token, "thin" | "medium" | "thick")
+        || token == "0"
+        || token.ends_with("px")
+        || token.ends_with("em")
+        || token.ends_with("rem")
+        || token.ends_with("pt")
+        || token.ends_with("pc")
+        || token.ends_with("cm")
+        || token.ends_with("mm")
+        || token.ends_with("in")
+}
+
+fn is_inline_border_style(token: &str) -> bool {
+    matches!(
+        token,
+        "none"
+            | "hidden"
+            | "dotted"
+            | "dashed"
+            | "solid"
+            | "double"
+            | "groove"
+            | "ridge"
+            | "inset"
+            | "outset"
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2300,8 +2989,7 @@ impl Document {
     pub fn is_document_fragment(&self, id: u32) -> bool {
         id != 0
             && self.arena.is_alive(NodeId(id))
-            && self.arena.get(NodeId(id)).node_type
-                == crate::dom::arena::NodeType::DocumentFragment
+            && self.arena.get(NodeId(id)).node_type == crate::dom::arena::NodeType::DocumentFragment
     }
 
     // ─── Node comparison and normalisation (DOM §4.4, §4.5) ─────────────────
@@ -2360,7 +3048,9 @@ impl Document {
             return false;
         }
         let (Some(x), Some(y)) = (self.arena.try_get(NodeId(a)), self.arena.try_get(NodeId(b)))
-        else { return false };
+        else {
+            return false;
+        };
         if x.tag != y.tag || x.namespace != y.namespace {
             return false;
         }
@@ -2371,7 +3061,9 @@ impl Document {
             // order-sensitive, which is right for the list and wrong here, so
             // the set comparison is spelled out rather than borrowed.
             let same_attrs = x.attributes.len() == y.attributes.len()
-                && x.attributes.iter().all(|(k, v)| y.attributes.get(k) == Some(v));
+                && x.attributes
+                    .iter()
+                    .all(|(k, v)| y.attributes.get(k) == Some(v));
             if !same_attrs || x.attribute_ns != y.attribute_ns {
                 return false;
             }
@@ -2695,15 +3387,45 @@ impl Document {
         self.get_bounding_client_rect(id).into_iter().collect()
     }
 
-    /// `element.scrollIntoView()` — bring the element to the top of the view.
-    ///
-    /// The default alignment is `start`, which is what this does. The rect is
-    /// viewport-relative, so its `y` IS the distance to scroll.
+    /// `element.scrollIntoView()` — bring the element into the nearest
+    /// scrollable ancestor, falling back to the viewport.
     pub fn scroll_into_view(&mut self, id: u32) {
-        let Some(rect) = self.get_bounding_client_rect(id) else {
+        let Some(target) = self.raw_border_rect_document(id) else {
             return;
         };
-        self.scroll_y = (self.scroll_y + rect.y).max(0.0);
+        let mut handled_by_ancestor = false;
+        let mut current = self.parent_node(id);
+        while current != 0 {
+            let scrollable = self
+                .get_computed_style(current)
+                .map(|style| matches!(style.overflow_y, Overflow::Scroll | Overflow::Auto))
+                .unwrap_or(false)
+                && self.element_scroll_height(current) > self.client_height(current);
+            if scrollable {
+                if let Some(view) = self.raw_padding_rect_document(current) {
+                    let current_scroll = self.element_scroll_top(current);
+                    let visible_top = view.y + current_scroll;
+                    let visible_bottom = visible_top + view.h;
+                    let target_top = target.y;
+                    let target_bottom = target.y + target.h;
+                    let mut next_scroll = current_scroll;
+                    if target_top < visible_top {
+                        next_scroll = target_top - view.y;
+                    } else if target_bottom > visible_bottom {
+                        next_scroll = target_bottom - view.y - view.h;
+                    }
+                    if (next_scroll - current_scroll).abs() > f32::EPSILON {
+                        let x = self.element_scroll_left(current);
+                        self.element_scroll_to(current, x, next_scroll);
+                    }
+                    handled_by_ancestor = true;
+                }
+            }
+            current = self.parent_node(current);
+        }
+        if !handled_by_ancestor {
+            self.scroll_y = target.y.max(0.0);
+        }
     }
 
     /// `element.offsetParent` — the nearest POSITIONED ancestor, else the body.
@@ -2731,13 +3453,15 @@ impl Document {
     /// edge. Subtracting the body put every such element 8px off, which is
     /// most elements on most pages.
     fn offset_origin(&mut self, id: u32) -> (f32, f32) {
-        let Some(parent) = self.offset_parent(id) else { return (0.0, 0.0) };
+        let Some(parent) = self.offset_parent(id) else {
+            return (0.0, 0.0);
+        };
         if Some(parent) == self.body()
             && self.computed_style_property(parent, "position") == "static"
         {
             return (0.0, 0.0);
         }
-        self.get_bounding_client_rect(parent)
+        self.raw_padding_rect_document(parent)
             .map(|r| (r.x, r.y))
             .unwrap_or((0.0, 0.0))
     }
@@ -2745,13 +3469,19 @@ impl Document {
     /// `element.offsetTop` — the border box's top edge, relative to
     /// [`offset_parent`](Self::offset_parent) rather than to the viewport.
     pub fn offset_top(&mut self, id: u32) -> f32 {
-        let own = self.get_bounding_client_rect(id).map(|r| r.y).unwrap_or(0.0);
+        let own = self
+            .raw_border_rect_document(id)
+            .map(|r| r.y)
+            .unwrap_or(0.0);
         own - self.offset_origin(id).1
     }
 
     /// `element.offsetLeft` — see [`offset_top`](Self::offset_top).
     pub fn offset_left(&mut self, id: u32) -> f32 {
-        let own = self.get_bounding_client_rect(id).map(|r| r.x).unwrap_or(0.0);
+        let own = self
+            .raw_border_rect_document(id)
+            .map(|r| r.x)
+            .unwrap_or(0.0);
         own - self.offset_origin(id).0
     }
 
@@ -2784,7 +3514,9 @@ impl Document {
                 if local != local_name {
                     return false;
                 }
-                let have = self.arena.try_get(NodeId(id))
+                let have = self
+                    .arena
+                    .try_get(NodeId(id))
                     .and_then(|n| n.attribute_ns.get(*name));
                 have.map(String::as_str) == want
             })
@@ -2795,4 +3527,3 @@ impl Document {
         }
     }
 }
-

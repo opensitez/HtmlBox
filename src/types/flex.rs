@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Flex / Grid ─────────────────────────────────────────────────────────────
 
@@ -18,7 +18,9 @@ pub enum FlexDirection {
 }
 
 impl Default for FlexDirection {
-    fn default() -> Self { Self::Row }
+    fn default() -> Self {
+        Self::Row
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,7 +31,9 @@ pub enum FlexWrap {
 }
 
 impl Default for FlexWrap {
-    fn default() -> Self { Self::Nowrap }
+    fn default() -> Self {
+        Self::Nowrap
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,7 +49,9 @@ pub enum AlignItems {
 }
 
 impl Default for AlignItems {
-    fn default() -> Self { Self::Stretch }
+    fn default() -> Self {
+        Self::Stretch
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,7 +67,9 @@ pub enum AlignSelf {
 }
 
 impl Default for AlignSelf {
-    fn default() -> Self { Self::Auto }
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -80,5 +88,7 @@ pub enum JustifyContent {
 }
 
 impl Default for JustifyContent {
-    fn default() -> Self { Self::FlexStart }
+    fn default() -> Self {
+        Self::FlexStart
+    }
 }

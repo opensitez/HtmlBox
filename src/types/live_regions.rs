@@ -3,10 +3,10 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::css::*;
-use std::collections::{HashMap, HashSet};
-use crate::layout::LayoutEngine;
 use crate::dom::*;
 use crate::html::*;
+use crate::layout::LayoutEngine;
+use std::collections::{HashMap, HashSet};
 
 impl Document {
     /// Drain and return all pending aria-live announcements.
@@ -39,26 +39,32 @@ impl Document {
         let mut new_ann: Vec<Announcement> = Vec::new();
 
         fn walk(
-            node:         &WebCore,
-            snapshots:    &mut HashMap<u32, String>,
-            out:          &mut Vec<Announcement>,
-            initialized:  bool,
+            node: &WebCore,
+            snapshots: &mut HashMap<u32, String>,
+            out: &mut Vec<Announcement>,
+            initialized: bool,
         ) {
             let politeness = match node.attributes.get("aria-live").map(|s| s.as_str()) {
                 Some("assertive") => LivePoliteness::Assertive,
-                Some("polite")    => LivePoliteness::Polite,
-                _                 => LivePoliteness::Off,
+                Some("polite") => LivePoliteness::Polite,
+                _ => LivePoliteness::Off,
             };
 
             if politeness != LivePoliteness::Off {
                 // aria-busy: region is being updated, defer announcement
-                let busy = node.attributes.get("aria-busy")
-                    .map(|v| v == "true").unwrap_or(false);
+                let busy = node
+                    .attributes
+                    .get("aria-busy")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
                 if !busy {
-                    let ptr   = node.node_id;
-                    let text  = collect_live_text(node);
-                    let atomic = node.attributes.get("aria-atomic")
-                        .map(|v| v == "true").unwrap_or(false);
+                    let ptr = node.node_id;
+                    let text = collect_live_text(node);
+                    let atomic = node
+                        .attributes
+                        .get("aria-atomic")
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
 
                     match snapshots.get(&ptr) {
                         None => {
@@ -70,7 +76,11 @@ impl Document {
                                 && politeness == LivePoliteness::Assertive
                                 && !text.is_empty()
                             {
-                                out.push(Announcement { text, politeness, atomic });
+                                out.push(Announcement {
+                                    text,
+                                    politeness,
+                                    atomic,
+                                });
                             }
                         }
                         Some(prev) if *prev != text => {
@@ -78,7 +88,11 @@ impl Document {
                             let changed = text.clone();
                             snapshots.insert(ptr, text);
                             if !changed.is_empty() {
-                                out.push(Announcement { text: changed, politeness, atomic });
+                                out.push(Announcement {
+                                    text: changed,
+                                    politeness,
+                                    atomic,
+                                });
                             }
                         }
                         _ => {} // No change, no announcement.
@@ -94,7 +108,12 @@ impl Document {
             }
         }
 
-        walk(&self.root, &mut self.live_region_snapshots, &mut new_ann, initialized);
+        walk(
+            &self.root,
+            &mut self.live_region_snapshots,
+            &mut new_ann,
+            initialized,
+        );
 
         self.live_regions_initialized = true;
         self.pending_announcements.extend(new_ann);

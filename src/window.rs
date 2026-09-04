@@ -40,6 +40,8 @@ pub struct BrowsingContext {
     /// counterpart — a page cannot see where its window sits on screen.
     pub screen_x: f64,
     pub screen_y: f64,
+    /// `window.devicePixelRatio`.
+    pub device_pixel_ratio: f64,
     /// `window.closed`.
     pub closed: bool,
 }
@@ -86,9 +88,7 @@ pub fn open(target: &str, features: &str) -> WindowId {
     let width = f.get("width").copied().unwrap_or(800.0);
     let height = f.get("height").copied().unwrap_or(600.0);
     // The viewport IS the window size — set once, read back from there.
-    registry::with_document(document_id, |d| {
-        d.set_viewport(width as f32, height as f32)
-    });
+    registry::with_document(document_id, |d| d.set_viewport(width as f32, height as f32));
 
     let mut ctx = match contexts().lock() {
         Ok(c) => c,
@@ -104,6 +104,7 @@ pub fn open(target: &str, features: &str) -> WindowId {
             name: target.to_string(),
             screen_x: f.get("left").copied().unwrap_or(0.0),
             screen_y: f.get("top").copied().unwrap_or(0.0),
+            device_pixel_ratio: 1.0,
             closed: false,
         },
     );
@@ -146,6 +147,7 @@ pub fn adopt(document_id: DocumentId, name: &str) -> WindowId {
             name: name.to_string(),
             screen_x: 0.0,
             screen_y: 0.0,
+            device_pixel_ratio: 1.0,
             closed: false,
         },
     );
@@ -231,11 +233,33 @@ pub fn inner_height(id: WindowId) -> f64 {
     }
 }
 
+/// `window.matchMedia(query)`.
+pub fn match_media(id: WindowId, query: &str) -> Option<crate::dom::api::MediaQueryList> {
+    document(id).and_then(|d| registry::with_document(d, |doc| doc.match_media(query)))
+}
+
 /// `window.resizeTo(width, height)`. Writes the document's viewport, which is
 /// what `innerWidth`/`innerHeight` then report — one measurement, not two.
 pub fn resize_to(id: WindowId, width: f64, height: f64) {
     if let Some(d) = document(id) {
         registry::with_document(d, |doc| doc.set_viewport(width as f32, height as f32));
+    }
+}
+
+/// `window.devicePixelRatio`.
+pub fn device_pixel_ratio(id: WindowId) -> f64 {
+    with_window(id, |w| w.device_pixel_ratio).unwrap_or(1.0)
+}
+
+/// Tell the browser the device pixel ratio. Not an IDL setter — the attribute is
+/// readonly to page script — this is the host informing the engine.
+pub fn set_device_pixel_ratio(id: WindowId, ratio: f64) {
+    if let Ok(mut ctx) = contexts().lock() {
+        if let Some(w) = ctx.windows.get_mut(&id) {
+            if ratio.is_finite() && ratio > 0.0 {
+                w.device_pixel_ratio = ratio;
+            }
+        }
     }
 }
 

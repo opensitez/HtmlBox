@@ -3,10 +3,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 /// Returns true if this element is a text-editable form input.
 /// What put this element in the **top layer** (CSS Position §6, HTML §4.11.4
@@ -93,8 +93,15 @@ pub fn is_text_input(node: &WebCore) -> bool {
     match node.tag.as_str() {
         "textarea" => true,
         "input" => {
-            let t = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
-            matches!(t, "text" | "password" | "email" | "search" | "url" | "tel" | "number")
+            let t = node
+                .attributes
+                .get("type")
+                .map(|s| s.as_str())
+                .unwrap_or("text");
+            matches!(
+                t,
+                "text" | "password" | "email" | "search" | "url" | "tel" | "number"
+            )
         }
         _ => false,
     }
@@ -116,7 +123,8 @@ pub fn input_value(node: &WebCore) -> String {
     }
     if node.tag == "textarea" {
         // Textarea value is in child text nodes
-        node.children.iter()
+        node.children
+            .iter()
             .filter(|c| c.tag == "#text")
             .map(|c| c.text.as_str())
             .collect()
@@ -126,10 +134,20 @@ pub fn input_value(node: &WebCore) -> String {
 }
 
 /// Process a key event on a focused form input. Returns true if the value changed.
-pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char>, ctrl: bool, _shift: bool) -> bool {
-    if !is_text_input(node) { return false; }
+pub fn process_form_input_key(
+    node: &mut WebCore,
+    key_code: u32,
+    ch: Option<char>,
+    ctrl: bool,
+    _shift: bool,
+) -> bool {
+    if !is_text_input(node) {
+        return false;
+    }
     // Disabled elements don't accept any input
-    if node.attributes.contains_key("disabled") { return false; }
+    if node.attributes.contains_key("disabled") {
+        return false;
+    }
     // Readonly elements allow cursor movement but not content changes
     let is_readonly = node.attributes.contains_key("readonly");
     let is_textarea = node.tag == "textarea";
@@ -143,7 +161,9 @@ pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char
     let sel_end = cursor.max(anchor);
     let mut new_cursor = cursor;
     let mut changed = false;
-    let maxlength: Option<usize> = node.attributes.get("maxlength")
+    let maxlength: Option<usize> = node
+        .attributes
+        .get("maxlength")
         .and_then(|s| s.parse().ok());
 
     // Ctrl+A: select all
@@ -155,56 +175,95 @@ pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char
 
     // Helper: delete selected range
     let delete_selection = |value: &mut String, sel_s: usize, sel_e: usize| -> usize {
-        let byte_s = value.char_indices().nth(sel_s).map(|(i, _)| i).unwrap_or(value.len());
-        let byte_e = value.char_indices().nth(sel_e).map(|(i, _)| i).unwrap_or(value.len());
+        let byte_s = value
+            .char_indices()
+            .nth(sel_s)
+            .map(|(i, _)| i)
+            .unwrap_or(value.len());
+        let byte_e = value
+            .char_indices()
+            .nth(sel_e)
+            .map(|(i, _)| i)
+            .unwrap_or(value.len());
         value.replace_range(byte_s..byte_e, "");
         sel_s
     };
 
     match key_code {
-        8 => { // Backspace
+        8 => {
+            // Backspace
             if !is_readonly {
                 if has_selection {
                     new_cursor = delete_selection(&mut value, sel_start, sel_end);
                     changed = true;
                 } else if cursor > 0 {
-                    let byte_pos = value.char_indices().nth(cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                    let byte_end = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    let byte_pos = value
+                        .char_indices()
+                        .nth(cursor - 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    let byte_end = value
+                        .char_indices()
+                        .nth(cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(value.len());
                     value.replace_range(byte_pos..byte_end, "");
                     new_cursor = cursor - 1;
                     changed = true;
                 }
             }
         }
-        46 => { // Delete
+        46 => {
+            // Delete
             if !is_readonly {
                 if has_selection {
                     new_cursor = delete_selection(&mut value, sel_start, sel_end);
                     changed = true;
                 } else if cursor < len {
-                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
-                    let byte_end = value.char_indices().nth(cursor + 1).map(|(i, _)| i).unwrap_or(value.len());
+                    let byte_pos = value
+                        .char_indices()
+                        .nth(cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(value.len());
+                    let byte_end = value
+                        .char_indices()
+                        .nth(cursor + 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(value.len());
                     value.replace_range(byte_pos..byte_end, "");
                     changed = true;
                 }
             }
         }
-        37 => { // Left arrow
-            if cursor > 0 { new_cursor = cursor - 1; }
+        37 => {
+            // Left arrow
+            if cursor > 0 {
+                new_cursor = cursor - 1;
+            }
         }
-        39 => { // Right arrow
-            if cursor < len { new_cursor = cursor + 1; }
+        39 => {
+            // Right arrow
+            if cursor < len {
+                new_cursor = cursor + 1;
+            }
         }
-        36 => { // Home
+        36 => {
+            // Home
             new_cursor = 0;
         }
-        35 => { // End
+        35 => {
+            // End
             new_cursor = len;
         }
-        13 => { // Enter
+        13 => {
+            // Enter
             if is_textarea && !is_readonly {
                 if maxlength.map(|m| len < m).unwrap_or(true) {
-                    let byte_pos = value.char_indices().nth(cursor).map(|(i, _)| i).unwrap_or(value.len());
+                    let byte_pos = value
+                        .char_indices()
+                        .nth(cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(value.len());
                     value.insert(byte_pos, '\n');
                     new_cursor = cursor + 1;
                     changed = true;
@@ -221,7 +280,11 @@ pub fn process_form_input_key(node: &mut WebCore, key_code: u32, ch: Option<char
                     }
                     let cur_len = value.chars().count();
                     if maxlength.map(|m| cur_len < m).unwrap_or(true) {
-                        let byte_pos = value.char_indices().nth(new_cursor).map(|(i, _)| i).unwrap_or(value.len());
+                        let byte_pos = value
+                            .char_indices()
+                            .nth(new_cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(value.len());
                         value.insert(byte_pos, c);
                         new_cursor += 1;
                         changed = true;

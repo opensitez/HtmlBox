@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Table structure (HTML §13.2.6.4.9 "in table") ─────────────────────────
 
@@ -15,8 +15,8 @@ use crate::css::*;
 /// it would put a stray text node before every table on the web.
 fn allowed_in_table(node: &WebCore) -> bool {
     match node.tag.as_str() {
-        "caption" | "colgroup" | "col" | "thead" | "tbody" | "tfoot" | "tr"
-        | "form" | "script" | "template" | "style" | "#comment" => true,
+        "caption" | "colgroup" | "col" | "thead" | "tbody" | "tfoot" | "tr" | "form" | "script"
+        | "template" | "style" | "#comment" => true,
         // A bare cell is table content: the row it needs is IMPLIED, not
         // missing (see `wrap_bare_cells_in_row`). Fostering it out instead
         // emptied `<table><td>x</td></table>` of everything it had.
@@ -33,7 +33,13 @@ fn allowed_in_table(node: &WebCore) -> bool {
 /// inserts the `<tbody>`. Without it the cells were not table content, so they
 /// were foster-parented out and the table came back empty.
 fn wrap_bare_cells_in_row(table: &mut WebCore) {
-    if !table.children.iter().any(|c| c.tag == "td" || c.tag == "th") { return; }
+    if !table
+        .children
+        .iter()
+        .any(|c| c.tag == "td" || c.tag == "th")
+    {
+        return;
+    }
     let children = std::mem::take(&mut table.children);
     let mut out: Vec<WebCore> = Vec::new();
     let mut row: Option<WebCore> = None;
@@ -41,16 +47,24 @@ fn wrap_bare_cells_in_row(table: &mut WebCore) {
         if child.tag == "td" || child.tag == "th" {
             let r = row.get_or_insert_with(|| {
                 let mut n = WebCore::new("tr");
-                apply_property(std::sync::Arc::make_mut(&mut n.style), "display", default_display("tr"));
+                apply_property(
+                    std::sync::Arc::make_mut(&mut n.style),
+                    "display",
+                    default_display("tr"),
+                );
                 n
             });
             r.children.push(child);
         } else {
-            if let Some(r) = row.take() { out.push(r); }
+            if let Some(r) = row.take() {
+                out.push(r);
+            }
             out.push(child);
         }
     }
-    if let Some(r) = row.take() { out.push(r); }
+    if let Some(r) = row.take() {
+        out.push(r);
+    }
     table.children = out;
 }
 
@@ -66,7 +80,9 @@ fn wrap_bare_cells_in_row(table: &mut WebCore) {
 /// single tbody like it should rather than one per row.
 fn group_rows_into_tbody(table: &mut WebCore) {
     wrap_bare_cells_in_row(table);
-    if !table.children.iter().any(|c| c.tag == "tr") { return; }
+    if !table.children.iter().any(|c| c.tag == "tr") {
+        return;
+    }
     let children = std::mem::take(&mut table.children);
     let mut out: Vec<WebCore> = Vec::new();
     let mut current: Option<WebCore> = None;
@@ -77,7 +93,11 @@ fn group_rows_into_tbody(table: &mut WebCore) {
         if child.tag == "tr" {
             let tbody = current.get_or_insert_with(|| {
                 let mut b = WebCore::new("tbody");
-                apply_property(std::sync::Arc::make_mut(&mut b.style), "display", default_display("tbody"));
+                apply_property(
+                    std::sync::Arc::make_mut(&mut b.style),
+                    "display",
+                    default_display("tbody"),
+                );
                 b
             });
             tbody.children.append(&mut pending_ws);
@@ -85,12 +105,16 @@ fn group_rows_into_tbody(table: &mut WebCore) {
         } else if is_ws && current.is_some() {
             pending_ws.push(child);
         } else {
-            if let Some(tbody) = current.take() { out.push(tbody); }
+            if let Some(tbody) = current.take() {
+                out.push(tbody);
+            }
             out.append(&mut pending_ws);
             out.push(child);
         }
     }
-    if let Some(tbody) = current.take() { out.push(tbody); }
+    if let Some(tbody) = current.take() {
+        out.push(tbody);
+    }
     out.append(&mut pending_ws);
     table.children = out;
 }
@@ -115,7 +139,9 @@ fn table_part_parents(tag: &str) -> Option<&'static [&'static str]> {
 /// table-cell` box in the middle of a block flow and made `querySelector("td")`
 /// answer on a document with no table in it.
 pub(crate) fn unwrap_misplaced_table_parts(node: &mut WebCore) {
-    if node.tag == "template" { return; }
+    if node.tag == "template" {
+        return;
+    }
     for child in &mut node.children {
         unwrap_misplaced_table_parts(child);
     }
@@ -149,7 +175,13 @@ pub(crate) fn unwrap_misplaced_table_parts(node: &mut WebCore) {
 /// Chrome gives `table > [form, tbody > tr]`; we were nesting the rows inside
 /// the form, which put a block box between the table and its rows.
 fn hoist_table_form_children(table: &mut WebCore) {
-    if !table.children.iter().any(|c| c.tag == "form" && !c.children.is_empty()) { return; }
+    if !table
+        .children
+        .iter()
+        .any(|c| c.tag == "form" && !c.children.is_empty())
+    {
+        return;
+    }
     let children = std::mem::take(&mut table.children);
     let mut out = Vec::with_capacity(children.len());
     for mut child in children {
@@ -174,7 +206,9 @@ pub(crate) fn normalize_tables(node: &mut WebCore) {
     for child in &mut node.children {
         normalize_tables(child);
     }
-    if !node.children.iter().any(|c| c.tag == "table") { return; }
+    if !node.children.iter().any(|c| c.tag == "table") {
+        return;
+    }
     // In place, by index: a `WebCore` is ~4KB and this recurses once per level,
     // so moving nodes through locals put kilobytes on the stack per element and
     // a deep page overflowed before it finished parsing.

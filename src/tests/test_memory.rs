@@ -14,7 +14,9 @@ fn tree_bytes(root: &WebCore) -> (usize, usize, usize, usize) {
         // win: the styles still exist, they are just behind pointers now. Count
         // the DISTINCT ones by address, which is the number that actually fell.
         styles.insert(std::sync::Arc::as_ptr(&n.style) as usize);
-        for c in &n.children { walk(c, count, styles); }
+        for c in &n.children {
+            walk(c, count, styles);
+        }
     }
     let (mut n, mut styles) = (0, HashSet::new());
     walk(root, &mut n, &mut styles);
@@ -32,7 +34,11 @@ fn the_data_model_sizes_are_what_the_plan_says() {
     );
     // (WebCore, ComputedStyle, LayoutBox) — update deliberately, with the
     // change that moved them.
-    assert_eq!(sizes, (616, 2024, 216), "sizes moved");
+    //
+    // 2024 → 2016: `transform-origin` had to become a `CssLength` pair to tell
+    // `10px` from `10%`, which is 32 bytes; it moved to `RareStyle` instead of
+    // riding on every element, and took the two f32 fields it replaced with it.
+    assert_eq!(sizes, (616, 2016, 216), "sizes moved");
 }
 
 #[test]
@@ -41,9 +47,13 @@ fn a_real_page_costs_what_the_plan_says() {
     let doc = r.load_html(include_str!("../../examples/html/demo.html"), 900.0);
     let (nodes, node_bytes, distinct_styles, total) = tree_bytes(&doc.root);
     // Before `Arc<ComputedStyle>`: 1132 nodes, 3,350,720 B, one style each.
+    //
+    // Total moved 2,921,688 → 2,912,896 with `ComputedStyle` 2024 → 2016: it is
+    // 1099 distinct styles times the struct, so it tracks the size assertion
+    // above and moves whenever that does.
     assert_eq!(
         (nodes, node_bytes, distinct_styles, total),
-        (1132, 697_312, 1099, 2_921_688),
+        (1132, 697_312, 1099, 2_912_896),
         "demo.html: nodes, node bytes, DISTINCT styles, total"
     );
 }
@@ -75,9 +85,24 @@ fn style_sharing_must_not_collapse_distinguishable_siblings() {
         let ids = d.get_elements_by_tag_name(tag);
         d.get_computed_style(ids[n]).map(|s| s.color).unwrap()
     };
-    let black = crate::types::Color { r: 0, g: 0, b: 0, a: 255 };
-    let red   = crate::types::Color { r: 255, g: 0, b: 0, a: 255 };
-    let green = crate::types::Color { r: 0, g: 255, b: 0, a: 255 };
+    let black = crate::types::Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let red = crate::types::Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let green = crate::types::Color {
+        r: 0,
+        g: 255,
+        b: 0,
+        a: 255,
+    };
     assert_eq!(
         (col("i", 0), col("i", 1), col("li", 0), col("li", 1)),
         (black, red, black, green),
@@ -96,22 +121,34 @@ fn every_sibling_sensitive_selector_form_turns_sharing_off() {
     // apart, so sharing them would drop the rule.
     let cases: &[(&str, &str, usize)] = &[
         // (rule, markup, which child index must get the colour)
-        ("i + i",             "<span><i></i><i></i></span>", 1),
-        ("i ~ i",             "<span><i></i><i></i></span>", 1),
-        ("i:nth-child(2)",    "<span><i></i><i></i></span>", 1),
+        ("i + i", "<span><i></i><i></i></span>", 1),
+        ("i ~ i", "<span><i></i><i></i></span>", 1),
+        ("i:nth-child(2)", "<span><i></i><i></i></span>", 1),
         ("i:nth-last-child(1)", "<span><i></i><i></i></span>", 1),
-        ("i:first-child",     "<span><i></i><i></i></span>", 0),
-        ("i:last-child",      "<span><i></i><i></i></span>", 1),
-        ("i:nth-of-type(2)",  "<span><i></i><i></i></span>", 1),
-        ("i:first-of-type",   "<span><i></i><i></i></span>", 0),
-        ("i:last-of-type",    "<span><i></i><i></i></span>", 1),
+        ("i:first-child", "<span><i></i><i></i></span>", 0),
+        ("i:last-child", "<span><i></i><i></i></span>", 1),
+        ("i:nth-of-type(2)", "<span><i></i><i></i></span>", 1),
+        ("i:first-of-type", "<span><i></i><i></i></span>", 0),
+        ("i:last-of-type", "<span><i></i><i></i></span>", 1),
     ];
-    let red = crate::types::Color { r: 255, g: 0, b: 0, a: 255 };
-    let black = crate::types::Color { r: 0, g: 0, b: 0, a: 255 };
+    let red = crate::types::Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let black = crate::types::Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
     for (rule, markup, hit) in cases {
         let mut r = crate::Renderer::new();
         let d = r.load_html(
-            &format!("<style>{rule} {{ color: rgb(255,0,0) }}</style>{markup}"), 900.0);
+            &format!("<style>{rule} {{ color: rgb(255,0,0) }}</style>{markup}"),
+            900.0,
+        );
         let ids = d.get_elements_by_tag_name("i");
         assert_eq!(ids.len(), 2, "{rule}");
         for (n, id) in ids.iter().enumerate() {
@@ -127,11 +164,24 @@ fn a_sheet_with_no_sibling_sensitive_rule_still_shares() {
     // The other half: the gate must not turn sharing off for every sheet.
     // ⛔ Without this, "always disable sharing" passes every test above.
     let mut r = crate::Renderer::new();
-    let d = r.load_html("<style>i { color: rgb(0,0,255) }</style><span><i></i><i></i></span>", 900.0);
-    assert!(!d.stylesheet.has_sibling_sensitive_rules, "nothing here can tell siblings apart");
+    let d = r.load_html(
+        "<style>i { color: rgb(0,0,255) }</style><span><i></i><i></i></span>",
+        900.0,
+    );
+    assert!(
+        !d.stylesheet.has_sibling_sensitive_rules,
+        "nothing here can tell siblings apart"
+    );
     let ids = d.get_elements_by_tag_name("i");
-    let blue = crate::types::Color { r: 0, g: 0, b: 255, a: 255 };
-    for id in ids { assert_eq!(d.get_computed_style(id).map(|s| s.color), Some(blue)); }
+    let blue = crate::types::Color {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    for id in ids {
+        assert_eq!(d.get_computed_style(id).map(|s| s.color), Some(blue));
+    }
 }
 
 #[test]
@@ -193,9 +243,13 @@ fn style_sharing_is_almost_never_reachable_on_a_real_page() {
 fn the_cascade_handles_deep_nesting() {
     let depth: usize = 1000;
     let mut html = String::from("<style>div{color:red}</style>");
-    for _ in 0..depth { html.push_str("<div>"); }
+    for _ in 0..depth {
+        html.push_str("<div>");
+    }
     html.push('x');
-    for _ in 0..depth { html.push_str("</div>"); }
+    for _ in 0..depth {
+        html.push_str("</div>");
+    }
     let mut r = crate::Renderer::new();
     let d = r.load_html(&html, 900.0);
     assert!(d.root.node_id != 0, "cascaded {depth} deep");
@@ -214,12 +268,32 @@ fn the_cascade_handles_deep_nesting() {
 fn style_sharing_must_not_ignore_other_attributes() {
     let mut r = crate::Renderer::new();
     let d = r.load_html(
-        "<style>i[data-x] { color: rgb(255,0,0) }</style><span><i></i><i data-x></i></span>", 900.0);
-    let got: Vec<crate::types::Color> = d.get_elements_by_tag_name("i").into_iter()
-        .map(|id| d.get_computed_style(id).unwrap().color).collect();
-    assert_eq!(got, vec![crate::types::Color{r:0,g:0,b:0,a:255},
-                         crate::types::Color{r:255,g:0,b:0,a:255}],
-        "an attribute selector must survive style sharing");
+        "<style>i[data-x] { color: rgb(255,0,0) }</style><span><i></i><i data-x></i></span>",
+        900.0,
+    );
+    let got: Vec<crate::types::Color> = d
+        .get_elements_by_tag_name("i")
+        .into_iter()
+        .map(|id| d.get_computed_style(id).unwrap().color)
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            crate::types::Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255
+            },
+            crate::types::Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        ],
+        "an attribute selector must survive style sharing"
+    );
 }
 
 /// `arenaplan.md` item 2's ceiling, measured rather than assumed.
@@ -248,63 +322,82 @@ fn the_rare_property_ceiling_is_worth_measuring_before_building() {
             || !s.rare().filter.is_empty()
             || !s.rare().backdrop_filter.is_empty()
             || !s.rare().mask_image_url.is_empty();
-        if uses_rare { *with_rare += 1; }
-        for c in &n.children { walk(c, total, with_rare); }
+        if uses_rare {
+            *with_rare += 1;
+        }
+        for c in &n.children {
+            walk(c, total, with_rare);
+        }
     }
     let (mut total, mut with_rare) = (0, 0);
     walk(&doc.root, &mut total, &mut with_rare);
-    assert_eq!((total, with_rare), (1132, 8), "rare-property usage on demo.html");
+    assert_eq!(
+        (total, with_rare),
+        (1132, 8),
+        "rare-property usage on demo.html"
+    );
 }
 
 /// Walk both representations and report every disagreement.
 fn collect_drift(d: &crate::types::Document, n: &WebCore, drift: &mut Vec<String>) {
-        // ⛔ A render box, not a node — skipped in full, not just in the
-        // child comparison, or it reports itself as "missing from the arena".
-        if n.tag == "::before" || n.tag == "::after" { return; }
-        let id = n.node_id;
-        if id != 0 && !crate::dom::arena::is_shadow_node_id(id) {
-            match d.arena.try_get(crate::dom::arena::NodeId(id)) {
-                None => drift.push(format!("#{id} <{}> missing from the arena", n.tag)),
-                Some(a) => {
-                    if a.tag != n.tag {
-                        drift.push(format!("#{id} tag: tree={:?} arena={:?}", n.tag, a.tag));
+    // ⛔ A render box, not a node — skipped in full, not just in the
+    // child comparison, or it reports itself as "missing from the arena".
+    if n.tag == "::before" || n.tag == "::after" {
+        return;
+    }
+    let id = n.node_id;
+    if id != 0 && !crate::dom::arena::is_shadow_node_id(id) {
+        match d.arena.try_get(crate::dom::arena::NodeId(id)) {
+            None => drift.push(format!("#{id} <{}> missing from the arena", n.tag)),
+            Some(a) => {
+                if a.tag != n.tag {
+                    drift.push(format!("#{id} tag: tree={:?} arena={:?}", n.tag, a.tag));
+                }
+                for (k, v) in n.attributes.iter() {
+                    match a.attributes.get(k) {
+                        Some(av) if av == v => {}
+                        other => drift.push(format!(
+                            "#{id} <{}> attr {k}: tree={v:?} arena={other:?}",
+                            n.tag
+                        )),
                     }
-                    for (k, v) in n.attributes.iter() {
-                        match a.attributes.get(k) {
-                            Some(av) if av == v => {}
-                            other => drift.push(format!(
-                                "#{id} <{}> attr {k}: tree={v:?} arena={other:?}", n.tag)),
-                        }
-                    }
-                    if (n.tag == "#text" || n.tag == "#comment") && a.text != n.text {
-                        drift.push(format!("#{id} text: tree={:?} arena={:?}", n.text, a.text));
-                    }
-                    // ⛔ TREE SHAPE, not just per-node data. `childNodes`,
-                    // `parentNode` and every traversal read the ARENA's links,
-                    // so a structural disagreement is invisible to the checks
-                    // above and visible to any caller.
-                    // ⛔ `::before` / `::after` are render boxes, NOT nodes:
-                    // the DOM must not expose them in `childNodes`, so the
-                    // arena is right to lack them and the comparison has to
-                    // skip them. Asserted positively in
-                    // `pseudo_elements_are_boxes_not_nodes`.
-                    let tree_kids: Vec<u32> = n
-                        .children
-                        .iter()
-                        .filter(|c| c.tag != "::before" && c.tag != "::after")
-                        .map(|c| c.node_id)
-                        .collect();
-                    let arena_kids: Vec<u32> =
-                        d.arena.children(crate::dom::arena::NodeId(id)).map(|c| c.0).collect();
-                    if tree_kids != arena_kids {
-                        drift.push(format!(
-                            "#{id} <{}> children: tree={tree_kids:?} arena={arena_kids:?}", n.tag));
-                    }
+                }
+                if (n.tag == "#text" || n.tag == "#comment") && a.text != n.text {
+                    drift.push(format!("#{id} text: tree={:?} arena={:?}", n.text, a.text));
+                }
+                // ⛔ TREE SHAPE, not just per-node data. `childNodes`,
+                // `parentNode` and every traversal read the ARENA's links,
+                // so a structural disagreement is invisible to the checks
+                // above and visible to any caller.
+                // ⛔ `::before` / `::after` are render boxes, NOT nodes:
+                // the DOM must not expose them in `childNodes`, so the
+                // arena is right to lack them and the comparison has to
+                // skip them. Asserted positively in
+                // `pseudo_elements_are_boxes_not_nodes`.
+                let tree_kids: Vec<u32> = n
+                    .children
+                    .iter()
+                    .filter(|c| c.tag != "::before" && c.tag != "::after")
+                    .map(|c| c.node_id)
+                    .collect();
+                let arena_kids: Vec<u32> = d
+                    .arena
+                    .children(crate::dom::arena::NodeId(id))
+                    .map(|c| c.0)
+                    .collect();
+                if tree_kids != arena_kids {
+                    drift.push(format!(
+                        "#{id} <{}> children: tree={tree_kids:?} arena={arena_kids:?}",
+                        n.tag
+                    ));
                 }
             }
         }
-        for c in &n.children { collect_drift(d, c, drift); }
     }
+    for c in &n.children {
+        collect_drift(d, c, drift);
+    }
+}
 
 /// `arenaplan.md` item 4's premise, checked rather than assumed.
 ///
@@ -336,7 +429,9 @@ fn the_two_representations_of_an_element_agree() {
 fn a_table_cell_reaches_the_dom_like_any_other_element() {
     let mut r = crate::Renderer::new();
     let d = r.load_html(
-        "<table><tr><td id=cell>hi</td></tr></table><div id=plain>hi</div>", 900.0);
+        "<table><tr><td id=cell>hi</td></tr></table><div id=plain>hi</div>",
+        900.0,
+    );
     let cell = d.get_element_by_id("cell").unwrap();
     let plain = d.get_element_by_id("plain").unwrap();
     assert_eq!(
@@ -353,7 +448,11 @@ fn a_table_cell_reaches_the_dom_like_any_other_element() {
     let kid = d.child_nodes(cell)[0];
     assert_eq!(d.node_type(kid), 3, "nodeType of a table cell's text");
     assert_eq!(d.node_name(kid), "#text");
-    assert_eq!(d.node_type(d.child_nodes(plain)[0]), 3, "and the div agrees");
+    assert_eq!(
+        d.node_type(d.child_nodes(plain)[0]),
+        3,
+        "and the div agrees"
+    );
 
     // A SYNTHESIZED text node reaches the same path: `<input type=submit>`
     // gets a `"Submit"` label built with `WebCore::new("#text")`, so it has no
@@ -363,7 +462,11 @@ fn a_table_cell_reaches_the_dom_like_any_other_element() {
     let btn = d2.get_element_by_id("b").unwrap();
     let kids = d2.child_nodes(btn);
     assert_eq!(kids.len(), 1, "the synthesized label");
-    assert_eq!(d2.node_type(kids[0]), 3, "a synthesized label is a TEXT node");
+    assert_eq!(
+        d2.node_type(kids[0]),
+        3,
+        "a synthesized label is a TEXT node"
+    );
     assert_eq!(d2.text_content(btn), "Submit");
 }
 
@@ -393,7 +496,12 @@ fn the_two_representations_still_agree_after_mutation() {
 
     let mut drift: Vec<String> = Vec::new();
     collect_drift(&d, &d.root, &mut drift);
-    assert_eq!(drift, Vec::<String>::new(), "{} drifted after mutation", drift.len());
+    assert_eq!(
+        drift,
+        Vec::<String>::new(),
+        "{} drifted after mutation",
+        drift.len()
+    );
 }
 
 /// Every node that reaches the tree must have an id the ARENA issued.
@@ -412,23 +520,38 @@ fn every_created_node_carries_an_arena_id() {
             bad.push(format!("{what} -> #{id} is not a live arena node"));
         }
     };
-    let e = d.create_element("span");            check(&d, "createElement", e);
-    let t = d.create_text_node("x");             check(&d, "createTextNode", t);
-    let c = d.create_comment("c");               check(&d, "createComment", c);
-    let f = d.create_document_fragment();        check(&d, "createDocumentFragment", f);
+    let e = d.create_element("span");
+    check(&d, "createElement", e);
+    let t = d.create_text_node("x");
+    check(&d, "createTextNode", t);
+    let c = d.create_comment("c");
+    check(&d, "createComment", c);
+    let f = d.create_document_fragment();
+    check(&d, "createDocumentFragment", f);
     let ns = d.create_element_ns("http://www.w3.org/2000/svg", "svg");
     check(&d, "createElementNS", ns);
-    let cd = d.create_cdata_section("d");        check(&d, "createCDATASection", cd);
+    let cd = d.create_cdata_section("d");
+    check(&d, "createCDATASection", cd);
     let pi = d.create_processing_instruction("t", "d");
     check(&d, "createProcessingInstruction", pi);
-    let cl = d.clone_node(host, true);           check(&d, "cloneNode", cl);
+    let cl = d.clone_node(host, true);
+    check(&d, "cloneNode", cl);
     drop(check);
 
     // And once attached, they must still be reachable through the DOM.
     d.append_child(host, e);
     d.append_child(e, t);
-    assert_eq!(d.text_content(host), "x", "an attached subtree reaches the DOM");
-    assert_eq!(bad, Vec::<String>::new(), "{} creation paths leak a phantom id", bad.len());
+    assert_eq!(
+        d.text_content(host),
+        "x",
+        "an attached subtree reaches the DOM"
+    );
+    assert_eq!(
+        bad,
+        Vec::<String>::new(),
+        "{} creation paths leak a phantom id",
+        bad.len()
+    );
 }
 
 /// ⛔ A THIRD live bug of the same family, and the clearest instance of
@@ -459,8 +582,17 @@ fn an_edit_leaves_the_dom_consistent() {
 
     let mut drift: Vec<String> = Vec::new();
     collect_drift(&d, &d.root, &mut drift);
-    assert_eq!(drift, Vec::<String>::new(), "{} drifted after an edit", drift.len());
-    assert_eq!(d.text_content(host), "hello", "the halves are still the same text");
+    assert_eq!(
+        drift,
+        Vec::<String>::new(),
+        "{} drifted after an edit",
+        drift.len()
+    );
+    assert_eq!(
+        d.text_content(host),
+        "hello",
+        "the halves are still the same text"
+    );
     assert_eq!(d.child_nodes(host).len(), 3, "\"he\", <br>, \"llo\"");
 
     // ⛔ And an edit that MUTATES an existing node rather than creating one.
@@ -472,11 +604,28 @@ fn an_edit_leaves_the_dom_consistent() {
     let host2 = d2.get_element_by_id("e").unwrap();
     let leaf2 = d2.child_nodes(host2)[0];
     d2.editor.set_caret_from_hit(leaf2, 5, false);
-    d2.process_key_event(crate::dom::HtmlEventType::KeyDown, 0, Some('!'), false, false, false, false);
+    d2.process_key_event(
+        crate::dom::HtmlEventType::KeyDown,
+        0,
+        Some('!'),
+        false,
+        false,
+        false,
+        false,
+    );
     let mut drift2: Vec<String> = Vec::new();
     collect_drift(&d2, &d2.root, &mut drift2);
-    assert_eq!(drift2, Vec::<String>::new(), "{} drifted after typing", drift2.len());
-    assert_eq!(d2.text_content(host2), "hello!", "the typed character reaches the DOM");
+    assert_eq!(
+        drift2,
+        Vec::<String>::new(),
+        "{} drifted after typing",
+        drift2.len()
+    );
+    assert_eq!(
+        d2.text_content(host2),
+        "hello!",
+        "the typed character reaches the DOM"
+    );
 }
 
 /// ⛔ UNDEFINED BEHAVIOUR, live in the codebase until this test.
@@ -507,39 +656,99 @@ fn a_node_lookup_survives_a_reallocating_mutation() {
         d.append_child(host, e);
     }
 
-    assert_eq!(d.get_box_by_id(a).map(|n| n.node_id), Some(a),
-        "the lookup must still find the right node after a reallocation");
-    assert_eq!(d.get_box_by_id(a).map(|n| n.tag.clone()), Some("p".to_string()));
+    assert_eq!(
+        d.get_box_by_id(a).map(|n| n.node_id),
+        Some(a),
+        "the lookup must still find the right node after a reallocation"
+    );
+    assert_eq!(
+        d.get_box_by_id(a).map(|n| n.tag.clone()),
+        Some("p".to_string())
+    );
 }
 
 /// The example pages every drift guard runs on. One list, so a guard added
 /// later cannot quietly run on fewer pages than the others.
 const EXAMPLE_PAGES: &[(&str, &str)] = &[
-        ("animation_demo.html", include_str!("../../examples/html/animation_demo.html")),
-        ("calculator.html", include_str!("../../examples/html/calculator.html")),
-        ("cascade_features.html", include_str!("../../examples/html/cascade_features.html")),
-        ("container.html", include_str!("../../examples/html/container.html")),
-        ("contenteditable.html", include_str!("../../examples/html/contenteditable.html")),
-        ("demo.html", include_str!("../../examples/html/demo.html")),
-        ("dom.html", include_str!("../../examples/html/dom.html")),
-        ("edit.html", include_str!("../../examples/html/edit.html")),
-        ("edit_demo.html", include_str!("../../examples/html/edit_demo.html")),
-        ("email.html", include_str!("../../examples/html/email.html")),
-        ("eudora.html", include_str!("../../examples/html/eudora.html")),
-        ("event_playground.html", include_str!("../../examples/html/event_playground.html")),
-        ("events.html", include_str!("../../examples/html/events.html")),
-        ("forms_demo.html", include_str!("../../examples/html/forms_demo.html")),
-        ("graph.html", include_str!("../../examples/html/graph.html")),
-        ("layout_features.html", include_str!("../../examples/html/layout_features.html")),
-        ("markdown.html", include_str!("../../examples/html/markdown.html")),
-        ("minesweeper.html", include_str!("../../examples/html/minesweeper.html")),
-        ("overflow.html", include_str!("../../examples/html/overflow.html")),
-        ("print.html", include_str!("../../examples/html/print.html")),
-        ("subgrid.html", include_str!("../../examples/html/subgrid.html")),
-        ("tictactoe.html", include_str!("../../examples/html/tictactoe.html")),
-        ("transform_filter_demo.html", include_str!("../../examples/html/transform_filter_demo.html")),
-        ("transitions_demo.html", include_str!("../../examples/html/transitions_demo.html"))
-    ];
+    (
+        "animation_demo.html",
+        include_str!("../../examples/html/animation_demo.html"),
+    ),
+    (
+        "calculator.html",
+        include_str!("../../examples/html/calculator.html"),
+    ),
+    (
+        "cascade_features.html",
+        include_str!("../../examples/html/cascade_features.html"),
+    ),
+    (
+        "container.html",
+        include_str!("../../examples/html/container.html"),
+    ),
+    (
+        "contenteditable.html",
+        include_str!("../../examples/html/contenteditable.html"),
+    ),
+    ("demo.html", include_str!("../../examples/html/demo.html")),
+    ("dom.html", include_str!("../../examples/html/dom.html")),
+    ("edit.html", include_str!("../../examples/html/edit.html")),
+    (
+        "edit_demo.html",
+        include_str!("../../examples/html/edit_demo.html"),
+    ),
+    ("email.html", include_str!("../../examples/html/email.html")),
+    (
+        "eudora.html",
+        include_str!("../../examples/html/eudora.html"),
+    ),
+    (
+        "event_playground.html",
+        include_str!("../../examples/html/event_playground.html"),
+    ),
+    (
+        "events.html",
+        include_str!("../../examples/html/events.html"),
+    ),
+    (
+        "forms_demo.html",
+        include_str!("../../examples/html/forms_demo.html"),
+    ),
+    ("graph.html", include_str!("../../examples/html/graph.html")),
+    (
+        "layout_features.html",
+        include_str!("../../examples/html/layout_features.html"),
+    ),
+    (
+        "markdown.html",
+        include_str!("../../examples/html/markdown.html"),
+    ),
+    (
+        "minesweeper.html",
+        include_str!("../../examples/html/minesweeper.html"),
+    ),
+    (
+        "overflow.html",
+        include_str!("../../examples/html/overflow.html"),
+    ),
+    ("print.html", include_str!("../../examples/html/print.html")),
+    (
+        "subgrid.html",
+        include_str!("../../examples/html/subgrid.html"),
+    ),
+    (
+        "tictactoe.html",
+        include_str!("../../examples/html/tictactoe.html"),
+    ),
+    (
+        "transform_filter_demo.html",
+        include_str!("../../examples/html/transform_filter_demo.html"),
+    ),
+    (
+        "transitions_demo.html",
+        include_str!("../../examples/html/transitions_demo.html"),
+    ),
+];
 
 /// The drift check across EVERY example page, not just `demo.html`.
 ///
@@ -560,7 +769,11 @@ fn no_example_page_drifts_between_its_two_representations() {
         let mut drift: Vec<String> = Vec::new();
         collect_drift(&doc, &doc.root, &mut drift);
         if !drift.is_empty() {
-            bad.push(format!("{name}: {} drifted — first: {}", drift.len(), drift[0]));
+            bad.push(format!(
+                "{name}: {} drifted — first: {}",
+                drift.len(),
+                drift[0]
+            ));
         }
     }
     assert_eq!(bad, Vec::<String>::new(), "{} pages drifted", bad.len());
@@ -573,13 +786,19 @@ fn no_example_page_drifts_between_its_two_representations() {
 fn pseudo_elements_are_boxes_not_nodes() {
     let mut r = crate::Renderer::new();
     let d = r.load_html(
-        "<style>#p::before { content: \"X\"; display: block }</style><p id=p>hi</p>", 900.0);
+        "<style>#p::before { content: \"X\"; display: block }</style><p id=p>hi</p>",
+        900.0,
+    );
     let p = d.get_element_by_id("p").unwrap();
     for kid in d.child_nodes(p) {
         let name = d.node_name(kid);
         assert!(!name.starts_with("::"), "childNodes must not expose {name}");
     }
-    assert_eq!(d.text_content(p), "hi", "and textContent is the real content");
+    assert_eq!(
+        d.text_content(p),
+        "hi",
+        "and textContent is the real content"
+    );
 }
 
 /// The OTHER direction. Every guard so far walks the tree and looks the node up
@@ -632,7 +851,9 @@ fn a_removed_subtree_is_retained_so_it_can_be_reinserted() {
         d.append_child(e, tx);
         d.append_child(host, e);
     }
-    for kid in d.child_nodes(host) { d.remove_child(kid); }
+    for kid in d.child_nodes(host) {
+        d.remove_child(kid);
+    }
     assert_eq!(
         d.arena.len() - before,
         100,
@@ -671,16 +892,25 @@ fn nothing_is_reclaimed_and_no_freed_id_is_ever_reissued() {
     let mut seen = std::collections::HashSet::new();
     fn reach(n: &WebCore, seen: &mut std::collections::HashSet<u32>) {
         seen.insert(n.node_id);
-        for c in &n.children { reach(c, seen); }
+        for c in &n.children {
+            reach(c, seen);
+        }
     }
     reach(&d.root, &mut seen);
-    assert_eq!(d.arena.len() - base, 80, "every discarded generation is retained");
+    assert_eq!(
+        d.arena.len() - base,
+        80,
+        "every discarded generation is retained"
+    );
 
     // And the guarantee the reclaim will rest on: a freed id is dead for good.
     let doomed = d.create_element("i");
     d.arena.free(crate::dom::arena::NodeId(doomed));
     let fresh = d.create_element("b");
-    assert_ne!(fresh, doomed, "the freed id is not recycled onto a new element");
+    assert_ne!(
+        fresh, doomed,
+        "the freed id is not recycled onto a new element"
+    );
     assert!(
         !d.arena.is_alive(crate::dom::arena::NodeId(doomed)),
         "and it stays dead, so a stale handle resolves to nothing"
@@ -728,7 +958,11 @@ fn the_dom_answers_come_from_the_arena_not_from_the_render_tree() {
 
     // Structure, order and identity — all from the arena, all correct after a
     // mixture of append, insert, remove and a re-parse.
-    assert_eq!(d.child_nodes(host), vec![a, ital, made], "children, in order");
+    assert_eq!(
+        d.child_nodes(host),
+        vec![a, ital, made],
+        "children, in order"
+    );
     assert_eq!(d.parent_node(ital), host, "and the way back up");
     assert_eq!(d.next_sibling(a), ital);
     assert_eq!(d.next_sibling(ital), made);
@@ -760,7 +994,9 @@ fn the_render_tree_holds_boxes_the_dom_does_not() {
     let x = d.get_element_by_id("x").unwrap();
 
     fn find<'a>(n: &'a WebCore, id: u32) -> Option<&'a WebCore> {
-        if n.node_id == id { return Some(n); }
+        if n.node_id == id {
+            return Some(n);
+        }
         n.children.iter().find_map(|c| find(c, id))
     }
     let box_x = find(&d.root, x).expect("the element has a box");
@@ -770,11 +1006,12 @@ fn the_render_tree_holds_boxes_the_dom_does_not() {
         "the render tree carries the pseudo-element box"
     );
     assert!(
-        !d.child_nodes(x).iter().any(|c| d.tag_name(*c) == Some("::before")),
+        !d.child_nodes(x)
+            .iter()
+            .any(|c| d.tag_name(*c) == Some("::before")),
         "and the DOM does not"
     );
 }
-
 
 /// ⛔ The FOURTH hole in the style-sharing key, and the first that is not an
 /// attribute at all.
@@ -815,11 +1052,13 @@ fn style_sharing_must_not_ignore_box_state() {
     );
     // The two elements are indistinguishable by tag and attributes, which is
     // the whole point — if they were not, the old key would have coped.
-    assert_eq!(d.get_attribute(plain, "open"), d.get_attribute(modal, "open"));
+    assert_eq!(
+        d.get_attribute(plain, "open"),
+        d.get_attribute(modal, "open")
+    );
     assert_eq!(d.tag_name(plain), d.tag_name(modal));
     assert_eq!(d.get_attribute(modal, "style"), None, "no inline write");
 }
-
 
 /// ⛔ Loading a page must not build a second `Renderer`.
 ///
@@ -842,13 +1081,20 @@ fn loading_a_page_does_not_build_a_second_renderer() {
     let _ = r.load_html(tiny, 1280.0); // warm the process-wide font caches
 
     let t = std::time::Instant::now();
-    for _ in 0..5 { let _ = r.load_html(tiny, 1280.0); }
+    for _ in 0..5 {
+        let _ = r.load_html(tiny, 1280.0);
+    }
     let reuse_ms = t.elapsed().as_millis();
 
     let t = std::time::Instant::now();
     for _ in 0..5 {
         let _ = crate::load_html_with_registry(
-            tiny, "", 1280.0, 700.0, crate::types::ComponentRegistry::default());
+            tiny,
+            "",
+            1280.0,
+            700.0,
+            crate::types::ComponentRegistry::default(),
+        );
     }
     let fresh_ms = t.elapsed().as_millis();
 
@@ -859,7 +1105,6 @@ fn loading_a_page_does_not_build_a_second_renderer() {
          of a one-element page"
     );
 }
-
 
 /// ⛔ A frame in which NOTHING changed must be nearly free, and a scroll must
 /// not cost anything like a first render.
@@ -914,7 +1159,6 @@ fn an_unchanged_frame_and_a_scroll_are_cheap() {
     );
 }
 
-
 /// ⛔ Every positioning scheme must survive the scroll-cached display list.
 ///
 /// The list is built once in DOCUMENT coordinates and translated by the scroll
@@ -963,14 +1207,16 @@ fn every_positioning_scheme_survives_the_scroll_cache() {
     doc.scroll_y = 500.0;
     r.render(&mut doc, &mut pm, 1.0);
     assert_eq!(
-        at(&pm, 40, 80), (255, 0, 0),
+        at(&pm, 40, 80),
+        (255, 0, 0),
         "a fixed box must stay put when the page scrolls — it did not, because \
          it was translated along with the document-coordinate list"
     );
 
     // …and the absolute box, at document y=1000, must appear at 1000-500=500.
     assert_eq!(
-        at(&pm, 230, 530), (0, 0, 255),
+        at(&pm, 230, 530),
+        (0, 0, 255),
         "an absolutely positioned box translates with the document"
     );
 }

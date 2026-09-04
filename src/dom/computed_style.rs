@@ -47,11 +47,15 @@ impl Document {
         // instead (measured: Chrome says `0px`, this said `27.2px`). The two
         // edges also mirror: `bottom` is `-top` and `right` is `-left`
         // (CSS 2.1 §9.4.3), so `top: 10px` makes `bottom` answer `-10px`.
-        if inset && matches!(
-            self.get_computed_style(id).map(|s| s.position),
-            Some(crate::types::Position::Relative)
-        ) {
-            let Some(style) = self.get_computed_style(id) else { return String::new() };
+        if inset
+            && matches!(
+                self.get_computed_style(id).map(|s| s.position),
+                Some(crate::types::Position::Relative)
+            )
+        {
+            let Some(style) = self.get_computed_style(id) else {
+                return String::new();
+            };
             let font_px = style.font_size.resolve(16.0, 16.0, 16.0);
             let resolve = |l: &crate::types::CssLength| -> Option<f32> {
                 match l {
@@ -97,6 +101,12 @@ impl Document {
                 ),
             };
         }
+        if matches!(
+            property.as_str(),
+            "margin" | "padding" | "border" | "overflow" | "flex" | "inset" | "gap"
+        ) {
+            return self.resolved_shorthand(id, &property);
+        }
         let resolved = match (property.as_str(), rect) {
             // A positioned box's inset IS its used value — the offset from the
             // containing block, not from the page. Same number whenever that
@@ -110,6 +120,18 @@ impl Document {
             // inline is the exception: `<img width=30>` is `"30px"`.
             ("width", Some(r)) if self.has_a_used_size(id) => Some(format!("{}px", r.w)),
             ("height", Some(r)) if self.has_a_used_size(id) => Some(format!("{}px", r.h)),
+            ("margin-top", _) => self.get_node(id).map(|n| px(n.layout.resolved_margin_top)),
+            ("margin-right", _) => self
+                .get_node(id)
+                .map(|n| px(n.layout.resolved_margin_right)),
+            ("margin-bottom", _) => self
+                .get_node(id)
+                .map(|n| px(n.layout.resolved_margin_bottom)),
+            ("margin-left", _) => self.get_node(id).map(|n| px(n.layout.resolved_margin_left)),
+            ("padding-top", _) => self.get_node(id).map(|n| px(n.layout.resolved_pad_top)),
+            ("padding-right", _) => self.get_node(id).map(|n| px(n.layout.resolved_pad_right)),
+            ("padding-bottom", _) => self.get_node(id).map(|n| px(n.layout.resolved_pad_bottom)),
+            ("padding-left", _) => self.get_node(id).map(|n| px(n.layout.resolved_pad_left)),
             _ => None,
         };
         match resolved {
@@ -123,6 +145,58 @@ impl Document {
                 Some(v) => v,
                 None => self.get_style_property(id, &property).unwrap_or_default(),
             },
+        }
+    }
+
+    /// `getComputedStyle(element, pseudo).getPropertyValue(property)` for
+    /// generated pseudo-elements whose styles are already cascaded onto the
+    /// originating element.
+    pub fn computed_style_pseudo_property(
+        &mut self,
+        id: u32,
+        pseudo: &str,
+        property: &str,
+    ) -> String {
+        let width = self.viewport_w;
+        crate::layout::LayoutEngine::new().layout(self, width);
+        let Some(node) = self.get_node(id).or_else(|| self.find_webcore(id)) else {
+            return String::new();
+        };
+        let pseudo = pseudo.trim().trim_start_matches(':');
+        let (style, content) = match pseudo {
+            "before" => (
+                node.style.before_style.as_deref(),
+                &node.style.before_content,
+            ),
+            "after" => (node.style.after_style.as_deref(), &node.style.after_content),
+            _ => (None, &String::new()),
+        };
+        let Some(style) = style else {
+            return String::new();
+        };
+        match property.to_ascii_lowercase().as_str() {
+            "content" => {
+                if content.is_empty() {
+                    "none".to_string()
+                } else if content.starts_with('"') || content.starts_with('\'') {
+                    content.clone()
+                } else {
+                    format!("\"{}\"", content.replace('"', "\\\""))
+                }
+            }
+            "display" => serialize_display(style.display),
+            "color" => serialize_color(style.color),
+            "background-color" => serialize_color(style.background_color),
+            "font-size" => format!("{}px", style.font_size.resolve(16.0, 16.0, 16.0)),
+            "font-weight" => style.font_weight.value().to_string(),
+            "font-style" => match style.font_style {
+                crate::types::FontStyle::Normal => "normal",
+                crate::types::FontStyle::Italic => "italic",
+                crate::types::FontStyle::Oblique => "oblique",
+            }
+            .to_string(),
+            "font-family" => serialize_font_family_list(&style.font_family),
+            _ => String::new(),
         }
     }
 
@@ -162,6 +236,11 @@ impl Document {
                 other => format!("{}px", other.resolve(font_px, vw, root_px)),
             }
         };
+        let is_flex_item = self
+            .parent_element(id)
+            .and_then(|parent| self.get_computed_style(parent))
+            .map(|parent| matches!(parent.display, Display::Flex | Display::InlineFlex))
+            .unwrap_or(false);
         Some(match property {
             // ⛔ EVERY variant. A `_ => return None` arm here sent the
             // uncovered ones to the inline fallback, so `<button>` — which
@@ -213,7 +292,32 @@ impl Document {
                 FontStyle::Oblique => "oblique",
             }
             .to_string(),
-            "font-family" => s.font_family.clone(),
+            "font-family" => serialize_font_family_list(&s.font_family),
+            "text-align" => serialize_text_align(s.text_align),
+            "visibility" => {
+                if s.visibility {
+                    "visible".to_string()
+                } else {
+                    "hidden".to_string()
+                }
+            }
+            "line-height" => len(&s.line_height),
+            "letter-spacing" => len(&s.letter_spacing),
+            "text-transform" => serialize_text_transform(s.text_transform),
+            "white-space" => serialize_white_space(s.white_space),
+            "direction" => match s.direction {
+                Direction::LTR => "ltr",
+                Direction::RTL => "rtl",
+            }
+            .to_string(),
+            "text-orientation" => match s.text_orientation {
+                TextOrientation::Mixed => "mixed",
+                TextOrientation::Upright => "upright",
+                TextOrientation::Sideways => "sideways",
+            }
+            .to_string(),
+            "text-combine-upright" => s.text_combine_upright.clone(),
+            "cursor" => serialize_cursor(s.cursor),
             "margin-top" => len(&s.margin_top),
             "margin-right" => len(&s.margin_right),
             "margin-bottom" => len(&s.margin_bottom),
@@ -230,7 +334,9 @@ impl Document {
             // `0px`/`none`, a `<div style="border-style:solid">` is `3px`.
             "border-top-width" => len(&used_border(&s.border_top_width, s.border_top_style)),
             "border-right-width" => len(&used_border(&s.border_right_width, s.border_right_style)),
-            "border-bottom-width" => len(&used_border(&s.border_bottom_width, s.border_bottom_style)),
+            "border-bottom-width" => {
+                len(&used_border(&s.border_bottom_width, s.border_bottom_style))
+            }
             "border-left-width" => len(&used_border(&s.border_left_width, s.border_left_style)),
             "border-top-style" => serialize_border_style(s.border_top_style),
             "border-right-style" => serialize_border_style(s.border_right_style),
@@ -240,6 +346,26 @@ impl Document {
             "border-right-color" => serialize_color(s.border_right_color),
             "border-bottom-color" => serialize_color(s.border_bottom_color),
             "border-left-color" => serialize_color(s.border_left_color),
+            "border-top-left-radius" => len(&s.border_top_left_radius),
+            "border-top-right-radius" => len(&s.border_top_right_radius),
+            "border-bottom-right-radius" => len(&s.border_bottom_right_radius),
+            "border-bottom-left-radius" => len(&s.border_bottom_left_radius),
+            "border-image-source" => s.border_image_source.clone(),
+            "border-image-slice" => s.border_image_slice.clone(),
+            "border-image-width" => s.border_image_width.clone(),
+            "border-image-outset" => s.border_image_outset.clone(),
+            "border-image-repeat" => s.border_image_repeat.clone(),
+            "border-image" => format!(
+                "{} {} / {} / {} {}",
+                s.border_image_source,
+                s.border_image_slice,
+                s.border_image_width,
+                s.border_image_outset,
+                s.border_image_repeat
+            ),
+            "outline-width" => format!("{}px", s.outline_width),
+            "outline-style" => serialize_border_style(s.outline_style),
+            "outline-color" => serialize_color(s.outline_color),
             "overflow-x" => serialize_overflow(s.overflow_x),
             "overflow-y" => serialize_overflow(s.overflow_y),
             "box-sizing" => match s.box_sizing {
@@ -252,23 +378,21 @@ impl Document {
                 Clear::Left => "left",
                 Clear::Right => "right",
                 Clear::Both => "both",
+                Clear::InlineStart => "inline-start",
+                Clear::InlineEnd => "inline-end",
             }
             .to_string(),
-            // ⛔ `min-*` serializes `auto` as `0px` — its initial value is
-            // `auto`, which computes to zero outside a flex item, and Chrome
-            // answers `"0px"` for both. The crate stores `Px(0)` for one of
-            // these and `Auto` for the other, so both roads have to lead here.
-            // Reached only when the rect path declined — a non-replaced
-            // inline or a `display: none` box, neither of which has a used
-            // size. The COMPUTED value is the answer there, and it is `auto`
-            // unless the author declared one.
             "width" => len(&s.width),
             "height" => len(&s.height),
-            "min-width" => serialize_min(&s.min_width, &len),
-            "min-height" => serialize_min(&s.min_height, &len),
+            "min-width" => serialize_min(&s.min_width, is_flex_item, &len),
+            "min-height" => serialize_min(&s.min_height, is_flex_item, &len),
             // `max-*` has `none` where the others have `auto`.
             "max-width" => len(&s.max_width),
             "max-height" => len(&s.max_height),
+            "line-clamp" | "-webkit-line-clamp" => s
+                .line_clamp
+                .map(|lines| lines.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             "opacity" => format!("{}", s.opacity),
             // `transform` serializes as the resolved 2D matrix, never as the
             // author's function list — CSSOM. `none` when there is no
@@ -279,32 +403,160 @@ impl Document {
                 if s.transform.is_empty() {
                     "none".to_string()
                 } else {
-                    // ⛔ A ZERO rect, deliberately. `compute_transform_matrix`
-                    // composes translate(origin) * M * translate(-origin) for
-                    // painting; CSSOM serializes M ITSELF, with no origin baked
-                    // in — Chrome answers `matrix(1, 0, 0, 1, 32, 0)` for
-                    // `translateX(2rem)` however the origin is set. A zero rect
-                    // makes the origin terms vanish, which is exactly right.
+                    // ⛔ The RAW matrix — CSSOM serializes M itself, with no
+                    // `transform-origin` baked in: the origin is a separate
+                    // property. Chrome answers `matrix(1, 0, 0, 1, 32, 0)` for
+                    // `translateX(2rem)` however the origin is set.
                     //
-                    // The cost is that a PERCENTAGE translation cannot resolve
-                    // here — it needs the border box, which this path has not
-                    // got. Those serialize as 0.
-                    let m = crate::renderer::display_list_builder::compute_transform_matrix(
-                        &s, &crate::types::Rect::new(0.0, 0.0, 0.0, 0.0));
-                    format!("matrix({}, {}, {}, {}, {}, {})",
-                        trim_f32(m[0]), trim_f32(m[1]), trim_f32(m[2]),
-                        trim_f32(m[3]), trim_f32(m[4]), trim_f32(m[5]))
+                    // The reference box IS passed, so a percentage translation
+                    // resolves — `translateX(50%)` on a 100px box serializes
+                    // as 50, which is what a script reading it back expects.
+                    // The reference box is the element's BORDER box, not its
+                    // bounding client rect: the latter is the box AFTER the
+                    // transform, which would make the percentage depend on its
+                    // own result.
+                    let (rw, rh) = self
+                        .get_node(id)
+                        .or_else(|| self.find_webcore(id))
+                        .map(|b| (b.layout.border_rect.w, b.layout.border_rect.h))
+                        .unwrap_or((0.0, 0.0));
+                    let m = crate::renderer::display_list_builder::compute_transform_matrix_raw(
+                        &s,
+                        rw,
+                        rh,
+                        &crate::types::TransformCtx {
+                            font_px,
+                            root_font_px: root_px,
+                            viewport_w: vw,
+                            viewport_h: self.viewport_h,
+                        },
+                    );
+                    format!(
+                        "matrix({}, {}, {}, {}, {}, {})",
+                        trim_f32(m[0]),
+                        trim_f32(m[1]),
+                        trim_f32(m[2]),
+                        trim_f32(m[3]),
+                        trim_f32(m[4]),
+                        trim_f32(m[5])
+                    )
                 }
             }
-            // ⛔ `z_index` is a bare `i32` with no `auto`. Chrome answers
-            // `"auto"` when it is unset and the number when it is set, and the
-            // cascade stores `0` for both — so a declared `z-index: 0` reads
-            // back as `"auto"` here. That single case is wrong; answering the
-            // number instead would be wrong for every element that never set
-            // one, which is nearly all of them.
+            "transform-box" => s.transform_box.clone(),
             "z-index" => {
-                if s.z_index == 0 { "auto".to_string() } else { s.z_index.to_string() }
+                if s.z_index_is_auto {
+                    "auto".to_string()
+                } else {
+                    s.z_index.to_string()
+                }
             }
+            "font-variant" | "font-variant-caps" => {
+                if s.small_caps {
+                    "small-caps".to_string()
+                } else {
+                    "normal".to_string()
+                }
+            }
+            "font-synthesis" => serialize_font_synthesis(s),
+            "font-synthesis-weight" => serialize_font_synthesis_longhand(s.font_synthesis_weight),
+            "font-synthesis-style" => serialize_font_synthesis_longhand(s.font_synthesis_style),
+            "font-synthesis-small-caps" => {
+                serialize_font_synthesis_longhand(s.font_synthesis_small_caps)
+            }
+            "font-synthesis-position" => {
+                serialize_font_synthesis_longhand(s.font_synthesis_position)
+            }
+            "text-decoration-skip-ink" => s.text_decoration_skip_ink.clone(),
+            "text-emphasis-style" => s.text_emphasis_style.clone(),
+            "text-emphasis-color" => s
+                .text_emphasis_color
+                .map(serialize_color)
+                .unwrap_or_else(|| "currentcolor".to_string()),
+            "text-emphasis-position" => s.text_emphasis_position.clone(),
+            "text-emphasis" => {
+                let color = s
+                    .text_emphasis_color
+                    .map(serialize_color)
+                    .unwrap_or_else(|| "currentcolor".to_string());
+                format!("{} {}", s.text_emphasis_style, color)
+            }
+            "text-wrap" => s.text_wrap.clone(),
+            "list-style-type" => serialize_list_style_type(s.list_style_type),
+            "mask-image" => {
+                if s.rare().mask_image_url.is_empty() {
+                    "none".to_string()
+                } else {
+                    format!("url(\"{}\")", s.rare().mask_image_url)
+                }
+            }
+            "mask-mode" => rare_or(&s.rare().mask_mode, "match-source"),
+            "mask-repeat" => rare_or(&s.rare().mask_repeat, "repeat"),
+            "mask-position" => rare_or(&s.rare().mask_position, "0% 0%"),
+            "mask-size" => rare_or(&s.rare().mask_size, "auto"),
+            "mask-clip" => rare_or(&s.rare().mask_clip, "border-box"),
+            "mask-origin" => rare_or(&s.rare().mask_origin, "border-box"),
+            "mask-composite" => rare_or(&s.rare().mask_composite, "add"),
+            "mask" => serialize_mask(s),
+            "vertical-align" => serialize_vertical_align(s.vertical_align),
+            "float" => serialize_float(s.float),
+            "flex-direction" => serialize_flex_direction(s.flex_direction),
+            "justify-content" => serialize_justify_content(s.justify_content),
+            "align-items" => serialize_align_items(s.align_items),
+            "row-gap" => len(&s.row_gap),
+            "column-gap" => len(&s.column_gap),
+            "flex-grow" => trim_f32(s.flex_grow),
+            "flex-shrink" => trim_f32(s.flex_shrink),
+            "flex-basis" => len(&s.flex_basis),
+            "order" => s.order.to_string(),
+            "content-visibility" => match s.content_visibility {
+                ContentVisibility::Visible => "visible",
+                ContentVisibility::Auto => "auto",
+                ContentVisibility::Hidden => "hidden",
+            }
+            .to_string(),
+            "contain-intrinsic-size" => shorthand_pair_values(
+                len(&s.contain_intrinsic_width),
+                len(&s.contain_intrinsic_height),
+            ),
+            "color-scheme" => s.color_scheme.clone(),
+            "background-blend-mode" => s.background_blend_mode.clone(),
+            "overflow-anchor" => s.overflow_anchor.clone(),
+            "overflow-clip-margin" => s.overflow_clip_margin.clone(),
+            "shape-outside" => s.shape_outside.clone(),
+            "shape-margin" => len(&s.shape_margin),
+            "scrollbar-width" => s.scrollbar_width.clone(),
+            "scrollbar-gutter" => s.scrollbar_gutter.clone(),
+            "scroll-margin-top" => len(&s.scroll_margin_top),
+            "scroll-margin-right" => len(&s.scroll_margin_right),
+            "scroll-margin-bottom" => len(&s.scroll_margin_bottom),
+            "scroll-margin-left" => len(&s.scroll_margin_left),
+            "scroll-margin" => shorthand_box_values([
+                len(&s.scroll_margin_top),
+                len(&s.scroll_margin_right),
+                len(&s.scroll_margin_bottom),
+                len(&s.scroll_margin_left),
+            ]),
+            "appearance" => s.appearance.clone(),
+            "field-sizing" => s.field_sizing.clone(),
+            "interpolate-size" => s.interpolate_size.clone(),
+            "margin-trim" => s.margin_trim.clone(),
+            "caption-side" => match s.caption_side {
+                CaptionSide::Top => "top",
+                CaptionSide::Bottom => "bottom",
+                CaptionSide::BlockStart => "block-start",
+                CaptionSide::BlockEnd => "block-end",
+                CaptionSide::InlineStart => "inline-start",
+                CaptionSide::InlineEnd => "inline-end",
+            }
+            .to_string(),
+            "text-underline-position" => match s.text_underline_position {
+                TextUnderlinePosition::Auto => "auto",
+                TextUnderlinePosition::FromFont => "from-font",
+                TextUnderlinePosition::Under => "under",
+                TextUnderlinePosition::Left => "left",
+                TextUnderlinePosition::Right => "right",
+            }
+            .to_string(),
             _ => return None,
         })
     }
@@ -329,6 +581,34 @@ fn serialize_color(c: crate::types::Color) -> String {
     }
 }
 
+fn serialize_display(display: crate::types::Display) -> String {
+    match display {
+        crate::types::Display::None => "none",
+        crate::types::Display::Block => "block",
+        crate::types::Display::Inline => "inline",
+        crate::types::Display::InlineBlock => "inline-block",
+        crate::types::Display::Flex => "flex",
+        crate::types::Display::InlineFlex => "inline-flex",
+        crate::types::Display::Grid => "grid",
+        crate::types::Display::InlineGrid => "inline-grid",
+        crate::types::Display::Table => "table",
+        crate::types::Display::TableRow => "table-row",
+        crate::types::Display::TableCell | crate::types::Display::TableHeaderCell => "table-cell",
+        crate::types::Display::TableRowGroup => "table-row-group",
+        crate::types::Display::TableHeaderGroup => "table-header-group",
+        crate::types::Display::TableFooterGroup => "table-footer-group",
+        crate::types::Display::TableColumnGroup => "table-column-group",
+        crate::types::Display::TableColumn => "table-column",
+        crate::types::Display::TableCaption => "table-caption",
+        crate::types::Display::ListItem => "list-item",
+        crate::types::Display::Ruby => "ruby",
+        crate::types::Display::RubyText => "ruby-text",
+        crate::types::Display::FlowRoot => "flow-root",
+        crate::types::Display::Contents => "contents",
+    }
+    .to_string()
+}
+
 fn serialize_border_style(v: crate::types::BorderStyle) -> String {
     use crate::types::BorderStyle as B;
     match v {
@@ -346,12 +626,285 @@ fn serialize_border_style(v: crate::types::BorderStyle) -> String {
     .to_string()
 }
 
+fn serialize_font_family_list(value: &str) -> String {
+    crate::css::split_font_families(value)
+        .into_iter()
+        .map(|family| serialize_font_family_name(&family))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn serialize_font_family_name(name: &str) -> String {
+    if is_css_family_identifier(name) {
+        name.to_string()
+    } else {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+fn serialize_font_synthesis(s: &crate::types::ComputedStyle) -> String {
+    if s.font_synthesis_weight
+        && s.font_synthesis_style
+        && s.font_synthesis_small_caps
+        && s.font_synthesis_position
+    {
+        return "auto".to_string();
+    }
+    if !s.font_synthesis_weight
+        && !s.font_synthesis_style
+        && !s.font_synthesis_small_caps
+        && !s.font_synthesis_position
+    {
+        return "none".to_string();
+    }
+    let mut parts = Vec::new();
+    if s.font_synthesis_weight {
+        parts.push("weight");
+    }
+    if s.font_synthesis_style {
+        parts.push("style");
+    }
+    if s.font_synthesis_small_caps {
+        parts.push("small-caps");
+    }
+    if s.font_synthesis_position {
+        parts.push("position");
+    }
+    parts.join(" ")
+}
+
+fn serialize_font_synthesis_longhand(enabled: bool) -> String {
+    if enabled { "auto" } else { "none" }.to_string()
+}
+
+fn rare_or(value: &str, initial: &str) -> String {
+    if value.is_empty() {
+        initial.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn serialize_mask(s: &crate::types::ComputedStyle) -> String {
+    let image = if s.rare().mask_image_url.is_empty() {
+        "none".to_string()
+    } else {
+        format!("url(\"{}\")", s.rare().mask_image_url)
+    };
+    format!(
+        "{} {} {} / {} {} {} {}",
+        image,
+        rare_or(&s.rare().mask_position, "0% 0%"),
+        rare_or(&s.rare().mask_repeat, "repeat"),
+        rare_or(&s.rare().mask_size, "auto"),
+        rare_or(&s.rare().mask_origin, "border-box"),
+        rare_or(&s.rare().mask_clip, "border-box"),
+        rare_or(&s.rare().mask_mode, "match-source"),
+    )
+}
+
+fn is_css_family_identifier(name: &str) -> bool {
+    const GENERICS: &[&str] = &[
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+        "ui-rounded",
+        "emoji",
+        "math",
+        "fangsong",
+    ];
+    if GENERICS.contains(&name) {
+        return true;
+    }
+    name.split('-').all(|part| {
+        let mut chars = part.chars();
+        matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+            && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    })
+}
+
+fn serialize_text_align(v: crate::types::TextAlign) -> String {
+    use crate::types::TextAlign as T;
+    match v {
+        T::Left => "left",
+        T::Right => "right",
+        T::Center => "center",
+        T::Justify => "justify",
+        T::Start => "start",
+        T::End => "end",
+    }
+    .to_string()
+}
+
+fn serialize_text_transform(v: crate::types::TextTransform) -> String {
+    use crate::types::TextTransform as T;
+    match v {
+        T::None => "none",
+        T::Uppercase => "uppercase",
+        T::Lowercase => "lowercase",
+        T::Capitalize => "capitalize",
+    }
+    .to_string()
+}
+
+fn serialize_white_space(v: crate::types::WhiteSpace) -> String {
+    use crate::types::WhiteSpace as W;
+    match v {
+        W::Normal => "normal",
+        W::Nowrap => "nowrap",
+        W::Pre => "pre",
+        W::PreWrap => "pre-wrap",
+        W::PreLine => "pre-line",
+    }
+    .to_string()
+}
+
+fn serialize_vertical_align(v: crate::types::VerticalAlign) -> String {
+    use crate::types::VerticalAlign as V;
+    match v {
+        V::Baseline => "baseline",
+        V::Top => "top",
+        V::Middle => "middle",
+        V::Bottom => "bottom",
+        V::TextTop => "text-top",
+        V::TextBottom => "text-bottom",
+        V::Sub => "sub",
+        V::Super => "super",
+    }
+    .to_string()
+}
+
+fn serialize_float(v: crate::types::Float) -> String {
+    use crate::types::Float as F;
+    match v {
+        F::None => "none",
+        F::Left => "left",
+        F::Right => "right",
+        F::InlineStart => "inline-start",
+        F::InlineEnd => "inline-end",
+    }
+    .to_string()
+}
+
+fn serialize_list_style_type(v: crate::types::ListStyleType) -> String {
+    use crate::types::ListStyleType as L;
+    match v {
+        L::None => "none",
+        L::Disc => "disc",
+        L::Circle => "circle",
+        L::Square => "square",
+        L::Decimal => "decimal",
+        L::DecimalLeadingZero => "decimal-leading-zero",
+        L::LowerAlpha => "lower-alpha",
+        L::UpperAlpha => "upper-alpha",
+        L::LowerLatin => "lower-latin",
+        L::UpperLatin => "upper-latin",
+        L::LowerRoman => "lower-roman",
+        L::UpperRoman => "upper-roman",
+        L::LowerGreek => "lower-greek",
+        L::Armenian => "armenian",
+        L::Georgian => "georgian",
+        L::Hebrew => "hebrew",
+        L::Hiragana => "hiragana",
+        L::Katakana => "katakana",
+        L::HiraganaIroha => "hiragana-iroha",
+        L::KatakanaIroha => "katakana-iroha",
+        L::CjkDecimal => "cjk-decimal",
+        L::Disclosure => "disclosure-open",
+    }
+    .to_string()
+}
+
+fn serialize_flex_direction(v: crate::types::FlexDirection) -> String {
+    use crate::types::FlexDirection as F;
+    match v {
+        F::Row => "row",
+        F::RowReverse => "row-reverse",
+        F::Column => "column",
+        F::ColumnReverse => "column-reverse",
+    }
+    .to_string()
+}
+
+fn serialize_justify_content(v: crate::types::JustifyContent) -> String {
+    use crate::types::JustifyContent as J;
+    match v {
+        J::FlexStart => "flex-start",
+        J::FlexEnd => "flex-end",
+        J::Center => "center",
+        J::SpaceBetween => "space-between",
+        J::SpaceAround => "space-around",
+        J::SpaceEvenly => "space-evenly",
+        J::Left => "left",
+        J::Right => "right",
+    }
+    .to_string()
+}
+
+fn serialize_align_items(v: crate::types::AlignItems) -> String {
+    use crate::types::AlignItems as A;
+    match v {
+        A::Stretch => "stretch",
+        A::FlexStart => "flex-start",
+        A::FlexEnd => "flex-end",
+        A::Center => "center",
+        A::Baseline => "baseline",
+        A::LastBaseline => "last baseline",
+    }
+    .to_string()
+}
+
+fn serialize_cursor(v: crate::types::CSSCursor) -> String {
+    use crate::types::CSSCursor as C;
+    match v {
+        C::Auto => "auto",
+        C::Default => "default",
+        C::Pointer => "pointer",
+        C::Text => "text",
+        C::Move => "move",
+        C::Crosshair => "crosshair",
+        C::Wait => "wait",
+        C::Help => "help",
+        C::NotAllowed => "not-allowed",
+        C::Grab => "grab",
+        C::Grabbing => "grabbing",
+        C::Copy => "copy",
+        C::Cell => "cell",
+        C::ContextMenu => "context-menu",
+        C::AllScroll => "all-scroll",
+        C::ZoomIn => "zoom-in",
+        C::ZoomOut => "zoom-out",
+        C::ColResize => "col-resize",
+        C::RowResize => "row-resize",
+        C::NResize => "n-resize",
+        C::EResize => "e-resize",
+        C::SResize => "s-resize",
+        C::WResize => "w-resize",
+        C::NEResize => "ne-resize",
+        C::NWResize => "nw-resize",
+        C::SEResize => "se-resize",
+        C::SWResize => "sw-resize",
+        C::None => "none",
+    }
+    .to_string()
+}
+
 /// `min-width` / `min-height`: `auto` is zero outside a flex item.
 fn serialize_min(
     l: &crate::types::CssLength,
+    is_flex_item: bool,
     len: &dyn Fn(&crate::types::CssLength) -> String,
 ) -> String {
     match l {
+        crate::types::CssLength::Auto | crate::types::CssLength::None if is_flex_item => {
+            "auto".to_string()
+        }
         crate::types::CssLength::Auto | crate::types::CssLength::None => "0px".to_string(),
         other => len(other),
     }
@@ -368,7 +921,6 @@ fn serialize_overflow(v: crate::types::Overflow) -> String {
     .to_string()
 }
 
-
 impl Document {
     /// Does this element generate a box with a USED width and height?
     ///
@@ -380,10 +932,12 @@ impl Document {
     /// (both measured).
     fn has_a_used_size(&self, id: u32) -> bool {
         const REPLACED: &[&str] = &[
-            "img", "video", "canvas", "iframe", "embed", "object", "input", "select",
-            "textarea", "button", "svg",
+            "img", "video", "canvas", "iframe", "embed", "object", "input", "select", "textarea",
+            "button", "svg",
         ];
-        let Some(style) = self.get_computed_style(id) else { return false };
+        let Some(style) = self.get_computed_style(id) else {
+            return false;
+        };
         match style.display {
             crate::types::Display::None => false,
             crate::types::Display::Inline => {
@@ -392,8 +946,85 @@ impl Document {
             _ => true,
         }
     }
+
+    fn resolved_shorthand(&mut self, id: u32, property: &str) -> String {
+        match property {
+            "margin" => shorthand_box_values([
+                self.computed_style_property(id, "margin-top"),
+                self.computed_style_property(id, "margin-right"),
+                self.computed_style_property(id, "margin-bottom"),
+                self.computed_style_property(id, "margin-left"),
+            ]),
+            "padding" => shorthand_box_values([
+                self.computed_style_property(id, "padding-top"),
+                self.computed_style_property(id, "padding-right"),
+                self.computed_style_property(id, "padding-bottom"),
+                self.computed_style_property(id, "padding-left"),
+            ]),
+            "overflow" => shorthand_pair_values(
+                self.computed_style_property(id, "overflow-x"),
+                self.computed_style_property(id, "overflow-y"),
+            ),
+            "gap" => shorthand_pair_values(
+                self.computed_style_property(id, "row-gap"),
+                self.computed_style_property(id, "column-gap"),
+            ),
+            "inset" => shorthand_box_values([
+                self.computed_style_property(id, "top"),
+                self.computed_style_property(id, "right"),
+                self.computed_style_property(id, "bottom"),
+                self.computed_style_property(id, "left"),
+            ]),
+            "flex" => format!(
+                "{} {} {}",
+                self.computed_style_property(id, "flex-grow"),
+                self.computed_style_property(id, "flex-shrink"),
+                self.computed_style_property(id, "flex-basis")
+            ),
+            "border" => {
+                let width = self.computed_style_property(id, "border-top-width");
+                let style = self.computed_style_property(id, "border-top-style");
+                let color = self.computed_style_property(id, "border-top-color");
+                let same_width = ["right", "bottom", "left"].iter().all(|side| {
+                    self.computed_style_property(id, &format!("border-{side}-width")) == width
+                });
+                let same_style = ["right", "bottom", "left"].iter().all(|side| {
+                    self.computed_style_property(id, &format!("border-{side}-style")) == style
+                });
+                let same_color = ["right", "bottom", "left"].iter().all(|side| {
+                    self.computed_style_property(id, &format!("border-{side}-color")) == color
+                });
+                if same_width && same_style && same_color {
+                    format!("{width} {style} {color}")
+                } else {
+                    String::new()
+                }
+            }
+            _ => String::new(),
+        }
+    }
 }
 
+fn shorthand_box_values(values: [String; 4]) -> String {
+    let [top, right, bottom, left] = values;
+    if top == right && top == bottom && top == left {
+        top
+    } else if top == bottom && right == left {
+        format!("{top} {right}")
+    } else if right == left {
+        format!("{top} {right} {bottom}")
+    } else {
+        format!("{top} {right} {bottom} {left}")
+    }
+}
+
+fn shorthand_pair_values(first: String, second: String) -> String {
+    if first == second {
+        first
+    } else {
+        format!("{first} {second}")
+    }
+}
 
 /// The used value of a border width: zero when the side draws nothing.
 ///
@@ -410,8 +1041,11 @@ fn used_border(
     }
 }
 
-
 /// A float as CSS serializes it — no trailing `.0`.
 fn trim_f32(v: f32) -> String {
-    if (v - v.round()).abs() < 1e-6 { format!("{}", v.round() as i64) } else { format!("{v}") }
+    if (v - v.round()).abs() < 1e-6 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v}")
+    }
 }

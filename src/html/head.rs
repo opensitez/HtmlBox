@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Head content parser ─────────────────────────────────────────────────────
 
@@ -15,16 +15,24 @@ pub(crate) fn parse_head_content(parser: &mut HtmlParser) {
                 parser.pos += 1;
                 break;
             }
-            Some(Token::OpenTag { tag, attrs, self_closing }) => {
+            Some(Token::OpenTag {
+                tag,
+                attrs,
+                self_closing,
+            }) => {
                 parser.pos += 1;
                 if !handle_head_tag(parser, &tag, attrs, self_closing) {
                     // Not head content, but we are inside an explicit <head>:
                     // the spec's "in head" mode ignores it. Skip its subtree so
                     // it does not leak into the head's children.
-                    if !self_closing { parser.skip_until_close(&tag); }
+                    if !self_closing {
+                        parser.skip_until_close(&tag);
+                    }
                 }
             }
-            _ => { parser.pos += 1; }
+            _ => {
+                parser.pos += 1;
+            }
         }
     }
 }
@@ -36,8 +44,10 @@ pub(crate) fn parse_head_content(parser: &mut HtmlParser) {
 /// puts that style in the head, which is where `document.head.children` and
 /// every browser expect to find it.
 pub(crate) fn is_head_content_tag(tag: &str) -> bool {
-    matches!(tag, "script" | "noscript" | "style" | "title" | "link" | "meta"
-                | "base" | "template")
+    matches!(
+        tag,
+        "script" | "noscript" | "style" | "title" | "link" | "meta" | "base" | "template"
+    )
 }
 
 /// Process one "in head" start tag. Returns false if `tag` is not head content.
@@ -49,7 +59,11 @@ pub(crate) fn handle_head_tag(
 ) -> bool {
     match tag {
         "script" | "noscript" => {
-            let content = if !self_closing { parser.collect_raw_text_until(tag) } else { String::new() };
+            let content = if !self_closing {
+                parser.collect_raw_text_until(tag)
+            } else {
+                String::new()
+            };
             if let Some(ref mut f) = parser.on_script {
                 f(tag, &attrs, &content);
             }
@@ -69,7 +83,7 @@ pub(crate) fn handle_head_tag(
             parser.push_head_node("title", attrs, title);
         }
         "link" => {
-            let rel  = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
+            let rel = attrs.get("rel").map(|s| s.as_str()).unwrap_or("");
             let media = attrs.get("media").map(|s| s.as_str()).unwrap_or("");
             let is_print_only = media.eq_ignore_ascii_case("print");
             // Don't fire hook for print-only stylesheets — they

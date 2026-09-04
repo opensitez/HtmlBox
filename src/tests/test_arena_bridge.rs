@@ -6,8 +6,8 @@
 //! - The node_map bridge lookup works correctly
 //! - Arena node attributes/text match WebCore data
 
-use crate::html::parse_html;
 use crate::dom::arena::NodeId;
+use crate::html::parse_html;
 use crate::types::{Document, WebCore};
 
 /// The `<body>` box, found by TAG.
@@ -52,7 +52,12 @@ fn every_node_gets_unique_nonzero_id() {
     let mut sorted = ids.clone();
     sorted.sort();
     sorted.dedup();
-    assert_eq!(ids.len(), sorted.len(), "duplicate node_ids found: {:?}", ids);
+    assert_eq!(
+        ids.len(),
+        sorted.len(),
+        "duplicate node_ids found: {:?}",
+        ids
+    );
 }
 
 #[test]
@@ -81,7 +86,11 @@ fn arena_mirrors_tree_structure() {
 
     // ul has 3 li children in arena
     let arena_children: Vec<NodeId> = arena.children(ul_id).collect();
-    assert_eq!(arena_children.len(), 3, "ul should have 3 li children in arena");
+    assert_eq!(
+        arena_children.len(),
+        3,
+        "ul should have 3 li children in arena"
+    );
 
     for (i, &li_arena_id) in arena_children.iter().enumerate() {
         assert_eq!(arena.get(li_arena_id).tag, "li");
@@ -119,12 +128,25 @@ fn arena_attributes_copied() {
     assert_eq!(div.tag, "div");
     let div_id = NodeId(div.node_id);
 
-    assert_eq!(arena.get(div_id).attributes.get("id").map(|s| s.as_str()), Some("main"));
-    assert_eq!(arena.get(div_id).attributes.get("class").map(|s| s.as_str()), Some("container"));
+    assert_eq!(
+        arena.get(div_id).attributes.get("id").map(|s| s.as_str()),
+        Some("main")
+    );
+    assert_eq!(
+        arena
+            .get(div_id)
+            .attributes
+            .get("class")
+            .map(|s| s.as_str()),
+        Some("container")
+    );
 
     let a = &div.children[0];
     let a_id = NodeId(a.node_id);
-    assert_eq!(arena.get(a_id).attributes.get("href").map(|s| s.as_str()), Some("/link"));
+    assert_eq!(
+        arena.get(a_id).attributes.get("href").map(|s| s.as_str()),
+        Some("/link")
+    );
 }
 
 #[test]
@@ -140,7 +162,11 @@ fn node_map_lookup_works() {
     for &id in &ids {
         let boxref = doc.get_box_by_id(id);
         assert!(boxref.is_some(), "node_id {} should be in node_map", id);
-        assert_eq!(boxref.unwrap().node_id, id, "looked-up box should have matching node_id");
+        assert_eq!(
+            boxref.unwrap().node_id,
+            id,
+            "looked-up box should have matching node_id"
+        );
     }
 
     // Look up non-existent id
@@ -150,13 +176,17 @@ fn node_map_lookup_works() {
 
 #[test]
 fn node_map_finds_deep_nodes() {
-    let mut doc = parse_html(r#"<div><ul><li><a href="/l1">link1</a></li><li><a href="/l2">link2</a></li></ul></div>"#);
+    let mut doc = parse_html(
+        r#"<div><ul><li><a href="/l1">link1</a></li><li><a href="/l2">link2</a></li></ul></div>"#,
+    );
     doc.rebuild_node_map();
 
     // Find all <a> tags by walking the tree
     fn find_tags<'a>(node: &'a crate::types::WebCore, tag: &str) -> Vec<&'a crate::types::WebCore> {
         let mut result = Vec::new();
-        if node.tag == tag { result.push(node); }
+        if node.tag == tag {
+            result.push(node);
+        }
         for child in &node.children {
             result.extend(find_tags(child, tag));
         }
@@ -175,7 +205,8 @@ fn node_map_finds_deep_nodes() {
 
 #[test]
 fn arena_and_webcore_node_counts_match() {
-    let doc = parse_html(r#"
+    let doc = parse_html(
+        r#"
         <html>
         <body>
             <h1>Title</h1>
@@ -187,7 +218,8 @@ fn arena_and_webcore_node_counts_match() {
             </ul>
         </body>
         </html>
-    "#);
+    "#,
+    );
 
     let webcore_count = count_nodes(&doc.root);
     // Arena has slot 0 (sentinel) + real nodes. Count alive nodes.
@@ -195,9 +227,11 @@ fn arena_and_webcore_node_counts_match() {
         .filter(|&i| doc.arena.is_alive(NodeId(i as u32)))
         .count();
 
-    assert_eq!(webcore_count, arena_alive,
+    assert_eq!(
+        webcore_count, arena_alive,
         "WebCore tree has {} nodes but arena has {} alive nodes",
-        webcore_count, arena_alive);
+        webcore_count, arena_alive
+    );
 }
 
 #[test]
@@ -211,9 +245,13 @@ fn arena_parent_child_links_consistent() {
         for child in &node.children {
             let child_id = NodeId(child.node_id);
             assert_eq!(
-                arena.get(child_id).parent, node_id,
+                arena.get(child_id).parent,
+                node_id,
                 "child '{}' (id={}) parent should be '{}' (id={}), got id={}",
-                child.tag, child.node_id, node.tag, node.node_id,
+                child.tag,
+                child.node_id,
+                node.tag,
+                node.node_id,
                 arena.get(child_id).parent.0
             );
             verify_links(arena, child);
@@ -267,7 +305,10 @@ fn arena_get_element_by_id_works() {
     assert!(found.is_some());
     let inner_id = found.unwrap();
     assert_eq!(arena.get(inner_id).tag, "span");
-    assert_eq!(arena.get(inner_id).attributes.get("id").map(|s| s.as_str()), Some("inner"));
+    assert_eq!(
+        arena.get(inner_id).attributes.get("id").map(|s| s.as_str()),
+        Some("inner")
+    );
 
     // Verify it matches the WebCore
     let span = &body_of(&doc).children[0].children[0]; // body > div > span

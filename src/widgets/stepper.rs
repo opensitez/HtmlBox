@@ -57,7 +57,8 @@ impl Stepper {
 
         // The well, and the two dividers that make it read as two buttons.
         paint.set_color_rgba8(240, 240, 240, 255);
-        if let Some(rect) = tiny_skia::Rect::from_xywh(btn_x, y + 1.0, bw - 1.0, self.height - 2.0) {
+        if let Some(rect) = tiny_skia::Rect::from_xywh(btn_x, y + 1.0, bw - 1.0, self.height - 2.0)
+        {
             pixmap.fill_rect(rect, &paint, ts, None);
         }
         let mut stroke = Stroke::default();

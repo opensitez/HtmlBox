@@ -31,8 +31,14 @@ impl TextInput {
         }
     }
 
-    pub fn with_placeholder(mut self, p: &str) -> Self { self.placeholder = p.to_string(); self }
-    pub fn with_password(mut self) -> Self { self.password = true; self }
+    pub fn with_placeholder(mut self, p: &str) -> Self {
+        self.placeholder = p.to_string();
+        self
+    }
+    pub fn with_password(mut self) -> Self {
+        self.password = true;
+        self
+    }
 
     /// Paint renders the border only. Text rendering requires a font system
     /// and is handled by the caller (browser engine uses cosmic_text,
@@ -50,7 +56,11 @@ impl TextInput {
         }
 
         // Border
-        let (r, g, b, a) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+        let (r, g, b, a) = if self.focused {
+            self.colors.focus_ring
+        } else {
+            self.colors.border
+        };
         paint.set_color_rgba8(r, g, b, a);
         let mut stroke = tiny_skia::Stroke::default();
         stroke.width = if self.focused { 2.0 } else { 1.0 };
@@ -81,7 +91,9 @@ impl TextInput {
 
     /// Insert text at cursor position.
     pub fn insert(&mut self, text: &str) {
-        if self.disabled { return; }
+        if self.disabled {
+            return;
+        }
         let byte_pos = self.cursor.min(self.value.len());
         self.value.insert_str(byte_pos, text);
         self.cursor = byte_pos + text.len();
@@ -89,18 +101,28 @@ impl TextInput {
 
     /// Delete character before cursor (backspace).
     pub fn backspace(&mut self) {
-        if self.disabled || self.cursor == 0 { return; }
+        if self.disabled || self.cursor == 0 {
+            return;
+        }
         let mut idx = self.cursor - 1;
-        while idx > 0 && !self.value.is_char_boundary(idx) { idx -= 1; }
+        while idx > 0 && !self.value.is_char_boundary(idx) {
+            idx -= 1;
+        }
         self.value.drain(idx..self.cursor);
         self.cursor = idx;
     }
 
     /// Delete character after cursor.
     pub fn delete(&mut self) {
-        if self.disabled || self.cursor >= self.value.len() { return; }
+        if self.disabled || self.cursor >= self.value.len() {
+            return;
+        }
         let end = self.cursor + 1;
-        let end = if end <= self.value.len() { end } else { self.value.len() };
+        let end = if end <= self.value.len() {
+            end
+        } else {
+            self.value.len()
+        };
         self.value.drain(self.cursor..end);
     }
 

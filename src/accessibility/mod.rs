@@ -36,14 +36,14 @@
 //! ```
 
 #[cfg(feature = "accessibility")]
-use std::collections::HashMap;
+use crate::types::{Display, Document, WebCore};
 #[cfg(feature = "accessibility")]
 use accesskit::{
-    Action, AutoComplete, HasPopup, Invalid, Live, Node, NodeId, Orientation, Role,
-    SortDirection, Toggled, Tree, TreeUpdate, Rect as AkRect,
+    Action, AutoComplete, HasPopup, Invalid, Live, Node, NodeId, Orientation, Rect as AkRect, Role,
+    SortDirection, Toggled, Tree, TreeUpdate,
 };
 #[cfg(feature = "accessibility")]
-use crate::types::{WebCore, Document, Display};
+use std::collections::HashMap;
 
 /// Synthetic document-root NodeId (wraps the real root element).
 #[cfg(feature = "accessibility")]
@@ -75,7 +75,7 @@ pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
     // Pre-pass 2: <label> associations.
     //   for_label_map:     element-id → label text  (from <label for="id">)
     //   wrapped_label_map: input-ptr  → label text  (from <label> wrapping the control)
-    let mut for_label_map:     HashMap<&str, String>           = HashMap::new();
+    let mut for_label_map: HashMap<&str, String> = HashMap::new();
     let mut wrapped_label_map: HashMap<u32, String> = HashMap::new();
     collect_label_maps(&doc.root, &mut for_label_map, &mut wrapped_label_map);
 
@@ -84,8 +84,14 @@ pub fn build_tree(doc: &Document, scale: f32) -> TreeUpdate {
 
     // Walk the real root element.
     let real_root_id = walk(
-        &doc.root, scale, &mut nodes, focused_id,
-        &id_to_nid, &id_to_text, &for_label_map, &wrapped_label_map,
+        &doc.root,
+        scale,
+        &mut nodes,
+        focused_id,
+        &id_to_nid,
+        &id_to_text,
+        &for_label_map,
+        &wrapped_label_map,
     );
 
     // Synthetic document root that owns the real root element.
@@ -133,7 +139,7 @@ fn collect_id_maps<'a>(
 #[cfg(feature = "accessibility")]
 fn collect_label_maps<'a>(
     node: &'a WebCore,
-    for_label_map:     &mut HashMap<&'a str, String>,
+    for_label_map: &mut HashMap<&'a str, String>,
     wrapped_label_map: &mut HashMap<u32, String>,
 ) {
     if node.tag == "label" {
@@ -161,13 +167,18 @@ fn collect_label_maps<'a>(
 fn collect_label_text(node: &WebCore) -> String {
     let mut s = node.text.trim().to_string();
     for child in &node.children {
-        if matches!(child.tag.as_str(), "input" | "textarea" | "select" | "button") {
+        if matches!(
+            child.tag.as_str(),
+            "input" | "textarea" | "select" | "button"
+        ) {
             continue; // skip embedded controls
         }
         if !matches!(child.style.display, Display::None) && child.style.visibility {
             let ct = collect_label_text(child);
             if !ct.is_empty() {
-                if !s.is_empty() { s.push(' '); }
+                if !s.is_empty() {
+                    s.push(' ');
+                }
                 s.push_str(&ct);
             }
         }
@@ -181,8 +192,14 @@ fn collect_label_text(node: &WebCore) -> String {
 fn find_labelable_descendant(node: &WebCore) -> Option<u32> {
     for child in &node.children {
         let tag = child.tag.as_str();
-        let labelable = matches!(tag, "button" | "input" | "meter" | "output" | "progress" | "select" | "textarea")
-            && child.attributes.get("type").map(|t| t != "hidden").unwrap_or(true);
+        let labelable = matches!(
+            tag,
+            "button" | "input" | "meter" | "output" | "progress" | "select" | "textarea"
+        ) && child
+            .attributes
+            .get("type")
+            .map(|t| t != "hidden")
+            .unwrap_or(true);
         if labelable {
             return Some(child.node_id);
         }
@@ -233,7 +250,7 @@ fn walk(
     ak.set_bounds(AkRect {
         x0: (r.x * scale) as f64,
         y0: (r.y * scale) as f64,
-        x1: ((r.x + r.w)  * scale) as f64,
+        x1: ((r.x + r.w) * scale) as f64,
         y1: ((r.y + r.h) * scale) as f64,
     });
 
@@ -244,8 +261,11 @@ fn walk(
         if !text.is_empty() {
             ak.set_label(text);
             let nids = resolve_idrefs(refs, id_to_nid);
-            if !nids.is_empty() { ak.set_labelled_by(nids); }
-        } else if let Some(name) = compute_name(node, id_to_text, for_label_map, wrapped_label_map) {
+            if !nids.is_empty() {
+                ak.set_labelled_by(nids);
+            }
+        } else if let Some(name) = compute_name(node, id_to_text, for_label_map, wrapped_label_map)
+        {
             ak.set_label(name);
         }
     } else if let Some(name) = compute_name(node, id_to_text, for_label_map, wrapped_label_map) {
@@ -258,9 +278,13 @@ fn walk(
         if !text.is_empty() {
             ak.set_description(text.as_str());
             let nids = resolve_idrefs(refs, id_to_nid);
-            if !nids.is_empty() { ak.set_described_by(nids); }
+            if !nids.is_empty() {
+                ak.set_described_by(nids);
+            }
         }
-    } else if let Some(desc) = node.attributes.get("aria-description")
+    } else if let Some(desc) = node
+        .attributes
+        .get("aria-description")
         .or_else(|| node.attributes.get("title"))
     {
         if !desc.is_empty() {
@@ -271,24 +295,37 @@ fn walk(
     // ── aria-controls ─────────────────────────────────────────────────────────
     if let Some(refs) = node.attributes.get("aria-controls") {
         let nids = resolve_idrefs(refs, id_to_nid);
-        if !nids.is_empty() { ak.set_controls(nids); }
+        if !nids.is_empty() {
+            ak.set_controls(nids);
+        }
     }
 
     // ── aria-owns ─────────────────────────────────────────────────────────────
     if let Some(refs) = node.attributes.get("aria-owns") {
         let nids = resolve_idrefs(refs, id_to_nid);
-        if !nids.is_empty() { ak.set_owns(nids); }
+        if !nids.is_empty() {
+            ak.set_owns(nids);
+        }
     }
 
     // ── Disabled ──────────────────────────────────────────────────────────────
     if node.attributes.contains_key("disabled")
-        || node.attributes.get("aria-disabled").map(|v| v == "true").unwrap_or(false)
+        || node
+            .attributes
+            .get("aria-disabled")
+            .map(|v| v == "true")
+            .unwrap_or(false)
     {
         ak.set_disabled();
     }
 
     // ── Hidden (screen-reader invisible) ─────────────────────────────────────
-    if node.attributes.get("aria-hidden").map(|v| v == "true").unwrap_or(false) {
+    if node
+        .attributes
+        .get("aria-hidden")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         ak.set_hidden();
     }
 
@@ -298,12 +335,15 @@ fn walk(
     }
 
     // ── Checked / toggled (checkbox, radio, switch) ───────────────────────────
-    let checked_attr = node.attributes.get("aria-checked").map(|s| s.as_str())
+    let checked_attr = node
+        .attributes
+        .get("aria-checked")
+        .map(|s| s.as_str())
         // A screen reader announces the CURRENT state, so this is checkedness
         // and not the markup's default — the same reason the painter reads it.
         .or_else(|| if node.checkedness { Some("true") } else { None });
     match checked_attr {
-        Some("true")  => ak.set_toggled(Toggled::True),
+        Some("true") => ak.set_toggled(Toggled::True),
         Some("mixed") => ak.set_toggled(Toggled::Mixed),
         Some("false") => ak.set_toggled(Toggled::False),
         _ => {}
@@ -316,71 +356,100 @@ fn walk(
 
     // ── Required ──────────────────────────────────────────────────────────────
     if node.attributes.contains_key("required")
-        || node.attributes.get("aria-required").map(|v| v == "true").unwrap_or(false)
+        || node
+            .attributes
+            .get("aria-required")
+            .map(|v| v == "true")
+            .unwrap_or(false)
     {
         ak.set_required();
     }
 
     // ── Read-only ─────────────────────────────────────────────────────────────
     if node.attributes.contains_key("readonly")
-        || node.attributes.get("aria-readonly").map(|v| v == "true").unwrap_or(false)
+        || node
+            .attributes
+            .get("aria-readonly")
+            .map(|v| v == "true")
+            .unwrap_or(false)
     {
         ak.set_read_only();
     }
 
     // ── Multiselectable ───────────────────────────────────────────────────────
-    if node.attributes.get("aria-multiselectable").map(|v| v == "true").unwrap_or(false) {
+    if node
+        .attributes
+        .get("aria-multiselectable")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         ak.set_multiselectable();
     }
 
     // ── Modal ─────────────────────────────────────────────────────────────────
-    if node.attributes.get("aria-modal").map(|v| v == "true").unwrap_or(false) {
+    if node
+        .attributes
+        .get("aria-modal")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         ak.set_modal();
     }
 
     // ── Busy ──────────────────────────────────────────────────────────────────
-    if node.attributes.get("aria-busy").map(|v| v == "true").unwrap_or(false) {
+    if node
+        .attributes
+        .get("aria-busy")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         ak.set_busy();
     }
 
     // ── Invalid ───────────────────────────────────────────────────────────────
     if let Some(inv) = node.attributes.get("aria-invalid") {
         let state = match inv.as_str() {
-            "grammar"  => Some(Invalid::Grammar),
+            "grammar" => Some(Invalid::Grammar),
             "spelling" => Some(Invalid::Spelling),
-            "true"     => Some(Invalid::True),
-            _          => None,
+            "true" => Some(Invalid::True),
+            _ => None,
         };
-        if let Some(s) = state { ak.set_invalid(s); }
+        if let Some(s) = state {
+            ak.set_invalid(s);
+        }
     }
 
     // ── Has-popup ─────────────────────────────────────────────────────────────
     if let Some(hp) = node.attributes.get("aria-haspopup") {
         let val = match hp.as_str() {
-            "menu"    => Some(HasPopup::Menu),
+            "menu" => Some(HasPopup::Menu),
             "listbox" => Some(HasPopup::Listbox),
-            "tree"    => Some(HasPopup::Tree),
-            "grid"    => Some(HasPopup::Grid),
-            "dialog"  => Some(HasPopup::Dialog),
-            "true"    => Some(HasPopup::True),
-            _         => None,
+            "tree" => Some(HasPopup::Tree),
+            "grid" => Some(HasPopup::Grid),
+            "dialog" => Some(HasPopup::Dialog),
+            "true" => Some(HasPopup::True),
+            _ => None,
         };
-        if let Some(v) = val { ak.set_has_popup(v); }
+        if let Some(v) = val {
+            ak.set_has_popup(v);
+        }
     }
 
     // ── Autocomplete ──────────────────────────────────────────────────────────
     if let Some(ac) = node.attributes.get("aria-autocomplete") {
         let val = match ac.as_str() {
             "inline" => Some(AutoComplete::Inline),
-            "list"   => Some(AutoComplete::List),
-            "both"   => Some(AutoComplete::Both),
-            _        => None,
+            "list" => Some(AutoComplete::List),
+            "both" => Some(AutoComplete::Both),
+            _ => None,
         };
-        if let Some(v) = val { ak.set_auto_complete(v); }
+        if let Some(v) = val {
+            ak.set_auto_complete(v);
+        }
     }
 
     // ── Heading level ─────────────────────────────────────────────────────────
-    if matches!(node.tag.as_str(), "h1"|"h2"|"h3"|"h4"|"h5"|"h6") {
+    if matches!(node.tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
         let level = node.tag[1..].parse::<usize>().unwrap_or(1);
         ak.set_level(level);
     }
@@ -394,7 +463,7 @@ fn walk(
     if let Some(orient) = node.attributes.get("aria-orientation") {
         match orient.as_str() {
             "horizontal" => ak.set_orientation(Orientation::Horizontal),
-            "vertical"   => ak.set_orientation(Orientation::Vertical),
+            "vertical" => ak.set_orientation(Orientation::Vertical),
             _ => {}
         }
     }
@@ -402,33 +471,43 @@ fn walk(
     // ── Sort direction ────────────────────────────────────────────────────────
     if let Some(sort) = node.attributes.get("aria-sort") {
         let dir = match sort.as_str() {
-            "ascending"  => Some(SortDirection::Ascending),
+            "ascending" => Some(SortDirection::Ascending),
             "descending" => Some(SortDirection::Descending),
-            "other"      => Some(SortDirection::Other),
-            _            => None,
+            "other" => Some(SortDirection::Other),
+            _ => None,
         };
-        if let Some(d) = dir { ak.set_sort_direction(d); }
+        if let Some(d) = dir {
+            ak.set_sort_direction(d);
+        }
     }
 
     // ── Numeric value (sliders, spinbuttons, meters, progress) ───────────────
-    if let Some(v) = node.attributes.get("aria-valuenow")
+    if let Some(v) = node
+        .attributes
+        .get("aria-valuenow")
         .and_then(|s| s.parse::<f64>().ok())
     {
         ak.set_numeric_value(v);
     }
-    if let Some(v) = node.attributes.get("aria-valuemin")
+    if let Some(v) = node
+        .attributes
+        .get("aria-valuemin")
         .and_then(|s| s.parse::<f64>().ok())
     {
         ak.set_min_numeric_value(v);
     }
-    if let Some(v) = node.attributes.get("aria-valuemax")
+    if let Some(v) = node
+        .attributes
+        .get("aria-valuemax")
         .and_then(|s| s.parse::<f64>().ok())
     {
         ak.set_max_numeric_value(v);
     }
     // aria-valuetext overrides numeric value for screen-reader announcements.
     if let Some(vt) = node.attributes.get("aria-valuetext") {
-        if !vt.is_empty() { ak.set_value(vt.as_str()); }
+        if !vt.is_empty() {
+            ak.set_value(vt.as_str());
+        }
     } else if matches!(node.tag.as_str(), "input" | "textarea") {
         // The VALUE a screen reader announces is what the control HOLDS. The
         // `value` attribute is its default, so this used to read out the
@@ -442,44 +521,60 @@ fn walk(
     }
 
     // ── Set size / position in set (listbox options, tabs, …) ────────────────
-    if let Some(v) = node.attributes.get("aria-setsize")
+    if let Some(v) = node
+        .attributes
+        .get("aria-setsize")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_size_of_set(v);
     }
-    if let Some(v) = node.attributes.get("aria-posinset")
+    if let Some(v) = node
+        .attributes
+        .get("aria-posinset")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_position_in_set(v);
     }
 
     // ── Table / grid dimensions ───────────────────────────────────────────────
-    if let Some(v) = node.attributes.get("aria-rowcount")
+    if let Some(v) = node
+        .attributes
+        .get("aria-rowcount")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_row_count(v);
     }
-    if let Some(v) = node.attributes.get("aria-colcount")
+    if let Some(v) = node
+        .attributes
+        .get("aria-colcount")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_column_count(v);
     }
-    if let Some(v) = node.attributes.get("aria-rowindex")
+    if let Some(v) = node
+        .attributes
+        .get("aria-rowindex")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_row_index(v);
     }
-    if let Some(v) = node.attributes.get("aria-colindex")
+    if let Some(v) = node
+        .attributes
+        .get("aria-colindex")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_column_index(v);
     }
-    if let Some(v) = node.attributes.get("aria-rowspan")
+    if let Some(v) = node
+        .attributes
+        .get("aria-rowspan")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_row_span(v);
     }
-    if let Some(v) = node.attributes.get("aria-colspan")
+    if let Some(v) = node
+        .attributes
+        .get("aria-colspan")
         .and_then(|s| s.parse::<usize>().ok())
     {
         ak.set_column_span(v);
@@ -487,7 +582,9 @@ fn walk(
 
     // ── Placeholder ───────────────────────────────────────────────────────────
     if let Some(ph) = node.attributes.get("placeholder") {
-        if !ph.is_empty() { ak.set_placeholder(ph.as_str()); }
+        if !ph.is_empty() {
+            ak.set_placeholder(ph.as_str());
+        }
     }
 
     // ── URL (links) ───────────────────────────────────────────────────────────
@@ -500,13 +597,18 @@ fn walk(
     // ── aria-live regions ─────────────────────────────────────────────────────
     if let Some(live) = node.attributes.get("aria-live") {
         let live_val = match live.as_str() {
-            "polite"    => Live::Polite,
+            "polite" => Live::Polite,
             "assertive" => Live::Assertive,
-            _           => Live::Off,
+            _ => Live::Off,
         };
         ak.set_live(live_val);
     }
-    if node.attributes.get("aria-atomic").map(|v| v == "true").unwrap_or(false) {
+    if node
+        .attributes
+        .get("aria-atomic")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         ak.set_live_atomic();
     }
 
@@ -514,14 +616,23 @@ fn walk(
     if is_focusable(node) {
         ak.add_action(Action::Focus);
     }
-    if matches!(role,
-        Role::Button | Role::DefaultButton | Role::Link |
-        Role::CheckBox | Role::RadioButton | Role::Switch |
-        Role::MenuItem | Role::MenuItemCheckBox
+    if matches!(
+        role,
+        Role::Button
+            | Role::DefaultButton
+            | Role::Link
+            | Role::CheckBox
+            | Role::RadioButton
+            | Role::Switch
+            | Role::MenuItem
+            | Role::MenuItemCheckBox
     ) {
         ak.add_action(Action::Click);
     }
-    if matches!(role, Role::TextInput | Role::MultilineTextInput | Role::SearchInput) {
+    if matches!(
+        role,
+        Role::TextInput | Role::MultilineTextInput | Role::SearchInput
+    ) {
         ak.add_action(Action::SetTextSelection);
     }
     if matches!(role, Role::ScrollView | Role::Application) {
@@ -530,13 +641,30 @@ fn walk(
     }
 
     // ── Children (skip display:none and aria-hidden subtrees) ─────────────────
-    let child_ids: Vec<NodeId> = node.children.iter()
+    let child_ids: Vec<NodeId> = node
+        .children
+        .iter()
         .filter(|c| {
             !matches!(c.style.display, Display::None)
                 && c.style.visibility
-                && !c.attributes.get("aria-hidden").map(|v| v == "true").unwrap_or(false)
+                && !c
+                    .attributes
+                    .get("aria-hidden")
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
         })
-        .map(|c| walk(c, scale, nodes, focused_id, id_to_nid, id_to_text, for_label_map, wrapped_label_map))
+        .map(|c| {
+            walk(
+                c,
+                scale,
+                nodes,
+                focused_id,
+                id_to_nid,
+                id_to_text,
+                for_label_map,
+                wrapped_label_map,
+            )
+        })
         .collect();
     if !child_ids.is_empty() {
         ak.set_children(child_ids);
@@ -551,167 +679,167 @@ fn walk(
 fn resolve_role(node: &WebCore) -> Role {
     if let Some(role_attr) = node.attributes.get("role") {
         match role_attr.as_str() {
-            "button"          => return Role::Button,
-            "link"            => return Role::Link,
-            "heading"         => return Role::Heading,
-            "checkbox"        => return Role::CheckBox,
-            "radio"           => return Role::RadioButton,
-            "switch"          => return Role::Switch,
-            "textbox"         => return Role::TextInput,
-            "searchbox"       => return Role::SearchInput,
-            "combobox"        => return Role::ComboBox,
-            "listbox"         => return Role::ListBox,
-            "option"          => return Role::ListBoxOption,
-            "list"            => return Role::List,
-            "listitem"        => return Role::ListItem,
-            "menu"            => return Role::Menu,
-            "menuitem"        => return Role::MenuItem,
-            "menuitemcheckbox"=> return Role::MenuItemCheckBox,
-            "menuitemradio"   => return Role::MenuItemRadio,
-            "radiogroup"      => return Role::RadioGroup,
-            "menubar"         => return Role::MenuBar,
-            "toolbar"         => return Role::Toolbar,
-            "tooltip"         => return Role::Tooltip,
-            "navigation"      => return Role::Navigation,
-            "main"            => return Role::Main,
-            "banner"          => return Role::Banner,
-            "contentinfo"     => return Role::ContentInfo,
-            "complementary"   => return Role::Complementary,
-            "region"          => return Role::Region,
-            "article"         => return Role::Article,
-            "form"            => return Role::Form,
-            "search"          => return Role::Search,
-            "dialog"          => return Role::Dialog,
-            "alertdialog"     => return Role::AlertDialog,
-            "alert"           => return Role::Alert,
-            "status"          => return Role::Status,
-            "log"             => return Role::Log,
-            "marquee"         => return Role::Marquee,
-            "timer"           => return Role::Timer,
-            "progressbar"     => return Role::ProgressIndicator,
-            "slider"          => return Role::Slider,
-            "spinbutton"      => return Role::SpinButton,
-            "scrollbar"       => return Role::ScrollBar,
-            "tab"             => return Role::Tab,
-            "tablist"         => return Role::TabList,
-            "tabpanel"        => return Role::TabPanel,
-            "table"           => return Role::Table,
-            "row"             => return Role::Row,
-            "cell"            => return Role::Cell,
-            "columnheader"    => return Role::ColumnHeader,
-            "rowheader"       => return Role::RowHeader,
-            "rowgroup"        => return Role::RowGroup,
-            "grid"            => return Role::Grid,
-            "treegrid"        => return Role::TreeGrid,
-            "tree"            => return Role::Tree,
-            "treeitem"        => return Role::TreeItem,
-            "separator"       => return Role::Splitter,
-            "img"             => return Role::Image,
-            "figure"          => return Role::Figure,
-            "group"           => return Role::Group,
-            "math"            => return Role::Math,
-            "feed"            => return Role::Feed,
-            "mark"            => return Role::Mark,
-            "note"            => return Role::Note,
-            "term"            => return Role::Term,
-            "definition"      => return Role::Definition,
-            "directory"       => return Role::Directory,
-            "doc-abstract"    => return Role::DocAbstract,
+            "button" => return Role::Button,
+            "link" => return Role::Link,
+            "heading" => return Role::Heading,
+            "checkbox" => return Role::CheckBox,
+            "radio" => return Role::RadioButton,
+            "switch" => return Role::Switch,
+            "textbox" => return Role::TextInput,
+            "searchbox" => return Role::SearchInput,
+            "combobox" => return Role::ComboBox,
+            "listbox" => return Role::ListBox,
+            "option" => return Role::ListBoxOption,
+            "list" => return Role::List,
+            "listitem" => return Role::ListItem,
+            "menu" => return Role::Menu,
+            "menuitem" => return Role::MenuItem,
+            "menuitemcheckbox" => return Role::MenuItemCheckBox,
+            "menuitemradio" => return Role::MenuItemRadio,
+            "radiogroup" => return Role::RadioGroup,
+            "menubar" => return Role::MenuBar,
+            "toolbar" => return Role::Toolbar,
+            "tooltip" => return Role::Tooltip,
+            "navigation" => return Role::Navigation,
+            "main" => return Role::Main,
+            "banner" => return Role::Banner,
+            "contentinfo" => return Role::ContentInfo,
+            "complementary" => return Role::Complementary,
+            "region" => return Role::Region,
+            "article" => return Role::Article,
+            "form" => return Role::Form,
+            "search" => return Role::Search,
+            "dialog" => return Role::Dialog,
+            "alertdialog" => return Role::AlertDialog,
+            "alert" => return Role::Alert,
+            "status" => return Role::Status,
+            "log" => return Role::Log,
+            "marquee" => return Role::Marquee,
+            "timer" => return Role::Timer,
+            "progressbar" => return Role::ProgressIndicator,
+            "slider" => return Role::Slider,
+            "spinbutton" => return Role::SpinButton,
+            "scrollbar" => return Role::ScrollBar,
+            "tab" => return Role::Tab,
+            "tablist" => return Role::TabList,
+            "tabpanel" => return Role::TabPanel,
+            "table" => return Role::Table,
+            "row" => return Role::Row,
+            "cell" => return Role::Cell,
+            "columnheader" => return Role::ColumnHeader,
+            "rowheader" => return Role::RowHeader,
+            "rowgroup" => return Role::RowGroup,
+            "grid" => return Role::Grid,
+            "treegrid" => return Role::TreeGrid,
+            "tree" => return Role::Tree,
+            "treeitem" => return Role::TreeItem,
+            "separator" => return Role::Splitter,
+            "img" => return Role::Image,
+            "figure" => return Role::Figure,
+            "group" => return Role::Group,
+            "math" => return Role::Math,
+            "feed" => return Role::Feed,
+            "mark" => return Role::Mark,
+            "note" => return Role::Note,
+            "term" => return Role::Term,
+            "definition" => return Role::Definition,
+            "directory" => return Role::Directory,
+            "doc-abstract" => return Role::DocAbstract,
             "none" | "presentation" => return Role::GenericContainer,
-            "generic"         => return Role::GenericContainer,
-            _                 => {} // fall through to element semantics
+            "generic" => return Role::GenericContainer,
+            _ => {} // fall through to element semantics
         }
     }
 
     let input_type = || node.attributes.get("type").map(|s| s.as_str());
 
     match node.tag.as_str() {
-        "button"                               => Role::Button,
+        "button" => Role::Button,
         "a" if node.attributes.contains_key("href") => Role::Link,
-        "h1"|"h2"|"h3"|"h4"|"h5"|"h6"        => Role::Heading,
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => Role::Heading,
         "input" => match input_type() {
-            Some("checkbox")                   => Role::CheckBox,
-            Some("radio")                      => Role::RadioButton,
-            Some("button")|Some("submit")|Some("reset") => Role::Button,
-            Some("range")                      => Role::Slider,
-            Some("number")                     => Role::SpinButton,
-            Some("search")                     => Role::SearchInput,
-            Some("email")                      => Role::EmailInput,
-            Some("url")                        => Role::UrlInput,
-            Some("tel")                        => Role::PhoneNumberInput,
-            Some("password")                   => Role::PasswordInput,
-            Some("color")                      => Role::ColorWell,
-            Some("date")                       => Role::DateInput,
-            Some("datetime-local")             => Role::DateTimeInput,
-            Some("week")                       => Role::WeekInput,
-            Some("month")                      => Role::MonthInput,
-            Some("time")                       => Role::TimeInput,
-            _                                  => Role::TextInput,
+            Some("checkbox") => Role::CheckBox,
+            Some("radio") => Role::RadioButton,
+            Some("button") | Some("submit") | Some("reset") => Role::Button,
+            Some("range") => Role::Slider,
+            Some("number") => Role::SpinButton,
+            Some("search") => Role::SearchInput,
+            Some("email") => Role::EmailInput,
+            Some("url") => Role::UrlInput,
+            Some("tel") => Role::PhoneNumberInput,
+            Some("password") => Role::PasswordInput,
+            Some("color") => Role::ColorWell,
+            Some("date") => Role::DateInput,
+            Some("datetime-local") => Role::DateTimeInput,
+            Some("week") => Role::WeekInput,
+            Some("month") => Role::MonthInput,
+            Some("time") => Role::TimeInput,
+            _ => Role::TextInput,
         },
-        "textarea"     => Role::MultilineTextInput,
-        "select"       => Role::ComboBox,
-        "option"       => Role::ListBoxOption,
-        "optgroup"     => Role::Group,
-        "img"          => Role::Image,
-        "figure"       => Role::Figure,
-        "figcaption"   => Role::FigureCaption,
-        "ul" | "ol"    => Role::List,
-        "li"           => Role::ListItem,
-        "dl"           => Role::DescriptionList,
-        "dt"           => Role::DescriptionListTerm,
-        "dd"           => Role::DescriptionListDetail,
-        "nav"          => Role::Navigation,
-        "main"         => Role::Main,
+        "textarea" => Role::MultilineTextInput,
+        "select" => Role::ComboBox,
+        "option" => Role::ListBoxOption,
+        "optgroup" => Role::Group,
+        "img" => Role::Image,
+        "figure" => Role::Figure,
+        "figcaption" => Role::FigureCaption,
+        "ul" | "ol" => Role::List,
+        "li" => Role::ListItem,
+        "dl" => Role::DescriptionList,
+        "dt" => Role::DescriptionListTerm,
+        "dd" => Role::DescriptionListDetail,
+        "nav" => Role::Navigation,
+        "main" => Role::Main,
         // <header>/<footer> are landmarks only at document scope; inside
         // article/section they are non-landmark.  Without parent context we
         // default to landmark and rely on the ARIA role attribute to override.
-        "header"       => Role::Banner,
-        "footer"       => Role::ContentInfo,
-        "aside"        => Role::Complementary,
-        "section"      => Role::Region,
-        "article"      => Role::Article,
-        "form"         => Role::Form,
-        "search"       => Role::Search,
-        "dialog"       => Role::Dialog,
-        "menu"         => Role::Menu,
-        "menuitem"     => Role::MenuItem,
-        "table"        => Role::Table,
-        "thead"|"tbody"|"tfoot" => Role::RowGroup,
-        "tr"           => Role::Row,
-        "td"           => Role::Cell,
-        "th"           => Role::ColumnHeader,
-        "caption"      => Role::Caption,
-        "details"      => Role::Details,
-        "summary"      => Role::DisclosureTriangle,
-        "meter"        => Role::Meter,
-        "progress"     => Role::ProgressIndicator,
-        "hr"           => Role::Splitter,
-        "blockquote"   => Role::Blockquote,
-        "pre"          => Role::Pre,
-        "code"         => Role::Code,
-        "del" | "s"    => Role::ContentDeletion,
-        "ins"          => Role::ContentInsertion,
-        "mark"         => Role::Mark,
-        "em" | "i"     => Role::Emphasis,
+        "header" => Role::Banner,
+        "footer" => Role::ContentInfo,
+        "aside" => Role::Complementary,
+        "section" => Role::Region,
+        "article" => Role::Article,
+        "form" => Role::Form,
+        "search" => Role::Search,
+        "dialog" => Role::Dialog,
+        "menu" => Role::Menu,
+        "menuitem" => Role::MenuItem,
+        "table" => Role::Table,
+        "thead" | "tbody" | "tfoot" => Role::RowGroup,
+        "tr" => Role::Row,
+        "td" => Role::Cell,
+        "th" => Role::ColumnHeader,
+        "caption" => Role::Caption,
+        "details" => Role::Details,
+        "summary" => Role::DisclosureTriangle,
+        "meter" => Role::Meter,
+        "progress" => Role::ProgressIndicator,
+        "hr" => Role::Splitter,
+        "blockquote" => Role::Blockquote,
+        "pre" => Role::Pre,
+        "code" => Role::Code,
+        "del" | "s" => Role::ContentDeletion,
+        "ins" => Role::ContentInsertion,
+        "mark" => Role::Mark,
+        "em" | "i" => Role::Emphasis,
         "strong" | "b" => Role::Strong,
-        "abbr"         => Role::Abbr,
-        "dfn"          => Role::Term,
-        "time"         => Role::Time,
-        "ruby"         => Role::Ruby,
-        "output"       => Role::Status,
-        "body"         => Role::Document,
-        "html"         => Role::Document,
-        "label"        => Role::Label,
-        "legend"       => Role::Legend,
-        "fieldset"     => Role::Group,
-        "address"      => Role::Group,
-        "audio"        => Role::Audio,
-        "video"        => Role::Video,
-        "canvas"       => Role::Canvas,
-        "iframe"       => Role::Iframe,
-        "br"           => Role::LineBreak,
-        "p"            => Role::Paragraph,
-        _              => Role::GenericContainer,
+        "abbr" => Role::Abbr,
+        "dfn" => Role::Term,
+        "time" => Role::Time,
+        "ruby" => Role::Ruby,
+        "output" => Role::Status,
+        "body" => Role::Document,
+        "html" => Role::Document,
+        "label" => Role::Label,
+        "legend" => Role::Legend,
+        "fieldset" => Role::Group,
+        "address" => Role::Group,
+        "audio" => Role::Audio,
+        "video" => Role::Video,
+        "canvas" => Role::Canvas,
+        "iframe" => Role::Iframe,
+        "br" => Role::LineBreak,
+        "p" => Role::Paragraph,
+        _ => Role::GenericContainer,
     }
 }
 
@@ -737,19 +865,25 @@ fn compute_name(
 
     // 2. aria-label
     if let Some(label) = node.attributes.get("aria-label") {
-        if !label.is_empty() { return Some(label.clone()); }
+        if !label.is_empty() {
+            return Some(label.clone());
+        }
     }
 
     // 3a. <label for="this-id">
     if let Some(id) = node.attributes.get("id") {
         if let Some(text) = for_label_map.get(id.as_str()) {
-            if !text.is_empty() { return Some(text.clone()); }
+            if !text.is_empty() {
+                return Some(text.clone());
+            }
         }
     }
 
     // 3b. Wrapping <label>
     if let Some(text) = wrapped_label_map.get(&node.node_id) {
-        if !text.is_empty() { return Some(text.clone()); }
+        if !text.is_empty() {
+            return Some(text.clone());
+        }
     }
 
     // 4. Element-specific native semantics
@@ -764,24 +898,32 @@ fn compute_name(
         "figure" => {
             if let Some(cap) = node.children.iter().find(|c| c.tag == "figcaption") {
                 let text = collect_text(cap);
-                if !text.is_empty() { return Some(text); }
+                if !text.is_empty() {
+                    return Some(text);
+                }
             }
         }
         // <table>: name from <caption> child
         "table" => {
-            if let Some(cap) = node.children.iter()
+            if let Some(cap) = node
+                .children
+                .iter()
                 .flat_map(|c| std::iter::once(c).chain(c.children.iter()))
                 .find(|c| c.tag == "caption")
             {
                 let text = collect_text(cap);
-                if !text.is_empty() { return Some(text); }
+                if !text.is_empty() {
+                    return Some(text);
+                }
             }
         }
         // <fieldset>: name from <legend> child
         "fieldset" => {
             if let Some(leg) = node.children.iter().find(|c| c.tag == "legend") {
                 let text = collect_text(leg);
-                if !text.is_empty() { return Some(text); }
+                if !text.is_empty() {
+                    return Some(text);
+                }
             }
         }
         _ => {}
@@ -796,18 +938,25 @@ fn compute_name(
     );
     if has_name_from_content {
         let text = collect_text(node);
-        if !text.is_empty() { return Some(text); }
+        if !text.is_empty() {
+            return Some(text);
+        }
     }
 
     // 6. placeholder — fallback name for text inputs with no other label
     if matches!(node.tag.as_str(), "input" | "textarea") {
         if let Some(ph) = node.attributes.get("placeholder") {
-            if !ph.is_empty() { return Some(ph.clone()); }
+            if !ph.is_empty() {
+                return Some(ph.clone());
+            }
         }
     }
 
     // 7. title as last resort
-    node.attributes.get("title").filter(|s| !s.is_empty()).cloned()
+    node.attributes
+        .get("title")
+        .filter(|s| !s.is_empty())
+        .cloned()
 }
 
 /// Recursively collect visible text content of a subtree.
@@ -818,7 +967,9 @@ fn collect_text(node: &WebCore) -> String {
         if !matches!(child.style.display, Display::None) && child.style.visibility {
             let ct = collect_text(child);
             if !ct.is_empty() {
-                if !s.is_empty() { s.push(' '); }
+                if !s.is_empty() {
+                    s.push(' ');
+                }
                 s.push_str(&ct);
             }
         }
@@ -832,11 +983,15 @@ fn is_focusable(node: &WebCore) -> bool {
     let tag = node.tag.as_str();
     matches!(tag, "button" | "input" | "textarea" | "select")
         || (tag == "a" && node.attributes.contains_key("href"))
-        || node.attributes.get("tabindex")
+        || node
+            .attributes
+            .get("tabindex")
             .and_then(|v| v.parse::<i32>().ok())
             .map(|n| n >= 0)
             .unwrap_or(false)
-        || node.attributes.get("contenteditable")
+        || node
+            .attributes
+            .get("contenteditable")
             .map(|v| v == "true" || v.is_empty())
             .unwrap_or(false)
 }

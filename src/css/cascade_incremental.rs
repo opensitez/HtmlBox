@@ -1,10 +1,10 @@
 //! The incremental cascade — the `:hover` fast path and dirty-subtree walks.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Incremental Hover Cascade ──────────────────────────────────────────────
 
@@ -19,13 +19,18 @@ pub fn mark_hover_dirty(
     hover_sensitive: &std::collections::HashSet<u32>,
 ) {
     // Nodes whose hover state actually changed (in one chain but not both)
-    let toggled: std::collections::HashSet<u32> = old_chain.symmetric_difference(new_chain).copied().collect();
+    let toggled: std::collections::HashSet<u32> =
+        old_chain.symmetric_difference(new_chain).copied().collect();
     // All nodes on the path (for has_dirty_descendant traversal)
     let path: std::collections::HashSet<u32> = old_chain.union(new_chain).copied().collect();
 
-    fn walk(node: &mut crate::types::WebCore, toggled: &std::collections::HashSet<u32>,
-            path: &std::collections::HashSet<u32>, has_hover_desc: bool,
-            sensitive: &std::collections::HashSet<u32>) -> bool {
+    fn walk(
+        node: &mut crate::types::WebCore,
+        toggled: &std::collections::HashSet<u32>,
+        path: &std::collections::HashSet<u32>,
+        has_hover_desc: bool,
+        sensitive: &std::collections::HashSet<u32>,
+    ) -> bool {
         let mut any_dirty = false;
         // Only mark cascade_dirty if this node is hover-sensitive — it has
         // hover rules of its own.
@@ -35,8 +40,8 @@ pub fn mark_hover_dirty(
         // in the sensitive set, so its toggle was skipped and the panel inside
         // it never re-cascaded. The set is an optimisation; it cannot be
         // trusted once a hover somewhere can restyle a subtree.
-        let considered = has_hover_desc || sensitive.is_empty()
-            || sensitive.contains(&node.node_id);
+        let considered =
+            has_hover_desc || sensitive.is_empty() || sensitive.contains(&node.node_id);
         if toggled.contains(&node.node_id) && considered {
             node.cascade_dirty = true;
             // ⛔ Geometry too, not only style. A hover rule routinely changes
@@ -64,7 +69,13 @@ pub fn mark_hover_dirty(
         any_dirty
     }
 
-    walk(root, &toggled, &path, has_hover_descendant_rules, hover_sensitive);
+    walk(
+        root,
+        &toggled,
+        &path,
+        has_hover_descendant_rules,
+        hover_sensitive,
+    );
 }
 
 fn mark_children_cascade_dirty(node: &mut crate::types::WebCore) {
@@ -79,7 +90,9 @@ fn mark_children_cascade_dirty(node: &mut crate::types::WebCore) {
 /// Clear cascade_dirty flags after cascade. Preserves has_dirty_descendant
 /// for the layout pass (propagate_dirty uses it to skip clean subtrees).
 pub fn clear_cascade_dirty(node: &mut crate::types::WebCore) {
-    if !node.cascade_dirty && !node.has_dirty_descendant { return; }
+    if !node.cascade_dirty && !node.has_dirty_descendant {
+        return;
+    }
     node.cascade_dirty = false;
     // Note: has_dirty_descendant is intentionally NOT cleared here — layout needs it.
     // It gets cleared after layout in clear_layout_dirty().
@@ -90,7 +103,9 @@ pub fn clear_cascade_dirty(node: &mut crate::types::WebCore) {
 
 /// Clear has_dirty_descendant flags after layout completes.
 pub fn clear_descendant_dirty(node: &mut crate::types::WebCore) {
-    if !node.has_dirty_descendant { return; }
+    if !node.has_dirty_descendant {
+        return;
+    }
     node.has_dirty_descendant = false;
     for child in &mut node.children {
         clear_descendant_dirty(child);
@@ -116,10 +131,22 @@ pub fn apply_cascade_incremental(
     let mut candidates_buf: Vec<usize> = Vec::new();
     let mut counters: HashMap<String, Vec<i32>> = HashMap::new();
     apply_cascade_incremental_walk(
-        root, stylesheet, parent_style, root_font_px,
-        &mut ancestors, 0, 1, 0, 1,
-        vw, vh, focused_box, keyboard_focus,
-        &stylesheet.variables, &mut candidates_buf, &mut counters,
+        root,
+        stylesheet,
+        parent_style,
+        root_font_px,
+        &mut ancestors,
+        0,
+        1,
+        0,
+        1,
+        vw,
+        vh,
+        focused_box,
+        keyboard_focus,
+        &stylesheet.variables,
+        &mut candidates_buf,
+        &mut counters,
         hover_chain,
     );
 }
@@ -154,10 +181,25 @@ fn apply_cascade_incremental_walk(
         // which is correct because when a parent's hover state changes,
         // children may inherit different values or match descendant selectors differently.
         apply_cascade_inner(
-            node, stylesheet, parent_style, root_font_px,
-            ancestors, child_index, sibling_count, type_child_index, type_sibling_count,
-            vw, vh, focused_box, keyboard_focus,
-            inherited_vars, candidates_buf, counters, hover_chain, &[],
+            node,
+            stylesheet,
+            parent_style,
+            root_font_px,
+            ancestors,
+            child_index,
+            sibling_count,
+            type_child_index,
+            type_sibling_count,
+            vw,
+            vh,
+            focused_box,
+            keyboard_focus,
+            inherited_vars,
+            candidates_buf,
+            counters,
+            hover_chain,
+            &[],
+            &[],
             // A cache local to this call: an incremental re-cascade
             // touches one subtree, so nothing outside it can be shared into.
             &mut crate::css::cascade::ShareCache::new(),
@@ -188,16 +230,30 @@ fn apply_cascade_incremental_walk(
         let mut t_count = 0usize;
         for (j, sib) in node.children.iter().enumerate() {
             if sib.tag == child_tag {
-                if j == i { t_idx = t_count; }
+                if j == i {
+                    t_idx = t_count;
+                }
                 t_count += 1;
             }
         }
         let child = &mut node.children[i];
         apply_cascade_incremental_walk(
-            child, stylesheet, Some(&parent_s), root_font_px,
-            ancestors, i, child_count, t_idx, t_count,
-            vw, vh, focused_box, keyboard_focus,
-            inherited_vars, candidates_buf, counters,
+            child,
+            stylesheet,
+            Some(&parent_s),
+            root_font_px,
+            ancestors,
+            i,
+            child_count,
+            t_idx,
+            t_count,
+            vw,
+            vh,
+            focused_box,
+            keyboard_focus,
+            inherited_vars,
+            candidates_buf,
+            counters,
             hover_chain,
         );
     }
@@ -207,18 +263,29 @@ fn apply_cascade_incremental_walk(
 
 /// Build the set of element pointers from root to the hovered element (hover chain).
 /// Returns empty set if target is null or not found in the tree.
-pub fn build_hover_chain(root: &crate::types::WebCore, target: u32) -> std::collections::HashSet<u32> {
-    if target == 0 { return std::collections::HashSet::new(); }
+pub fn build_hover_chain(
+    root: &crate::types::WebCore,
+    target: u32,
+) -> std::collections::HashSet<u32> {
+    if target == 0 {
+        return std::collections::HashSet::new();
+    }
     fn walk(node: &crate::types::WebCore, target: u32, path: &mut Vec<u32>) -> bool {
         path.push(node.node_id);
-        if node.node_id != 0 && node.node_id == target { return true; }
+        if node.node_id != 0 && node.node_id == target {
+            return true;
+        }
         for child in &node.children {
-            if walk(child, target, path) { return true; }
+            if walk(child, target, path) {
+                return true;
+            }
         }
         // Also search shadow tree
         if let Some(ref sr) = node.shadow_root {
             for child in &sr.children {
-                if walk(child, target, path) { return true; }
+                if walk(child, target, path) {
+                    return true;
+                }
             }
         }
         path.pop();
@@ -249,7 +316,9 @@ fn swap_hover_inner(
     ancestor_in_chain: bool,
 ) -> bool {
     // Skip synthetic pseudo-element children — their style is set by their parent
-    if node.tag == "::before" || node.tag == "::after" { return false; }
+    if node.tag == "::before" || node.tag == "::after" {
+        return false;
+    }
 
     let self_in_chain = node.node_id != 0 && hover_chain.contains(&node.node_id);
     let in_hover = ancestor_in_chain || self_in_chain;
@@ -260,17 +329,39 @@ fn swap_hover_inner(
         let should_hover = in_hover;
         if should_hover != node.hover_applied {
             // Swap: style becomes the other variant, hover_style stores the current
-            let other = std::sync::Arc::make_mut(&mut node.style).hover_style.take().unwrap();
+            let other = std::sync::Arc::make_mut(&mut node.style)
+                .hover_style
+                .take()
+                .unwrap();
             // Preserve hover_style/active_style/visited_style from the base side
             let _hs_backup = std::sync::Arc::make_mut(&mut node.style).hover_style.take(); // already None after take above
-            let as_backup = std::sync::Arc::make_mut(&mut node.style).active_style.take();
-            let vs_backup = std::sync::Arc::make_mut(&mut node.style).visited_style.take();
+            let as_backup = std::sync::Arc::make_mut(&mut node.style)
+                .active_style
+                .take();
+            let vs_backup = std::sync::Arc::make_mut(&mut node.style)
+                .visited_style
+                .take();
             // Preserve before/after pseudo styles from the incoming variant
             // (the other style may have different before_style/before_content)
-            let cur_before_style = std::sync::Arc::make_mut(&mut node.style).before_style.take();
-            let cur_before_content = std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).before_content);
+            let cur_before_style = std::sync::Arc::make_mut(&mut node.style)
+                .before_style
+                .take();
+            let cur_before_content =
+                std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).before_content);
             let cur_after_style = std::sync::Arc::make_mut(&mut node.style).after_style.take();
-            let cur_after_content = std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).after_content);
+            let cur_after_content =
+                std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).after_content);
+            let cur_selection_style = std::sync::Arc::make_mut(&mut node.style)
+                .selection_style
+                .take();
+            let cur_marker_style = std::sync::Arc::make_mut(&mut node.style)
+                .marker_style
+                .take();
+            let cur_marker_content =
+                std::mem::take(&mut std::sync::Arc::make_mut(&mut node.style).marker_content);
+            let cur_placeholder_style = std::sync::Arc::make_mut(&mut node.style)
+                .placeholder_style
+                .take();
 
             let cur_style = std::mem::replace(&mut node.style, std::sync::Arc::new(*other));
             // Store the old style as the new hover_style (for swapping back)
@@ -278,9 +369,8 @@ fn swap_hover_inner(
             // this node is its only owner — which is the common case here,
             // since a hovered element is excluded from sharing — and fall back
             // to a clone only when it really is shared.
-            let mut stored = Box::new(
-                std::sync::Arc::try_unwrap(cur_style).unwrap_or_else(|a| (*a).clone()),
-            );
+            let mut stored =
+                Box::new(std::sync::Arc::try_unwrap(cur_style).unwrap_or_else(|a| (*a).clone()));
             stored.hover_style = None;
             stored.active_style = None;
             stored.visited_style = None;
@@ -289,6 +379,10 @@ fn swap_hover_inner(
             stored.before_content = cur_before_content;
             stored.after_style = cur_after_style;
             stored.after_content = cur_after_content;
+            stored.selection_style = cur_selection_style;
+            stored.marker_style = cur_marker_style;
+            stored.marker_content = cur_marker_content;
+            stored.placeholder_style = cur_placeholder_style;
 
             std::sync::Arc::make_mut(&mut node.style).hover_style = Some(stored);
             std::sync::Arc::make_mut(&mut node.style).active_style = as_backup;

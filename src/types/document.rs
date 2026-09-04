@@ -3,12 +3,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
-
-
+use std::collections::{HashMap, HashSet};
 
 /// The root document: box tree + stylesheet + metadata.
 /// Which popup an element opens on activation.
@@ -19,17 +17,17 @@ pub enum PickerKind {
 }
 
 pub struct Document {
-    pub root:            WebCore,
-    pub stylesheet:      Stylesheet,
-    pub title:           String,
-    pub base_url:        String,
+    pub root: WebCore,
+    pub stylesheet: Stylesheet,
+    pub title: String,
+    pub base_url: String,
 
     // ── Arena-based DOM (bridge period: mirrors WebCore tree) ────────────────
     /// Arena-based DOM tree with stable NodeId identity.
     /// During the bridge period, this mirrors the WebCore tree structure.
-    pub arena:           DomArena,
+    pub arena: DomArena,
     /// Next node_id to assign (monotonically increasing counter).
-    pub next_node_id:    u32,
+    pub next_node_id: u32,
     /// Bridge lookup: set of known node_ids in the tree.
     /// O(1) node lookup index: node_id → raw pointer into the WebCore tree.
     /// A node's PATH from the root — the child index at each level.
@@ -58,10 +56,10 @@ pub struct Document {
     /// than `Html` when a caller asks for an XML document explicitly.
     pub kind: DocumentKind,
     /// Separated layout data indexed by node_id (bridge: duplicates WebCore geometry).
-    pub layout_store:    crate::layout::layout_box::LayoutStore,
+    pub layout_store: crate::layout::layout_box::LayoutStore,
     /// Nodes created by dom_create_element/dom_create_text that haven't been
     /// inserted into the WebCore tree yet. Consumed by dom_append_child/dom_insert_before.
-    pub pending_nodes:   HashMap<u32, WebCore>,
+    pub pending_nodes: HashMap<u32, WebCore>,
     /// URLs from `<link rel="stylesheet" href="...">` tags in `<head>`.
     /// Populated by the parser so the host can fetch and merge external CSS.
     /// External stylesheets from `<link rel="stylesheet">` tags: (href, media).
@@ -69,39 +67,39 @@ pub struct Document {
     /// print-only sheets can be skipped for screen rendering but kept for future
     /// print support.
     pub linked_stylesheets: Vec<(String, String)>,
-    pub editor:          Editor,
+    pub editor: Editor,
     /// Drawing state for the document's `<canvas>` elements, keyed by node id.
     /// The pixels stay on the element in `WebCore::image_data`; this is what
     /// persists between two calls from a page. See `canvas::CanvasSurfaces`.
     pub canvas_surfaces: crate::canvas::CanvasSurfaces,
     /// NodeId-based event system with capture/bubble phases.
-    pub event_targets:   crate::dom::events::EventTargetMap,
+    pub event_targets: crate::dom::events::EventTargetMap,
     /// Viewport scroll position in logical pixels (managed by Renderer::render).
-    pub scroll_x:        f32,
-    pub scroll_y:        f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
     /// Active scrollbar drag state (None when not dragging).
-    pub scrollbar_drag:  Option<ScrollbarDrag>,
+    pub scrollbar_drag: Option<ScrollbarDrag>,
     /// Currently hovered element (node_id, 0 if none).
-    pub hovered_box:     u32,
+    pub hovered_box: u32,
     /// Suppresses the next hover change after a hover-triggered relayout.
     /// Prevents feedback loops: hover opens dropdown → layout changes →
     /// re-hit-test finds different element → dropdown closes → repeat.
     pub hover_suppress_count: u8,
     /// Currently active (pressed) element (node_id, 0 if none).
-    pub active_box:      u32,
+    pub active_box: u32,
     /// Currently focused element (node_id, 0 if none).
-    pub focused_box:     u32,
+    pub focused_box: u32,
     /// Element hit on last MouseDown — used to fire Click on MouseUp if same target.
     pub mousedown_target: u32,
     /// Last click target + time for DblClick detection.
     pub last_click_target: u32,
-    pub last_click_time:   Option<std::time::Instant>,
+    pub last_click_time: Option<std::time::Instant>,
     /// Drag state machine.
-    pub drag_source:       u32,
+    pub drag_source: u32,
     pub drag_start_doc_pt: (f32, f32),
-    pub drag_active:       bool,
+    pub drag_active: bool,
     /// Set of link hrefs the user has clicked (for :visited pseudo-class).
-    pub visited_urls:    std::collections::HashSet<String>,
+    pub visited_urls: std::collections::HashSet<String>,
     /// `setCustomValidity()` messages, keyed by element.
     ///
     /// Custom validity is STATE, not content — there is no attribute for it,
@@ -141,10 +139,10 @@ pub struct Document {
     /// would apply a second, wrong adjustment on top of it.
     pub suppress_range_updates: bool,
     /// Last known logical viewport size — kept in sync by LayoutEngine::layout.
-    pub viewport_w:      f32,
-    pub viewport_h:      f32,
+    pub viewport_w: f32,
+    pub viewport_h: f32,
     /// True when focus was moved by keyboard (Tab/Shift+Tab) — drives :focus-visible.
-    pub keyboard_focus:  bool,
+    pub keyboard_focus: bool,
     /// Caret blink epoch — reset on each keystroke so caret stays visible while typing.
     pub caret_blink_epoch: std::time::Instant,
     /// Currently open select dropdown (node_id, 0 if none open).
@@ -180,17 +178,17 @@ pub struct Document {
     pub dropdown_hover_idx: i32,
     /// Form event callback — set by the host to handle form interactions.
     /// Called when users interact with form elements (click checkbox, type in input, etc.).
-    pub on_form_event:   Option<FormEventCallback>,
+    pub on_form_event: Option<FormEventCallback>,
 
     // ── Engine callbacks ─────────────────────────────────────────────────────
     /// Called when a link is clicked (href). Return `true` to handle navigation,
     /// `false` to let the engine follow the link.
-    pub on_navigate:     Option<Box<dyn FnMut(&str) -> bool + Send>>,
+    pub on_navigate: Option<Box<dyn FnMut(&str) -> bool + Send>>,
     /// Called when the document title changes (e.g. via `<title>` or DOM mutation).
     pub on_title_change: Option<Box<dyn FnMut(&str) + Send>>,
     /// Called after any DOM mutation (node added/removed/attribute changed).
     /// The argument is the node_id of the mutated node.
-    pub on_dom_mutation:  Option<Box<dyn FnMut(u32) + Send>>,
+    pub on_dom_mutation: Option<Box<dyn FnMut(u32) + Send>>,
     /// Called when a node becomes visible in the viewport (intersection observer pattern).
     pub on_visibility_change: Option<Box<dyn FnMut(u32, bool) + Send>>,
 
@@ -244,18 +242,7 @@ pub struct Document {
 }
 
 impl Document {
-
-
     // ── Node index (node_id → pointer for O(1) lookup) ───────────────────────
-
-
-
-
-
-
-
-
-
 
     /// High-level mouse event entry point.
     /// The palette geometry of an open picker — one place, so the hit test and
@@ -310,9 +297,10 @@ impl Document {
         let br = node.layout.border_rect;
         // Below the control, as the dropdown opens below its select.
         let (w, h) = match self.picker_kind(id) {
-            Some(PickerKind::Calendar) => {
-                (crate::widgets::Calendar::width(), crate::widgets::Calendar::height())
-            }
+            Some(PickerKind::Calendar) => (
+                crate::widgets::Calendar::width(),
+                crate::widgets::Calendar::height(),
+            ),
             _ => {
                 let cols = crate::widgets::PALETTE_COLUMNS as f32;
                 let rows = (crate::widgets::PALETTE.len() as f32 / cols).ceil();
@@ -330,7 +318,13 @@ impl Document {
         if node.tag != "input" {
             return None;
         }
-        match node.attributes.get("type")?.trim().to_ascii_lowercase().as_str() {
+        match node
+            .attributes
+            .get("type")?
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "color" => Some(PickerKind::Color),
             // `month` and `week` open a calendar too in a browser, but they
             // pick a MONTH and a WEEK, not a day — a day grid would write a
@@ -373,7 +367,9 @@ impl Document {
         click_y: f32,
         unselect_request: bool,
     ) -> bool {
-        let Some(select) = self.find_webcore(select_id) else { return false };
+        let Some(select) = self.find_webcore(select_id) else {
+            return false;
+        };
         if select.attributes.contains_key("disabled") {
             return false;
         }
@@ -391,7 +387,9 @@ impl Document {
         };
         let option_id = options[row];
 
-        let Some(select_mut) = self.find_webcore_mut(select_id) else { return false };
+        let Some(select_mut) = self.find_webcore_mut(select_id) else {
+            return false;
+        };
         let multiple = crate::html::forms::is_multiple(&*select_mut);
         // "Upon this request being conveyed to the user agent, and before the
         // relevant user interaction event is queued (e.g. before the click
@@ -434,7 +432,9 @@ impl Document {
     /// toward it. Both are user-agent choices; this is the one browsers make.
     /// Dragging needs `mouse_move` wired to the same path.
     pub(crate) fn drag_range_to(&mut self, input_id: u32, doc_pt: (f32, f32)) -> bool {
-        let Some(input) = self.find_webcore(input_id) else { return false };
+        let Some(input) = self.find_webcore(input_id) else {
+            return false;
+        };
         // Mutability (HTML §4.10.18.2). `readonly` does NOT apply to a range,
         // so `disabled` is the whole test.
         if input.attributes.contains_key("disabled") {
@@ -510,7 +510,9 @@ impl Document {
         if input_id == 0 {
             return false;
         }
-        let Some(input) = self.find_webcore(input_id) else { return false };
+        let Some(input) = self.find_webcore(input_id) else {
+            return false;
+        };
         let text = input_value(input);
         if text == origin {
             return false;
@@ -549,12 +551,17 @@ impl Document {
     /// program listening for `input` — which is what a live-updating handler
     /// listens for — never heard a `<select>` at all.
     pub(crate) fn send_select_update_notifications(&mut self, select_id: u32) {
-        let Some(select) = self.find_webcore(select_id) else { return };
+        let Some(select) = self.find_webcore(select_id) else {
+            return;
+        };
         let value = crate::html::forms::select_value(select);
         let id = select.attributes.get("id").cloned().unwrap_or_default();
         let name = select.attributes.get("name").cloned().unwrap_or_default();
         if let Some(ref mut cb) = self.on_form_event {
-            for kind in [FormEventKind::Input(value.clone()), FormEventKind::Change(value)] {
+            for kind in [
+                FormEventKind::Input(value.clone()),
+                FormEventKind::Change(value),
+            ] {
                 cb(&FormEvent {
                     tag: "select".into(),
                     id: id.clone(),
@@ -589,7 +596,9 @@ impl Document {
                 _ => break,
             }
         }
-        let Some(node) = self.find_webcore(node_id) else { return };
+        let Some(node) = self.find_webcore(node_id) else {
+            return;
+        };
         if node.tag.starts_with('#') {
             return;
         }
@@ -650,89 +659,49 @@ impl Document {
             .copied()
     }
 
-
-
-
-
-
-
-
-
     // ── aria-live ──────────────────────────────────────────────────────────────
 
-
-
     // ── CSS Animation / Transition runtime ────────────────────────────────────
-
-
-
-
-
-
-
-
-
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 impl Clone for Document {
     fn clone(&self) -> Self {
         Self {
-            root:            self.root.clone(),
-            stylesheet:      self.stylesheet.clone(),
-            title:           self.title.clone(),
-            base_url:        self.base_url.clone(),
-            arena:           DomArena::new(),  // cloned docs get fresh arena (rebuilt on demand)
-            next_node_id:    self.next_node_id,
-            node_index:      HashMap::new(),   // rebuilt on demand
+            root: self.root.clone(),
+            stylesheet: self.stylesheet.clone(),
+            title: self.title.clone(),
+            base_url: self.base_url.clone(),
+            arena: DomArena::new(), // cloned docs get fresh arena (rebuilt on demand)
+            next_node_id: self.next_node_id,
+            node_index: HashMap::new(), // rebuilt on demand
             // A copy of an XML document is still an XML document — carried
             // over rather than reset, or the copy would start folding names
             // the original does not.
-            kind:            self.kind,
-            layout_store:    crate::layout::layout_box::LayoutStore::new(),
-            pending_nodes:   HashMap::new(),
+            kind: self.kind,
+            layout_store: crate::layout::layout_box::LayoutStore::new(),
+            pending_nodes: HashMap::new(),
             linked_stylesheets: self.linked_stylesheets.clone(),
-            editor:          self.editor.clone(),
+            editor: self.editor.clone(),
             // The canvas BITMAPS come along inside `root.clone()`, because
             // they live on the elements. The drawing STATE does not: a copy of
             // a document starts from the default context, the same way it
             // starts with no event listeners.
             canvas_surfaces: crate::canvas::CanvasSurfaces::default(),
-            event_targets:   crate::dom::events::EventTargetMap::new(), // listeners not cloned
-            scroll_x:        self.scroll_x,
-            scroll_y:        self.scroll_y,
-            scrollbar_drag:  self.scrollbar_drag.clone(),
-            hovered_box:     self.hovered_box,
+            event_targets: crate::dom::events::EventTargetMap::new(), // listeners not cloned
+            scroll_x: self.scroll_x,
+            scroll_y: self.scroll_y,
+            scrollbar_drag: self.scrollbar_drag.clone(),
+            hovered_box: self.hovered_box,
             hover_suppress_count: self.hover_suppress_count,
-            active_box:      self.active_box,
-            focused_box:     self.focused_box,
+            active_box: self.active_box,
+            focused_box: self.focused_box,
             mousedown_target: self.mousedown_target,
             last_click_target: self.last_click_target,
             last_click_time: self.last_click_time,
-            drag_source:     self.drag_source,
+            drag_source: self.drag_source,
             drag_start_doc_pt: self.drag_start_doc_pt,
-            drag_active:     self.drag_active,
-            visited_urls:    self.visited_urls.clone(),
+            drag_active: self.drag_active,
+            visited_urls: self.visited_urls.clone(),
             custom_validity: self.custom_validity.clone(),
             doctype: self.doctype,
             quirks: self.quirks,
@@ -743,31 +712,39 @@ impl Clone for Document {
             ranges: self.ranges.clone(),
             top_layer: self.top_layer.clone(),
             suppress_range_updates: false,
-            viewport_w:      self.viewport_w,
-            viewport_h:      self.viewport_h,
-            keyboard_focus:  self.keyboard_focus,
-            caret_blink_epoch: std::time::Instant::now(), open_select: 0, open_picker: 0, dropdown_hover_idx: -1,
+            viewport_w: self.viewport_w,
+            viewport_h: self.viewport_h,
+            keyboard_focus: self.keyboard_focus,
+            caret_blink_epoch: std::time::Instant::now(),
+            open_select: 0,
+            open_picker: 0,
+            dropdown_hover_idx: -1,
             // Transient interaction state, like the two popups beside it: a
             // fresh document is holding nothing.
-            dragging_range: 0, range_drag_origin: String::new(),
-            active_animations:     self.active_animations.clone(),
-            transition_states:     self.transition_states.clone(),
-            prev_styles:           self.prev_styles.clone(),
-            cascade_styles:        self.cascade_styles.clone(),
-            animation_overrides:   self.animation_overrides.clone(),
+            dragging_range: 0,
+            range_drag_origin: String::new(),
+            active_animations: self.active_animations.clone(),
+            transition_states: self.transition_states.clone(),
+            prev_styles: self.prev_styles.clone(),
+            cascade_styles: self.cascade_styles.clone(),
+            animation_overrides: self.animation_overrides.clone(),
             needs_animation_frame: self.needs_animation_frame,
-            hover_changed:         self.hover_changed,
+            hover_changed: self.hover_changed,
             hover_sensitive_nodes: self.hover_sensitive_nodes.clone(),
-            style_dirty:           self.style_dirty,
-            prev_hovered_box:      self.prev_hovered_box,
-            pending_announcements:    self.pending_announcements.clone(),
-            live_region_snapshots:    self.live_region_snapshots.clone(),
+            style_dirty: self.style_dirty,
+            prev_hovered_box: self.prev_hovered_box,
+            pending_announcements: self.pending_announcements.clone(),
+            live_region_snapshots: self.live_region_snapshots.clone(),
             live_regions_initialized: self.live_regions_initialized,
-            layout_generation:       self.layout_generation,
+            layout_generation: self.layout_generation,
             // Async image state is not cloned — cloned docs start with no pending fetches.
-            pending_images:   None,
+            pending_images: None,
             images_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            on_form_event: None, on_navigate: None, on_title_change: None, on_dom_mutation: None, on_visibility_change: None, // callbacks not cloned
+            on_form_event: None,
+            on_navigate: None,
+            on_title_change: None,
+            on_dom_mutation: None,
+            on_visibility_change: None, // callbacks not cloned
         }
     }
 }
@@ -782,7 +759,9 @@ impl std::fmt::Debug for Document {
 }
 
 impl Default for Document {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // SAFETY: Document contains raw pointers (hovered_box, active_box, etc.) that are
@@ -791,10 +770,15 @@ impl Default for Document {
 // re-established on the owning thread.
 unsafe impl Send for Document {}
 
-pub(crate) fn find_node_by_path_mut<'a>(root: &'a mut WebCore, path: &[usize]) -> Option<&'a mut WebCore> {
+pub(crate) fn find_node_by_path_mut<'a>(
+    root: &'a mut WebCore,
+    path: &[usize],
+) -> Option<&'a mut WebCore> {
     let mut node = root;
     for &idx in path {
-        if idx >= node.children.len() { return None; }
+        if idx >= node.children.len() {
+            return None;
+        }
         node = &mut node.children[idx];
     }
     Some(node)

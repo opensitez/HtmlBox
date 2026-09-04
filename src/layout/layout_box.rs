@@ -44,12 +44,16 @@ pub struct LayoutStore {
 
 impl LayoutStore {
     pub fn new() -> Self {
-        Self { boxes: std::collections::HashMap::new() }
+        Self {
+            boxes: std::collections::HashMap::new(),
+        }
     }
 
     /// Get or create a LayoutBox for a node.
     pub fn get_or_create(&mut self, node_id: u32) -> &mut LayoutBox {
-        self.boxes.entry(node_id).or_insert_with(|| LayoutBox::new(node_id))
+        self.boxes
+            .entry(node_id)
+            .or_insert_with(|| LayoutBox::new(node_id))
     }
 
     /// Get an existing LayoutBox.

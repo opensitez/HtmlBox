@@ -38,9 +38,10 @@
 //! transform.
 
 use tiny_skia::{
-    Color as TsColor, FillRule, FilterQuality, GradientStop, LinearGradient, Mask, Paint, Path,
-    PathBuilder, PathSegment, Pixmap, PixmapPaint, PixmapRef, Point as TsPoint, RadialGradient,
-    SpreadMode, Stroke as TsStroke, Transform, LineCap as TsLineCap, LineJoin as TsLineJoin,
+    Color as TsColor, FillRule, FilterQuality, GradientStop, LineCap as TsLineCap,
+    LineJoin as TsLineJoin, LinearGradient, Mask, Paint, Path, PathBuilder, PathSegment, Pixmap,
+    PixmapPaint, PixmapRef, Point as TsPoint, RadialGradient, SpreadMode, Stroke as TsStroke,
+    Transform,
 };
 
 use cosmic_text::{
@@ -399,7 +400,9 @@ impl<'a> TinySkiaCanvas<'a> {
     fn clip_to(&mut self, path: &Path, rule: super::FillRule) {
         let ts_rule = rule.to_tiny_skia();
         let (w, h) = (self.pixmap.width(), self.pixmap.height());
-        let Some(mut mask) = Mask::new(w, h) else { return };
+        let Some(mut mask) = Mask::new(w, h) else {
+            return;
+        };
         mask.fill_path(path, ts_rule, true, self.state.transform);
         if let Some(existing) = self.clip_mask.as_mut() {
             existing.intersect_path(path, ts_rule, true, self.state.transform);
@@ -683,8 +686,11 @@ impl<'a> Canvas for TinySkiaCanvas<'a> {
                 owned_tc.font_system,
                 owned_tc.swash_cache,
                 &mut buf,
+                text,
                 px,
                 py,
+                0.0,
+                0.0,
                 cosmic_color,
             );
         });
@@ -1147,13 +1153,17 @@ impl<'a> Canvas for TinySkiaCanvas<'a> {
     /// `tiny_skia::Path` and are painted from there, so `self.path` is never
     /// touched. That isolation is the entire reason a page uses a `Path2D`.
     fn fill_path(&mut self, path: &super::Path2D, rule: super::FillRule) {
-        let Some(built) = build_path2d(path) else { return };
+        let Some(built) = build_path2d(path) else {
+            return;
+        };
         self.paint_path(&built, rule, false);
     }
 
     /// `stroke(path)` — likewise leaves the current path alone.
     fn stroke_path(&mut self, path: &super::Path2D) {
-        let Some(built) = build_path2d(path) else { return };
+        let Some(built) = build_path2d(path) else {
+            return;
+        };
         self.paint_path(&built, super::FillRule::NonZero, true);
     }
 
@@ -1163,11 +1173,19 @@ impl<'a> Canvas for TinySkiaCanvas<'a> {
     /// discards the current path as part of its own semantics, so a caller
     /// could not put back what the default had thrown away.
     fn clip_path(&mut self, path: &super::Path2D, rule: super::FillRule) {
-        let Some(built) = build_path2d(path) else { return };
+        let Some(built) = build_path2d(path) else {
+            return;
+        };
         self.clip_to(&built, rule);
     }
 
-    fn is_point_in_path2d(&self, path: &super::Path2D, x: f32, y: f32, rule: super::FillRule) -> bool {
+    fn is_point_in_path2d(
+        &self,
+        path: &super::Path2D,
+        x: f32,
+        y: f32,
+        rule: super::FillRule,
+    ) -> bool {
         let Some(built) = build_path2d(path) else {
             return false;
         };
@@ -1341,7 +1359,8 @@ impl<'a> TinySkiaCanvas<'a> {
             // the shadow is blurred by a Gaussian with a standard deviation of
             // half it. CSS `drop-shadow()` names the deviation directly, which
             // is why the two callers of `shadow_layer` pass different things.
-            if let Some(cast) = super::effects::shadow_layer(&layer, shadow.color, shadow.blur / 2.0)
+            if let Some(cast) =
+                super::effects::shadow_layer(&layer, shadow.color, shadow.blur / 2.0)
             {
                 self.pixmap.draw_pixmap(
                     shadow.offset_x.round() as i32,
@@ -1353,14 +1372,8 @@ impl<'a> TinySkiaCanvas<'a> {
                 );
             }
         }
-        self.pixmap.draw_pixmap(
-            0,
-            0,
-            layer.as_ref(),
-            &paint,
-            Transform::identity(),
-            None,
-        );
+        self.pixmap
+            .draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::identity(), None);
     }
 
     /// The page's own transform — the current matrix with the device scale
@@ -1585,9 +1598,7 @@ fn point_in_path(path: &Path, x: f32, y: f32, rule: super::FillRule) -> bool {
             }
             PathSegment::CubicTo(c1, c2, p) => {
                 let next = (p.x, p.y);
-                for (from, to) in
-                    flatten_cubic(current, (c1.x, c1.y), (c2.x, c2.y), next)
-                {
+                for (from, to) in flatten_cubic(current, (c1.x, c1.y), (c2.x, c2.y), next) {
                     cross(from, to, &mut winding, &mut crossings);
                 }
                 current = next;
@@ -2128,7 +2139,11 @@ mod path_lifetime_tests {
         c.set_fill_color(Color::rgb(255, 0, 0));
         c.fill();
         drop(c);
-        assert_eq!(at(&pm, 42, 42), [0, 255, 0, 255], "the Path2D never painted");
+        assert_eq!(
+            at(&pm, 42, 42),
+            [0, 255, 0, 255],
+            "the Path2D never painted"
+        );
         assert_eq!(
             at(&pm, 20, 20),
             [255, 0, 0, 255],
@@ -2256,7 +2271,10 @@ mod tests {
         c.set_line_width(4.0);
         square(&mut c);
         assert!(c.is_point_in_stroke(10.0, 20.0), "on the left edge");
-        assert!(!c.is_point_in_stroke(20.0, 20.0), "the middle is not stroke");
+        assert!(
+            !c.is_point_in_stroke(20.0, 20.0),
+            "the middle is not stroke"
+        );
     }
 
     #[test]
@@ -2267,7 +2285,10 @@ mod tests {
         c.set_line_width(1.0);
         assert!(!c.is_point_in_stroke(14.0, 20.0), "4px in, with a 1px line");
         c.set_line_width(12.0);
-        assert!(c.is_point_in_stroke(14.0, 20.0), "the same point, 12px line");
+        assert!(
+            c.is_point_in_stroke(14.0, 20.0),
+            "the same point, 12px line"
+        );
     }
 
     #[test]
@@ -2428,9 +2449,8 @@ mod tests {
         let mut swash_cache = SwashCache::new();
 
         let leftmost = |canvas: &Pixmap| {
-            (0..200u32).find(|x| {
-                (0..200u32).any(|y| canvas.pixel(*x, y).expect("in bounds").alpha() > 0)
-            })
+            (0..200u32)
+                .find(|x| (0..200u32).any(|y| canvas.pixel(*x, y).expect("in bounds").alpha() > 0))
         };
 
         let mut ltr = Pixmap::new(200, 200).expect("a pixmap");
@@ -2501,13 +2521,19 @@ mod tests {
         c.fill_rect(0.0, 0.0, 100.0, 100.0);
 
         let url = c.to_data_url("image/png", None);
-        assert!(url.starts_with("data:image/png;base64,"), "got {}", &url[..40]);
+        assert!(
+            url.starts_with("data:image/png;base64,"),
+            "got {}",
+            &url[..40]
+        );
 
         use base64::Engine as _;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(url.trim_start_matches("data:image/png;base64,"))
             .expect("valid base64");
-        let decoded = image::load_from_memory(&bytes).expect("a real PNG").to_rgba8();
+        let decoded = image::load_from_memory(&bytes)
+            .expect("a real PNG")
+            .to_rgba8();
         assert_eq!(decoded.dimensions(), (100, 100));
         assert_eq!(decoded.get_pixel(50, 50).0, [255, 0, 0, 255]);
     }
@@ -2523,7 +2549,9 @@ mod tests {
         c.fill_rect(0.0, 0.0, 100.0, 100.0);
 
         let bytes = c.to_blob("image/png", None).expect("encoded");
-        let decoded = image::load_from_memory(&bytes).expect("a real PNG").to_rgba8();
+        let decoded = image::load_from_memory(&bytes)
+            .expect("a real PNG")
+            .to_rgba8();
         let px = decoded.get_pixel(50, 50).0;
         assert_eq!(px[3], 128, "alpha survives");
         assert!(px[0] > 250, "and red is still full, got {}", px[0]);
@@ -2535,7 +2563,9 @@ mod tests {
         let c = TinySkiaCanvas::new(&mut p);
         // Nothing drawn: a fully transparent canvas.
         let bytes = c.to_blob("image/jpeg", Some(1.0)).expect("encoded");
-        let decoded = image::load_from_memory(&bytes).expect("a real JPEG").to_rgb8();
+        let decoded = image::load_from_memory(&bytes)
+            .expect("a real JPEG")
+            .to_rgb8();
         let px = decoded.get_pixel(50, 50).0;
         assert!(
             px[0] > 240 && px[1] > 240 && px[2] > 240,
@@ -2686,7 +2716,11 @@ mod tests {
             for y in 0..200 {
                 for x in 0..200 {
                     let px = both.pixel(x as u32, y as u32).expect("in bounds");
-                    let hit = if want_blue { px.blue() > 0 } else { px.red() > 0 };
+                    let hit = if want_blue {
+                        px.blue() > 0
+                    } else {
+                        px.red() > 0
+                    };
                     if hit {
                         lo = lo.min(x);
                         hi = hi.max(x);
@@ -2697,7 +2731,10 @@ mod tests {
         };
         let (fill_lo, fill_hi) = extent(false);
         let (stroke_lo, stroke_hi) = extent(true);
-        assert!(fill_lo != usize::MAX && stroke_lo != usize::MAX, "both drew");
+        assert!(
+            fill_lo != usize::MAX && stroke_lo != usize::MAX,
+            "both drew"
+        );
         assert!(
             (fill_lo as i32 - stroke_lo as i32).abs() <= 3
                 && (fill_hi as i32 - stroke_hi as i32).abs() <= 3,
@@ -2815,11 +2852,16 @@ mod tests {
         c.set_font(&Font::new("sans-serif", 20.0));
 
         let natural = c.measure_text("wide text here").width;
-        assert!(natural > 10.0, "the fixture has to overflow to test anything");
+        assert!(
+            natural > 10.0,
+            "the fixture has to overflow to test anything"
+        );
         // The squeeze factor is what `fill_text_constrained` applies; asking for
         // it directly is asking whether the text would be condensed and by how
         // much, without needing to read it back out of the pixels.
-        let factor = c.condense_factor("wide text here", 10.0).expect("condensed");
+        let factor = c
+            .condense_factor("wide text here", 10.0)
+            .expect("condensed");
         assert!((factor - 10.0 / natural).abs() < 0.001, "got {factor}");
     }
 
@@ -2891,7 +2933,11 @@ mod tests {
         assert_eq!(p.pixel(20, 20).expect("in bounds").red(), 255, "the shape");
         let cast = p.pixel(38, 38).expect("in bounds");
         assert!(cast.alpha() > 0, "the shadow landed");
-        assert_eq!(cast.red(), 0, "and it is the shadow colour, not the shape's");
+        assert_eq!(
+            cast.red(),
+            0,
+            "and it is the shadow colour, not the shape's"
+        );
     }
 
     #[test]

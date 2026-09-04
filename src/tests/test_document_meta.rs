@@ -9,23 +9,38 @@ use crate::html::doctype::QuirksMode;
 use crate::html::parse_html;
 use crate::types::Document;
 
-fn doc(html: &str) -> Document { parse_html(html) }
+fn doc(html: &str) -> Document {
+    parse_html(html)
+}
 
 // ─── the doctype node ───────────────────────────────────────────────────────
 
 #[test]
 fn the_doctype_is_a_node_with_a_name_and_two_identifiers() {
-    let d = doc(r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"><html><body></body></html>"#);
+    let d = doc(
+        r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"><html><body></body></html>"#,
+    );
     let dt = d.doctype().expect("a doctype node");
-    assert_eq!(d.doctype_name().as_deref(), Some("html"), "the NAME is lowercased");
-    assert_eq!(d.doctype_public_id().as_deref(), Some("-//W3C//DTD HTML 4.01//EN"));
+    assert_eq!(
+        d.doctype_name().as_deref(),
+        Some("html"),
+        "the NAME is lowercased"
+    );
+    assert_eq!(
+        d.doctype_public_id().as_deref(),
+        Some("-//W3C//DTD HTML 4.01//EN")
+    );
     assert_eq!(
         d.doctype_system_id().as_deref(),
         Some("http://www.w3.org/TR/html4/strict.dtd"),
         "the identifiers keep their CASE — only the name is folded"
     );
     assert_eq!(d.node_type(dt), 10);
-    assert_eq!(d.node_name(dt), "html", "nodeName IS the name, not uppercased");
+    assert_eq!(
+        d.node_name(dt),
+        "html",
+        "nodeName IS the name, not uppercased"
+    );
 }
 
 #[test]
@@ -55,7 +70,11 @@ fn the_doctype_is_the_documents_first_child_and_the_document_is_its_parent() {
     assert_eq!(kids[0], dt);
     assert_eq!(d.first_child(d.document_node()), Some(dt));
     assert_eq!(d.parent_node(dt), d.document_node());
-    assert_eq!(d.node_type(kids[1]), 1, "the second child is the document element");
+    assert_eq!(
+        d.node_type(kids[1]),
+        1,
+        "the second child is the document element"
+    );
 }
 
 #[test]
@@ -70,7 +89,11 @@ fn a_document_without_a_doctype_has_only_the_document_element() {
 fn only_the_first_doctype_counts() {
     let d = doc("<!DOCTYPE html><!DOCTYPE foo><html><body></body></html>");
     assert_eq!(d.doctype_name().as_deref(), Some("html"));
-    assert_eq!(d.child_nodes(d.document_node()).len(), 2, "not one node per doctype");
+    assert_eq!(
+        d.child_nodes(d.document_node()).len(),
+        2,
+        "not one node per doctype"
+    );
 }
 
 // ─── quirks mode ────────────────────────────────────────────────────────────
@@ -82,20 +105,56 @@ fn compat_mode_matches_chrome_across_the_measured_doctypes() {
     let cases: &[(&str, &str)] = &[
         ("<!DOCTYPE html>", "CSS1Compat"),
         ("", "BackCompat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">"#, "CSS1Compat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">"#, "BackCompat"),
-        (r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">"#, "CSS1Compat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">"#, "BackCompat"),
-        (r#"<!DOCTYPE html SYSTEM "about:legacy-compat">"#, "CSS1Compat"),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">"#,
+            "CSS1Compat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">"#,
+            "BackCompat",
+        ),
+        (
+            r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">"#,
+            "CSS1Compat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">"#,
+            "BackCompat",
+        ),
+        (
+            r#"<!DOCTYPE html SYSTEM "about:legacy-compat">"#,
+            "CSS1Compat",
+        ),
         ("<!doctype HTML>", "CSS1Compat"),
         ("<!DOCTYPE foo>", "BackCompat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">"#, "CSS1Compat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN">"#, "BackCompat"),
-        (r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">"#, "CSS1Compat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">"#, "BackCompat"),
-        (r#"<!DOCTYPE html SYSTEM "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd">"#, "BackCompat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN">"#, "CSS1Compat"),
-        (r#"<!DOCTYPE HTML PUBLIC "-//w3c//dtd html 4.01 transitional//en">"#, "BackCompat"),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">"#,
+            "CSS1Compat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN">"#,
+            "BackCompat",
+        ),
+        (
+            r#"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">"#,
+            "CSS1Compat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">"#,
+            "BackCompat",
+        ),
+        (
+            r#"<!DOCTYPE html SYSTEM "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd">"#,
+            "BackCompat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN">"#,
+            "CSS1Compat",
+        ),
+        (
+            r#"<!DOCTYPE HTML PUBLIC "-//w3c//dtd html 4.01 transitional//en">"#,
+            "BackCompat",
+        ),
     ];
     for (dt, want) in cases {
         let d = doc(&format!("{dt}<html><body></body></html>"));
@@ -118,17 +177,31 @@ fn limited_quirks_is_a_third_state_that_compat_mode_cannot_see() {
         assert_eq!(d.quirks, QuirksMode::LimitedQuirks, "{dt}");
         assert_eq!(d.compat_mode(), "CSS1Compat", "{dt}");
     }
-    assert_eq!(doc("<!DOCTYPE html><html></html>").quirks, QuirksMode::NoQuirks);
+    assert_eq!(
+        doc("<!DOCTYPE html><html></html>").quirks,
+        QuirksMode::NoQuirks
+    );
     assert_eq!(doc("<html></html>").quirks, QuirksMode::Quirks);
 }
 
 #[test]
 fn the_system_identifier_flips_the_html_401_pair_between_two_modes() {
     // The single rule that needs both halves of the doctype at once.
-    for public in ["-//W3C//DTD HTML 4.01 Transitional//EN", "-//W3C//DTD HTML 4.01 Frameset//EN"] {
-        let without = doc(&format!(r#"<!DOCTYPE HTML PUBLIC "{public}"><html></html>"#));
-        assert_eq!(without.quirks, QuirksMode::Quirks, "{public} without a system id");
-        let with = doc(&format!(r#"<!DOCTYPE HTML PUBLIC "{public}" "s"><html></html>"#));
+    for public in [
+        "-//W3C//DTD HTML 4.01 Transitional//EN",
+        "-//W3C//DTD HTML 4.01 Frameset//EN",
+    ] {
+        let without = doc(&format!(
+            r#"<!DOCTYPE HTML PUBLIC "{public}"><html></html>"#
+        ));
+        assert_eq!(
+            without.quirks,
+            QuirksMode::Quirks,
+            "{public} without a system id"
+        );
+        let with = doc(&format!(
+            r#"<!DOCTYPE HTML PUBLIC "{public}" "s"><html></html>"#
+        ));
         assert_eq!(with.quirks, QuirksMode::LimitedQuirks, "{public} with one");
     }
 }
@@ -141,7 +214,11 @@ fn a_malformed_doctype_still_names_the_document_and_forces_quirks() {
     assert_eq!(d.quirks, QuirksMode::Quirks);
     let d = doc("<!DOCTYPE html PUBLIC><html></html>");
     assert_eq!(d.quirks, QuirksMode::Quirks);
-    assert_eq!(d.doctype_name().as_deref(), Some("html"), "the name survived");
+    assert_eq!(
+        d.doctype_name().as_deref(),
+        Some("html"),
+        "the name survived"
+    );
     let d = doc(r#"<!DOCTYPE html SOMETHING "x"><html></html>"#);
     assert_eq!(d.quirks, QuirksMode::Quirks, "neither PUBLIC nor SYSTEM");
 }
@@ -149,7 +226,10 @@ fn a_malformed_doctype_still_names_the_document_and_forces_quirks() {
 #[test]
 fn single_quoted_identifiers_parse_too() {
     let d = doc(r#"<!DOCTYPE html PUBLIC '-//W3C//DTD HTML 4.01//EN' 'sys'><html></html>"#);
-    assert_eq!(d.doctype_public_id().as_deref(), Some("-//W3C//DTD HTML 4.01//EN"));
+    assert_eq!(
+        d.doctype_public_id().as_deref(),
+        Some("-//W3C//DTD HTML 4.01//EN")
+    );
     assert_eq!(d.doctype_system_id().as_deref(), Some("sys"));
 }
 
@@ -158,9 +238,17 @@ fn single_quoted_identifiers_parse_too() {
 #[test]
 fn the_metadata_members_answer_what_this_crate_can_honestly_say() {
     let d = doc("<!DOCTYPE html><html><body></body></html>");
-    assert_eq!(d.character_set(), "UTF-8", "a Rust &str is UTF-8 by construction");
+    assert_eq!(
+        d.character_set(),
+        "UTF-8",
+        "a Rust &str is UTF-8 by construction"
+    );
     assert_eq!(d.content_type(), "text/html");
-    assert_eq!(d.ready_state(), "complete", "parse_html RETURNS a finished document");
+    assert_eq!(
+        d.ready_state(),
+        "complete",
+        "parse_html RETURNS a finished document"
+    );
     assert_eq!(d.visibility_state(), "visible");
     assert!(!d.document_hidden());
     assert_eq!(d.referrer(), "");
@@ -184,7 +272,9 @@ const PAGE: &str = r#"<!DOCTYPE html><html><body>
 </body></html>"#;
 
 fn ids(d: &Document, list: Vec<u32>) -> Vec<String> {
-    list.into_iter().map(|id| d.get_attribute(id, "id").unwrap_or_default()).collect()
+    list.into_iter()
+        .map(|id| d.get_attribute(id, "id").unwrap_or_default())
+        .collect()
 }
 
 #[test]
@@ -205,7 +295,11 @@ fn anchors_are_a_with_a_name_which_is_a_different_question_from_links() {
 #[test]
 fn images_forms_scripts_and_embeds_are_plain_tag_filters() {
     let d = doc(PAGE);
-    assert_eq!(ids(&d, d.images()), ["i1", "i2"], "an img with no src still counts");
+    assert_eq!(
+        ids(&d, d.images()),
+        ["i1", "i2"],
+        "an img with no src still counts"
+    );
     assert_eq!(ids(&d, d.forms()), ["f1", "f2"]);
     assert_eq!(ids(&d, d.embeds()), ["e1"]);
     assert_eq!(d.plugins(), d.embeds(), "plugins IS embeds");
@@ -225,9 +319,17 @@ fn get_elements_by_name_matches_any_element_not_just_form_controls() {
 fn get_elements_by_tag_name_ns_treats_html_elements_as_xhtml() {
     let d = doc(PAGE);
     const XHTML: &str = "http://www.w3.org/1999/xhtml";
-    assert_eq!(d.get_elements_by_tag_name_ns(XHTML, "a").len(), 3, "all three <a>");
+    assert_eq!(
+        d.get_elements_by_tag_name_ns(XHTML, "a").len(),
+        3,
+        "all three <a>"
+    );
     assert_eq!(d.get_elements_by_tag_name_ns("*", "a").len(), 3);
-    assert_eq!(d.get_elements_by_tag_name_ns("http://example.com/ns", "a").len(), 0);
+    assert_eq!(
+        d.get_elements_by_tag_name_ns("http://example.com/ns", "a")
+            .len(),
+        0
+    );
     assert!(d.get_elements_by_tag_name_ns(XHTML, "*").len() > 5);
 }
 

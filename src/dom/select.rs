@@ -35,7 +35,9 @@ impl Document {
 
     /// `select.add(new Option(text))` — append an `<option>` carrying `text`.
     pub fn add_item(&mut self, select: u32, text: &str) {
-        if select == 0 { return; }
+        if select == 0 {
+            return;
+        }
         let option = self.create_element("option");
         let label = self.create_text_node(text);
         self.append_child(option, label);
@@ -107,15 +109,16 @@ impl Document {
     /// writing it here is why a reset used to restore the last programmatic
     /// selection instead of the markup's.
     pub fn set_selected_index(&mut self, select: u32, index: i32) {
-        let options = crate::html::forms::option_ids(
-            match self.find_webcore(select) {
-                Some(n) => n,
-                None => return,
-            },
-        );
+        let options = crate::html::forms::option_ids(match self.find_webcore(select) {
+            Some(n) => n,
+            None => return,
+        });
         // A negative index — or any out-of-range one — means "nothing
         // selected", which selectedness can now actually express.
-        let chosen = usize::try_from(index).ok().filter(|i| *i < options.len()).map(|i| options[i]);
+        let chosen = usize::try_from(index)
+            .ok()
+            .filter(|i| *i < options.len())
+            .map(|i| options[i]);
         if let Some(sel) = self.find_webcore_mut(select) {
             crate::html::forms::for_each_option_mut(sel, &mut |option, _| {
                 option.selectedness = Some(option.node_id) == chosen;
@@ -141,8 +144,12 @@ impl Document {
     /// `input_value` covers the first and last but answers a `<select>` from a
     /// `value` attribute a select does not have.
     pub fn value(&self, id: u32) -> String {
-        if id == 0 { return String::new(); }
-        let Some(node) = self.find_webcore(id) else { return String::new() };
+        if id == 0 {
+            return String::new();
+        }
+        let Some(node) = self.find_webcore(id) else {
+            return String::new();
+        };
         let tag = node.tag.clone();
         let input_mode = crate::html::forms::value_mode(node);
         match tag.as_str() {
@@ -182,8 +189,13 @@ impl Document {
 
     /// `element.value = v`, the setter half of the above.
     pub fn set_value(&mut self, id: u32, value: &str) {
-        if id == 0 { return; }
-        let tag = self.find_webcore(id).map(|n| n.tag.clone()).unwrap_or_default();
+        if id == 0 {
+            return;
+        }
+        let tag = self
+            .find_webcore(id)
+            .map(|n| n.tag.clone())
+            .unwrap_or_default();
         match tag.as_str() {
             // The IDL setter sets the VALUE and raises the dirty value flag
             // (HTML §4.10.5.4) — it does not rewrite the markup, which is what

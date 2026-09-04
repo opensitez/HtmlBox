@@ -5,11 +5,9 @@
 //! none of the several concerns inside it. Call sites say
 //! `crate::types::X`, so the glob re-exports keep one path to each item.
 
-
-
+use crate::dom::arena::DomArena;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use crate::dom::arena::DomArena;
 
 pub mod animation_helpers;
 pub mod animation_runtime;
@@ -44,6 +42,7 @@ pub mod layout_line;
 pub mod length;
 pub mod live_regions;
 pub mod live_text;
+pub mod logical;
 pub mod scrollbar_hit;
 pub mod slots;
 pub mod transform;
@@ -83,9 +82,9 @@ pub use layout_line::*;
 pub use length::*;
 pub use live_regions::*;
 pub use live_text::*;
+pub use logical::*;
 pub use scrollbar_hit::*;
 pub use slots::*;
 pub use transform::*;
 pub use webcore_node::*;
 pub use wheel_scroll::*;
-

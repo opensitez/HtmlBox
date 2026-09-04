@@ -1,53 +1,70 @@
 //! Hit testing: map screen coordinates ↔ text offsets.
 //! Ported from C++ HitTest.cpp.
 
-use crate::types::*;
 use crate::layout::inline_layout::collect_flat_text;
+use crate::types::*;
 
 // ─── Character-width approximation ───────────────────────────────────────────
 // Matches the renderer's approx_text_width_ls — same coefficients.
 
 fn approx_char_width(ch: char, font_px: f32) -> f32 {
     let base = font_px * 0.55;
-    if "iIlj1!|:;,.'`".contains(ch) { base * 0.45 }
-    else if "mwMW".contains(ch)      { base * 1.20 }
-    else if ch == ' '                 { base * 0.35 }
-    else                              { base }
+    if "iIlj1!|:;,.'`".contains(ch) {
+        base * 0.45
+    } else if "mwMW".contains(ch) {
+        base * 1.20
+    } else if ch == ' ' {
+        base * 0.35
+    } else {
+        base
+    }
 }
 
 fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
-    while idx > 0 && !s.is_char_boundary(idx) { idx -= 1; }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
     idx
 }
 
 // ─── Measure a range [start, end) across inline runs ─────────────────────────
 
 fn measure_run_range(
-    text:           &str,
-    runs:           &[InlineRun],
-    start:          usize,
-    end:            usize,
+    text: &str,
+    runs: &[InlineRun],
+    start: usize,
+    end: usize,
     extra_per_word: f32,
 ) -> f32 {
-    if start >= end { return 0.0; }
+    if start >= end {
+        return 0.0;
+    }
     let mut w = 0.0f32;
     for run in runs {
         let seg_start = start.max(run.text_offset);
-        let seg_end   = end.min(run.text_offset + run.length);
-        if seg_start >= seg_end { continue; }
+        let seg_end = end.min(run.text_offset + run.length);
+        if seg_start >= seg_end {
+            continue;
+        }
 
-        let font_px  = run.style.font_size_px(16.0, 16.0);
+        let font_px = run.style.font_size_px(16.0, 16.0);
         let letter_s = run.style.letter_spacing.resolve(font_px, 0.0, 16.0);
-        let word_s   = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
+        let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
 
         let s = floor_char_boundary(text, seg_start.min(text.len()));
         let e = floor_char_boundary(text, seg_end.min(text.len()));
-        if s >= e { continue; }
+        if s >= e {
+            continue;
+        }
 
         for ch in text[s..e].chars() {
-            if ch == '\n' || ch == '\r' { continue; }
+            if ch == '\n' || ch == '\r' {
+                continue;
+            }
             w += approx_char_width(ch, font_px) + letter_s;
-            if ch == ' ' { w += word_s + extra_per_word; }
+            if ch == ' ' {
+                w += word_s + extra_per_word;
+            }
         }
     }
     w
@@ -57,19 +74,16 @@ fn measure_run_range(
 
 /// Returns the X pixel position of the caret at `offset` within `line`.
 /// `text` is the flat text of the containing box.
-pub fn get_caret_x(
-    text:   &str,
-    runs:   &[InlineRun],
-    line:   &LayoutLine,
-    offset: usize,
-) -> f32 {
+pub fn get_caret_x(text: &str, runs: &[InlineRun], line: &LayoutLine, offset: usize) -> f32 {
     let line_end = line.text_start + line.text_length;
-    let offset   = offset.min(line_end);
+    let offset = offset.min(line_end);
 
     // Fast path: use pre-computed char_x positions (shaped at the same physical
     // pixel size as the renderer, giving pixel-accurate caret placement).
     if !line.char_x.is_empty() {
-        let idx = offset.saturating_sub(line.text_start).min(line.char_x.len() - 1);
+        let idx = offset
+            .saturating_sub(line.text_start)
+            .min(line.char_x.len() - 1);
         return line.x + line.char_x[idx];
     }
 
@@ -78,18 +92,18 @@ pub fn get_caret_x(
         let mut x = line.x;
         for vs in &line.visual_segments {
             let seg_start = vs.logical_start;
-            let seg_end   = (vs.logical_start + vs.length).min(line_end);
-            if seg_start >= seg_end { continue; }
+            let seg_end = (vs.logical_start + vs.length).min(line_end);
+            if seg_start >= seg_end {
+                continue;
+            }
             let is_rtl = (vs.level & 1) != 0;
-            let seg_w  = measure_run_range(text, runs, seg_start, seg_end,
-                                           line.extra_space_per_word);
+            let seg_w =
+                measure_run_range(text, runs, seg_start, seg_end, line.extra_space_per_word);
             if offset >= seg_start && offset <= seg_end {
                 return if is_rtl {
-                    x + measure_run_range(text, runs, offset, seg_end,
-                                          line.extra_space_per_word)
+                    x + measure_run_range(text, runs, offset, seg_end, line.extra_space_per_word)
                 } else {
-                    x + measure_run_range(text, runs, seg_start, offset,
-                                          line.extra_space_per_word)
+                    x + measure_run_range(text, runs, seg_start, offset, line.extra_space_per_word)
                 };
             }
             x += seg_w;
@@ -98,20 +112,23 @@ pub fn get_caret_x(
     }
 
     // LTR path
-    line.x + measure_run_range(text, runs, line.text_start, offset,
-                               line.extra_space_per_word)
+    line.x
+        + measure_run_range(
+            text,
+            runs,
+            line.text_start,
+            offset,
+            line.extra_space_per_word,
+        )
 }
 
 // ─── Offset from X ────────────────────────────────────────────────────────────
 
 /// Returns the text byte-offset closest to `x` pixels within `line`.
-pub fn get_offset_from_x(
-    text: &str,
-    runs: &[InlineRun],
-    line: &LayoutLine,
-    x:    f32,
-) -> usize {
-    if x <= line.x { return line.text_start; }
+pub fn get_offset_from_x(text: &str, runs: &[InlineRun], line: &LayoutLine, x: f32) -> usize {
+    if x <= line.x {
+        return line.text_start;
+    }
 
     let line_end = line.text_start + line.text_length;
 
@@ -127,12 +144,14 @@ pub fn get_offset_from_x(
         let flat_slice_e = floor_char_boundary(text, measure_end.min(text.len()));
         let mut byte_off = line_start;
         for ch in text[flat_slice_s..flat_slice_e].chars() {
-            let i     = byte_off - line_start;
-            let next  = byte_off + ch.len_utf8();
-            let ni    = (next - line_start).min(line.char_x.len() - 1);
+            let i = byte_off - line_start;
+            let next = byte_off + ch.len_utf8();
+            let ni = (next - line_start).min(line.char_x.len() - 1);
             let x0 = line.char_x[i];
             let x1 = line.char_x[ni];
-            if rel_x < x0 + (x1 - x0) / 2.0 { return byte_off; }
+            if rel_x < x0 + (x1 - x0) / 2.0 {
+                return byte_off;
+            }
             byte_off = next;
         }
         return measure_end;
@@ -149,23 +168,29 @@ pub fn get_offset_from_x(
     };
 
     let range_len = measure_end.saturating_sub(line.text_start);
-    if range_len == 0 { return line.text_start; }
+    if range_len == 0 {
+        return line.text_start;
+    }
 
     // Build per-byte-offset character widths
     let mut char_widths = vec![0.0f32; range_len];
 
     for run in runs {
         let seg_start = line.text_start.max(run.text_offset);
-        let seg_end   = measure_end.min(run.text_offset + run.length);
-        if seg_start >= seg_end { continue; }
+        let seg_end = measure_end.min(run.text_offset + run.length);
+        if seg_start >= seg_end {
+            continue;
+        }
 
-        let font_px  = run.style.font_size_px(16.0, 16.0);
+        let font_px = run.style.font_size_px(16.0, 16.0);
         let letter_s = run.style.letter_spacing.resolve(font_px, 0.0, 16.0);
-        let word_s   = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
+        let word_s = run.style.word_spacing.resolve(font_px, 0.0, 16.0);
 
         let s = floor_char_boundary(text, seg_start.min(text.len()));
         let e = floor_char_boundary(text, seg_end.min(text.len()));
-        if s >= e { continue; }
+        if s >= e {
+            continue;
+        }
 
         let mut byte_off = seg_start;
         for ch in text[s..e].chars() {
@@ -173,7 +198,9 @@ pub fn get_offset_from_x(
                 let idx = byte_off - line.text_start;
                 if idx < range_len {
                     let mut cw = approx_char_width(ch, font_px) + letter_s;
-                    if ch == ' ' { cw += word_s; }
+                    if ch == ' ' {
+                        cw += word_s;
+                    }
                     char_widths[idx] = cw;
                 }
             }
@@ -189,7 +216,9 @@ pub fn get_offset_from_x(
         for ch in text[s..e].chars() {
             if ch == ' ' {
                 let idx = byte_off - line.text_start;
-                if idx < range_len { char_widths[idx] += line.extra_space_per_word; }
+                if idx < range_len {
+                    char_widths[idx] += line.extra_space_per_word;
+                }
             }
             byte_off += ch.len_utf8();
         }
@@ -202,8 +231,10 @@ pub fn get_offset_from_x(
         let mut cur_x = 0.0f32;
         for vs in &line.visual_segments {
             let seg_start = vs.logical_start;
-            let seg_end   = (vs.logical_start + vs.length).min(measure_end);
-            if seg_start < line.text_start || seg_start >= seg_end { continue; }
+            let seg_end = (vs.logical_start + vs.length).min(measure_end);
+            if seg_start < line.text_start || seg_start >= seg_end {
+                continue;
+            }
             let is_rtl = (vs.level & 1) != 0;
             let seg_w: f32 = (seg_start..seg_end)
                 .map(|i| char_widths.get(i - line.text_start).copied().unwrap_or(0.0))
@@ -213,11 +244,13 @@ pub fn get_offset_from_x(
                 let s = floor_char_boundary(text, seg_start.min(text.len()));
                 let e = floor_char_boundary(text, seg_end.min(text.len()));
                 if is_rtl {
-                    let mut seg_x   = cur_x + seg_w;
+                    let mut seg_x = cur_x + seg_w;
                     let mut byte_off = seg_start;
                     for ch in text[s..e].chars() {
-                        let cw = char_widths.get(byte_off - line.text_start)
-                                            .copied().unwrap_or(0.0);
+                        let cw = char_widths
+                            .get(byte_off - line.text_start)
+                            .copied()
+                            .unwrap_or(0.0);
                         seg_x -= cw;
                         if rel_x >= seg_x && rel_x < seg_x + cw {
                             return if rel_x < seg_x + cw / 2.0 {
@@ -230,13 +263,17 @@ pub fn get_offset_from_x(
                     }
                     return seg_start;
                 } else {
-                    let mut seg_x   = cur_x;
+                    let mut seg_x = cur_x;
                     let mut byte_off = seg_start;
                     for ch in text[s..e].chars() {
-                        let cw = char_widths.get(byte_off - line.text_start)
-                                            .copied().unwrap_or(0.0);
-                        if rel_x < seg_x + cw / 2.0 { return byte_off; }
-                        seg_x    += cw;
+                        let cw = char_widths
+                            .get(byte_off - line.text_start)
+                            .copied()
+                            .unwrap_or(0.0);
+                        if rel_x < seg_x + cw / 2.0 {
+                            return byte_off;
+                        }
+                        seg_x += cw;
                         byte_off += ch.len_utf8();
                     }
                     return seg_end;
@@ -248,14 +285,19 @@ pub fn get_offset_from_x(
     }
 
     // LTR path
-    let mut cur_x    = 0.0f32;
+    let mut cur_x = 0.0f32;
     let mut byte_off = line.text_start;
     let s = floor_char_boundary(text, line.text_start.min(text.len()));
     let e = floor_char_boundary(text, measure_end.min(text.len()));
     for ch in text[s..e].chars() {
-        let cw = char_widths.get(byte_off - line.text_start).copied().unwrap_or(0.0);
-        if rel_x < cur_x + cw / 2.0 { return byte_off; }
-        cur_x    += cw;
+        let cw = char_widths
+            .get(byte_off - line.text_start)
+            .copied()
+            .unwrap_or(0.0);
+        if rel_x < cur_x + cw / 2.0 {
+            return byte_off;
+        }
+        cur_x += cw;
         byte_off += ch.len_utf8();
     }
     measure_end
@@ -266,7 +308,7 @@ pub fn get_offset_from_x(
 /// Result of a hit test: identifies which box was hit and where within it.
 pub struct HitResult {
     /// Stable node identity (survives tree mutations).
-    pub node_id:      u32,
+    pub node_id: u32,
     /// Byte offset within that box's flat text.
     pub local_offset: usize,
 }
@@ -279,13 +321,54 @@ pub struct HitResult {
 // entirely in absolute coordinates and does NOT subtract content_rect offsets
 // when recursing into children.
 
+/// The point mapped into `node`'s own coordinate system.
+///
+/// css-transforms-1 §transform-rendering: a transform establishes a new local
+/// coordinate system for the element and its descendants, and a point is
+/// mapped into it by pre-multiplying with the INVERSE of the matrix. Testing
+/// the raw document point against the untransformed `border_rect` made every
+/// translated, rotated or scaled control unclickable where it is DRAWN — and
+/// clickable where it is not.
+///
+/// ⛔ `vw`/`vh` inside a `translate()` resolve against a zero viewport here:
+/// the hit-test entry points are public API that carries no viewport, and the
+/// layout engine that has one is not on this path. Percentages — the reference
+/// box — and `px`/`em` are exact. Recorded in `cssgaps.md`.
+pub(crate) fn to_local(node: &WebCore, pt: (f32, f32)) -> (f32, f32) {
+    if node.style.css_transform.ops.is_empty() {
+        return pt;
+    }
+    let m = crate::renderer::display_list_builder::compute_transform_matrix(
+        &node.style,
+        &node.layout.border_rect,
+        &crate::types::TransformCtx {
+            font_px: node.style.font_size_px(16.0, 16.0),
+            root_font_px: 16.0,
+            viewport_w: 0.0,
+            viewport_h: 0.0,
+        },
+    );
+    let det = m[0] * m[3] - m[1] * m[2];
+    // A singular matrix (`scale(0)`) collapses the box to nothing; there is no
+    // point to map back, and the box cannot be hit.
+    if det.abs() < 1e-6 {
+        return pt;
+    }
+    let (x, y) = (pt.0 - m[4], pt.1 - m[5]);
+    ((m[3] * x - m[2] * y) / det, (-m[1] * x + m[0] * y) / det)
+}
+
 fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitResult> {
-    if matches!(node.style.display, Display::None) { return None; }
+    if matches!(node.style.display, Display::None) {
+        return None;
+    }
     // `inert` blocks pointer interaction for the whole subtree (HTML §6.7).
     // Returning here rather than checking ancestors IS the inherited rule:
     // the walk is top-down, so a subtree it never enters is one no descendant
     // of can be hit.
-    if node.attributes.contains_key("inert") { return None; }
+    if node.attributes.contains_key("inert") {
+        return None;
+    }
 
     // Adjust for this node's own scroll offset (rare — only scrollable boxes)
     let px = doc_pt.0 + node.layout.scroll_left;
@@ -295,84 +378,129 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
     // block children (e.g. buttons) receive hits even when the parent has
     // inline text nodes. See fallback handling below.
 
-    // Pass 0: positioned children with z-index > 0 (highest z-index first).
-    // These paint on top of everything else and should receive hits first.
-    // This handles CSS dropdowns (z-index:99999) that overlap sibling content.
-    {
-        let mut zi_children: Vec<(i32, usize)> = Vec::new();
-        for (i, child) in node.children.iter().enumerate() {
-            if child.attributes.contains_key("inert") { continue; }
-            if child.style.is_positioned() && child.style.z_index > 0 {
-                zi_children.push((child.style.z_index, i));
+    let children_are_clipped = children_clipped_at(node, px, py);
+    if !children_are_clipped {
+        // Pass 0: positioned children with z-index > 0 (highest z-index first).
+        // These paint on top of everything else and should receive hits first.
+        // This handles CSS dropdowns (z-index:99999) that overlap sibling content.
+        {
+            let mut zi_children: Vec<(i32, usize)> = Vec::new();
+            for (i, child) in node.children.iter().enumerate() {
+                if child.attributes.contains_key("inert") {
+                    continue;
+                }
+                if child.style.is_positioned() && child.style.z_index > 0 {
+                    zi_children.push((child.style.z_index, i));
+                }
             }
-        }
-        if !zi_children.is_empty() {
-            // Highest z-index first
-            zi_children.sort_by(|a, b| b.0.cmp(&a.0));
-            for &(_, idx) in &zi_children {
-                let child = &node.children[idx];
-                if child.tag == "::before" || child.tag == "::after" { continue; }
-                if child.layout.border_rect.h <= 0.0
-                    && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
-                let b = &child.layout.border_rect;
-                if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
-                    if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-                    return Some(HitResult { node_id: child.node_id, local_offset: 0 });
+            if !zi_children.is_empty() {
+                // Highest z-index first
+                zi_children.sort_by(|a, b| b.0.cmp(&a.0));
+                for &(_, idx) in &zi_children {
+                    let child = &node.children[idx];
+                    if child.tag == "::before" || child.tag == "::after" {
+                        continue;
+                    }
+                    if child.layout.border_rect.h <= 0.0
+                        && matches!(child.style.overflow_y, crate::types::Overflow::Hidden)
+                    {
+                        continue;
+                    }
+                    let (cx, cy) = to_local(child, (px, py));
+                    let b = &child.layout.border_rect;
+                    if cx >= b.x && cx < b.x + b.w && cy >= b.y && cy < b.y + b.h {
+                        if let Some(r) = hit_test_impl(child, (cx, cy), _button) {
+                            return Some(r);
+                        }
+                        return Some(HitResult {
+                            node_id: child.node_id,
+                            local_offset: 0,
+                        });
+                    }
                 }
             }
         }
-    }
 
-    // Pass 1: deepest child whose borderRect (absolute) contains the point
-    for child in node.children.iter().rev() {
-        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
-        // back to `return Some(child.node_id)` when the recursion finds nothing
-        // deeper, so a child that refused the hit would be returned anyway.
-        if child.attributes.contains_key("inert") { continue; }
-        // display:contents elements are transparent — recurse into their children directly
-        if matches!(child.style.display, crate::types::Display::Contents) {
-            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-            continue;
+        // Pass 1: deepest child whose borderRect (absolute) contains the point
+        for child in node.children.iter().rev() {
+            // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+            // back to `return Some(child.node_id)` when the recursion finds nothing
+            // deeper, so a child that refused the hit would be returned anyway.
+            if child.attributes.contains_key("inert") {
+                continue;
+            }
+            // display:contents elements are transparent — recurse into their children directly
+            if matches!(child.style.display, crate::types::Display::Contents) {
+                if let Some(r) = hit_test_impl(child, (px, py), _button) {
+                    return Some(r);
+                }
+                continue;
+            }
+            // Skip elements with 0 height and overflow:hidden — they're collapsed (e.g. hidden dropdowns)
+            if child.layout.border_rect.h <= 0.0
+                && matches!(child.style.overflow_y, crate::types::Overflow::Hidden)
+            {
+                continue;
+            }
+            // Skip ::before/::after pseudo-elements for hit testing — they're decorative
+            if child.tag == "::before" || child.tag == "::after" {
+                continue;
+            }
+            let (cx, cy) = to_local(child, (px, py));
+            let b = &child.layout.border_rect;
+            if cx >= b.x && cx < b.x + b.w && cy >= b.y && cy < b.y + b.h {
+                if let Some(r) = hit_test_impl(child, (cx, cy), _button) {
+                    return Some(r);
+                }
+                return Some(HitResult {
+                    node_id: child.node_id,
+                    local_offset: 0,
+                });
+            }
         }
-        // Skip elements with 0 height and overflow:hidden — they're collapsed (e.g. hidden dropdowns)
-        if child.layout.border_rect.h <= 0.0
-            && matches!(child.style.overflow_y, crate::types::Overflow::Hidden) { continue; }
-        // Skip ::before/::after pseudo-elements for hit testing — they're decorative
-        if child.tag == "::before" || child.tag == "::after" { continue; }
-        let b = &child.layout.border_rect;
-        if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
-            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
-            return Some(HitResult { node_id: child.node_id, local_offset: 0 });
-        }
-    }
 
-    // Pass 2: children whose marginRect contains the point (gap / margin areas)
-    for child in node.children.iter().rev() {
-        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
-        // back to `return Some(child.node_id)` when the recursion finds nothing
-        // deeper, so a child that refused the hit would be returned anyway.
-        if child.attributes.contains_key("inert") { continue; }
-        let b = &child.layout.border_rect;
-        let in_border = px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h;
-        if in_border { continue; }
-        let m = &child.layout.margin_rect;
-        if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
-            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
+        // Pass 2: children whose marginRect contains the point (gap / margin areas)
+        for child in node.children.iter().rev() {
+            // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+            // back to `return Some(child.node_id)` when the recursion finds nothing
+            // deeper, so a child that refused the hit would be returned anyway.
+            if child.attributes.contains_key("inert") {
+                continue;
+            }
+            let (cx, cy) = to_local(child, (px, py));
+            let b = &child.layout.border_rect;
+            let in_border = cx >= b.x && cx < b.x + b.w && cy >= b.y && cy < b.y + b.h;
+            if in_border {
+                continue;
+            }
+            let m = &child.layout.margin_rect;
+            if cx >= m.x && cx < m.x + m.w && cy >= m.y && cy < m.y + m.h {
+                if let Some(r) = hit_test_impl(child, (cx, cy), _button) {
+                    return Some(r);
+                }
+            }
         }
-    }
 
-    // Pass 3: X-range only — handles margin-collapse overflow
-    for child in node.children.iter().rev() {
-        // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
-        // back to `return Some(child.node_id)` when the recursion finds nothing
-        // deeper, so a child that refused the hit would be returned anyway.
-        if child.attributes.contains_key("inert") { continue; }
-        let m = &child.layout.margin_rect;
-        let in_margin = px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h;
-        if in_margin { continue; }
-        let b = &child.layout.border_rect;
-        if px >= b.x && px < b.x + b.w {
-            if let Some(r) = hit_test_impl(child, (px, py), _button) { return Some(r); }
+        // Pass 3: X-range only — handles margin-collapse overflow
+        for child in node.children.iter().rev() {
+            // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
+            // back to `return Some(child.node_id)` when the recursion finds nothing
+            // deeper, so a child that refused the hit would be returned anyway.
+            if child.attributes.contains_key("inert") {
+                continue;
+            }
+            let (cx, cy) = to_local(child, (px, py));
+            let m = &child.layout.margin_rect;
+            let in_margin = cx >= m.x && cx < m.x + m.w && cy >= m.y && cy < m.y + m.h;
+            if in_margin {
+                continue;
+            }
+            let b = &child.layout.border_rect;
+            if cx >= b.x && cx < b.x + b.w {
+                if let Some(r) = hit_test_impl(child, (cx, cy), _button) {
+                    return Some(r);
+                }
+            }
         }
     }
 
@@ -381,30 +509,56 @@ fn hit_test_impl(node: &WebCore, doc_pt: (f32, f32), _button: u8) -> Option<HitR
     if px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h {
         // If this node has inline content, return the inline hit offset
         // (caret/text hit). Otherwise select the node itself.
-            if !node.layout.line_cache.is_empty() {
+        if !node.layout.line_cache.is_empty() {
             let flat = collect_flat_text(node);
             let line = snap_to_line(&node.layout.line_cache, py);
-            let off  = get_offset_from_x(&flat, &node.layout.inline_runs, line, px);
-            return Some(HitResult { node_id: node.node_id, local_offset: off });
+            let off = get_offset_from_x(&flat, &node.layout.inline_runs, line, px);
+            return Some(HitResult {
+                node_id: node.node_id,
+                local_offset: off,
+            });
         }
-        return Some(HitResult { node_id: node.node_id, local_offset: 0 });
+        return Some(HitResult {
+            node_id: node.node_id,
+            local_offset: 0,
+        });
     }
 
     None
 }
 
+fn children_clipped_at(node: &WebCore, px: f32, py: f32) -> bool {
+    let clip_x = matches!(
+        node.style.overflow_x,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    );
+    let clip_y = matches!(
+        node.style.overflow_y,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    );
+    if !clip_x && !clip_y {
+        return false;
+    }
+    let p = &node.layout.padding_rect;
+    (clip_x && (px < p.x || px >= p.x + p.w)) || (clip_y && (py < p.y || py >= p.y + p.h))
+}
+
 fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
-    if lines.is_empty() { panic!("snap_to_line called with empty lines"); }
-    
+    if lines.is_empty() {
+        panic!("snap_to_line called with empty lines");
+    }
+
     let mut lo = 0usize;
     let mut hi = lines.len() - 1;
-    
+
     while lo <= hi {
         let mid = (lo + hi) / 2;
         let l = &lines[mid];
-        
+
         if y < l.y {
-            if mid == 0 { return &lines[0]; }
+            if mid == 0 {
+                return &lines[0];
+            }
             hi = mid - 1;
         } else if y >= l.y + l.height {
             lo = mid + 1;
@@ -412,9 +566,11 @@ fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
             return l;
         }
     }
-    
+
     // Snap to the closest line if we're between lines
-    if lo >= lines.len() { return lines.last().unwrap(); }
+    if lo >= lines.len() {
+        return lines.last().unwrap();
+    }
     &lines[lo]
 }
 
@@ -425,8 +581,9 @@ fn snap_to_line(lines: &[LayoutLine], y: f32) -> &LayoutLine {
 /// The point is relative to the document origin (top-left of viewport content),
 /// before any scroll offset is applied — i.e. `(mouse_x + scroll_x, mouse_y + scroll_y)`.
 pub fn point_to_hit(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<HitResult> {
-    // Coordinates are absolute — pass directly (root.layout.content_rect is always 0,0)
-    hit_test_impl(root, doc_pt, button)
+    // Coordinates are absolute — pass directly (root.layout.content_rect is always 0,0).
+    // The root's OWN transform has no parent to undo it, so it is undone here.
+    hit_test_impl(root, to_local(root, doc_pt), button)
 }
 
 /// Map a (node_id, local_byte_offset) back to a document-space (x, y) point
@@ -434,27 +591,31 @@ pub fn point_to_hit(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<Hi
 ///
 /// Pass `scroll_x = 0, scroll_y = 0` to get absolute document coordinates.
 pub fn offset_to_point(
-    root:         &WebCore,
-    target_id:    u32,
+    root: &WebCore,
+    target_id: u32,
     local_offset: usize,
-    scroll_x:     f32,
-    scroll_y:     f32,
+    scroll_x: f32,
+    scroll_y: f32,
 ) -> Option<(f32, f32)> {
     find_and_measure(root, target_id, local_offset, scroll_x, scroll_y)
 }
 
 fn find_and_measure(
-    node:         &WebCore,
-    target_id:    u32,
+    node: &WebCore,
+    target_id: u32,
     local_offset: usize,
-    scroll_x:     f32,
-    scroll_y:     f32,
+    scroll_x: f32,
+    scroll_y: f32,
 ) -> Option<(f32, f32)> {
     if node.node_id == target_id {
         let flat = collect_flat_text(node);
         return Some(caret_point_in_box(
-            &flat, &node.layout.inline_runs, &node.layout.line_cache,
-            local_offset, scroll_x, scroll_y,
+            &flat,
+            &node.layout.inline_runs,
+            &node.layout.line_cache,
+            local_offset,
+            scroll_x,
+            scroll_y,
         ));
     }
 
@@ -465,8 +626,12 @@ fn find_and_measure(
         if let Some(abs_off) = inline_offset_of_by_id(node, target_id, local_offset, &mut acc) {
             let flat = collect_flat_text(node);
             return Some(caret_point_in_box(
-                &flat, &node.layout.inline_runs, &node.layout.line_cache,
-                abs_off, scroll_x, scroll_y,
+                &flat,
+                &node.layout.inline_runs,
+                &node.layout.line_cache,
+                abs_off,
+                scroll_x,
+                scroll_y,
             ));
         }
     }
@@ -481,19 +646,23 @@ fn find_and_measure(
 
 /// Like inline_offset_of but matches by node_id instead of pointer.
 fn inline_offset_of_by_id(
-    node:         &WebCore,
-    target_id:    u32,
+    node: &WebCore,
+    target_id: u32,
     local_offset: usize,
-    acc:          &mut usize,
+    acc: &mut usize,
 ) -> Option<usize> {
     if node.node_id == target_id {
         return Some(*acc + local_offset);
     }
-    if matches!(node.style.display,
-                Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+    if matches!(
+        node.style.display,
+        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+    ) {
         return None;
     }
-    if matches!(node.style.display, Display::None) { return None; }
+    if matches!(node.style.display, Display::None) {
+        return None;
+    }
     if node.is_text_node() {
         *acc += node.text.len();
         return None;
@@ -510,12 +679,12 @@ fn inline_offset_of_by_id(
 }
 
 fn caret_point_in_box(
-    flat:         &str,
-    runs:         &[InlineRun],
-    lines:        &[LayoutLine],
+    flat: &str,
+    runs: &[InlineRun],
+    lines: &[LayoutLine],
     local_offset: usize,
-    scroll_x:     f32,
-    scroll_y:     f32,
+    scroll_x: f32,
+    scroll_y: f32,
 ) -> (f32, f32) {
     // line.x / line.y are absolute document coordinates
     for line in lines {
@@ -534,25 +703,39 @@ fn caret_point_in_box(
 
 /// Find the deepest box at a document-space point. Returns node_id.
 pub fn hit_test_box_at(root: &WebCore, doc_pt: (f32, f32), button: u8) -> u32 {
-    deepest_box_at(root, doc_pt, button).unwrap_or(root.node_id)
+    deepest_box_at(root, to_local(root, doc_pt), button).unwrap_or(root.node_id)
 }
 
 fn deepest_box_at(node: &WebCore, pt: (f32, f32), _button: u8) -> Option<u32> {
-    if matches!(node.style.display, Display::None) { return None; }
+    if matches!(node.style.display, Display::None) {
+        return None;
+    }
     // ⛔ The SECOND tree walker — `hit_test_impl` above is not the only road
     // in, and a guard on one of them is invisible to every test that drives
     // the other. The check is per-CHILD in the loop below rather than here:
     // this function's only caller answers `unwrap_or(root.node_id)`, so a
     // guard at this point cannot change what an inert root returns.
-    let (px, py) = (pt.0 + node.layout.scroll_left, pt.1 + node.layout.scroll_top);
+    let (px, py) = (
+        pt.0 + node.layout.scroll_left,
+        pt.1 + node.layout.scroll_top,
+    );
+    if children_clipped_at(node, px, py) {
+        return None;
+    }
     for child in node.children.iter().rev() {
         // ⛔ Skipped HERE, not by the recursive call: each of these loops falls
         // back to `return Some(child.node_id)` when the recursion finds nothing
         // deeper, so a child that refused the hit would be returned anyway.
-        if child.attributes.contains_key("inert") { continue; }
+        if child.attributes.contains_key("inert") {
+            continue;
+        }
+        // The second walker needs the same mapping — see `to_local`.
+        let (cx, cy) = to_local(child, (px, py));
         let m = &child.layout.margin_rect;
-        if px >= m.x && px < m.x + m.w && py >= m.y && py < m.y + m.h {
-            if let Some(r) = deepest_box_at(child, (px, py), _button) { return Some(r); }
+        if cx >= m.x && cx < m.x + m.w && cy >= m.y && cy < m.y + m.h {
+            if let Some(r) = deepest_box_at(child, (cx, cy), _button) {
+                return Some(r);
+            }
             return Some(child.node_id);
         }
     }
@@ -561,18 +744,25 @@ fn deepest_box_at(node: &WebCore, pt: (f32, f32), _button: u8) -> Option<u32> {
 
 /// Find a link URL at a document-space point, if any.
 pub fn hit_test_link(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<String> {
+    let doc_pt = to_local(root, doc_pt);
     // 1. Try hitting text content (inline runs)
     if let Some(hit) = hit_test_impl(root, doc_pt, button) {
         fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
-            if node.node_id == id { return Some(node); }
+            if node.node_id == id {
+                return Some(node);
+            }
             for child in &node.children {
-                if let Some(f) = find_node(child, id) { return Some(f); }
+                if let Some(f) = find_node(child, id) {
+                    return Some(f);
+                }
             }
             None
         }
         if let Some(node) = find_node(root, hit.node_id) {
             for run in &node.layout.inline_runs {
-                if hit.local_offset >= run.text_offset && hit.local_offset < run.text_offset + run.length {
+                if hit.local_offset >= run.text_offset
+                    && hit.local_offset < run.text_offset + run.length
+                {
                     if !run.style.href.is_empty() {
                         return Some(run.style.href.clone());
                     }
@@ -583,37 +773,50 @@ pub fn hit_test_link(root: &WebCore, doc_pt: (f32, f32), button: u8) -> Option<S
 
     // 2. Fallback: find the deepest box and search up for 'href' attribute
     let target_id = hit_test_box_at(root, doc_pt, button);
-    if target_id == 0 { return None; }
+    if target_id == 0 {
+        return None;
+    }
     find_href_up_by_id(root, target_id)
 }
 
 fn find_href_up_by_id(root: &WebCore, target_id: u32) -> Option<String> {
     fn walk(node: &WebCore, target_id: u32, path: &mut Vec<u32>) -> bool {
         path.push(node.node_id);
-        if node.node_id == target_id { return true; }
+        if node.node_id == target_id {
+            return true;
+        }
         for child in &node.children {
-            if walk(child, target_id, path) { return true; }
+            if walk(child, target_id, path) {
+                return true;
+            }
         }
         path.pop();
         false
     }
     let mut path = Vec::new();
-    if !walk(root, target_id, &mut path) { return None; }
+    if !walk(root, target_id, &mut path) {
+        return None;
+    }
     // Walk path in reverse (target → root) looking for href
     for &nid in path.iter().rev() {
         fn find_node(node: &WebCore, id: u32) -> Option<&WebCore> {
-            if node.node_id == id { return Some(node); }
+            if node.node_id == id {
+                return Some(node);
+            }
             for child in &node.children {
-                if let Some(f) = find_node(child, id) { return Some(f); }
+                if let Some(f) = find_node(child, id) {
+                    return Some(f);
+                }
             }
             None
         }
         if let Some(node) = find_node(root, nid) {
             if let Some(href) = node.attributes.get("href") {
-                if !href.is_empty() { return Some(href.clone()); }
+                if !href.is_empty() {
+                    return Some(href.clone());
+                }
             }
         }
     }
     None
 }
-

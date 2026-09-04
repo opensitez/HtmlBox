@@ -1,20 +1,20 @@
 pub mod block;
-pub mod inline_layout;
-pub mod text;
+pub mod constraints;
 pub mod flex;
 pub mod grid;
-pub mod constraints;
+pub mod inline_layout;
 pub mod perf;
+pub mod text;
 
 use std::collections::HashMap;
-pub mod table;
 pub mod hit_test;
 pub mod layout_box;
+pub mod table;
 
-pub use constraints::{Constraints, IntrinsicSizes, FormattingContext};
+pub use constraints::{Constraints, FormattingContext, IntrinsicSizes};
 
-use std::cell::Cell;
 use crate::types::*;
+use std::cell::Cell;
 
 // ─── Font loading helpers ──────────────────────────────────────────────────────
 
@@ -30,7 +30,11 @@ fn split_font_sources(src: &str) -> Vec<&str> {
     for (i, c) in src.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => { if depth > 0 { depth -= 1; } }
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
             ',' if depth == 0 => {
                 result.push(&src[start..i]);
                 start = i + 1;
@@ -55,7 +59,9 @@ fn load_font_bytes(fs: &mut cosmic_text::FontSystem, data: Vec<u8>) {
         // WOFF2 is Brotli plus a `glyf`/`loca` transform; decoding it in-house
         // keeps the font on the same streaming path as every other resource.
         match crate::woff2::decode(&data) {
-            Some(sfnt) => { fs.db_mut().load_font_data(sfnt); }
+            Some(sfnt) => {
+                fs.db_mut().load_font_data(sfnt);
+            }
             None => {}
         }
         return;
@@ -76,42 +82,44 @@ fn load_font_bytes(fs: &mut cosmic_text::FontSystem, data: Vec<u8>) {
 fn decode_woff1(data: &[u8]) -> Option<Vec<u8>> {
     use flate2::read::ZlibDecoder;
 
-    if data.len() < 44 { return None; }
+    if data.len() < 44 {
+        return None;
+    }
 
     let r32 = |off: usize| -> u32 {
-        u32::from_be_bytes([data[off], data[off+1], data[off+2], data[off+3]])
+        u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
     };
-    let r16 = |off: usize| -> u16 {
-        u16::from_be_bytes([data[off], data[off+1]])
-    };
+    let r16 = |off: usize| -> u16 { u16::from_be_bytes([data[off], data[off + 1]]) };
 
-    let _signature = r32(0);       // 'wOFF'
-    let flavor     = r32(4);       // original sfVersion (e.g. 0x00010000 for TrueType)
-    let _length    = r32(8);       // total WOFF file size
+    let _signature = r32(0); // 'wOFF'
+    let flavor = r32(4); // original sfVersion (e.g. 0x00010000 for TrueType)
+    let _length = r32(8); // total WOFF file size
     let num_tables = r16(12);
-    let _reserved  = r16(14);
+    let _reserved = r16(14);
     let total_sfnt = r32(16) as usize; // total size of uncompressed font
-    // bytes 20..44: version, metadata, private data offsets (not needed)
+                                       // bytes 20..44: version, metadata, private data offsets (not needed)
 
     // Each table directory entry is 20 bytes, starting at offset 44
     struct TableEntry {
-        tag:             [u8; 4],
-        offset:          usize,
-        comp_length:     usize,
-        orig_length:     usize,
-        orig_checksum:   u32,
+        tag: [u8; 4],
+        offset: usize,
+        comp_length: usize,
+        orig_length: usize,
+        orig_checksum: u32,
     }
     let mut entries = Vec::with_capacity(num_tables as usize);
     for i in 0..num_tables as usize {
         let base = 44 + i * 20;
-        if base + 20 > data.len() { return None; }
+        if base + 20 > data.len() {
+            return None;
+        }
         let mut tag = [0u8; 4];
-        tag.copy_from_slice(&data[base..base+4]);
+        tag.copy_from_slice(&data[base..base + 4]);
         entries.push(TableEntry {
             tag,
-            offset:       r32(base + 4) as usize,
-            comp_length:  r32(base + 8) as usize,
-            orig_length:  r32(base + 12) as usize,
+            offset: r32(base + 4) as usize,
+            comp_length: r32(base + 8) as usize,
+            orig_length: r32(base + 12) as usize,
             orig_checksum: r32(base + 16),
         });
     }
@@ -149,7 +157,9 @@ fn decode_woff1(data: &[u8]) -> Option<Vec<u8>> {
             decompressed
         } else {
             // uncompressed
-            if entry.offset + entry.orig_length > data.len() { return None; }
+            if entry.offset + entry.orig_length > data.len() {
+                return None;
+            }
             data[entry.offset..entry.offset + entry.orig_length].to_vec()
         };
 
@@ -188,7 +198,10 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
         \xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\
         \x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff";
 
-    let s: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
+    let s: Vec<u8> = s
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ')
+        .collect();
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut i = 0;
     while i + 3 < s.len() {
@@ -196,15 +209,23 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
         let b = s[i + 1];
         let c = s[i + 2];
         let d = s[i + 3];
-        if a >= 128 || b >= 128 || c >= 128 || d >= 128 { return Err(()); }
+        if a >= 128 || b >= 128 || c >= 128 || d >= 128 {
+            return Err(());
+        }
         let va = TABLE[a as usize];
         let vb = TABLE[b as usize];
         let vc = if c == b'=' { 0 } else { TABLE[c as usize] };
         let vd = if d == b'=' { 0 } else { TABLE[d as usize] };
-        if va == 0xff || vb == 0xff || vc == 0xff || vd == 0xff { return Err(()); }
+        if va == 0xff || vb == 0xff || vc == 0xff || vd == 0xff {
+            return Err(());
+        }
         out.push((va << 2) | (vb >> 4));
-        if c != b'=' { out.push((vb << 4) | (vc >> 2)); }
-        if d != b'=' { out.push((vc << 6) | vd); }
+        if c != b'=' {
+            out.push((vb << 4) | (vc >> 2));
+        }
+        if d != b'=' {
+            out.push((vc << 6) | vd);
+        }
         i += 4;
     }
     Ok(out)
@@ -214,16 +235,21 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, ()> {
 
 #[derive(Debug, Default, Clone)]
 pub struct FloatItem {
-    pub rect:  Rect,
-    pub side:  FloatSide,
-    pub clear: f32,  // bottom of this float
+    pub rect: Rect,
+    pub side: FloatSide,
+    pub clear: f32, // bottom of this float
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FloatSide { Left, Right }
+pub enum FloatSide {
+    Left,
+    Right,
+}
 
 impl Default for FloatSide {
-    fn default() -> Self { Self::Left }
+    fn default() -> Self {
+        Self::Left
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -235,21 +261,26 @@ pub struct FloatContext {
 impl FloatContext {
     pub fn available_width(
         &self,
-        y: f32, line_h: f32,
+        y: f32,
+        line_h: f32,
         containing_w: f32,
         out_left: &mut f32,
         out_right: &mut f32,
     ) {
-        *out_left  = 0.0;
+        *out_left = 0.0;
         *out_right = containing_w;
         for f in &self.floats {
             if f.rect.y < y + line_h && f.clear > y {
                 if f.side == FloatSide::Left {
                     let r = f.rect.x + f.rect.w;
-                    if r > *out_left { *out_left = r; }
+                    if r > *out_left {
+                        *out_left = r;
+                    }
                 } else {
                     let l = f.rect.x;
-                    if l < *out_right { *out_right = l; }
+                    if l < *out_right {
+                        *out_right = l;
+                    }
                 }
             }
         }
@@ -259,9 +290,21 @@ impl FloatContext {
         let mut y = current_y;
         for f in &self.floats {
             match clear {
-                Clear::Left  if f.side == FloatSide::Left  => { if f.clear > y { y = f.clear; } }
-                Clear::Right if f.side == FloatSide::Right => { if f.clear > y { y = f.clear; } }
-                Clear::Both                                 => { if f.clear > y { y = f.clear; } }
+                Clear::Left if f.side == FloatSide::Left => {
+                    if f.clear > y {
+                        y = f.clear;
+                    }
+                }
+                Clear::Right if f.side == FloatSide::Right => {
+                    if f.clear > y {
+                        y = f.clear;
+                    }
+                }
+                Clear::Both => {
+                    if f.clear > y {
+                        y = f.clear;
+                    }
+                }
                 _ => {}
             }
         }
@@ -271,7 +314,8 @@ impl FloatContext {
     pub fn place_float(
         &mut self,
         current_y: f32,
-        float_w: f32, float_h: f32,
+        float_w: f32,
+        float_h: f32,
         containing_w: f32,
         side: FloatSide,
     ) -> Rect {
@@ -282,13 +326,19 @@ impl FloatContext {
             let mut right = containing_w;
             self.available_width(y, float_h, containing_w, &mut left, &mut right);
             let available = right - left;
-            if available >= float_w { break; }
+            if available >= float_w {
+                break;
+            }
             // Move past the nearest float bottom
-            let next_y = self.floats.iter()
+            let next_y = self
+                .floats
+                .iter()
                 .filter(|f| f.clear > y)
                 .map(|f| f.clear)
                 .fold(f32::MAX, f32::min);
-            if next_y == f32::MAX { break; }
+            if next_y == f32::MAX {
+                break;
+            }
             y = next_y;
         }
 
@@ -296,9 +346,17 @@ impl FloatContext {
         let mut right = containing_w;
         self.available_width(y, float_h, containing_w, &mut left, &mut right);
 
-        let x = if side == FloatSide::Left { left } else { right - float_w };
+        let x = if side == FloatSide::Left {
+            left
+        } else {
+            right - float_w
+        };
         let rect = Rect::new(x, y, float_w, float_h);
-        self.floats.push(FloatItem { rect, side, clear: y + float_h });
+        self.floats.push(FloatItem {
+            rect,
+            side,
+            clear: y + float_h,
+        });
         rect
     }
 }
@@ -319,7 +377,8 @@ fn propagate_dirty(node: &mut WebCore) -> bool {
     // Fast path: if neither this node nor any descendant is dirty, skip entirely.
     // Check both cascade-dirty descendants (hover → style → layout) and
     // layout-dirty descendants (DOM mutation → layout_dirty set directly).
-    if !node.layout.layout_dirty && !node.has_dirty_descendant && !node.has_dirty_layout_descendant {
+    if !node.layout.layout_dirty && !node.has_dirty_descendant && !node.has_dirty_layout_descendant
+    {
         return false;
     }
     // Invalidate intrinsic width cache — a dirty descendant means our
@@ -329,7 +388,9 @@ fn propagate_dirty(node: &mut WebCore) -> bool {
 
     let mut child_dirty = false;
     for child in &mut node.children {
-        if propagate_dirty(child) { child_dirty = true; }
+        if propagate_dirty(child) {
+            child_dirty = true;
+        }
     }
     if child_dirty {
         node.layout.layout_dirty = true;
@@ -342,33 +403,41 @@ fn propagate_dirty(node: &mut WebCore) -> bool {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ResolvedBox {
-    pub margin_top:    f32,
-    pub margin_right:  f32,
+    pub margin_top: f32,
+    pub margin_right: f32,
     pub margin_bottom: f32,
-    pub margin_left:   f32,
+    pub margin_left: f32,
 
-    pub padding_top:    f32,
-    pub padding_right:  f32,
+    pub padding_top: f32,
+    pub padding_right: f32,
     pub padding_bottom: f32,
-    pub padding_left:   f32,
+    pub padding_left: f32,
 
-    pub border_top:    f32,
-    pub border_right:  f32,
+    pub border_top: f32,
+    pub border_right: f32,
     pub border_bottom: f32,
-    pub border_left:   f32,
+    pub border_left: f32,
 
-    pub content_width:  Option<f32>,  // None = auto
+    pub content_width: Option<f32>, // None = auto
     pub content_height: Option<f32>,
 }
 
 impl ResolvedBox {
     pub fn h_space(&self) -> f32 {
-        self.margin_left + self.border_left + self.padding_left
-            + self.padding_right + self.border_right + self.margin_right
+        self.margin_left
+            + self.border_left
+            + self.padding_left
+            + self.padding_right
+            + self.border_right
+            + self.margin_right
     }
     pub fn v_space(&self) -> f32 {
-        self.margin_top + self.border_top + self.padding_top
-            + self.padding_bottom + self.border_bottom + self.margin_bottom
+        self.margin_top
+            + self.border_top
+            + self.padding_top
+            + self.padding_bottom
+            + self.border_bottom
+            + self.margin_bottom
     }
     pub fn inner_h_space(&self) -> f32 {
         self.border_left + self.padding_left + self.padding_right + self.border_right
@@ -378,27 +447,68 @@ impl ResolvedBox {
     }
 }
 
-pub fn resolve_box(style: &ComputedStyle, parent_font_px: f32,
-                   containing_w: f32, root_font_px: f32) -> ResolvedBox {
-    resolve_box_vp(style, parent_font_px, containing_w, root_font_px, 0.0, 0.0, None)
+pub fn resolve_box(
+    style: &ComputedStyle,
+    parent_font_px: f32,
+    containing_w: f32,
+    root_font_px: f32,
+) -> ResolvedBox {
+    resolve_box_vp(
+        style,
+        parent_font_px,
+        containing_w,
+        root_font_px,
+        0.0,
+        0.0,
+        None,
+    )
 }
 
-pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
-                   containing_w: f32, root_font_px: f32,
-                   viewport_w: f32, viewport_h: f32,
-                   containing_h: Option<f32>) -> ResolvedBox {
-    let res = |l: &CssLength| l.resolve_vp(parent_font_px, containing_w, root_font_px, viewport_w, viewport_h);
+pub fn resolve_box_vp(
+    style: &ComputedStyle,
+    parent_font_px: f32,
+    containing_w: f32,
+    root_font_px: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    containing_h: Option<f32>,
+) -> ResolvedBox {
+    let res = |l: &CssLength| {
+        l.resolve_vp(
+            parent_font_px,
+            containing_w,
+            root_font_px,
+            viewport_w,
+            viewport_h,
+        )
+    };
     let _font_px = style.font_size_px(parent_font_px, root_font_px);
 
-    let pad_left   = res(&style.padding_left);
-    let pad_right  = res(&style.padding_right);
-    let pad_top    = res(&style.padding_top);
+    let pad_left = res(&style.padding_left);
+    let pad_right = res(&style.padding_right);
+    let pad_top = res(&style.padding_top);
     let pad_bottom = res(&style.padding_bottom);
 
-    let border_left   = if style.border_left_style   != BorderStyle::None { res(&style.border_left_width)   } else { 0.0 };
-    let border_right  = if style.border_right_style  != BorderStyle::None { res(&style.border_right_width)  } else { 0.0 };
-    let border_top    = if style.border_top_style    != BorderStyle::None { res(&style.border_top_width)    } else { 0.0 };
-    let border_bottom = if style.border_bottom_style != BorderStyle::None { res(&style.border_bottom_width) } else { 0.0 };
+    let border_left = if style.border_left_style != BorderStyle::None {
+        res(&style.border_left_width)
+    } else {
+        0.0
+    };
+    let border_right = if style.border_right_style != BorderStyle::None {
+        res(&style.border_right_width)
+    } else {
+        0.0
+    };
+    let border_top = if style.border_top_style != BorderStyle::None {
+        res(&style.border_top_width)
+    } else {
+        0.0
+    };
+    let border_bottom = if style.border_bottom_style != BorderStyle::None {
+        res(&style.border_bottom_width)
+    } else {
+        0.0
+    };
 
     // ⛔ `width` and `height` DO NOT APPLY to a non-replaced inline box —
     // CSS 2.1 §10.2 and §10.5. An `<span style="width:100px;height:50px">`
@@ -428,7 +538,10 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     } else if matches!(style.height, CssLength::Percent(_)) {
         match containing_h {
             Some(ch) => {
-                let mut h = style.height.resolve_vp(parent_font_px, ch, root_font_px, viewport_w, viewport_h).max(0.0);
+                let mut h = style
+                    .height
+                    .resolve_vp(parent_font_px, ch, root_font_px, viewport_w, viewport_h)
+                    .max(0.0);
                 if style.box_sizing == BoxSizing::BorderBox {
                     h = (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
                 }
@@ -445,15 +558,15 @@ pub fn resolve_box_vp(style: &ComputedStyle, parent_font_px: f32,
     };
 
     ResolvedBox {
-        margin_top:    res(&style.margin_top),
-        margin_right:  res(&style.margin_right),
+        margin_top: res(&style.margin_top),
+        margin_right: res(&style.margin_right),
         margin_bottom: res(&style.margin_bottom),
-        margin_left:   res(&style.margin_left),
+        margin_left: res(&style.margin_left),
 
-        padding_top:    pad_top,
-        padding_right:  pad_right,
+        padding_top: pad_top,
+        padding_right: pad_right,
         padding_bottom: pad_bottom,
-        padding_left:   pad_left,
+        padding_left: pad_left,
 
         border_top,
         border_right,
@@ -527,7 +640,7 @@ impl LayoutEngine {
             font_system: None,
             component_registry: ComponentRegistry::default(),
             scale: 1.0,
-            last_cascade_vw: f32::NAN,   // NAN forces cascade on first call
+            last_cascade_vw: f32::NAN, // NAN forces cascade on first call
             last_geometry_viewport_h: f32::NAN, // NAN forces full layout on first call
             cached_has_media_q: false,
             cached_has_container_q: false,
@@ -553,8 +666,8 @@ impl LayoutEngine {
         style: FontStyle,
         font_family: &str,
     ) -> f32 {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
         // Build a compact cache key from text + font properties
         let mut hasher = DefaultHasher::new();
@@ -577,9 +690,11 @@ impl LayoutEngine {
         let w = if let Some(fs_ptr) = self.font_system {
             let fs = unsafe { &mut *fs_ptr };
             crate::layout::inline_layout::measure_text_width_weighted(
-                text, font_px,
+                text,
+                font_px,
                 Some(fs),
-                weight, style,
+                weight,
+                style,
                 self.scale,
                 font_family,
             )
@@ -593,14 +708,40 @@ impl LayoutEngine {
 
     /// Resolve a box's styles using the engine's viewport dimensions.
     #[inline]
-    pub fn res_box(&self, style: &ComputedStyle, font_px: f32, containing_w: f32, root_font_px: f32) -> ResolvedBox {
-        resolve_box_vp(style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, None)
+    pub fn res_box(
+        &self,
+        style: &ComputedStyle,
+        font_px: f32,
+        containing_w: f32,
+        root_font_px: f32,
+    ) -> ResolvedBox {
+        resolve_box_vp(
+            style,
+            font_px,
+            containing_w,
+            root_font_px,
+            self.viewport_w,
+            self.viewport_h,
+            None,
+        )
     }
 
     /// Resolve a single CSS length using the engine's viewport dimensions.
     #[inline]
-    pub fn res_len(&self, len: &CssLength, font_px: f32, containing: f32, root_font_px: f32) -> f32 {
-        len.resolve_vp(font_px, containing, root_font_px, self.viewport_w, self.viewport_h)
+    pub fn res_len(
+        &self,
+        len: &CssLength,
+        font_px: f32,
+        containing: f32,
+        root_font_px: f32,
+    ) -> f32 {
+        len.resolve_vp(
+            font_px,
+            containing,
+            root_font_px,
+            self.viewport_w,
+            self.viewport_h,
+        )
     }
 
     /// Compute both min-content and max-content intrinsic widths in one call.
@@ -609,7 +750,12 @@ impl LayoutEngine {
     ///
     /// Returns `IntrinsicSizes { min_content, max_content }`.
     /// Results are cached via `cached_intrinsic_w` (max) on the node's LayoutBox.
-    pub fn intrinsic_sizes(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> IntrinsicSizes {
+    pub fn intrinsic_sizes(
+        &self,
+        node: &WebCore,
+        parent_font_px: f32,
+        root_font_px: f32,
+    ) -> IntrinsicSizes {
         IntrinsicSizes {
             min_content: self.min_content_width(node, parent_font_px, root_font_px),
             max_content: self.max_content_width(node, parent_font_px, root_font_px),
@@ -629,8 +775,12 @@ impl LayoutEngine {
             }
             // Nothing decoded yet: the attributes stand in so the box reserves
             // the right shape before the bytes arrive.
-            let attr = |k: &str| node.attributes.get(k)
-                .and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            let attr = |k: &str| {
+                node.attributes
+                    .get(k)
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(0.0)
+            };
             let (attr_w, attr_h) = (attr("width"), attr("height"));
             return match (attr_w > 0.0, attr_h > 0.0) {
                 (true, true) => Some((attr_w, attr_h)),
@@ -653,13 +803,22 @@ impl LayoutEngine {
     /// the photo behind it.
     ///
     /// The result is a CONTENT-box width; the caller adds padding and border.
-    fn replaced_intrinsic_width(&self, node: &WebCore, font_px: f32, root_font_px: f32) -> Option<f32> {
+    fn replaced_intrinsic_width(
+        &self,
+        node: &WebCore,
+        font_px: f32,
+        root_font_px: f32,
+    ) -> Option<f32> {
         let (iw, ih) = self.intrinsic_dimensions(node)?;
-        if iw <= 0.0 || ih <= 0.0 { return None; }
+        if iw <= 0.0 || ih <= 0.0 {
+            return None;
+        }
         // A percentage has no containing block to resolve against while
         // measuring intrinsics, so it counts as indefinite.
         let definite = |len: &CssLength| -> f32 {
-            if len.is_auto() || matches!(len, CssLength::Percent(_)) { return 0.0; }
+            if len.is_auto() || matches!(len, CssLength::Percent(_)) {
+                return 0.0;
+            }
             len.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h)
         };
         let h = definite(&node.style.height);
@@ -689,17 +848,115 @@ impl LayoutEngine {
     /// CONTENT size suggestion of Flexbox §4.5 — the automatic minimum is the
     /// smaller of it and the specified size, so reading the specified width
     /// here would make the two the same number and stop the item shrinking.
-    pub fn min_content_width_of_content(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+    /// The width a definite height gives a box through its `aspect-ratio` —
+    /// css-sizing-4 §4, the height→width direction of the transfer.
+    ///
+    /// `None` when the box has no ratio or no definite height, which leaves
+    /// the caller's own measurement in charge.
+    fn aspect_ratio_transferred_width(
+        &self,
+        node: &WebCore,
+        font_px: f32,
+        root_font_px: f32,
+    ) -> Option<f32> {
+        let ratio = node.style.aspect_ratio.filter(|r| *r > 0.0)?;
+        // A percentage height is not definite during intrinsic measurement:
+        // there is no containing height to resolve it against here.
+        if node.style.height.is_auto() || matches!(node.style.height, CssLength::Percent(_)) {
+            return None;
+        }
+        let mut h = self.res_len(&node.style.height, font_px, 0.0, root_font_px);
+        if node.style.box_sizing == BoxSizing::BorderBox {
+            let rb = self.res_box(&node.style, font_px, 0.0, root_font_px);
+            h = (h - rb.padding_top - rb.padding_bottom - rb.border_top - rb.border_bottom)
+                .max(0.0);
+        }
+        if h > 0.0 {
+            Some(h * ratio)
+        } else {
+            None
+        }
+    }
+
+    /// A sizing length that may be an INTRINSIC KEYWORD rather than a length.
+    ///
+    /// `min-width` and `max-width` accept `min-content`/`max-content`/
+    /// `fit-content` too (css-sizing-3 §5), and `res_len` answers 0 for those
+    /// — so `min-width: max-content` on a narrow box was simply a floor of
+    /// zero, and `max-width: max-content` read as "no maximum".
+    pub fn res_len_sizing(
+        &self,
+        len: &CssLength,
+        node: &WebCore,
+        avail: f32,
+        font_px: f32,
+        containing_w: f32,
+        root_font_px: f32,
+    ) -> Option<f32> {
+        len.intrinsic().map(|kind| {
+            self.intrinsic_width(&kind, node, avail, font_px, root_font_px, containing_w)
+        })
+    }
+
+    /// Turn an intrinsic sizing keyword into a width — css-sizing-3 §5, §6.1.
+    ///
+    /// One definition, shared by block, inline and flex container sizing. Each
+    /// of the three had its own copy of the same three-arm match, so a form the
+    /// spec added later — `fit-content(<length>)` — had to be taught to all
+    /// three or silently behave as the bare keyword in whichever was missed.
+    pub fn intrinsic_width(
+        &self,
+        kind: &CssLength,
+        node: &WebCore,
+        avail: f32,
+        font_px: f32,
+        root_font_px: f32,
+        containing_w: f32,
+    ) -> f32 {
+        let mn = self.min_content_width_of_content(node, font_px, root_font_px);
+        let mx = self.max_content_width_of_content(node, font_px, root_font_px);
+        match kind {
+            CssLength::MinContent => mn,
+            CssLength::MaxContent => mx,
+            // The function form substitutes its argument for the available
+            // space: max(min-content, min(max-content, argument)).
+            CssLength::FitContentArg(a) => {
+                let x = a.resolve(font_px, containing_w, root_font_px);
+                mx.min(x).max(mn)
+            }
+            // `fit-content` is max-content clamped to what is available,
+            // floored by min-content.
+            _ => mx.min(avail).max(mn),
+        }
+    }
+
+    pub fn min_content_width_of_content(
+        &self,
+        node: &WebCore,
+        parent_font_px: f32,
+        root_font_px: f32,
+    ) -> f32 {
         self.min_content_width_inner(node, parent_font_px, root_font_px, false)
     }
 
-    fn min_content_width_inner(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32, honor_width: bool) -> f32 {
-        if matches!(node.style.display, Display::None) { return 0.0; }
+    fn min_content_width_inner(
+        &self,
+        node: &WebCore,
+        parent_font_px: f32,
+        root_font_px: f32,
+        honor_width: bool,
+    ) -> f32 {
+        if matches!(node.style.display, Display::None) {
+            return 0.0;
+        }
 
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
 
         // Explicit width → use that directly
-        if honor_width && !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
+        if honor_width
+            && !node.style.width.is_auto()
+            && !matches!(node.style.width, CssLength::Percent(_))
+        {
             let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
             // ⛔ A `border-box` width ALREADY contains the padding and border,
             // and every caller adds those again on top of what we return — the
@@ -714,6 +971,15 @@ impl LayoutEngine {
             return w.max(0.0);
         }
 
+        // css-sizing-4 §4: a box with a preferred aspect ratio and a DEFINITE
+        // block size transfers that size through the ratio — in BOTH
+        // directions. Only the width→height direction was implemented, so
+        // `display:inline-block; aspect-ratio:2/1; height:100px` measured as
+        // zero wide and collapsed, instead of 200.
+        if let Some(w) = self.aspect_ratio_transferred_width(node, font_px, root_font_px) {
+            return w;
+        }
+
         // Replaced elements: the size they are shown at, ratio included.
         if let Some(w) = self.replaced_intrinsic_width(node, font_px, root_font_px) {
             return w;
@@ -721,20 +987,25 @@ impl LayoutEngine {
 
         // Custom component: use cached dimensions (like a replaced element)
         if self.component_registry.get_component(&node.tag).is_some()
-            || self.component_registry.map.contains_key(&node.tag) {
-            return if node.component_width > 0.0 { node.component_width } else {
+            || self.component_registry.map.contains_key(&node.tag)
+        {
+            return if node.component_width > 0.0 {
+                node.component_width
+            } else {
                 // First call before layout — measure to get initial size
                 if let Some(c) = self.component_registry.get_component(&node.tag) {
                     c.measure(node, 0.0).0
                 } else if let Some(cb) = self.component_registry.map.get(&node.tag) {
                     (cb.measure)(node, 0.0).0
-                } else { 0.0 }
+                } else {
+                    0.0
+                }
             };
         }
 
         let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
-        let pad_border = rbox.padding_left + rbox.padding_right
-                       + rbox.border_left + rbox.border_right;
+        let pad_border =
+            rbox.padding_left + rbox.padding_right + rbox.border_left + rbox.border_right;
 
         // Text node or pseudo-element (::before/::after) with direct text content.
         // Pseudo-elements store content in node.text, not as #text children.
@@ -742,16 +1013,24 @@ impl LayoutEngine {
         let has_direct_text = node.is_text_node() || (is_pseudo && !node.text.is_empty());
         if has_direct_text {
             let text = &node.text;
-            if text.is_empty() { return 0.0; }
+            if text.is_empty() {
+                return 0.0;
+            }
             let mut max_word = 0.0f32;
             for word in text.split(|c: char| c.is_ascii_whitespace()) {
-                if word.is_empty() { continue; }
+                if word.is_empty() {
+                    continue;
+                }
                 let w = self.measure_text_cached(
-                    word, font_px,
-                    node.style.font_weight, node.style.font_style,
+                    word,
+                    font_px,
+                    node.style.font_weight,
+                    node.style.font_style,
                     &node.style.font_family,
                 );
-                if w > max_word { max_word = w; }
+                if w > max_word {
+                    max_word = w;
+                }
             }
             return max_word;
         }
@@ -764,22 +1043,36 @@ impl LayoutEngine {
         // the widest single item, which is what a wrap container does.
         let single_line_row_flex =
             matches!(node.style.display, Display::Flex | Display::InlineFlex)
-            && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse)
-            && matches!(node.style.flex_wrap, FlexWrap::Nowrap);
+                && matches!(
+                    node.style.flex_direction,
+                    FlexDirection::Row | FlexDirection::RowReverse
+                )
+                && matches!(node.style.flex_wrap, FlexWrap::Nowrap);
         if single_line_row_flex {
             let gap = self.res_len(&node.style.column_gap, font_px, 0.0, root_font_px);
             let mut total = 0.0f32;
             let mut count = 0usize;
             for ch in &node.children {
-                if matches!(ch.style.display, Display::None) { continue; }
-                if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
-                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+                if matches!(ch.style.display, Display::None) {
+                    continue;
+                }
+                if matches!(ch.style.position, Position::Absolute | Position::Fixed) {
+                    continue;
+                }
+                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) {
+                    continue;
+                }
                 let child_font = ch.style.font_size_px(font_px, root_font_px);
                 let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
-                let child_outer = child_rbox.padding_left + child_rbox.padding_right
-                    + child_rbox.border_left + child_rbox.border_right
-                    + child_rbox.margin_left + child_rbox.margin_right;
-                if count > 0 { total += gap; }
+                let child_outer = child_rbox.padding_left
+                    + child_rbox.padding_right
+                    + child_rbox.border_left
+                    + child_rbox.border_right
+                    + child_rbox.margin_left
+                    + child_rbox.margin_right;
+                if count > 0 {
+                    total += gap;
+                }
                 total += self.min_content_width(ch, font_px, root_font_px) + child_outer;
                 count += 1;
             }
@@ -789,15 +1082,24 @@ impl LayoutEngine {
         // For containers: max of children's min-content widths
         let mut max_w = 0.0f32;
         for ch in &node.children {
-            if matches!(ch.style.display, Display::None) { continue; }
-            if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+            if matches!(ch.style.display, Display::None) {
+                continue;
+            }
+            if matches!(ch.style.position, Position::Absolute | Position::Fixed) {
+                continue;
+            }
             let child_font = ch.style.font_size_px(font_px, root_font_px);
             let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
-            let child_outer = child_rbox.padding_left + child_rbox.padding_right
-                + child_rbox.border_left + child_rbox.border_right
-                + child_rbox.margin_left + child_rbox.margin_right;
+            let child_outer = child_rbox.padding_left
+                + child_rbox.padding_right
+                + child_rbox.border_left
+                + child_rbox.border_right
+                + child_rbox.margin_left
+                + child_rbox.margin_right;
             let cw = self.min_content_width(ch, font_px, root_font_px) + child_outer;
-            if cw > max_w { max_w = cw; }
+            if cw > max_w {
+                max_w = cw;
+            }
         }
         max_w + pad_border
     }
@@ -809,17 +1111,33 @@ impl LayoutEngine {
     /// Max-content width with the element's own `width` ignored, which is what
     /// `flex-basis: content` asks for (Flexbox §7.2.3): size from the content
     /// and disregard the specified size.
-    pub fn max_content_width_of_content(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32) -> f32 {
+    pub fn max_content_width_of_content(
+        &self,
+        node: &WebCore,
+        parent_font_px: f32,
+        root_font_px: f32,
+    ) -> f32 {
         self.max_content_width_inner(node, parent_font_px, root_font_px, false)
     }
 
-    fn max_content_width_inner(&self, node: &WebCore, parent_font_px: f32, root_font_px: f32, honor_width: bool) -> f32 {
-        if matches!(node.style.display, Display::None) { return 0.0; }
+    fn max_content_width_inner(
+        &self,
+        node: &WebCore,
+        parent_font_px: f32,
+        root_font_px: f32,
+        honor_width: bool,
+    ) -> f32 {
+        if matches!(node.style.display, Display::None) {
+            return 0.0;
+        }
 
         // Explicit width → use that directly (but skip percentages — they can't
         // resolve without a known containing width during intrinsic measurement).
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
-        if honor_width && !node.style.width.is_auto() && !matches!(node.style.width, CssLength::Percent(_)) {
+        if honor_width
+            && !node.style.width.is_auto()
+            && !matches!(node.style.width, CssLength::Percent(_))
+        {
             let w = self.res_len(&node.style.width, font_px, 0.0, root_font_px);
             // ⛔ A `border-box` width ALREADY contains the padding and border,
             // and every caller adds those again on top of what we return — the
@@ -832,6 +1150,15 @@ impl LayoutEngine {
                 return (w - edges).max(0.0);
             }
             return w.max(0.0);
+        }
+
+        // css-sizing-4 §4: a box with a preferred aspect ratio and a DEFINITE
+        // block size transfers that size through the ratio — in BOTH
+        // directions. Only the width→height direction was implemented, so
+        // `display:inline-block; aspect-ratio:2/1; height:100px` measured as
+        // zero wide and collapsed, instead of 200.
+        if let Some(w) = self.aspect_ratio_transferred_width(node, font_px, root_font_px) {
+            return w;
         }
 
         // Replaced elements: the size they are shown at, ratio included.
@@ -877,46 +1204,63 @@ impl LayoutEngine {
 
         // Custom component: use cached dimensions (like a replaced element)
         if self.component_registry.get_component(&node.tag).is_some()
-            || self.component_registry.map.contains_key(&node.tag) {
-            return if node.component_width > 0.0 { node.component_width } else {
+            || self.component_registry.map.contains_key(&node.tag)
+        {
+            return if node.component_width > 0.0 {
+                node.component_width
+            } else {
                 if let Some(c) = self.component_registry.get_component(&node.tag) {
                     c.measure(node, f32::MAX).0
                 } else if let Some(cb) = self.component_registry.map.get(&node.tag) {
                     (cb.measure)(node, f32::MAX).0
-                } else { 0.0 }
+                } else {
+                    0.0
+                }
             };
         }
 
         let rbox = self.res_box(&node.style, font_px, 0.0, root_font_px);
-        let pad_border = rbox.padding_left + rbox.padding_right
-                       + rbox.border_left + rbox.border_right;
+        let pad_border =
+            rbox.padding_left + rbox.padding_right + rbox.border_left + rbox.border_right;
 
         // Text node or pseudo-element (::before/::after) with direct text content.
         let is_pseudo = matches!(node.tag.as_str(), "::before" | "::after");
         let has_direct_text = node.is_text_node() || (is_pseudo && !node.text.is_empty());
         if has_direct_text {
             let text = &node.text;
-            if text.is_empty() { return 0.0; }
+            if text.is_empty() {
+                return 0.0;
+            }
             // Collapse whitespace for normal white-space mode (CSS §4.1.1)
-            let text = if matches!(node.style.white_space, WhiteSpace::Normal | WhiteSpace::Nowrap) {
+            let text = if matches!(
+                node.style.white_space,
+                WhiteSpace::Normal | WhiteSpace::Nowrap
+            ) {
                 let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
                 collapsed
             } else {
                 text.clone()
             };
-            if text.is_empty() { return 0.0; }
+            if text.is_empty() {
+                return 0.0;
+            }
             let w = self.measure_text_cached(
-                &text, font_px,
-                node.style.font_weight, node.style.font_style,
+                &text,
+                font_px,
+                node.style.font_weight,
+                node.style.font_style,
                 &node.style.font_family,
             );
             return w;
         }
 
         let is_row_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
-            && matches!(node.style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
-        let _is_col_flex = matches!(node.style.display, Display::Flex | Display::InlineFlex)
-            && !is_row_flex;
+            && matches!(
+                node.style.flex_direction,
+                FlexDirection::Row | FlexDirection::RowReverse
+            );
+        let _is_col_flex =
+            matches!(node.style.display, Display::Flex | Display::InlineFlex) && !is_row_flex;
 
         if is_row_flex {
             // Row flex: sum of children's max-content widths + their box model.
@@ -924,22 +1268,35 @@ impl LayoutEngine {
             let gap = self.res_len(&node.style.column_gap, font_px, 0.0, root_font_px);
             let mut count = 0usize;
             for ch in &node.children {
-                if matches!(ch.style.display, Display::None) { continue; }
-                if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
-                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) { continue; }
+                if matches!(ch.style.display, Display::None) {
+                    continue;
+                }
+                if matches!(ch.style.position, Position::Absolute | Position::Fixed) {
+                    continue;
+                }
+                if ch.tag == "#text" && ch.text.chars().all(|c| c.is_ascii_whitespace()) {
+                    continue;
+                }
                 let child_font = ch.style.font_size_px(font_px, root_font_px);
                 let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
-                let child_outer = child_rbox.padding_left + child_rbox.padding_right
-                    + child_rbox.border_left + child_rbox.border_right
-                    + child_rbox.margin_left + child_rbox.margin_right;
+                let child_outer = child_rbox.padding_left
+                    + child_rbox.padding_right
+                    + child_rbox.border_left
+                    + child_rbox.border_right
+                    + child_rbox.margin_left
+                    + child_rbox.margin_right;
                 // Use flex-basis if it gives a definite length. `content` says
                 // to measure the content, and a percentage has nothing to
                 // resolve against during intrinsic measurement, so both fall
                 // through to the content measurement rather than reading 0.
                 let basis_is_definite = !ch.style.flex_basis.is_auto()
-                    && !matches!(ch.style.flex_basis, CssLength::Content | CssLength::Percent(_));
+                    && !matches!(
+                        ch.style.flex_basis,
+                        CssLength::Content | CssLength::Percent(_)
+                    );
                 let mut child_main = if basis_is_definite {
-                    self.res_len(&ch.style.flex_basis, child_font, 0.0, root_font_px).max(0.0)
+                    self.res_len(&ch.style.flex_basis, child_font, 0.0, root_font_px)
+                        .max(0.0)
                 } else if matches!(ch.style.flex_basis, CssLength::Content) {
                     self.max_content_width_of_content(ch, font_px, root_font_px)
                 } else {
@@ -953,15 +1310,21 @@ impl LayoutEngine {
                 // wide as the remaining items alone.
                 if ch.style.flex_grow > 0.0 {
                     let mc = self.max_content_width(ch, font_px, root_font_px);
-                    if mc > child_main { child_main = mc; }
+                    if mc > child_main {
+                        child_main = mc;
+                    }
                 }
                 // The item's own minimum still floors that contribution.
                 if !ch.style.min_width.is_auto() {
                     let mw = self.res_len(&ch.style.min_width, child_font, 0.0, root_font_px);
-                    if mw > child_main { child_main = mw; }
+                    if mw > child_main {
+                        child_main = mw;
+                    }
                 }
                 total += child_main + child_outer;
-                if count > 0 { total += gap; }
+                if count > 0 {
+                    total += gap;
+                }
                 count += 1;
             }
             return total + pad_border;
@@ -978,20 +1341,29 @@ impl LayoutEngine {
         let mut float_sum = 0.0f32;
         let mut run = 0.0f32; // the inline run being accumulated
         for ch in &node.children {
-            if matches!(ch.style.display, Display::None) { continue; }
-            if matches!(ch.style.position, Position::Absolute | Position::Fixed) { continue; }
+            if matches!(ch.style.display, Display::None) {
+                continue;
+            }
+            if matches!(ch.style.position, Position::Absolute | Position::Fixed) {
+                continue;
+            }
             let child_font = ch.style.font_size_px(font_px, root_font_px);
             let child_rbox = self.res_box(&ch.style, child_font, 0.0, root_font_px);
-            let child_outer = child_rbox.padding_left + child_rbox.padding_right
-                + child_rbox.border_left + child_rbox.border_right
-                + child_rbox.margin_left + child_rbox.margin_right;
+            let child_outer = child_rbox.padding_left
+                + child_rbox.padding_right
+                + child_rbox.border_left
+                + child_rbox.border_right
+                + child_rbox.margin_left
+                + child_rbox.margin_right;
             let cw = self.max_content_width(ch, font_px, root_font_px) + child_outer;
             if !matches!(ch.style.float, Float::None) {
                 float_sum += cw;
                 continue;
             }
             if ch.tag == "br" {
-                if run > max_w { max_w = run; }
+                if run > max_w {
+                    max_w = run;
+                }
                 run = 0.0;
                 continue;
             }
@@ -999,12 +1371,18 @@ impl LayoutEngine {
                 run += cw;
             } else {
                 // A block-level child ends the current line and owns its own.
-                if run > max_w { max_w = run; }
+                if run > max_w {
+                    max_w = run;
+                }
                 run = 0.0;
-                if cw > max_w { max_w = cw; }
+                if cw > max_w {
+                    max_w = cw;
+                }
             }
         }
-        if run > max_w { max_w = run; }
+        if run > max_w {
+            max_w = run;
+        }
         // Container must be wide enough for both floats and normal flow
         max_w.max(float_sum) + pad_border
     }
@@ -1022,7 +1400,9 @@ impl LayoutEngine {
             for face in faces {
                 let mut found = false;
                 for source in split_font_sources(&face.src) {
-                    if found { break; }
+                    if found {
+                        break;
+                    }
                     let source = source.trim();
                     let url_inner = if let Some(start) = source.find("url(") {
                         let rest = &source[start + 4..];
@@ -1045,7 +1425,8 @@ impl LayoutEngine {
                     }
 
                     // Base64 data URI — load immediately (no network)
-                    if let Some(b64) = url_inner.strip_prefix("data:")
+                    if let Some(b64) = url_inner
+                        .strip_prefix("data:")
                         .and_then(|s| s.find(";base64,").map(|i| &s[i + 8..]))
                     {
                         if let Ok(bytes) = decode_base64(b64.trim()) {
@@ -1089,12 +1470,18 @@ impl LayoutEngine {
                     std::thread::spawn(move || {
                         let result = crate::http_client()
                             .get(&url)
-                            .send().ok()
+                            .send()
+                            .ok()
                             .and_then(|r| r.bytes().ok())
                             .map(|b| b.to_vec())
                             .filter(|b| !b.is_empty());
                         if let Some(bytes) = result {
-                            eprintln!("  Font loaded: {} ({} bytes) from {}", family, bytes.len(), &url[..url.len().min(80)]);
+                            eprintln!(
+                                "  Font loaded: {} ({} bytes) from {}",
+                                family,
+                                bytes.len(),
+                                &url[..url.len().min(80)]
+                            );
                             let _ = sender.send((family, bytes));
                         } else {
                             eprintln!("  Font fetch failed: {}", family);
@@ -1127,7 +1514,11 @@ impl LayoutEngine {
         }
 
         // If all fetches are done, drop the receiver.
-        if self.fonts_in_flight.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        if self
+            .fonts_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
+        {
             self.pending_fonts = None;
         }
 
@@ -1176,16 +1567,31 @@ impl LayoutEngine {
         }
 
         // Cache @media / @container presence so we don't O(n)-scan rules every layout.
-        self.cached_has_media_q     = doc.stylesheet.rules.iter().any(|r| !r.media_condition.is_empty());
-        self.cached_has_container_q = doc.stylesheet.rules.iter().any(|r| !r.container_condition.is_empty());
+        self.cached_has_media_q = doc
+            .stylesheet
+            .rules
+            .iter()
+            .any(|r| !r.media_condition.is_empty());
+        self.cached_has_container_q = doc
+            .stylesheet
+            .rules
+            .iter()
+            .any(|r| !r.container_condition.is_empty());
 
         // Skip the CSS cascade on resize when nothing media-query-relevant changed.
         let needs_cascade = self.last_cascade_vw.is_nan()
             || (self.cached_has_media_q
                 && doc.stylesheet.rules.iter().any(|r| {
                     !r.media_condition.is_empty()
-                        && crate::css::evaluate_media(&r.media_condition, self.last_cascade_vw, self.viewport_h)
-                            != crate::css::evaluate_media(&r.media_condition, viewport_width, self.viewport_h)
+                        && crate::css::evaluate_media(
+                            &r.media_condition,
+                            self.last_cascade_vw,
+                            self.viewport_h,
+                        ) != crate::css::evaluate_media(
+                            &r.media_condition,
+                            viewport_width,
+                            self.viewport_h,
+                        )
                 }));
 
         let hover_changed = doc.hover_changed;
@@ -1198,8 +1604,14 @@ impl LayoutEngine {
             // Full cascade needed (initial, viewport change, etc.)
             let hover_chain = crate::css::build_hover_chain(&doc.root, doc.hovered_box);
             crate::css::apply_cascade_vp_hover(
-                &mut doc.root, &doc.stylesheet, None, root_font_px,
-                self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
+                &mut doc.root,
+                &doc.stylesheet,
+                None,
+                root_font_px,
+                self.viewport_w,
+                self.viewport_h,
+                doc.focused_box,
+                doc.keyboard_focus,
                 &hover_chain,
             );
             // Clear any leftover dirty flags after full cascade
@@ -1224,13 +1636,22 @@ impl LayoutEngine {
             // opened. Hovering the element itself worked, which is why simple
             // `a:hover` colour changes looked fine while no menu did.
             crate::css::mark_hover_dirty(
-                &mut doc.root, &old_chain, &new_chain,
+                &mut doc.root,
+                &old_chain,
+                &new_chain,
                 doc.stylesheet.has_hover_descendant_rules,
-                &doc.hover_sensitive_nodes);
+                &doc.hover_sensitive_nodes,
+            );
 
             crate::css::apply_cascade_incremental(
-                &mut doc.root, &doc.stylesheet, None, root_font_px,
-                self.viewport_w, self.viewport_h, doc.focused_box, doc.keyboard_focus,
+                &mut doc.root,
+                &doc.stylesheet,
+                None,
+                root_font_px,
+                self.viewport_w,
+                self.viewport_h,
+                doc.focused_box,
+                doc.keyboard_focus,
                 &new_chain,
             );
             crate::css::clear_cascade_dirty(&mut doc.root);
@@ -1251,7 +1672,9 @@ impl LayoutEngine {
         // ── CSS animation / transition runtime ─────────────────────────────
         let now = std::time::Instant::now();
         doc.sync_animations(now);
-        if did_cascade || hover_changed { doc.sync_transitions(now, did_cascade); }
+        if did_cascade || hover_changed {
+            doc.sync_transitions(now, did_cascade);
+        }
         doc.tick_animations(now);
         if !doc.animation_overrides.is_empty() {
             let overrides = doc.animation_overrides.clone();
@@ -1272,9 +1695,19 @@ impl LayoutEngine {
         // re-layout so the updated styles take effect.
         if self.cached_has_container_q {
             let changed = crate::css::apply_container_cascade_tree(
-                &mut doc.root, &doc.stylesheet, &[], &[], 0, 1, 0, 1,
-                root_font_px, self.viewport_w, self.viewport_h,
-                doc.focused_box, doc.keyboard_focus,
+                &mut doc.root,
+                &doc.stylesheet,
+                &[],
+                &[],
+                0,
+                1,
+                0,
+                1,
+                root_font_px,
+                self.viewport_w,
+                self.viewport_h,
+                doc.focused_box,
+                doc.keyboard_focus,
             );
             if changed {
                 // Re-apply animation overrides after container-query cascade.
@@ -1354,8 +1787,8 @@ impl LayoutEngine {
         let content_w = rbox.content_width.unwrap_or(viewport_width);
         doc.root.layout.content_rect.w = content_w;
         doc.root.layout.padding_rect.w = content_w;
-        doc.root.layout.border_rect.w  = content_w;
-        doc.root.layout.margin_rect.w  = content_w;
+        doc.root.layout.border_rect.w = content_w;
+        doc.root.layout.margin_rect.w = content_w;
         // Always mark root dirty — layout_geometry is only called when
         // cascade ran or layout is explicitly requested. The incremental
         // optimization happens INSIDE layout_box via subtree pruning.
@@ -1369,12 +1802,15 @@ impl LayoutEngine {
                 n.layout.layout_dirty = true;
                 n.layout.intrinsic_dirty = true;
                 n.has_dirty_layout_descendant = true;
-                for c in &mut n.children { mark_all_dirty(c); }
+                for c in &mut n.children {
+                    mark_all_dirty(c);
+                }
             }
             mark_all_dirty(&mut doc.root);
         }
 
-        self.pos_cb.set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
+        self.pos_cb
+            .set(Rect::new(0.0, 0.0, content_w, self.viewport_h));
         // **The root's containing block is the VIEWPORT, height included.**
         // CSS 2.1 §10.1: the initial containing block has the viewport's
         // dimensions. Passing only the width made `html { height: 100% }`
@@ -1382,7 +1818,14 @@ impl LayoutEngine {
         // containing block's is, the whole chain below it collapsed — which is
         // every app shell ever written.
         let root_c = if self.viewport_h > 0.0 {
-            Constraints::with_height(content_w, self.viewport_h, 0.0, 0.0, root_font_px, root_font_px)
+            Constraints::with_height(
+                content_w,
+                self.viewport_h,
+                0.0,
+                0.0,
+                root_font_px,
+                root_font_px,
+            )
         } else {
             Constraints::new(content_w, 0.0, 0.0, root_font_px, root_font_px)
         };
@@ -1392,7 +1835,7 @@ impl LayoutEngine {
         let h = doc.root.layout.margin_rect.h;
         doc.root.layout.content_rect.h = h;
         doc.root.layout.padding_rect.h = h;
-        doc.root.layout.border_rect.h  = h;
+        doc.root.layout.border_rect.h = h;
 
         perf::end_layout();
         perf::set_counts(
@@ -1417,19 +1860,15 @@ impl LayoutEngine {
         doc.layout_generation = doc.layout_generation.wrapping_add(1);
     }
 
-    pub fn layout_box(
-        &self,
-        node:       &mut WebCore,
-        c: &Constraints,
-    ) -> f32 {
+    pub fn layout_box(&self, node: &mut WebCore, c: &Constraints) -> f32 {
         self.layout_box_with_fc(node, c, None)
     }
 
     pub fn layout_box_with_fc(
         &self,
-        node:       &mut WebCore,
+        node: &mut WebCore,
         c: &Constraints,
-        fc:  Option<&mut FloatContext>,
+        fc: Option<&mut FloatContext>,
     ) -> f32 {
         let containing_w = c.available_width;
         let x = c.x;
@@ -1443,8 +1882,8 @@ impl LayoutEngine {
             eprintln!("  [layout] ABORTING: >5M layout calls — infinite loop detected");
             node.layout.content_rect = Rect::new(x, y, containing_w, 0.0);
             node.layout.padding_rect = node.layout.content_rect;
-            node.layout.border_rect  = node.layout.content_rect;
-            node.layout.margin_rect  = node.layout.content_rect;
+            node.layout.border_rect = node.layout.content_rect;
+            node.layout.margin_rect = node.layout.content_rect;
             return 0.0;
         }
         // Guard against stack overflow on deeply nested DOMs.
@@ -1452,16 +1891,16 @@ impl LayoutEngine {
         if depth >= MAX_LAYOUT_DEPTH {
             node.layout.content_rect = Rect::new(x, y, containing_w, 0.0);
             node.layout.padding_rect = node.layout.content_rect;
-            node.layout.border_rect  = node.layout.content_rect;
-            node.layout.margin_rect  = node.layout.content_rect;
+            node.layout.border_rect = node.layout.content_rect;
+            node.layout.margin_rect = node.layout.content_rect;
             return 0.0;
         }
         // Don't layout display:none
         if matches!(node.style.display, Display::None) {
             node.layout.content_rect = Rect::default();
             node.layout.padding_rect = Rect::default();
-            node.layout.border_rect  = Rect::default();
-            node.layout.margin_rect  = Rect::default();
+            node.layout.border_rect = Rect::default();
+            node.layout.margin_rect = Rect::default();
             return 0.0;
         }
 
@@ -1470,8 +1909,8 @@ impl LayoutEngine {
         if matches!(node.style.display, Display::Contents) {
             node.layout.content_rect = Rect::default();
             node.layout.padding_rect = Rect::default();
-            node.layout.border_rect  = Rect::default();
-            node.layout.margin_rect  = Rect::default();
+            node.layout.border_rect = Rect::default();
+            node.layout.margin_rect = Rect::default();
             return 0.0;
         }
 
@@ -1518,24 +1957,56 @@ impl LayoutEngine {
         // The resolved values are applied to rbox after resolve_box_vp.
         let (intrinsic_w_override, intrinsic_h_override) = if has_intrinsic {
             if node.style.width.is_auto() && !node.style.height.is_auto() {
-                let h = node.style.height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
+                let h = node.style.height.resolve_vp(
+                    font_px,
+                    0.0,
+                    root_font_px,
+                    self.viewport_w,
+                    self.viewport_h,
+                );
                 let w = (h * iw / ih).round();
                 (Some(w), None)
             } else if node.style.height.is_auto() && !node.style.width.is_auto() {
-                let mut w = node.style.width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
-                let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
-                if max_w > 0.0 && w > max_w { w = max_w; }
+                let mut w = node.style.width.resolve_vp(
+                    font_px,
+                    containing_w,
+                    root_font_px,
+                    self.viewport_w,
+                    self.viewport_h,
+                );
+                let max_w = node.style.max_width.resolve_vp(
+                    font_px,
+                    containing_w,
+                    root_font_px,
+                    self.viewport_w,
+                    self.viewport_h,
+                );
+                if max_w > 0.0 && w > max_w {
+                    w = max_w;
+                }
                 let h = (w * ih / iw).round();
                 (None, Some(h))
             } else if node.style.width.is_auto() && node.style.height.is_auto() {
                 let mut w = iw;
                 let mut h = ih;
-                let max_w = node.style.max_width.resolve_vp(font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h);
+                let max_w = node.style.max_width.resolve_vp(
+                    font_px,
+                    containing_w,
+                    root_font_px,
+                    self.viewport_w,
+                    self.viewport_h,
+                );
                 if max_w > 0.0 && w > max_w {
                     h = (max_w * ih / iw).round();
                     w = max_w;
                 }
-                let max_h = node.style.max_height.resolve_vp(font_px, 0.0, root_font_px, self.viewport_w, self.viewport_h);
+                let max_h = node.style.max_height.resolve_vp(
+                    font_px,
+                    0.0,
+                    root_font_px,
+                    self.viewport_w,
+                    self.viewport_h,
+                );
                 if max_h > 0.0 && h > max_h {
                     w = (max_h * iw / ih).round();
                     h = max_h;
@@ -1548,7 +2019,15 @@ impl LayoutEngine {
             (None, None)
         };
 
-        let mut rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, self.viewport_w, self.viewport_h, c.available_height);
+        let mut rbox = resolve_box_vp(
+            &node.style,
+            font_px,
+            containing_w,
+            root_font_px,
+            self.viewport_w,
+            self.viewport_h,
+            c.available_height,
+        );
 
         // Apply intrinsic aspect ratio overrides to rbox (not to style)
         if let Some(w) = intrinsic_w_override {
@@ -1578,18 +2057,21 @@ impl LayoutEngine {
         // explicit width and at least one auto horizontal margin.  Block layout has
         // its own copy of this logic; here we handle flex/grid/table/custom.
         if let Some(content_w) = rbox.content_width {
-            let left_auto  = node.style.margin_left.is_auto();
+            let left_auto = node.style.margin_left.is_auto();
             let right_auto = node.style.margin_right.is_auto();
             if left_auto || right_auto {
-                let non_margin = rbox.border_left + rbox.padding_left + content_w
-                               + rbox.padding_right + rbox.border_right;
-                let available  = (containing_w - non_margin).max(0.0);
+                let non_margin = rbox.border_left
+                    + rbox.padding_left
+                    + content_w
+                    + rbox.padding_right
+                    + rbox.border_right;
+                let available = (containing_w - non_margin).max(0.0);
                 if left_auto && right_auto {
                     let ml = (available / 2.0).floor();
-                    rbox.margin_left  = ml;
+                    rbox.margin_left = ml;
                     rbox.margin_right = available - ml;
                 } else if left_auto {
-                    rbox.margin_left  = available - rbox.margin_right;
+                    rbox.margin_left = available - rbox.margin_right;
                 } else {
                     rbox.margin_right = available - rbox.margin_left;
                 }
@@ -1610,27 +2092,33 @@ impl LayoutEngine {
         // (e.g. height: 100vh) and flex-stretch heights dependent on the viewport
         // are recalculated rather than returning stale cached geometry.
         let viewport_h_unchanged = self.viewport_h == self.last_geometry_viewport_h;
-        if fc.is_none() && !node.layout.layout_dirty && node.layout.resolved_content_width > 0.0
+        if fc.is_none()
+            && !node.layout.layout_dirty
+            && node.layout.resolved_content_width > 0.0
             && viewport_h_unchanged
         {
             let new_content_w = if let Some(cw) = rbox.content_width {
                 cw
             } else {
-                let outer = rbox.margin_left + rbox.border_left  + rbox.padding_left
-                          + rbox.border_right + rbox.padding_right + rbox.margin_right;
+                let outer = rbox.margin_left
+                    + rbox.border_left
+                    + rbox.padding_left
+                    + rbox.border_right
+                    + rbox.padding_right
+                    + rbox.margin_right;
                 (containing_w - outer).max(0.0)
             };
             // Also check the explicit content height hasn't changed.
             // This catches flex-stretch re-layouts where the parent mutates
             // child.style.height before calling layout_box a second time.
             let height_ok = match rbox.content_height {
-                None    => true,  // auto height is determined by children — safe
+                None => true, // auto height is determined by children — safe
                 Some(h) => (h - node.layout.content_rect.h).abs() < 0.5,
             };
             if (new_content_w - node.layout.resolved_content_width).abs() < 0.5 && height_ok {
                 // Content size is unchanged — just move the subtree.
                 let dx = (x + rbox.margin_left) - node.layout.border_rect.x;
-                let dy = (y + rbox.margin_top)  - node.layout.border_rect.y;
+                let dy = (y + rbox.margin_top) - node.layout.border_rect.y;
                 if dx.abs() > 0.01 || dy.abs() > 0.01 {
                     shift_rects(node, dx, dy);
                 }
@@ -1643,12 +2131,16 @@ impl LayoutEngine {
         // Check for custom component — treated as replaced element with cached dimensions.
         // Only re-measure when the node is dirty (attribute changed, explicit invalidation).
         let is_trait_component = self.component_registry.get_component(&node.tag).is_some();
-        let is_legacy_component = !is_trait_component && self.component_registry.map.contains_key(&node.tag);
+        let is_legacy_component =
+            !is_trait_component && self.component_registry.map.contains_key(&node.tag);
         if is_trait_component || is_legacy_component {
             // Measure only on first layout or when dirty — cache the result
             if node.component_width == 0.0 || node.layout.layout_dirty {
                 let (cw, ch) = if is_trait_component {
-                    self.component_registry.get_component(&node.tag).unwrap().measure(node, containing_w)
+                    self.component_registry
+                        .get_component(&node.tag)
+                        .unwrap()
+                        .measure(node, containing_w)
                 } else {
                     let cb = self.component_registry.map.get(&node.tag).unwrap();
                     (cb.measure)(node, containing_w)
@@ -1658,11 +2150,26 @@ impl LayoutEngine {
             }
             let cw = node.component_width;
             let ch = node.component_height;
-            let final_w = if node.style.width.is_auto() { cw } else { rbox.content_width.unwrap_or(cw) };
-            let final_h = if node.style.height.is_auto() { ch } else { rbox.content_height.unwrap_or(ch) };
-            block::build_box_rects(node, &rbox, x + rbox.margin_left + rbox.border_left + rbox.padding_left,
-                                   y + rbox.margin_top + rbox.border_top + rbox.padding_top,
-                                   final_w, final_h, rbox.margin_left, rbox.margin_right);
+            let final_w = if node.style.width.is_auto() {
+                cw
+            } else {
+                rbox.content_width.unwrap_or(cw)
+            };
+            let final_h = if node.style.height.is_auto() {
+                ch
+            } else {
+                rbox.content_height.unwrap_or(ch)
+            };
+            block::build_box_rects(
+                node,
+                &rbox,
+                x + rbox.margin_left + rbox.border_left + rbox.padding_left,
+                y + rbox.margin_top + rbox.border_top + rbox.padding_top,
+                final_w,
+                final_h,
+                rbox.margin_left,
+                rbox.margin_right,
+            );
             node.layout.layout_dirty = false;
             return node.layout.margin_rect.h;
         }
@@ -1673,10 +2180,17 @@ impl LayoutEngine {
         // create a containing block for absolute/fixed descendants.
         if !matches!(node.style.position, Position::Static) || !node.style.transform.is_empty() {
             let est_padding_x = x + rbox.margin_left + rbox.border_left;
-            let est_padding_y = y + rbox.margin_top  + rbox.border_top;
-            let est_content_w = rbox.content_width.unwrap_or((containing_w - rbox.h_space()).max(0.0));
+            let est_padding_y = y + rbox.margin_top + rbox.border_top;
+            let est_content_w = rbox
+                .content_width
+                .unwrap_or((containing_w - rbox.h_space()).max(0.0));
             let est_padding_w = est_content_w + rbox.padding_left + rbox.padding_right;
-            self.pos_cb.set(Rect::new(est_padding_x, est_padding_y, est_padding_w, self.viewport_h));
+            self.pos_cb.set(Rect::new(
+                est_padding_x,
+                est_padding_y,
+                est_padding_w,
+                self.viewport_h,
+            ));
         }
 
         // Shadow DOM: layout reads `effective_children()`, which answers the
@@ -1692,13 +2206,16 @@ impl LayoutEngine {
 
         // Replaced elements (input, select, textarea, img) cannot be flex/grid
         // containers per CSS spec — blockify for dispatch WITHOUT mutating style.
-        let is_button_input = node.tag == "input" && matches!(
-            node.attributes.get("type").map(|s| s.as_str()),
-            Some("submit") | Some("button") | Some("reset")
-        );
+        let is_button_input = node.tag == "input"
+            && matches!(
+                node.attributes.get("type").map(|s| s.as_str()),
+                Some("submit") | Some("button") | Some("reset")
+            );
         let effective_display = if !is_button_input
-            && matches!(node.tag.as_str(), "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe")
-        {
+            && matches!(
+                node.tag.as_str(),
+                "input" | "select" | "textarea" | "img" | "video" | "canvas" | "iframe"
+            ) {
             match node.style.display {
                 Display::Flex | Display::Grid => Display::Block,
                 Display::InlineFlex | Display::InlineGrid => Display::InlineBlock,
@@ -1712,29 +2229,36 @@ impl LayoutEngine {
         let child_c = Constraints::new(containing_w, x, y, font_px, root_font_px);
 
         let h = match effective_display {
-            Display::Flex | Display::InlineFlex => {
-                flex::layout_flex(self, node, &rbox, &child_c)
-            }
-            Display::Grid | Display::InlineGrid => {
-                grid::layout_grid(self, node, &rbox, &child_c)
-            }
+            Display::Flex | Display::InlineFlex => flex::layout_flex(self, node, &rbox, &child_c),
+            Display::Grid | Display::InlineGrid => grid::layout_grid(self, node, &rbox, &child_c),
             Display::Table => {
                 // Handle margin:auto centering for tables
                 let table_c = if !node.style.width.is_auto()
                     && (node.style.margin_left.is_auto() || node.style.margin_right.is_auto())
                 {
                     let tw = self.res_len(&node.style.width, font_px, containing_w, root_font_px);
-                    let non_margin = rbox.border_left + rbox.padding_left + tw + rbox.padding_right + rbox.border_right;
+                    let non_margin = rbox.border_left
+                        + rbox.padding_left
+                        + tw
+                        + rbox.padding_right
+                        + rbox.border_right;
                     let available = (containing_w - non_margin).max(0.0);
-                    let (ml, _mr) = if node.style.margin_left.is_auto() && node.style.margin_right.is_auto() {
-                        let ml = (available / 2.0).floor();
-                        (ml, available - ml)
-                    } else if node.style.margin_left.is_auto() {
-                        (available - rbox.margin_right, rbox.margin_right)
-                    } else {
-                        (rbox.margin_left, available - rbox.margin_left)
-                    };
-                    Constraints::new(containing_w, x + ml - rbox.margin_left, y, font_px, root_font_px)
+                    let (ml, _mr) =
+                        if node.style.margin_left.is_auto() && node.style.margin_right.is_auto() {
+                            let ml = (available / 2.0).floor();
+                            (ml, available - ml)
+                        } else if node.style.margin_left.is_auto() {
+                            (available - rbox.margin_right, rbox.margin_right)
+                        } else {
+                            (rbox.margin_left, available - rbox.margin_left)
+                        };
+                    Constraints::new(
+                        containing_w,
+                        x + ml - rbox.margin_left,
+                        y,
+                        font_px,
+                        root_font_px,
+                    )
                 } else {
                     child_c
                 };
@@ -1746,16 +2270,19 @@ impl LayoutEngine {
                 // floated (no inline content to lay out). When floats and inline
                 // content coexist, inline layout handles them via Float items.
                 let children = node.effective_children();
-                let has_any_inline = children.iter().any(|c|
+                let has_any_inline = children.iter().any(|c| {
                     !matches!(c.style.display, Display::None)
-                    && !matches!(c.style.position, Position::Absolute | Position::Fixed)
-                    && matches!(c.style.float, Float::None)
-                    && c.style.is_inline_level()
-                    && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace())));
-                let has_only_floats = !has_any_inline && children.iter().any(|c|
-                    !matches!(c.style.display, Display::None)
-                    && !matches!(c.style.position, Position::Absolute | Position::Fixed)
-                    && !matches!(c.style.float, Float::None));
+                        && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                        && matches!(c.style.float, Float::None)
+                        && c.style.is_inline_level()
+                        && !(c.tag == "#text" && c.text.chars().all(|ch| ch.is_ascii_whitespace()))
+                });
+                let has_only_floats = !has_any_inline
+                    && children.iter().any(|c| {
+                        !matches!(c.style.display, Display::None)
+                            && !matches!(c.style.position, Position::Absolute | Position::Fixed)
+                            && !matches!(c.style.float, Float::None)
+                    });
                 if has_block_children(node) || has_only_floats {
                     block::layout_block_with_fc(self, node, &rbox, &child_c, fc)
                 } else {
@@ -1781,14 +2308,18 @@ impl LayoutEngine {
         &self,
         node: &mut WebCore,
         max_w: f32,
-        x: f32, y: f32,
+        x: f32,
+        y: f32,
         parent_font_px: f32,
-        root_font_px:   f32,
+        root_font_px: f32,
     ) -> (f32, f32, f32) {
         let font_px = node.style.font_size_px(parent_font_px, root_font_px);
         let _rbox = self.res_box(&node.style, font_px, max_w, root_font_px);
 
-        let h = self.layout_box(node, &Constraints::new(max_w, x, y, parent_font_px, root_font_px));
+        let h = self.layout_box(
+            node,
+            &Constraints::new(max_w, x, y, parent_font_px, root_font_px),
+        );
         let w = node.layout.border_rect.w;
         let baseline = node.layout.baseline;
         (w, h, baseline)
@@ -1799,7 +2330,9 @@ impl LayoutEngine {
 
 /// Quick check if any node in the tree has a shadow root.
 fn has_shadow_roots(node: &WebCore) -> bool {
-    if node.shadow_root.is_some() { return true; }
+    if node.shadow_root.is_some() {
+        return true;
+    }
     node.children.iter().any(|c| has_shadow_roots(c))
 }
 
@@ -1822,29 +2355,50 @@ fn count_nodes(node: &WebCore) -> usize {
 
 pub fn has_block_children(node: &WebCore) -> bool {
     node.effective_children().iter().any(|c| {
-        if matches!(c.style.display, Display::None) { return false; }
+        if matches!(c.style.display, Display::None) {
+            return false;
+        }
         if matches!(c.style.display, Display::Contents) {
             return has_block_children(c);
         }
-        matches!(c.style.position, Position::Static | Position::Relative | Position::Sticky) &&
-        c.style.is_block_level() &&
-        matches!(c.style.float, Float::None)
+        matches!(
+            c.style.position,
+            Position::Static | Position::Relative | Position::Sticky
+        ) && c.style.is_block_level()
+            && matches!(c.style.float, Float::None)
     })
 }
 
 // ─── Absolute / fixed positioning pass ───────────────────────────────────────
 
-pub fn layout_positioned(engine: &LayoutEngine, node: &mut WebCore,
-                         containing_rect: Rect, parent_font_px: f32, root_font_px: f32) {
-    layout_positioned_static(engine, node, containing_rect, parent_font_px, root_font_px, None);
+pub fn layout_positioned(
+    engine: &LayoutEngine,
+    node: &mut WebCore,
+    containing_rect: Rect,
+    parent_font_px: f32,
+    root_font_px: f32,
+) {
+    layout_positioned_static(
+        engine,
+        node,
+        containing_rect,
+        parent_font_px,
+        root_font_px,
+        None,
+    );
 }
 
 /// Layout an absolutely/fixed positioned element, with optional static position.
 /// `static_y` is the y offset (relative to containing block) where the element would
 /// appear in normal flow — used when `top` and `bottom` are both `auto`.
-pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
-                         containing_rect: Rect, parent_font_px: f32, root_font_px: f32,
-                         static_y: Option<f32>) {
+pub fn layout_positioned_static(
+    engine: &LayoutEngine,
+    node: &mut WebCore,
+    containing_rect: Rect,
+    parent_font_px: f32,
+    root_font_px: f32,
+    static_y: Option<f32>,
+) {
     let font_px = node.style.font_size_px(parent_font_px, root_font_px);
     // By default the containing block is the passed containing_rect. For `fixed`
     // positioned elements the containing block is the viewport (0,0, viewport_w, viewport_h).
@@ -1859,20 +2413,42 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
         containing_y = 0.0;
     }
 
-    let left_auto  = node.style.left.is_auto();
+    let left_auto = node.style.left.is_auto();
     let right_auto = node.style.right.is_auto();
-    let top_auto   = node.style.top.is_auto();
-    let bot_auto   = node.style.bottom.is_auto();
+    let top_auto = node.style.top.is_auto();
+    let bot_auto = node.style.bottom.is_auto();
 
     // If both horizontal sides are set AND width is auto, compute width from stretch.
     // If width is explicit (or the element has intrinsic size), don't stretch —
     // auto margins will center it instead (CSS 2.1 §10.3.7).
-    let constrained_w = if !left_auto && !right_auto && node.style.width.is_auto()
+    let constrained_w = if !left_auto
+        && !right_auto
+        && node.style.width.is_auto()
         && !(node.tag == "img" && node.image_width > 0)
     {
-        let l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
-        let r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
-        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
+        let l = node.style.left.resolve_vp(
+            font_px,
+            containing_w,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+        );
+        let r = node.style.right.resolve_vp(
+            font_px,
+            containing_w,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+        );
+        let rbox_inner = resolve_box_vp(
+            &node.style,
+            font_px,
+            containing_w,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+            Some(containing_h),
+        );
         let w = (containing_w - l - r - rbox_inner.inner_h_space()).max(0.0);
         Some(w)
     } else {
@@ -1880,9 +2456,29 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
     };
 
     let constrained_h = if !top_auto && !bot_auto {
-        let t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        let b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-        let rbox_inner = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
+        let t = node.style.top.resolve_vp(
+            font_px,
+            containing_h,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+        );
+        let b = node.style.bottom.resolve_vp(
+            font_px,
+            containing_h,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+        );
+        let rbox_inner = resolve_box_vp(
+            &node.style,
+            font_px,
+            containing_w,
+            root_font_px,
+            engine.viewport_w,
+            engine.viewport_h,
+            Some(containing_h),
+        );
         let h = (containing_h - t - b - rbox_inner.inner_v_space()).max(0.0);
         Some(h)
     } else {
@@ -1906,21 +2502,60 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
         let intrinsic_w = engine.max_content_width(node, font_px, root_font_px);
         if intrinsic_w > 0.0 && intrinsic_w < layout_w {
             let shrink_w = intrinsic_w
-                + node.layout.resolved_pad_left  + node.layout.resolved_pad_right
-                + node.layout.resolved_border_left + node.layout.resolved_border_right
-                + node.layout.resolved_margin_left + node.layout.resolved_margin_right;
-            engine.layout_box(node, &Constraints::new(shrink_w, 0.0, 0.0, font_px, root_font_px));
+                + node.layout.resolved_pad_left
+                + node.layout.resolved_pad_right
+                + node.layout.resolved_border_left
+                + node.layout.resolved_border_right
+                + node.layout.resolved_margin_left
+                + node.layout.resolved_margin_right;
+            engine.layout_box(
+                node,
+                &Constraints::new(shrink_w, 0.0, 0.0, font_px, root_font_px),
+            );
         }
     }
 
     // Now resolve position offsets
-    let rbox = resolve_box_vp(&node.style, font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h, Some(containing_h));
-    let res_l = node.style.left.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
-    let res_r = node.style.right.resolve_vp(font_px, containing_w, root_font_px, engine.viewport_w, engine.viewport_h);
-    let res_t = node.style.top.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
-    let res_b = node.style.bottom.resolve_vp(font_px, containing_h, root_font_px, engine.viewport_w, engine.viewport_h);
+    let rbox = resolve_box_vp(
+        &node.style,
+        font_px,
+        containing_w,
+        root_font_px,
+        engine.viewport_w,
+        engine.viewport_h,
+        Some(containing_h),
+    );
+    let res_l = node.style.left.resolve_vp(
+        font_px,
+        containing_w,
+        root_font_px,
+        engine.viewport_w,
+        engine.viewport_h,
+    );
+    let res_r = node.style.right.resolve_vp(
+        font_px,
+        containing_w,
+        root_font_px,
+        engine.viewport_w,
+        engine.viewport_h,
+    );
+    let res_t = node.style.top.resolve_vp(
+        font_px,
+        containing_h,
+        root_font_px,
+        engine.viewport_w,
+        engine.viewport_h,
+    );
+    let res_b = node.style.bottom.resolve_vp(
+        font_px,
+        containing_h,
+        root_font_px,
+        engine.viewport_w,
+        engine.viewport_h,
+    );
 
-    let x = if !left_auto && !right_auto
+    let x = if !left_auto
+        && !right_auto
         && (node.style.margin_left.is_auto() || node.style.margin_right.is_auto())
         && !node.style.width.is_auto()
     {
@@ -1942,7 +2577,8 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
         containing_x + rbox.margin_left
     };
 
-    let y = if !top_auto && !bot_auto
+    let y = if !top_auto
+        && !bot_auto
         && (node.style.margin_top.is_auto() || node.style.margin_bottom.is_auto())
         && !node.style.height.is_auto()
     {
@@ -1980,7 +2616,10 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
     // If both sides set → we may need to re-layout with constrained size
     if let Some(cw) = constrained_w {
         if node.layout.content_rect.w != cw {
-            engine.layout_box(node, &Constraints::new(layout_w, x, y, font_px, root_font_px));
+            engine.layout_box(
+                node,
+                &Constraints::new(layout_w, x, y, font_px, root_font_px),
+            );
         }
     }
 
@@ -1992,17 +2631,21 @@ pub fn layout_positioned_static(engine: &LayoutEngine, node: &mut WebCore,
             let diff = ch - node.layout.content_rect.h;
             node.layout.content_rect.h += diff;
             node.layout.padding_rect.h += diff;
-            node.layout.border_rect.h  += diff;
-            node.layout.margin_rect.h  += diff;
+            node.layout.border_rect.h += diff;
+            node.layout.margin_rect.h += diff;
         }
     }
 }
 
 pub fn shift_rects(node: &mut WebCore, dx: f32, dy: f32) {
-    node.layout.content_rect.x += dx; node.layout.content_rect.y += dy;
-    node.layout.padding_rect.x += dx; node.layout.padding_rect.y += dy;
-    node.layout.border_rect.x  += dx; node.layout.border_rect.y  += dy;
-    node.layout.margin_rect.x  += dx; node.layout.margin_rect.y  += dy;
+    node.layout.content_rect.x += dx;
+    node.layout.content_rect.y += dy;
+    node.layout.padding_rect.x += dx;
+    node.layout.padding_rect.y += dy;
+    node.layout.border_rect.x += dx;
+    node.layout.border_rect.y += dy;
+    node.layout.margin_rect.x += dx;
+    node.layout.margin_rect.y += dy;
     for line in &mut node.layout.line_cache {
         line.x += dx;
         line.y += dy;
@@ -2015,11 +2658,15 @@ pub fn shift_rects(node: &mut WebCore, dx: f32, dy: f32) {
     for child in node.effective_children_mut() {
         // Fixed-position elements are placed relative to the viewport,
         // not their parent — don't shift them when a parent moves.
-        if child.style.position == Position::Fixed { continue; }
+        if child.style.position == Position::Fixed {
+            continue;
+        }
         shift_rects(child, dx, dy);
     }
 }
 
 impl Default for LayoutEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

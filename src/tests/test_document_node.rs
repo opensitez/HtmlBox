@@ -16,7 +16,11 @@ fn doc() -> crate::Document {
 fn the_document_is_node_type_9() {
     let d = doc();
     assert_eq!(d.node_type(d.document_node()), 9, "DOCUMENT_NODE");
-    assert_eq!(d.node_type(d.document_element().unwrap()), 1, "the document ELEMENT is an element");
+    assert_eq!(
+        d.node_type(d.document_element().unwrap()),
+        1,
+        "the document ELEMENT is an element"
+    );
 }
 
 #[test]
@@ -24,7 +28,10 @@ fn html_parent_is_the_document() {
     let d = doc();
     // `<html>` read as an orphan before, which is why `getRootNode()` stopped
     // at the document element instead of reaching the document.
-    assert_eq!(d.parent_node(d.document_element().unwrap()), d.document_node());
+    assert_eq!(
+        d.parent_node(d.document_element().unwrap()),
+        d.document_node()
+    );
     // And the document has no parent.
     assert_eq!(d.parent_node(d.document_node()), 0);
 }
@@ -56,7 +63,8 @@ fn document_element_is_html() {
 #[test]
 fn a_shadow_node_roots_at_its_shadow_tree_not_the_document() {
     let d = parse_html(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
     let host = d.query_selector("#host").unwrap();
     let inner = d.shadow_query_selector(host, "#inner").unwrap();
     // Without `composed`, the root is the shadow tree — that is what makes a

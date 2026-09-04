@@ -2,20 +2,21 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Custom Components ───────────────────────────────────────────────────────
 
 pub type ComponentMeasureFn = Arc<dyn Fn(&WebCore, f32) -> (f32, f32) + Send + Sync>;
-pub type ComponentPaintFn   = Arc<dyn Fn(&WebCore, &mut tiny_skia::Pixmap, f32, f32, f32, f32, f32) + Send + Sync>;
+pub type ComponentPaintFn =
+    Arc<dyn Fn(&WebCore, &mut tiny_skia::Pixmap, f32, f32, f32, f32, f32) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ComponentCallbacks {
     pub measure: ComponentMeasureFn,
-    pub paint:   ComponentPaintFn,
+    pub paint: ComponentPaintFn,
 }
 
 /// A custom component that fully participates in the layout pipeline.
@@ -49,8 +50,16 @@ pub trait Component: Send + Sync {
     fn measure(&self, node: &WebCore, available_width: f32) -> (f32, f32);
 
     /// Paint: draw the component into the pixmap at the given position.
-    fn paint(&self, node: &WebCore, pixmap: &mut tiny_skia::Pixmap,
-             x: f32, y: f32, w: f32, h: f32, scale: f32);
+    fn paint(
+        &self,
+        node: &WebCore,
+        pixmap: &mut tiny_skia::Pixmap,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        scale: f32,
+    );
 
     /// Intrinsic sizes for parent flex/grid/table sizing.
     /// Returns (min_content_width, max_content_width).
@@ -63,16 +72,24 @@ pub trait Component: Send + Sync {
 
     /// Hit test: is the given point (relative to the component's content rect) inside?
     /// Default: rectangular hit test (always true if within bounds).
-    fn hit_test(&self, _node: &WebCore, _x: f32, _y: f32) -> bool { true }
+    fn hit_test(&self, _node: &WebCore, _x: f32, _y: f32) -> bool {
+        true
+    }
 
     /// Handle an input event. Return true if the event was consumed.
-    fn handle_event(&self, _node: &mut WebCore, _event: &ComponentEvent) -> bool { false }
+    fn handle_event(&self, _node: &mut WebCore, _event: &ComponentEvent) -> bool {
+        false
+    }
 
     /// Accessibility role for this component.
-    fn accessibility_role(&self) -> &str { "generic" }
+    fn accessibility_role(&self) -> &str {
+        "generic"
+    }
 
     /// Accessibility label (human-readable name).
-    fn accessibility_label(&self, _node: &WebCore) -> Option<String> { None }
+    fn accessibility_label(&self, _node: &WebCore) -> Option<String> {
+        None
+    }
 }
 
 /// Input events delivered to components.
@@ -101,11 +118,14 @@ pub struct ComponentRegistry {
 }
 
 impl ComponentRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Register a legacy callback-based component.
     pub fn register(&mut self, tag: &str, measure: ComponentMeasureFn, paint: ComponentPaintFn) {
-        self.map.insert(tag.to_string(), ComponentCallbacks { measure, paint });
+        self.map
+            .insert(tag.to_string(), ComponentCallbacks { measure, paint });
     }
 
     /// Register a trait-based component (new API).

@@ -1,8 +1,8 @@
 // Ported from tests/test_html.cpp
 
-use crate::types::*;
-use crate::types::ListStyleType;
 use super::harness::*;
+use crate::types::ListStyleType;
+use crate::types::*;
 
 // Helper: find the <body> box inside a document.
 fn get_body(doc: &Document) -> Option<&WebCore> {
@@ -36,7 +36,9 @@ fn html_multiple_children() {
 #[test]
 fn html_inline_style() {
     let doc = parse(r#"<p style="color: red;">Red text</p>"#);
-    let b = find_box(&doc.root, &|b: &WebCore| b.style.color == Color::rgb(255, 0, 0));
+    let b = find_box(&doc.root, &|b: &WebCore| {
+        b.style.color == Color::rgb(255, 0, 0)
+    });
     assert!(b.is_some());
 }
 
@@ -94,7 +96,10 @@ fn html_lang_attribute() {
 fn html_class_attribute() {
     let doc = parse(r#"<div class="foo bar">Test</div>"#);
     let b = find_box(&doc.root, &|b: &WebCore| {
-        b.attributes.get("class").map(|v| v == "foo bar").unwrap_or(false)
+        b.attributes
+            .get("class")
+            .map(|v| v == "foo bar")
+            .unwrap_or(false)
     });
     assert!(b.is_some());
 }
@@ -139,7 +144,11 @@ fn html_anchor_element() {
     let found_url = {
         let mut found = false;
         walk_boxes(&doc.root, &mut |b: &WebCore| {
-            if b.attributes.get("href").map(|v| !v.is_empty()).unwrap_or(false) {
+            if b.attributes
+                .get("href")
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+            {
                 found = true;
             }
         });
@@ -181,9 +190,7 @@ fn html_utf8_basic() {
 
 #[test]
 fn html_charset_meta() {
-    let doc = parse(
-        r#"<html><head><meta charset="utf-8"></head><body><p>Test</p></body></html>"#,
-    );
+    let doc = parse(r#"<html><head><meta charset="utf-8"></head><body><p>Test</p></body></html>"#);
     assert!(doc_text(&doc).contains("Test"));
 }
 
@@ -252,9 +259,7 @@ fn html_css_background_matches_root() {
 
 #[test]
 fn html_body_css_matches_body() {
-    let doc = parse(
-        r#"<style>html { color: red; } body { color: blue; }</style><p>Text</p>"#,
-    );
+    let doc = parse(r#"<style>html { color: red; } body { color: blue; }</style><p>Text</p>"#);
     assert_eq!(doc.root.style.color.r, 255); // html gets red
     let body = get_body(&doc);
     assert!(body.is_some());
@@ -265,9 +270,7 @@ fn html_body_css_matches_body() {
 
 #[test]
 fn html_body_css_matches_without_explicit_tag() {
-    let doc = parse(
-        r#"<style>body { color: red; background: #0d1117; }</style><p>Text</p>"#,
-    );
+    let doc = parse(r#"<style>body { color: red; background: #0d1117; }</style><p>Text</p>"#);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
@@ -357,10 +360,7 @@ fn html_body_css_font_family() {
 
 #[test]
 fn html_body_css_font_size() {
-    let doc_default = parse_and_layout(
-        r#"<html><body><p>Text</p></body></html>"#,
-        800.0,
-    );
+    let doc_default = parse_and_layout(r#"<html><body><p>Text</p></body></html>"#, 800.0);
     let doc_big = parse_and_layout(
         r#"<html><head><style>body { font-size: 24pt; }</style></head><body><p>Text</p></body></html>"#,
         800.0,
@@ -371,7 +371,12 @@ fn html_body_css_font_size() {
     assert!(p_big.is_some());
     let size_default = p_default.unwrap().style.font_size.resolve(16.0, 0.0, 16.0);
     let size_big = p_big.unwrap().style.font_size.resolve(16.0, 0.0, 16.0);
-    assert!(size_big > size_default, "big font size ({}) should exceed default ({})", size_big, size_default);
+    assert!(
+        size_big > size_default,
+        "big font size ({}) should exceed default ({})",
+        size_big,
+        size_default
+    );
 }
 
 #[test]
@@ -486,10 +491,7 @@ fn html_body_background_used_for_canvas() {
 
 #[test]
 fn html_html_body_separate_margin() {
-    let doc = parse_and_layout(
-        r#"<style>body { margin: 20px; }</style><p>Text</p>"#,
-        800.0,
-    );
+    let doc = parse_and_layout(r#"<style>body { margin: 20px; }</style><p>Text</p>"#, 800.0);
     assert_eq!(doc.root.tag, "html");
     let body = get_body(&doc);
     assert!(body.is_some());
@@ -544,10 +546,7 @@ fn html_body_layout_position() {
 
 #[test]
 fn html_body_layout_with_explicit_margin() {
-    let doc = parse_and_layout(
-        r#"<body style="margin: 8px;"><p>Text</p></body>"#,
-        800.0,
-    );
+    let doc = parse_and_layout(r#"<body style="margin: 8px;"><p>Text</p></body>"#, 800.0);
     let body = get_body(&doc);
     assert!(body.is_some());
     let body = body.unwrap();
@@ -676,9 +675,7 @@ fn html_table_full_width_in_body_with_padding() {
     assert!(body.is_some());
     // body contentWidth = 800 - 16 - 16 = 768
     assert_eq!(body.unwrap().layout.content_rect.w, 768.0);
-    let table = find_box(&doc.root, &|b: &WebCore| {
-        b.style.display == Display::Table
-    });
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     // table at 100% should match body content width
     assert_eq!(table.unwrap().layout.margin_rect.w, 768.0);
@@ -693,9 +690,7 @@ fn html_table_full_width_in_body_with_padding_and_box_sizing() {
     let body = get_body(&doc);
     assert!(body.is_some());
     assert_eq!(body.unwrap().layout.content_rect.w, 768.0);
-    let table = find_box(&doc.root, &|b: &WebCore| {
-        b.style.display == Display::Table
-    });
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     assert_eq!(table.unwrap().layout.margin_rect.w, 768.0);
 }
@@ -710,11 +705,34 @@ fn html_table_in_body_with_margin_and_padding() {
     assert!(body.is_some());
     // contentWidth = 800 - 8 - 8 - 16 - 16 = 752
     assert_eq!(body.unwrap().layout.content_rect.w, 752.0);
-    let table = find_box(&doc.root, &|b: &WebCore| {
-        b.style.display == Display::Table
-    });
+    let table = find_box(&doc.root, &|b: &WebCore| b.style.display == Display::Table);
     assert!(table.is_some());
     assert_eq!(table.unwrap().layout.margin_rect.w, 752.0);
+}
+
+#[test]
+fn table_border_spacing_uses_vertical_component_for_row_gaps() {
+    let doc = parse_and_layout(
+        r#"<table style="border-spacing: 3px 17px;">
+            <tr><td id="a">A</td></tr>
+            <tr><td id="b">B</td></tr>
+        </table>"#,
+        800.0,
+    );
+    let first = find_box(&doc.root, &|b: &WebCore| {
+        b.attributes.get("id").is_some_and(|v| v == "a")
+    })
+    .expect("first cell");
+    let second = find_box(&doc.root, &|b: &WebCore| {
+        b.attributes.get("id").is_some_and(|v| v == "b")
+    })
+    .expect("second cell");
+    let gap =
+        second.layout.border_rect.y - (first.layout.border_rect.y + first.layout.border_rect.h);
+    assert!(
+        (gap - 17.0).abs() < 0.5,
+        "vertical border-spacing should create a 17px row gap, got {gap}"
+    );
 }
 
 // ============================================================
@@ -753,7 +771,10 @@ fn html_canvas_bg_html_overrides_body() {
     assert_eq!(doc.root.style.background_color, Color::rgb(0, 128, 0));
     let body = get_body(&doc);
     assert!(body.is_some());
-    assert_eq!(body.unwrap().style.background_color, Color::rgb(255, 255, 0));
+    assert_eq!(
+        body.unwrap().style.background_color,
+        Color::rgb(255, 255, 0)
+    );
 }
 
 #[test]
@@ -848,9 +869,8 @@ fn html_double_layout_table_in_body_with_padding() {
 
 #[test]
 fn html_head_content_not_rendered() {
-    let doc = parse(
-        r#"<html><head><title>My Page</title></head><body><p>Visible</p></body></html>"#,
-    );
+    let doc =
+        parse(r#"<html><head><title>My Page</title></head><body><p>Visible</p></body></html>"#);
     assert!(doc_text(&doc).contains("Visible"));
     // The title IS a node and IS part of `textContent` — Chrome answers
     // "My PageVisible" for `documentElement.textContent`. What "not rendered"
@@ -874,9 +894,8 @@ fn html_title_content_suppressed() {
 
 #[test]
 fn html_script_content_suppressed() {
-    let doc = parse(
-        r#"<html><head><script>var x = 1;</script></head><body><p>Text</p></body></html>"#,
-    );
+    let doc =
+        parse(r#"<html><head><script>var x = 1;</script></head><body><p>Text</p></body></html>"#);
     assert!(!doc_text(&doc).contains("var x"));
     assert!(doc_text(&doc).contains("Text"));
 }
@@ -891,14 +910,15 @@ fn html_noscript_content_suppressed() {
 
 #[test]
 fn html_meta_charset_does_not_create_box() {
-    let doc = parse(
-        r#"<html><head><meta charset="utf-8"></head><body><p>Text</p></body></html>"#,
-    );
+    let doc = parse(r#"<html><head><meta charset="utf-8"></head><body><p>Text</p></body></html>"#);
     // `<meta>` is an ELEMENT in the head (HTML §13.2.6.4.4) with no box.
     let meta = find_box(&doc.root, &|b: &WebCore| b.tag == "meta")
         .expect("<meta> is an element in the head");
     assert!(matches!(meta.style.display, crate::types::Display::None));
-    assert_eq!(meta.attributes.get("charset").map(|s| s.as_str()), Some("utf-8"));
+    assert_eq!(
+        meta.attributes.get("charset").map(|s| s.as_str()),
+        Some("utf-8")
+    );
 }
 
 #[test]
@@ -920,7 +940,10 @@ fn html_link_tag_does_not_create_box() {
     let link = find_box(&doc.root, &|b: &WebCore| b.tag == "link")
         .expect("<link> is an element in the head");
     assert!(matches!(link.style.display, crate::types::Display::None));
-    assert_eq!(link.attributes.get("href").map(|s| s.as_str()), Some("style.css"));
+    assert_eq!(
+        link.attributes.get("href").map(|s| s.as_str()),
+        Some("style.css")
+    );
 }
 
 #[test]
@@ -986,9 +1009,7 @@ fn html_title_extracted() {
 
 #[test]
 fn html_title_extracted_trimmed() {
-    let doc = parse(
-        r#"<html><head><title>  Spaces  </title></head><body></body></html>"#,
-    );
+    let doc = parse(r#"<html><head><title>  Spaces  </title></head><body></body></html>"#);
     assert_eq!(doc.title, "Spaces");
 }
 
@@ -1000,9 +1021,8 @@ fn html_title_empty_when_missing() {
 
 #[test]
 fn html_title_not_in_text() {
-    let doc = parse(
-        r#"<html><head><title>Secret</title></head><body><p>Visible</p></body></html>"#,
-    );
+    let doc =
+        parse(r#"<html><head><title>Secret</title></head><body><p>Visible</p></body></html>"#);
     assert_eq!(doc.title, "Secret");
     assert!(doc_text(&doc).contains("Visible"));
     // `Document.title` is a convenience mirror; the ELEMENT is still in the
@@ -1016,9 +1036,7 @@ fn html_title_not_in_text() {
 
 #[test]
 fn html_details_closed_hides_content() {
-    let doc = parse(
-        r#"<details><summary>Click me</summary><p>Hidden content</p></details>"#,
-    );
+    let doc = parse(r#"<details><summary>Click me</summary><p>Hidden content</p></details>"#);
     let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
@@ -1034,9 +1052,7 @@ fn html_details_closed_hides_content() {
 
 #[test]
 fn html_details_open_shows_content() {
-    let doc = parse(
-        r#"<details open><summary>Click me</summary><p>Visible content</p></details>"#,
-    );
+    let doc = parse(r#"<details open><summary>Click me</summary><p>Visible content</p></details>"#);
     let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
@@ -1047,9 +1063,7 @@ fn html_details_open_shows_content() {
 
 #[test]
 fn html_summary_is_list_item() {
-    let doc = parse(
-        r#"<details><summary>Title</summary><p>Body</p></details>"#,
-    );
+    let doc = parse(r#"<details><summary>Title</summary><p>Body</p></details>"#);
     let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     assert_eq!(summary.unwrap().style.display, Display::ListItem);
@@ -1058,32 +1072,32 @@ fn html_summary_is_list_item() {
 #[test]
 fn html_summary_disclosure_marker_closed() {
     // Closed details — summary has a disclosure-type list marker (Disclosure variant).
-    let doc = parse(
-        r#"<details><summary>Title</summary><p>Body</p></details>"#,
-    );
+    let doc = parse(r#"<details><summary>Title</summary><p>Body</p></details>"#);
     let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
     // In the Rust types, Disclosure is the closest variant.
-    assert_eq!(summary.unwrap().style.list_style_type, ListStyleType::Disclosure);
+    assert_eq!(
+        summary.unwrap().style.list_style_type,
+        ListStyleType::Disclosure
+    );
 }
 
 #[test]
 fn html_summary_disclosure_marker_open() {
     // Open details — summary marker changes to open state.
     // In the Rust types, Disclosure is used for both; just verify it is set.
-    let doc = parse(
-        r#"<details open><summary>Title</summary><p>Body</p></details>"#,
-    );
+    let doc = parse(r#"<details open><summary>Title</summary><p>Body</p></details>"#);
     let summary = find_box(&doc.root, &|b: &WebCore| b.tag == "summary");
     assert!(summary.is_some());
-    assert_eq!(summary.unwrap().style.list_style_type, ListStyleType::Disclosure);
+    assert_eq!(
+        summary.unwrap().style.list_style_type,
+        ListStyleType::Disclosure
+    );
 }
 
 #[test]
 fn html_details_summary_text_rendered() {
-    let doc = parse(
-        r#"<details><summary>FAQ</summary><p>Answer here</p></details>"#,
-    );
+    let doc = parse(r#"<details><summary>FAQ</summary><p>Answer here</p></details>"#);
     assert!(doc_text(&doc).contains("FAQ"));
 }
 
@@ -1095,9 +1109,11 @@ fn html_details_multiple_children() {
     let details = find_box(&doc.root, &|b: &WebCore| b.tag == "details");
     assert!(details.is_some());
     let details = details.unwrap();
-    let hidden_count = details.children.iter().filter(|ch| {
-        ch.tag != "summary" && ch.style.display == Display::None
-    }).count();
+    let hidden_count = details
+        .children
+        .iter()
+        .filter(|ch| ch.tag != "summary" && ch.style.display == Display::None)
+        .count();
     assert_eq!(hidden_count, 3);
 }
 
@@ -1137,22 +1153,35 @@ fn html_attributes_map_custom_data() {
         b.attributes.contains_key("data-custom")
     });
     assert!(div.is_some());
-    assert_eq!(div.unwrap().attributes.get("data-custom").map(|s| s.as_str()), Some("value123"));
+    assert_eq!(
+        div.unwrap()
+            .attributes
+            .get("data-custom")
+            .map(|s| s.as_str()),
+        Some("value123")
+    );
 }
 
 #[test]
 fn html_attributes_map_multiple() {
-    let doc = parse(
-        r##"<div id="x" role="button" aria-label="close" tabindex="0">X</div>"##,
-    );
+    let doc = parse(r##"<div id="x" role="button" aria-label="close" tabindex="0">X</div>"##);
     let div = find_box(&doc.root, &|b: &WebCore| {
         b.attributes.get("id").map(|v| v == "x").unwrap_or(false)
     });
     assert!(div.is_some());
     let div = div.unwrap();
-    assert_eq!(div.attributes.get("role").map(|s| s.as_str()), Some("button"));
-    assert_eq!(div.attributes.get("aria-label").map(|s| s.as_str()), Some("close"));
-    assert_eq!(div.attributes.get("tabindex").map(|s| s.as_str()), Some("0"));
+    assert_eq!(
+        div.attributes.get("role").map(|s| s.as_str()),
+        Some("button")
+    );
+    assert_eq!(
+        div.attributes.get("aria-label").map(|s| s.as_str()),
+        Some("close")
+    );
+    assert_eq!(
+        div.attributes.get("tabindex").map(|s| s.as_str()),
+        Some("0")
+    );
 }
 
 #[test]
@@ -1163,7 +1192,13 @@ fn html_attributes_map_inline_element() {
         b.tag == "span" && b.attributes.contains_key("data-type")
     });
     assert!(span.is_some());
-    assert_eq!(span.unwrap().attributes.get("data-type").map(|s| s.as_str()), Some("highlight"));
+    assert_eq!(
+        span.unwrap()
+            .attributes
+            .get("data-type")
+            .map(|s| s.as_str()),
+        Some("highlight")
+    );
 }
 
 #[test]
@@ -1173,7 +1208,10 @@ fn html_attributes_map_img() {
     assert!(img.is_some());
     let img = img.unwrap();
     assert_eq!(img.attributes.get("alt").map(|s| s.as_str()), Some("photo"));
-    assert_eq!(img.attributes.get("src").map(|s| s.as_str()), Some("test.jpg"));
+    assert_eq!(
+        img.attributes.get("src").map(|s| s.as_str()),
+        Some("test.jpg")
+    );
 }
 
 #[test]
@@ -1207,7 +1245,12 @@ fn ol_list_index_sequential() {
     let items: Vec<_> = find_all_boxes(&doc.root, &|b| b.tag == "li");
     assert_eq!(items.len(), 3, "expected 3 <li> boxes");
     let indices: Vec<i32> = items.iter().map(|b| b.style.list_index).collect();
-    assert_eq!(indices, vec![1, 2, 3], "list_index must be 1,2,3 not {:?}", indices);
+    assert_eq!(
+        indices,
+        vec![1, 2, 3],
+        "list_index must be 1,2,3 not {:?}",
+        indices
+    );
 }
 
 #[test]
@@ -1225,8 +1268,11 @@ fn ol_list_style_type_decimal() {
     // <ol> defaults to decimal list-style-type.
     let doc = parse("<ol><li>Item</li></ol>");
     let li = find_box(&doc.root, &|b| b.tag == "li").expect("<li> not found");
-    assert_eq!(li.style.list_style_type, ListStyleType::Decimal,
-        "ol > li must have Decimal list-style-type");
+    assert_eq!(
+        li.style.list_style_type,
+        ListStyleType::Decimal,
+        "ol > li must have Decimal list-style-type"
+    );
 }
 
 #[test]
@@ -1237,13 +1283,23 @@ fn nested_ol_list_index_independent() {
     // Outer: A=1, wrapper=2, B=3. Inner: X=1, Y=2.
     let indices: Vec<i32> = all_li.iter().map(|b| b.style.list_index).collect();
     // Outer items must include 1 and not all be 0.
-    assert!(indices.iter().any(|&i| i > 0), "at least one list_index must be > 0, got {:?}", indices);
+    assert!(
+        indices.iter().any(|&i| i > 0),
+        "at least one list_index must be > 0, got {:?}",
+        indices
+    );
     // The two inner items must be 1 and 2.
-    let inner: Vec<_> = all_li.iter().filter(|b| {
-        // Children of the nested ol — identified by having siblings that are also li with low index
-        b.style.list_index <= 2
-    }).collect();
-    assert!(inner.len() >= 2, "expected inner list items with index 1 and 2");
+    let inner: Vec<_> = all_li
+        .iter()
+        .filter(|b| {
+            // Children of the nested ol — identified by having siblings that are also li with low index
+            b.style.list_index <= 2
+        })
+        .collect();
+    assert!(
+        inner.len() >= 2,
+        "expected inner list items with index 1 and 2"
+    );
 }
 
 // ============================================================
@@ -1255,8 +1311,10 @@ fn table_border_attr_sets_collapse() {
     // border="1" on <table> should enable border-collapse.
     let doc = parse(r#"<table border="1"><tr><td>A</td></tr></table>"#);
     let table = find_box(&doc.root, &|b| b.tag == "table").unwrap();
-    assert!(table.style.border_collapse,
-        "table with border=\"1\" must have border-collapse: collapse");
+    assert!(
+        table.style.border_collapse,
+        "table with border=\"1\" must have border-collapse: collapse"
+    );
 }
 
 #[test]
@@ -1267,7 +1325,11 @@ fn table_border_attr_sets_table_border_width() {
         crate::types::CssLength::Px(v) => v,
         _ => -1.0,
     };
-    assert_eq!(w, 1.0, "table border-top-width should be 1px, got {:?}", table.style.border_top_width);
+    assert_eq!(
+        w, 1.0,
+        "table border-top-width should be 1px, got {:?}",
+        table.style.border_top_width
+    );
 }
 
 #[test]
@@ -1280,9 +1342,11 @@ fn table_border_attr_propagates_to_cells() {
             crate::types::CssLength::Px(v) => v,
             _ => -1.0,
         };
-        assert!(w > 0.0,
+        assert!(
+            w > 0.0,
             "td in table with border=\"1\" should have border-top-width > 0, got {:?}",
-            cell.style.border_top_width);
+            cell.style.border_top_width
+        );
     }
 }
 
@@ -1295,8 +1359,11 @@ fn table_cellspacing_zero_sets_border_spacing() {
         crate::types::CssLength::Zero => 0.0,
         other => panic!("unexpected border_spacing_h: {:?}", other),
     };
-    assert_eq!(sp, 0.0,
-        "cellspacing=\"0\" must set border-spacing to 0, got {:?}", table.style.border_spacing_h);
+    assert_eq!(
+        sp, 0.0,
+        "cellspacing=\"0\" must set border-spacing to 0, got {:?}",
+        table.style.border_spacing_h
+    );
 }
 
 #[test]
@@ -1308,8 +1375,11 @@ fn table_cellspacing_nonzero() {
         crate::types::CssLength::Zero => 0.0,
         other => panic!("unexpected border_spacing_h: {:?}", other),
     };
-    assert_eq!(sp, 4.0,
-        "cellspacing=\"4\" must set border-spacing to 4px, got {:?}", table.style.border_spacing_h);
+    assert_eq!(
+        sp, 4.0,
+        "cellspacing=\"4\" must set border-spacing to 4px, got {:?}",
+        table.style.border_spacing_h
+    );
 }
 
 #[test]
@@ -1319,9 +1389,13 @@ fn table_no_border_attr_no_cell_borders() {
     // `border-style: none` that zeroes it. See `table_border_zero_no_cell_borders`.
     let mut doc = parse(r#"<table><tr><td>A</td></tr></table>"#);
     let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap().node_id;
-    assert_eq!(doc.computed_style_property(cell, "border-top-style"), "none");
     assert_eq!(
-        doc.computed_style_property(cell, "border-top-width"), "0px",
+        doc.computed_style_property(cell, "border-top-style"),
+        "none"
+    );
+    assert_eq!(
+        doc.computed_style_property(cell, "border-top-width"),
+        "0px",
         "a td in a table with no border attribute draws no border"
     );
 }
@@ -1335,9 +1409,13 @@ fn table_border_zero_no_cell_borders() {
     // wrong. Chrome on the same markup: `width=0px style=none`.
     let mut doc = parse(r#"<table border="0"><tr><td>A</td></tr></table>"#);
     let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap().node_id;
-    assert_eq!(doc.computed_style_property(cell, "border-top-style"), "none");
     assert_eq!(
-        doc.computed_style_property(cell, "border-top-width"), "0px",
+        doc.computed_style_property(cell, "border-top-style"),
+        "none"
+    );
+    assert_eq!(
+        doc.computed_style_property(cell, "border-top-width"),
+        "0px",
         "a td in a table with border=\"0\" draws no border"
     );
 }
@@ -1345,15 +1423,20 @@ fn table_border_zero_no_cell_borders() {
 #[test]
 fn css_border_overrides_html_border_attr() {
     // Author CSS on td should win over the HTML border attribute propagation.
-    let doc = parse(r#"<style>td { border: 3px solid red; }</style>
-<table border="1"><tr><td>A</td></tr></table>"#);
+    let doc = parse(
+        r#"<style>td { border: 3px solid red; }</style>
+<table border="1"><tr><td>A</td></tr></table>"#,
+    );
     let cell = find_box(&doc.root, &|b| b.tag == "td").unwrap();
     let w = match cell.style.border_top_width {
         crate::types::CssLength::Px(v) => v,
         _ => -1.0,
     };
-    assert_eq!(w, 3.0,
-        "author CSS border 3px should override HTML attr 1px, got {:?}", cell.style.border_top_width);
+    assert_eq!(
+        w, 3.0,
+        "author CSS border 3px should override HTML attr 1px, got {:?}",
+        cell.style.border_top_width
+    );
 }
 
 // ============================================================
@@ -1368,7 +1451,11 @@ fn body_margin_8px_from_ua() {
         crate::types::CssLength::Px(v) => v,
         _ => -1.0,
     };
-    assert_eq!(m, 8.0, "body margin-top should be 8px from UA stylesheet, got {:?}", body.style.margin_top);
+    assert_eq!(
+        m, 8.0,
+        "body margin-top should be 8px from UA stylesheet, got {:?}",
+        body.style.margin_top
+    );
 }
 
 #[test]
@@ -1380,7 +1467,11 @@ fn body_margin_overridden_by_author_css() {
         crate::types::CssLength::Zero => 0.0,
         _ => -1.0,
     };
-    assert_eq!(m, 0.0, "body margin-top should be overridden to 0 by author CSS, got {:?}", body.style.margin_top);
+    assert_eq!(
+        m, 0.0,
+        "body margin-top should be overridden to 0 by author CSS, got {:?}",
+        body.style.margin_top
+    );
 }
 
 #[test]
@@ -1408,5 +1499,8 @@ fn clicking_a_summary_toggles_its_details() {
 
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseDown, point, 0);
     doc.process_mouse_event(crate::dom::HtmlEventType::MouseUp, point, 0);
-    assert!(!doc.has_attribute(d, "open"), "and the next click closed it again");
+    assert!(
+        !doc.has_attribute(d, "open"),
+        "and the next click closed it again"
+    );
 }

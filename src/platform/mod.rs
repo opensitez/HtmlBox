@@ -1,15 +1,15 @@
+use softbuffer::{Context, Surface};
 use std::sync::Arc;
 use tiny_skia::Pixmap;
 use winit::window::Window;
-use softbuffer::{Context, Surface};
 
 pub struct Platform {
     surface: Surface<Arc<Window>, Arc<Window>>,
-    window:  Arc<Window>,
-    width:   u32,
-    height:  u32,
+    window: Arc<Window>,
+    width: u32,
+    height: u32,
     /// Reused across frames to avoid per-frame allocation (~10 MB on 2× Retina).
-    pixmap:  Option<Pixmap>,
+    pixmap: Option<Pixmap>,
 }
 
 impl Platform {
@@ -17,7 +17,13 @@ impl Platform {
         let context = Context::new(window.clone()).expect("Failed to create softbuffer context");
         let surface = Surface::new(&context, window.clone()).expect("Failed to create surface");
         let size = window.inner_size();
-        let mut platform = Self { surface, window, width: size.width, height: size.height, pixmap: None };
+        let mut platform = Self {
+            surface,
+            window,
+            width: size.width,
+            height: size.height,
+            pixmap: None,
+        };
         platform.resize(size.width, size.height);
         platform
     }
@@ -38,7 +44,7 @@ impl Platform {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.width  = width.max(1);
+        self.width = width.max(1);
         self.height = height.max(1);
         // Discard cached pixmap so next render reallocates at the new size.
         self.pixmap = None;
@@ -59,7 +65,9 @@ impl Platform {
 
         // Reuse the pixmap across frames; only reallocate when dimensions change.
         // This avoids allocating+zeroing ~10 MB per frame on HiDPI displays.
-        let need_new = self.pixmap.as_ref()
+        let need_new = self
+            .pixmap
+            .as_ref()
             .map(|p| p.width() != self.width || p.height() != self.height)
             .unwrap_or(true);
         if need_new {
@@ -67,20 +75,23 @@ impl Platform {
         }
         let pixmap = match self.pixmap.as_mut() {
             Some(p) => p,
-            None    => return,
+            None => return,
         };
 
         draw(scale, pixmap);
 
         // Blit pixmap (premultiplied RGBA bytes) → softbuffer (0xAARRGGBB native-endian).
         // Using raw byte access + chunks_exact so LLVM can auto-vectorise the loop.
-        let mut buf = self.surface.buffer_mut().expect("Failed to get surface buffer");
+        let mut buf = self
+            .surface
+            .buffer_mut()
+            .expect("Failed to get surface buffer");
         let data = pixmap.data(); // [r,g,b,a, r,g,b,a, …]
         for (dst, chunk) in buf.iter_mut().zip(data.chunks_exact(4)) {
             *dst = ((chunk[3] as u32) << 24)   // a
                  | ((chunk[0] as u32) << 16)   // r
                  | ((chunk[1] as u32) <<  8)   // g
-                 |  (chunk[2] as u32);         // b
+                 |  (chunk[2] as u32); // b
         }
         buf.present().expect("Failed to present buffer");
     }

@@ -26,7 +26,11 @@ pub struct AttrMap {
 }
 
 impl AttrMap {
-    pub fn new() -> Self { AttrMap { entries: Vec::new() } }
+    pub fn new() -> Self {
+        AttrMap {
+            entries: Vec::new(),
+        }
+    }
 
     #[inline]
     fn position(&self, key: &str) -> Option<usize> {
@@ -63,7 +67,8 @@ impl AttrMap {
     }
 
     pub fn remove(&mut self, key: impl AsRef<str>) -> Option<String> {
-        self.position(key.as_ref()).map(|i| self.entries.remove(i).1)
+        self.position(key.as_ref())
+            .map(|i| self.entries.remove(i).1)
     }
 
     /// The `entry(k).or_default()` shape, which several call sites use to
@@ -111,9 +116,15 @@ impl AttrMap {
         self.entries.get(index).map(|(k, v)| (k, v))
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn clear(&mut self) { self.entries.clear() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.entries.clear()
+    }
 
     pub fn retain(&mut self, mut f: impl FnMut(&str, &str) -> bool) {
         self.entries.retain(|(k, v)| f(k, v));
@@ -127,15 +138,21 @@ impl<'a> IntoIterator for &'a AttrMap {
         fn(&'a (String, String)) -> (&'a String, &'a String),
     >;
     fn into_iter(self) -> Self::IntoIter {
-        fn split<'b>(p: &'b (String, String)) -> (&'b String, &'b String) { (&p.0, &p.1) }
-        self.entries.iter().map(split as fn(&'a (String, String)) -> (&'a String, &'a String))
+        fn split<'b>(p: &'b (String, String)) -> (&'b String, &'b String) {
+            (&p.0, &p.1)
+        }
+        self.entries
+            .iter()
+            .map(split as fn(&'a (String, String)) -> (&'a String, &'a String))
     }
 }
 
 impl FromIterator<(String, String)> for AttrMap {
     fn from_iter<T: IntoIterator<Item = (String, String)>>(iter: T) -> Self {
         let mut m = AttrMap::new();
-        for (k, v) in iter { m.insert(k, v); }
+        for (k, v) in iter {
+            m.insert(k, v);
+        }
         m
     }
 }
@@ -187,17 +204,28 @@ pub struct Attr {
 
 impl Attr {
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
-        Attr { owner_element: 0, namespace: None, name: name.into(), value: value.into() }
+        Attr {
+            owner_element: 0,
+            namespace: None,
+            name: name.into(),
+            value: value.into(),
+        }
     }
 
     /// `Node.nodeType` — `ATTRIBUTE_NODE`.
-    pub fn node_type(&self) -> u16 { 2 }
+    pub fn node_type(&self) -> u16 {
+        2
+    }
 
     /// `Node.nodeName` is the qualified name, same as `name`.
-    pub fn node_name(&self) -> &str { &self.name }
+    pub fn node_name(&self) -> &str {
+        &self.name
+    }
 
     /// `Node.nodeValue` is the value, same as `value`.
-    pub fn node_value(&self) -> &str { &self.value }
+    pub fn node_value(&self) -> &str {
+        &self.value
+    }
 
     /// The part before the colon, or `None` when there is no colon.
     pub fn prefix(&self) -> Option<&str> {
@@ -206,16 +234,27 @@ impl Attr {
 
     /// The part after the colon, or the whole name when there is no colon.
     pub fn local_name(&self) -> &str {
-        self.name.split_once(':').map(|(_, l)| l).unwrap_or(&self.name)
+        self.name
+            .split_once(':')
+            .map(|(_, l)| l)
+            .unwrap_or(&self.name)
     }
 
-    pub fn namespace_uri(&self) -> Option<&str> { self.namespace.as_deref() }
+    pub fn namespace_uri(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
 
     pub fn owner_element(&self) -> Option<u32> {
-        if self.owner_element == 0 { None } else { Some(self.owner_element) }
+        if self.owner_element == 0 {
+            None
+        } else {
+            Some(self.owner_element)
+        }
     }
 
     /// Always true. The spec keeps it "for historical reasons" and requires
     /// exactly this answer.
-    pub fn specified(&self) -> bool { true }
+    pub fn specified(&self) -> bool {
+        true
+    }
 }

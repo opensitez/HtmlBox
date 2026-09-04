@@ -28,9 +28,13 @@ const FORM: &str = r#"<form id=f>
 <textarea id=ta required></textarea>
 </form>"#;
 
-fn form() -> crate::types::Document { parse_html(FORM) }
+fn form() -> crate::types::Document {
+    parse_html(FORM)
+}
 
-fn el(d: &crate::types::Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn el(d: &crate::types::Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 #[test]
 fn a_barred_control_is_valid_no_matter_what_its_attributes_say() {
@@ -38,7 +42,10 @@ fn a_barred_control_is_valid_no_matter_what_its_attributes_say() {
     // Chrome: hid / dis / ro / btn / out / fs all willValidate=false, valid=true.
     for id in ["hid", "dis", "ro", "btn", "out", "fs"] {
         let e = el(&d, id);
-        assert!(!d.will_validate(e), "{id} should be barred from constraint validation");
+        assert!(
+            !d.will_validate(e),
+            "{id} should be barred from constraint validation"
+        );
         assert!(d.validity(e).valid(), "{id} is valid because it is barred");
         assert_eq!(d.validation_message(e), "", "{id} has no message");
     }
@@ -52,7 +59,10 @@ fn a_barred_control_is_valid_no_matter_what_its_attributes_say() {
 fn required_is_the_only_constraint_an_empty_value_can_violate() {
     let d = form();
     let req = el(&d, "req");
-    assert!(d.validity(req).value_missing, "Chrome: req flags=[valueMissing]");
+    assert!(
+        d.validity(req).value_missing,
+        "Chrome: req flags=[valueMissing]"
+    );
     assert!(!d.validity(req).valid());
     assert!(!d.validation_message(req).is_empty());
 
@@ -62,8 +72,14 @@ fn required_is_the_only_constraint_an_empty_value_can_violate() {
 
     // A `<select required>` whose selection has an empty value, and an empty
     // `<textarea required>`, are both valueMissing.
-    assert!(d.validity(el(&d, "sel")).value_missing, "Chrome: sel flags=[valueMissing]");
-    assert!(d.validity(el(&d, "ta")).value_missing, "Chrome: ta flags=[valueMissing]");
+    assert!(
+        d.validity(el(&d, "sel")).value_missing,
+        "Chrome: sel flags=[valueMissing]"
+    );
+    assert!(
+        d.validity(el(&d, "ta")).value_missing,
+        "Chrome: ta flags=[valueMissing]"
+    );
 }
 
 #[test]
@@ -85,12 +101,18 @@ fn a_length_constraint_ignores_a_value_the_user_never_edited() {
     // is on the dirty value flag.
     let mut d = form();
     let ml = el(&d, "ml");
-    assert!(d.validity(ml).valid(), "Chrome: ml valid=true — the author's default is exempt");
+    assert!(
+        d.validity(ml).valid(),
+        "Chrome: ml valid=true — the author's default is exempt"
+    );
 
     // Once the user (or the IDL setter, which raises the same flag) writes it,
     // the constraint applies.
     d.set_value(ml, "abcdef");
-    assert!(d.validity(ml).too_long, "a dirty value over maxlength is tooLong");
+    assert!(
+        d.validity(ml).too_long,
+        "a dirty value over maxlength is tooLong"
+    );
     assert!(!d.validity(ml).valid());
 }
 
@@ -100,13 +122,19 @@ fn range_and_step_constraints_report_which_bound_was_crossed() {
     let under = d.validity(el(&d, "num"));
     assert!(under.range_underflow, "Chrome: num flags=[rangeUnderflow]");
     assert!(!under.range_overflow);
-    assert!(d.validation_message(el(&d, "num")).contains('5'), "the message names the bound");
+    assert!(
+        d.validation_message(el(&d, "num")).contains('5'),
+        "the message names the bound"
+    );
 
     let over = d.validity(el(&d, "num2"));
     assert!(over.range_overflow, "Chrome: num2 flags=[rangeOverflow]");
     assert!(!over.range_underflow);
 
-    assert!(d.validity(el(&d, "st")).step_mismatch, "Chrome: st flags=[stepMismatch] — 4 is not 0+3n");
+    assert!(
+        d.validity(el(&d, "st")).step_mismatch,
+        "Chrome: st flags=[stepMismatch] — 4 is not 0+3n"
+    );
 }
 
 #[test]
@@ -118,7 +146,11 @@ fn a_custom_message_wins_and_an_empty_one_clears_it() {
     d.set_custom_validity(req2, "nope");
     assert!(d.validity(req2).custom_error, "Chrome: customError=true");
     assert!(!d.validity(req2).valid(), "Chrome: valid=false");
-    assert_eq!(d.validation_message(req2), "nope", "Chrome: msg=\"nope\" — verbatim");
+    assert_eq!(
+        d.validation_message(req2),
+        "nope",
+        "Chrome: msg=\"nope\" — verbatim"
+    );
     assert!(!d.check_validity(req2), "Chrome: check=false");
 
     d.set_custom_validity(req2, "");
@@ -129,9 +161,13 @@ fn a_custom_message_wins_and_an_empty_one_clears_it() {
 #[test]
 fn a_form_checks_every_control_it_owns() {
     let mut d = form();
-    assert!(!d.check_validity(el(&d, "f")), "Chrome: form.checkValidity=false");
+    assert!(
+        !d.check_validity(el(&d, "f")),
+        "Chrome: form.checkValidity=false"
+    );
 
-    let mut clean = parse_html(r#"<form id=f><input id=a value="x"><input id=b required value="y"></form>"#);
+    let mut clean =
+        parse_html(r#"<form id=f><input id=a value="x"><input id=b required value="y"></form>"#);
     assert!(clean.check_validity(clean.get_element_by_id("f").unwrap()));
 }
 
@@ -144,17 +180,24 @@ fn check_validity_fires_invalid_at_each_failing_control() {
     for id in ["req", "em", "pat"] {
         let e = el(&d, id);
         let log = seen.clone();
-        d.add_event_listener(e, "invalid", Box::new(move |ev, _| {
-            log.lock().unwrap().push(ev.current_target);
-        }), crate::dom::events::ListenerOptions::capture(false));
+        d.add_event_listener(
+            e,
+            "invalid",
+            Box::new(move |ev, _| {
+                log.lock().unwrap().push(ev.current_target);
+            }),
+            crate::dom::events::ListenerOptions::capture(false),
+        );
     }
     let (req, em, pat) = (el(&d, "req"), el(&d, "em"), el(&d, "pat"));
     let form_el = el(&d, "f");
     d.check_validity(form_el);
 
     let fired = seen.lock().unwrap().clone();
-    assert!(fired.contains(&req) && fired.contains(&em) && fired.contains(&pat),
-        "every failing control gets an `invalid` event, not just the first: {fired:?}");
+    assert!(
+        fired.contains(&req) && fired.contains(&em) && fired.contains(&pat),
+        "every failing control gets an `invalid` event, not just the first: {fired:?}"
+    );
 
     // A control that passes does not fire.
     let req2 = el(&d, "req2");
@@ -163,68 +206,108 @@ fn check_validity_fires_invalid_at_each_failing_control() {
 
 #[test]
 fn form_owner_prefers_the_attribute_over_the_ancestor() {
-    let d = parse_html(r#"
+    let d = parse_html(
+        r#"
         <form id="outer"><input id="inside"></form>
         <form id="other"></form>
         <input id="outside" form="other">
         <form id="wrap"><input id="redirected" form="other"></form>
-    "#);
+    "#,
+    );
     assert_eq!(d.form_owner(el(&d, "inside")), Some(el(&d, "outer")));
-    assert_eq!(d.form_owner(el(&d, "outside")), Some(el(&d, "other")),
-        "a control outside every form still has one when `form` names it");
-    assert_eq!(d.form_owner(el(&d, "redirected")), Some(el(&d, "other")),
-        "the attribute BEATS the ancestor — that is what it is for");
+    assert_eq!(
+        d.form_owner(el(&d, "outside")),
+        Some(el(&d, "other")),
+        "a control outside every form still has one when `form` names it"
+    );
+    assert_eq!(
+        d.form_owner(el(&d, "redirected")),
+        Some(el(&d, "other")),
+        "the attribute BEATS the ancestor — that is what it is for"
+    );
 }
 
 #[test]
 fn form_elements_lists_the_listed_ones_in_tree_order() {
-    let d = parse_html(r#"<form id="f">
+    let d = parse_html(
+        r#"<form id="f">
         <input id="a"><p>text</p><select id="b"></select><textarea id="c"></textarea>
         <button id="d"></button><fieldset id="e"></fieldset><output id="g"></output>
         <input id="img" type="image"><div id="nope"></div>
-    </form>"#);
-    let names: Vec<String> = d.form_elements(el(&d, "f")).into_iter()
+    </form>"#,
+    );
+    let names: Vec<String> = d
+        .form_elements(el(&d, "f"))
+        .into_iter()
         .map(|n| d.get_attribute(n, "id").unwrap_or_default())
         .collect();
-    assert_eq!(names, vec!["a", "b", "c", "d", "e", "g"],
-        "`<input type=image>` is excluded and a `<div>` was never listed");
+    assert_eq!(
+        names,
+        vec!["a", "b", "c", "d", "e", "g"],
+        "`<input type=image>` is excluded and a `<div>` was never listed"
+    );
 }
 
 #[test]
 fn labels_finds_both_the_for_attribute_and_the_wrapping_label() {
-    let d = parse_html(r#"
+    let d = parse_html(
+        r#"
         <label id="l1" for="x">by for</label>
         <label id="l2"><input id="x"></label>
         <label id="l3" for="other">not this one</label>
-    "#);
+    "#,
+    );
     let labels = d.labels(el(&d, "x"));
-    assert_eq!(labels, vec![el(&d, "l1"), el(&d, "l2")], "tree order, both kinds");
-    assert!(d.labels(el(&d, "l3")).is_empty(), "a label is not labelable");
+    assert_eq!(
+        labels,
+        vec![el(&d, "l1"), el(&d, "l2")],
+        "tree order, both kinds"
+    );
+    assert!(
+        d.labels(el(&d, "l3")).is_empty(),
+        "a label is not labelable"
+    );
 }
 
 #[test]
 fn a_disabled_fieldset_disables_its_controls_but_not_its_first_legend() {
-    let d = parse_html(r#"<form><fieldset disabled>
+    let d = parse_html(
+        r#"<form><fieldset disabled>
         <legend><input id="in_legend" required value=""></legend>
         <input id="shielded" required value="">
-    </fieldset></form>"#);
-    assert!(!d.will_validate(el(&d, "shielded")), "inside a disabled fieldset");
-    assert!(d.will_validate(el(&d, "in_legend")),
-        "the FIRST legend of a disabled fieldset is the escape hatch HTML gives authors");
+    </fieldset></form>"#,
+    );
+    assert!(
+        !d.will_validate(el(&d, "shielded")),
+        "inside a disabled fieldset"
+    );
+    assert!(
+        d.will_validate(el(&d, "in_legend")),
+        "the FIRST legend of a disabled fieldset is the escape hatch HTML gives authors"
+    );
 }
 
 #[test]
 fn a_radio_group_is_satisfied_by_any_checked_member() {
-    let d = parse_html(r#"<form>
+    let d = parse_html(
+        r#"<form>
         <input id="r1" type="radio" name="g" required>
         <input id="r2" type="radio" name="g" checked>
-    </form>"#);
-    assert!(d.validity(el(&d, "r1")).valid(),
-        "`required` on one radio is a constraint on the GROUP, not on that button");
+    </form>"#,
+    );
+    assert!(
+        d.validity(el(&d, "r1")).valid(),
+        "`required` on one radio is a constraint on the GROUP, not on that button"
+    );
 
-    let d2 = parse_html(r#"<form>
+    let d2 = parse_html(
+        r#"<form>
         <input id="r1" type="radio" name="g" required>
         <input id="r2" type="radio" name="g">
-    </form>"#);
-    assert!(d2.validity(el(&d2, "r1")).value_missing, "nothing checked in the group");
+    </form>"#,
+    );
+    assert!(
+        d2.validity(el(&d2, "r1")).value_missing,
+        "nothing checked in the group"
+    );
 }

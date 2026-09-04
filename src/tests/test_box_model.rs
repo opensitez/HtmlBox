@@ -1,8 +1,8 @@
 // Ported from tests/test_box_model.cpp
 
+use super::harness::*;
 use crate::css::apply_property;
 use crate::types::*;
-use super::harness::*;
 
 // ── Margin Tests ──────────────────────────────────────────────────────────────
 
@@ -39,10 +39,10 @@ fn boxmodel_margin_shorthand_one() {
 #[test]
 fn boxmodel_margin_individual() {
     let mut s = ComputedStyle::default();
-    apply_property(&mut s, "margin-top",    "5px");
-    apply_property(&mut s, "margin-right",  "10px");
+    apply_property(&mut s, "margin-top", "5px");
+    apply_property(&mut s, "margin-right", "10px");
     apply_property(&mut s, "margin-bottom", "15px");
-    apply_property(&mut s, "margin-left",   "20px");
+    apply_property(&mut s, "margin-left", "20px");
     assert_eq!(s.margin_top.resolve(16.0, 0.0, 16.0), 5.0);
     assert_eq!(s.margin_right.resolve(16.0, 0.0, 16.0), 10.0);
     assert_eq!(s.margin_bottom.resolve(16.0, 0.0, 16.0), 15.0);
@@ -55,10 +55,16 @@ fn boxmodel_margin_auto_center() {
         r#"<div style="width: 200px; margin-left: auto; margin-right: auto;">Centered</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0
+    });
     assert!(b.is_some(), "div with width=200 not found");
     let x = b.unwrap().layout.content_rect.x;
-    assert!(x > 250.0 && x < 350.0, "expected centered x ~300, got {}", x);
+    assert!(
+        x > 250.0 && x < 350.0,
+        "expected centered x ~300, got {}",
+        x
+    );
 }
 
 #[test]
@@ -67,7 +73,9 @@ fn boxmodel_margin_auto_left_only() {
         r#"<div style="width: 200px; margin-left: auto;">Right</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0
+    });
     assert!(b.is_some());
     assert!(b.unwrap().layout.content_rect.x > 500.0);
 }
@@ -75,7 +83,9 @@ fn boxmodel_margin_auto_left_only() {
 #[test]
 fn boxmodel_margin_auto_does_not_affect_defaults() {
     let doc = parse_and_layout(r#"<div style="width: 200px;">Not centered</div>"#, 800.0);
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0
+    });
     assert!(b.is_some());
     assert!(b.unwrap().layout.content_rect.x < 50.0);
 }
@@ -116,10 +126,10 @@ fn boxmodel_padding_shorthand_one() {
 #[test]
 fn boxmodel_padding_individual() {
     let mut s = ComputedStyle::default();
-    apply_property(&mut s, "padding-top",    "5px");
-    apply_property(&mut s, "padding-right",  "10px");
+    apply_property(&mut s, "padding-top", "5px");
+    apply_property(&mut s, "padding-right", "10px");
     apply_property(&mut s, "padding-bottom", "15px");
-    apply_property(&mut s, "padding-left",   "20px");
+    apply_property(&mut s, "padding-left", "20px");
     assert_eq!(s.padding_top.resolve(16.0, 0.0, 16.0), 5.0);
     assert_eq!(s.padding_right.resolve(16.0, 0.0, 16.0), 10.0);
     assert_eq!(s.padding_bottom.resolve(16.0, 0.0, 16.0), 15.0);
@@ -132,10 +142,16 @@ fn boxmodel_padding_affects_layout() {
         r#"<div style="width: 200px; padding: 20px;">Padded</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0
+    });
     assert!(b.is_some());
     let pw = b.unwrap().layout.padding_rect.w;
-    assert!(pw >= 235.0 && pw <= 245.0, "expected padding_rect.w ~240, got {}", pw);
+    assert!(
+        pw >= 235.0 && pw <= 245.0,
+        "expected padding_rect.w ~240, got {}",
+        pw
+    );
 }
 
 // ── Border Tests ──────────────────────────────────────────────────────────────
@@ -172,7 +188,7 @@ fn boxmodel_border_style_only() {
 #[test]
 fn boxmodel_border_individual_sides() {
     let mut s = ComputedStyle::default();
-    apply_property(&mut s, "border-top",    "1px solid black");
+    apply_property(&mut s, "border-top", "1px solid black");
     apply_property(&mut s, "border-bottom", "3px dashed blue");
     assert_eq!(s.border_top_width.resolve(16.0, 0.0, 16.0), 1.0);
     assert_eq!(s.border_top_style, BorderStyle::Solid);
@@ -186,10 +202,16 @@ fn boxmodel_border_affects_layout() {
         r#"<div style="width: 200px; border: 5px solid black;">Bordered</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 200.0).abs() < 5.0
+    });
     assert!(b.is_some());
     let bw = b.unwrap().layout.border_rect.w;
-    assert!(bw >= 205.0 && bw <= 215.0, "expected border_rect.w ~210, got {}", bw);
+    assert!(
+        bw >= 205.0 && bw <= 215.0,
+        "expected border_rect.w ~210, got {}",
+        bw
+    );
 }
 
 // ── Box Sizing ────────────────────────────────────────────────────────────────
@@ -200,13 +222,21 @@ fn boxmodel_content_box_default() {
         r#"<div style="width: 200px; padding: 20px; border: 5px solid black;">Content-box</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && b.style.box_sizing == BoxSizing::ContentBox);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && b.style.box_sizing == BoxSizing::ContentBox
+    });
     assert!(b.is_some(), "div should default to content-box sizing");
     let bx = b.unwrap();
-    assert!((bx.layout.content_rect.w - 200.0).abs() < 5.0, "content width should be 200");
+    assert!(
+        (bx.layout.content_rect.w - 200.0).abs() < 5.0,
+        "content width should be 200"
+    );
     // borderRect = 200 (content) + 40 (padding) + 10 (border) = 250
-    assert!(bx.layout.border_rect.w >= 245.0 && bx.layout.border_rect.w <= 255.0,
-        "expected border_rect.w ~250, got {}", bx.layout.border_rect.w);
+    assert!(
+        bx.layout.border_rect.w >= 245.0 && bx.layout.border_rect.w <= 255.0,
+        "expected border_rect.w ~250, got {}",
+        bx.layout.border_rect.w
+    );
 }
 
 #[test]
@@ -215,15 +245,23 @@ fn boxmodel_border_box_sizing() {
         r#"<div style="box-sizing: border-box; width: 200px; padding: 20px; border: 5px solid black;">Border-box</div>"#,
         800.0,
     );
-    let b = find_box(&doc.root, &|b| b.tag == "div" && b.style.box_sizing == BoxSizing::BorderBox);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && b.style.box_sizing == BoxSizing::BorderBox
+    });
     assert!(b.is_some(), "div should have border-box sizing");
     let bx = b.unwrap();
     // borderRect should be 200
-    assert!(bx.layout.border_rect.w >= 195.0 && bx.layout.border_rect.w <= 205.0,
-        "expected border_rect.w ~200, got {}", bx.layout.border_rect.w);
+    assert!(
+        bx.layout.border_rect.w >= 195.0 && bx.layout.border_rect.w <= 205.0,
+        "expected border_rect.w ~200, got {}",
+        bx.layout.border_rect.w
+    );
     // contentWidth = 200 - 40 (padding) - 10 (border) = 150
-    assert!(bx.layout.content_rect.w >= 145.0 && bx.layout.content_rect.w <= 155.0,
-        "expected content_rect.w ~150, got {}", bx.layout.content_rect.w);
+    assert!(
+        bx.layout.content_rect.w >= 145.0 && bx.layout.content_rect.w <= 155.0,
+        "expected content_rect.w ~150, got {}",
+        bx.layout.content_rect.w
+    );
 }
 
 // ── Width / Height ────────────────────────────────────────────────────────────
@@ -231,7 +269,9 @@ fn boxmodel_border_box_sizing() {
 #[test]
 fn boxmodel_explicit_width() {
     let doc = parse_and_layout(r#"<div style="width: 300px;">Fixed</div>"#, 800.0);
-    let b = find_box(&doc.root, &|b| b.tag == "div" && (b.layout.content_rect.w - 300.0).abs() < 5.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && (b.layout.content_rect.w - 300.0).abs() < 5.0
+    });
     assert!(b.is_some());
 }
 
@@ -247,7 +287,9 @@ fn boxmodel_percentage_width() {
 #[test]
 fn boxmodel_auto_width_fills_container() {
     let doc = parse_and_layout(r#"<div>Full width</div>"#, 800.0);
-    let b = find_box(&doc.root, &|b| b.tag == "div" && b.layout.content_rect.w > 700.0);
+    let b = find_box(&doc.root, &|b| {
+        b.tag == "div" && b.layout.content_rect.w > 700.0
+    });
     assert!(b.is_some());
 }
 
@@ -340,7 +382,9 @@ fn boxmodel_background_color() {
 #[test]
 fn boxmodel_background_color_from_html() {
     let doc = parse(r#"<div style="background-color: yellow;">Yellow</div>"#);
-    let b = find_box(&doc.root, &|b| b.style.background_color == Color::rgb(255, 255, 0));
+    let b = find_box(&doc.root, &|b| {
+        b.style.background_color == Color::rgb(255, 255, 0)
+    });
     assert!(b.is_some());
 }
 
@@ -352,7 +396,10 @@ fn boxmodel_color_inheritance_via_stylesheet() {
         800.0,
     );
     let parent = find_box(&doc.root, &|b| {
-        b.attributes.get("class").map(|c| c == "parent").unwrap_or(false)
+        b.attributes
+            .get("class")
+            .map(|c| c == "parent")
+            .unwrap_or(false)
             && b.style.color == Color::rgb(255, 0, 0)
     });
     assert!(parent.is_some(), "parent div with red color not found");

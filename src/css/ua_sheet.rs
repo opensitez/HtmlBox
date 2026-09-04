@@ -1,10 +1,10 @@
 //! The user-agent stylesheet.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── User-Agent Stylesheet ───────────────────────────────────────────────────
 
@@ -243,9 +243,13 @@ pub(crate) fn apply_host_rules(
 ) {
     let mut matched: Vec<(u32, usize)> = Vec::new();
     for (ri, rule) in shadow_sheet.rules.iter().enumerate() {
-        if rule.pseudo_element != PseudoElement::None { continue; }
+        if rule.pseudo_element != PseudoElement::None {
+            continue;
+        }
         for sel in &rule.selectors {
-            let Some(inner) = host_selector_argument(sel) else { continue };
+            let Some(inner) = host_selector_argument(sel) else {
+                continue;
+            };
             // `:host` alone matches unconditionally; `:host(sel)` and
             // `:host-context(sel)` match when the host itself matches `sel`.
             let hit = match inner {
@@ -257,13 +261,20 @@ pub(crate) fn apply_host_rules(
                 // `<body class=dark>` do nothing.
                 HostArg::Context(arg) => {
                     matches_bare(arg, &host.tag, &host.attributes, Some(host))
-                        || ancestors.iter().any(|a| matches_bare(arg, &a.tag, &a.attributes, None))
+                        || ancestors
+                            .iter()
+                            .any(|a| matches_bare(arg, &a.tag, &a.attributes, None))
                 }
             };
-            if hit { matched.push((rule.specificity, ri)); break; }
+            if hit {
+                matched.push((rule.specificity, ri));
+                break;
+            }
         }
     }
-    if matched.is_empty() { return; }
+    if matched.is_empty() {
+        return;
+    }
     matched.sort_by_key(|(sp, _)| *sp);
     for (_, ri) in &matched {
         for (prop, val) in &shadow_sheet.rules[*ri].declarations {
@@ -285,7 +296,9 @@ pub(crate) fn apply_host_rules(
 fn host_selector_argument(sel: &CssSelector) -> Option<HostArg<'_>> {
     for part in &sel.parts {
         if let SelectorPart::PseudoClass(name) = part {
-            if name == "host" { return Some(HostArg::Bare); }
+            if name == "host" {
+                return Some(HostArg::Bare);
+            }
             if let Some(rest) = name.strip_prefix("host(") {
                 return Some(HostArg::Host(rest.trim_end_matches(')')));
             }
@@ -315,15 +328,23 @@ fn matches_bare(
     node: Option<&WebCore>,
 ) -> bool {
     let parsed = parse_selector(sel);
-    if parsed.parts.is_empty() { return false; }
+    if parsed.parts.is_empty() {
+        return false;
+    }
     let empty = std::collections::HashSet::new();
     let ctx = MatchContext {
-        focused_box: 0, keyboard_focus: false,
-        type_child_index: 0, type_sibling_count: 1,
-        html_box: node, hover_chain: &empty,
+        focused_box: 0,
+        keyboard_focus: false,
+        type_child_index: 0,
+        type_sibling_count: 1,
+        html_box: node,
+        hover_chain: &empty,
         element_id: node.map(|n| n.node_id).unwrap_or(0),
         prev_siblings: &[],
+        next_siblings: &[],
     };
-    parsed.parts.iter().all(|p|
-        matches_part_with_context(p, tag, attrs, 0, 1, &[], &ctx))
+    parsed
+        .parts
+        .iter()
+        .all(|p| matches_part_with_context(p, tag, attrs, 0, 1, &[], &ctx))
 }

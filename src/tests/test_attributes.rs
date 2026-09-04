@@ -8,7 +8,9 @@
 use crate::html::parse_html;
 use crate::html::serializer::escape_html;
 
-fn doc(html: &str) -> crate::types::Document { parse_html(html) }
+fn doc(html: &str) -> crate::types::Document {
+    parse_html(html)
+}
 
 #[test]
 fn attribute_names_come_back_in_source_order() {
@@ -41,7 +43,11 @@ fn a_new_attribute_is_appended_and_a_reset_one_keeps_its_place() {
         vec!["id", "zebra", "alpha", "mid", "aaa"],
         "Chrome: after reset zebra: unchanged — a RESET name does not move"
     );
-    assert_eq!(d.get_attribute(el, "zebra").as_deref(), Some("7"), "…but takes the new value");
+    assert_eq!(
+        d.get_attribute(el, "zebra").as_deref(),
+        Some("7"),
+        "…but takes the new value"
+    );
 }
 
 #[test]
@@ -109,5 +115,9 @@ fn a_no_break_space_is_escaped_in_text_and_in_an_attribute() {
     let mut d = doc(r#"<div id="d">x</div>"#);
     let el = d.get_element_by_id("d").unwrap();
     d.set_attribute(el, "t", "a\u{00A0}b");
-    assert!(d.outer_html(el).contains(r#"t="a&nbsp;b""#), "got {}", d.outer_html(el));
+    assert!(
+        d.outer_html(el).contains(r#"t="a&nbsp;b""#),
+        "got {}",
+        d.outer_html(el)
+    );
 }

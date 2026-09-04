@@ -2,10 +2,10 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── CSS Value (pre-parsed declaration value) ───────────────────────────────
 
@@ -52,6 +52,8 @@ pub enum CssValue {
     Inherit,
     Initial,
     Unset,
+    Revert,
+    RevertLayer,
     /// Unparsed string — fallback for complex values, var() references,
     /// and properties that haven't been converted to typed form yet.
     Raw(String),
@@ -60,7 +62,16 @@ pub enum CssValue {
 /// Border-style single value (not the shorthand).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BorderStyleValue {
-    None, Hidden, Solid, Dashed, Dotted, Double, Groove, Ridge, Inset, Outset,
+    None,
+    Hidden,
+    Solid,
+    Dashed,
+    Dotted,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
 }
 
 impl CssValue {

@@ -1,5 +1,5 @@
-use crate::types::*;
 use super::harness::*;
+use crate::types::*;
 
 #[test]
 fn test_font_size_inheritance_em() {
@@ -10,11 +10,11 @@ fn test_font_size_inheritance_em() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    
+
     // Parent div should be 2 * 16px = 32px
     let div = find_box(&doc.root, &|b| b.tag == "div").expect("div not found");
     assert_eq!(div.style.font_size, CssLength::Px(32.0));
-    
+
     // Child p should inherit 32px as Px, NOT 2em
     let p = find_box(&doc.root, &|b| b.tag == "p").expect("p not found");
     assert_eq!(p.style.font_size, CssLength::Px(32.0));
@@ -31,8 +31,14 @@ fn test_nested_em_scaling() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    
-    let inner = find_box(&doc.root, &|b| b.attributes.get("id").map(|v| v == "inner").unwrap_or(false)).expect("inner div not found");
+
+    let inner = find_box(&doc.root, &|b| {
+        b.attributes
+            .get("id")
+            .map(|v| v == "inner")
+            .unwrap_or(false)
+    })
+    .expect("inner div not found");
     // Outer div resolved to 32px. Inner div resolves 2em against 32px -> 64px.
     assert_eq!(inner.style.font_size, CssLength::Px(64.0));
 }
@@ -42,7 +48,7 @@ fn test_h1_ua_font_size() {
     // UA stylesheet specifies h1 { font-size: 2em; }
     let html = "<h1>Heading</h1>";
     let doc = parse_and_layout(html, 800.0);
-    
+
     let h1 = find_box(&doc.root, &|b| b.tag == "h1").expect("h1 not found");
     // Default root is 16px, h1 is 2em -> 32px
     assert_eq!(h1.style.font_size, CssLength::Px(32.0));
@@ -57,7 +63,7 @@ fn test_rem_resolution() {
         </div>
     "#;
     let doc = parse_and_layout(html, 800.0);
-    
+
     let p = find_box(&doc.root, &|b| b.tag == "p").expect("p not found");
     assert_eq!(p.style.font_size, CssLength::Px(16.0));
 }
@@ -67,7 +73,7 @@ fn test_pt_resolution() {
     // pt should resolve to 4/3 px (12pt = 16px)
     let html = r#"<p style="font-size: 12pt;">12pt text</p>"#;
     let doc = parse_and_layout(html, 800.0);
-    
+
     let p = find_box(&doc.root, &|b| b.tag == "p").expect("p not found");
     assert_eq!(p.style.font_size, CssLength::Px(16.0));
 }
@@ -86,11 +92,14 @@ fn test_text_shadow_inherited_by_text_node() {
 
     // The #text child must inherit it
     let text_node = find_box(&doc.root, &|b| b.tag == "#text").expect("#text not found");
-    let ts = text_node.style.text_shadow.as_ref()
+    let ts = text_node
+        .style
+        .text_shadow
+        .as_ref()
         .expect("#text must inherit text_shadow from parent");
     assert!((ts.offset_x - 2.0).abs() < 0.01, "offset_x should be 2");
     assert!((ts.offset_y - 2.0).abs() < 0.01, "offset_y should be 2");
-    assert!((ts.blur - 4.0).abs() < 0.01,     "blur should be 4");
+    assert!((ts.blur - 4.0).abs() < 0.01, "blur should be 4");
     // ⛔ 77, not 76. `0.3 * 255` is 76.5, and this asserted the old
     // TRUNCATING conversion. Chrome settles the tie: `#0000004D` (77)
     // round-trips to `0.3`, while `#0000004C` (76) comes back as `0.298` — so
@@ -111,13 +120,15 @@ fn test_text_shadow_not_inherited_across_block_boundary() {
     let paras: Vec<_> = {
         let mut v = Vec::new();
         let mut collect = |b: &WebCore| {
-            if b.tag == "p" { v.push(b.style.text_shadow.is_some()); }
+            if b.tag == "p" {
+                v.push(b.style.text_shadow.is_some());
+            }
         };
         walk_boxes(&doc.root, &mut collect);
         v
     };
     assert_eq!(paras.len(), 2);
-    assert!(paras[0],  "first p should have text_shadow");
+    assert!(paras[0], "first p should have text_shadow");
     assert!(!paras[1], "second p should NOT have text_shadow");
 }
 
@@ -132,14 +143,23 @@ fn test_inline_span_background_propagated_to_text_run() {
 
     // The span itself should have the colour
     let span = find_box(&doc.root, &|b| b.tag == "span").expect("span not found");
-    assert_eq!(span.style.background_color, Color::rgb(255, 255, 0),
-               "span should have yellow background");
+    assert_eq!(
+        span.style.background_color,
+        Color::rgb(255, 255, 0),
+        "span should have yellow background"
+    );
 
     // Every inline run collected from the span should carry the background colour.
     let p = find_box(&doc.root, &|b| b.tag == "p").expect("p not found");
-    assert!(!p.layout.inline_runs.is_empty(), "p should have inline runs");
+    assert!(
+        !p.layout.inline_runs.is_empty(),
+        "p should have inline runs"
+    );
     for run in &p.layout.inline_runs {
-        assert_eq!(run.style.background_color, Color::rgb(255, 255, 0),
-                   "all runs under highlighted span should carry yellow background");
+        assert_eq!(
+            run.style.background_color,
+            Color::rgb(255, 255, 0),
+            "all runs under highlighted span should carry yellow background"
+        );
     }
 }

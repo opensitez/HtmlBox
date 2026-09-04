@@ -12,59 +12,252 @@ use crate::types::Document;
 
 const BASE: &str = "http://base.example.org/dir/page.html?bq#bh";
 
-fn base() -> Url { parse(BASE, None).expect("the base parses") }
-fn u(input: &str) -> Url { parse(input, Some(&base())).expect("parses") }
+fn base() -> Url {
+    parse(BASE, None).expect("the base parses")
+}
+fn u(input: &str) -> Url {
+    parse(input, Some(&base())).expect("parses")
+}
 
 /// (input, href, protocol, host, hostname, port, pathname, search, hash, origin)
 const TABLE: &[(&str, &str, &str, &str, &str, &str, &str, &str, &str, &str)] = &[
-    ("http://example.com/a/b?x=1#frag", "http://example.com/a/b?x=1#frag", "http:",
-     "example.com", "example.com", "", "/a/b", "?x=1", "#frag", "http://example.com"),
-    ("https://user:pw@example.com:8443/p?q#h", "https://user:pw@example.com:8443/p?q#h",
-     "https:", "example.com:8443", "example.com", "8443", "/p", "?q", "#h",
-     "https://example.com:8443"),
+    (
+        "http://example.com/a/b?x=1#frag",
+        "http://example.com/a/b?x=1#frag",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/a/b",
+        "?x=1",
+        "#frag",
+        "http://example.com",
+    ),
+    (
+        "https://user:pw@example.com:8443/p?q#h",
+        "https://user:pw@example.com:8443/p?q#h",
+        "https:",
+        "example.com:8443",
+        "example.com",
+        "8443",
+        "/p",
+        "?q",
+        "#h",
+        "https://example.com:8443",
+    ),
     // ⛔ The scheme's default port is dropped from host, port AND href.
-    ("http://example.com:80/", "http://example.com/", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
-    ("https://example.com:443/", "https://example.com/", "https:", "example.com",
-     "example.com", "", "/", "", "", "https://example.com"),
+    (
+        "http://example.com:80/",
+        "http://example.com/",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
+    (
+        "https://example.com:443/",
+        "https://example.com/",
+        "https:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "https://example.com",
+    ),
     // ⛔ An empty path on a special scheme becomes `/`, and href GAINS it.
-    ("http://example.com", "http://example.com/", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
-    ("http://example.com:8080", "http://example.com:8080/", "http:", "example.com:8080",
-     "example.com", "8080", "/", "", "", "http://example.com:8080"),
-    ("https://example.com/a/../b/./c", "https://example.com/b/c", "https:", "example.com",
-     "example.com", "", "/b/c", "", "", "https://example.com"),
+    (
+        "http://example.com",
+        "http://example.com/",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
+    (
+        "http://example.com:8080",
+        "http://example.com:8080/",
+        "http:",
+        "example.com:8080",
+        "example.com",
+        "8080",
+        "/",
+        "",
+        "",
+        "http://example.com:8080",
+    ),
+    (
+        "https://example.com/a/../b/./c",
+        "https://example.com/b/c",
+        "https:",
+        "example.com",
+        "example.com",
+        "",
+        "/b/c",
+        "",
+        "",
+        "https://example.com",
+    ),
     // ⛔ `file:` has an empty host and its own origin shape.
-    ("file:///tmp/x.txt", "file:///tmp/x.txt", "file:", "", "", "", "/tmp/x.txt", "", "",
-     "file://"),
+    (
+        "file:///tmp/x.txt",
+        "file:///tmp/x.txt",
+        "file:",
+        "",
+        "",
+        "",
+        "/tmp/x.txt",
+        "",
+        "",
+        "file://",
+    ),
     // ⛔ Opaque schemes: the whole remainder is the PATHNAME, origin is the
     // STRING "null". Three of them, because a parser that special-cases only
     // `data:` passes with one.
-    ("data:text/plain,hi", "data:text/plain,hi", "data:", "", "", "", "text/plain,hi",
-     "", "", "null"),
-    ("mailto:a@b.c", "mailto:a@b.c", "mailto:", "", "", "", "a@b.c", "", "", "null"),
-    ("about:blank", "about:blank", "about:", "", "", "", "blank", "", "", "null"),
+    (
+        "data:text/plain,hi",
+        "data:text/plain,hi",
+        "data:",
+        "",
+        "",
+        "",
+        "text/plain,hi",
+        "",
+        "",
+        "null",
+    ),
+    (
+        "mailto:a@b.c",
+        "mailto:a@b.c",
+        "mailto:",
+        "",
+        "",
+        "",
+        "a@b.c",
+        "",
+        "",
+        "null",
+    ),
+    (
+        "about:blank",
+        "about:blank",
+        "about:",
+        "",
+        "",
+        "",
+        "blank",
+        "",
+        "",
+        "null",
+    ),
     // ⛔ href KEEPS the delimiter where the component is empty.
-    ("http://example.com/?", "http://example.com/?", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
-    ("http://example.com/#", "http://example.com/#", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
+    (
+        "http://example.com/?",
+        "http://example.com/?",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
+    (
+        "http://example.com/#",
+        "http://example.com/#",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
     // Relative forms.
-    ("//cdn.example.com/x.js", "http://cdn.example.com/x.js", "http:", "cdn.example.com",
-     "cdn.example.com", "", "/x.js", "", "", "http://cdn.example.com"),
-    ("/root/path", "http://base.example.org/root/path", "http:", "base.example.org",
-     "base.example.org", "", "/root/path", "", "", "http://base.example.org"),
-    ("rel/path", "http://base.example.org/dir/rel/path", "http:", "base.example.org",
-     "base.example.org", "", "/dir/rel/path", "", "", "http://base.example.org"),
-    ("?onlyquery", "http://base.example.org/dir/page.html?onlyquery", "http:",
-     "base.example.org", "base.example.org", "", "/dir/page.html", "?onlyquery", "",
-     "http://base.example.org"),
-    ("#onlyhash", "http://base.example.org/dir/page.html?bq#onlyhash", "http:",
-     "base.example.org", "base.example.org", "", "/dir/page.html", "?bq", "#onlyhash",
-     "http://base.example.org"),
+    (
+        "//cdn.example.com/x.js",
+        "http://cdn.example.com/x.js",
+        "http:",
+        "cdn.example.com",
+        "cdn.example.com",
+        "",
+        "/x.js",
+        "",
+        "",
+        "http://cdn.example.com",
+    ),
+    (
+        "/root/path",
+        "http://base.example.org/root/path",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/root/path",
+        "",
+        "",
+        "http://base.example.org",
+    ),
+    (
+        "rel/path",
+        "http://base.example.org/dir/rel/path",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/rel/path",
+        "",
+        "",
+        "http://base.example.org",
+    ),
+    (
+        "?onlyquery",
+        "http://base.example.org/dir/page.html?onlyquery",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/page.html",
+        "?onlyquery",
+        "",
+        "http://base.example.org",
+    ),
+    (
+        "#onlyhash",
+        "http://base.example.org/dir/page.html?bq#onlyhash",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/page.html",
+        "?bq",
+        "#onlyhash",
+        "http://base.example.org",
+    ),
     // ⛔ The empty string is the base MINUS its fragment.
-    ("", "http://base.example.org/dir/page.html?bq", "http:", "base.example.org",
-     "base.example.org", "", "/dir/page.html", "?bq", "", "http://base.example.org"),
+    (
+        "",
+        "http://base.example.org/dir/page.html?bq",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/page.html",
+        "?bq",
+        "",
+        "http://base.example.org",
+    ),
 ];
 
 #[test]
@@ -88,30 +281,110 @@ fn the_parser_matches_chrome_row_for_row() {
 /// because the inputs I had chosen never reached it. Measured like the rest.
 const TABLE2: &[(&str, &str, &str, &str, &str, &str, &str, &str, &str, &str)] = &[
     // A query-relative reference carries its own fragment.
-    ("?q#f", "http://base.example.org/dir/page.html?q#f", "http:", "base.example.org",
-     "base.example.org", "", "/dir/page.html", "?q", "#f", "http://base.example.org"),
+    (
+        "?q#f",
+        "http://base.example.org/dir/page.html?q#f",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/page.html",
+        "?q",
+        "#f",
+        "http://base.example.org",
+    ),
     // ⛔ Scheme AND host are lowercased; the PATH keeps its case.
-    ("HTTP://EXAMPLE.COM/Path", "http://example.com/Path", "http:", "example.com",
-     "example.com", "", "/Path", "", "", "http://example.com"),
+    (
+        "HTTP://EXAMPLE.COM/Path",
+        "http://example.com/Path",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/Path",
+        "",
+        "",
+        "http://example.com",
+    ),
     // ⛔ An authority comes from the `//`, not from the scheme being special:
     // a non-special scheme can have a host, and its origin is still "null".
-    ("a1+-.b://host/p", "a1+-.b://host/p", "a1+-.b:", "host", "host", "", "/p", "", "",
-     "null"),
+    (
+        "a1+-.b://host/p",
+        "a1+-.b://host/p",
+        "a1+-.b:",
+        "host",
+        "host",
+        "",
+        "/p",
+        "",
+        "",
+        "null",
+    ),
     // ⛔ Not a scheme — a scheme cannot start with a digit, so this resolves
     // as a relative path.
-    ("1http://x", "http://base.example.org/dir/1http://x", "http:", "base.example.org",
-     "base.example.org", "", "/dir/1http://x", "", "", "http://base.example.org"),
+    (
+        "1http://x",
+        "http://base.example.org/dir/1http://x",
+        "http:",
+        "base.example.org",
+        "base.example.org",
+        "",
+        "/dir/1http://x",
+        "",
+        "",
+        "http://base.example.org",
+    ),
     // An EMPTY port is legal and drops out.
-    ("http://example.com:/", "http://example.com/", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
+    (
+        "http://example.com:/",
+        "http://example.com/",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
     // Trailing dot segments keep the trailing slash; popping past the root is
     // not an error.
-    ("http://example.com/a/..", "http://example.com/", "http:", "example.com",
-     "example.com", "", "/", "", "", "http://example.com"),
-    ("http://example.com/a/.", "http://example.com/a/", "http:", "example.com",
-     "example.com", "", "/a/", "", "", "http://example.com"),
-    ("http://example.com/../../x", "http://example.com/x", "http:", "example.com",
-     "example.com", "", "/x", "", "", "http://example.com"),
+    (
+        "http://example.com/a/..",
+        "http://example.com/",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/",
+        "",
+        "",
+        "http://example.com",
+    ),
+    (
+        "http://example.com/a/.",
+        "http://example.com/a/",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/a/",
+        "",
+        "",
+        "http://example.com",
+    ),
+    (
+        "http://example.com/../../x",
+        "http://example.com/x",
+        "http:",
+        "example.com",
+        "example.com",
+        "",
+        "/x",
+        "",
+        "",
+        "http://example.com",
+    ),
 ];
 
 #[test]
@@ -145,7 +418,10 @@ fn a_port_that_is_not_a_number_is_a_parse_failure() {
     // ⛔ Chrome throws `TypeError` rather than folding `:80x` into the host.
     assert_eq!(parse("http://example.com:80x/", Some(&base())), None);
     assert_eq!(parse("http://example.com:1a/", Some(&base())), None);
-    assert!(parse("http://example.com:8080/", Some(&base())).is_some(), "digits are fine");
+    assert!(
+        parse("http://example.com:8080/", Some(&base())).is_some(),
+        "digits are fine"
+    );
 }
 
 #[test]
@@ -168,7 +444,11 @@ fn href_cannot_be_rebuilt_from_the_components() {
     // and every other row in the table still passes.
     let q = u("http://example.com/?");
     assert_eq!(q.search(), "");
-    assert!(q.href().ends_with('?'), "href kept the delimiter: {:?}", q.href());
+    assert!(
+        q.href().ends_with('?'),
+        "href kept the delimiter: {:?}",
+        q.href()
+    );
     let h = u("http://example.com/#");
     assert_eq!(h.hash(), "");
     assert!(h.href().ends_with('#'), "{:?}", h.href());
@@ -177,7 +457,11 @@ fn href_cannot_be_rebuilt_from_the_components() {
 #[test]
 fn origin_has_three_shapes_and_only_one_is_scheme_slash_slash_host() {
     assert_eq!(u("http://example.com/x").origin(), "http://example.com");
-    assert_eq!(u("file:///tmp/x").origin(), "file://", "a scheme with an empty host");
+    assert_eq!(
+        u("file:///tmp/x").origin(),
+        "file://",
+        "a scheme with an empty host"
+    );
     assert_eq!(u("mailto:a@b.c").origin(), "null", "the STRING null");
     assert_ne!(u("mailto:a@b.c").origin(), "", "not an empty string");
 }
@@ -189,7 +473,10 @@ fn a_non_special_scheme_has_no_authority_at_all() {
         assert!(!p.special, "{input}");
         assert_eq!(p.hostname, "", "{input} hostname");
         assert_eq!(p.port, "", "{input} port");
-        assert!(!p.pathname().starts_with('/'), "{input} keeps its opaque path");
+        assert!(
+            !p.pathname().starts_with('/'),
+            "{input} keeps its opaque path"
+        );
     }
 }
 
@@ -219,7 +506,10 @@ fn a_hyperlinks_components_come_from_its_resolved_url() {
     assert_eq!(c("origin"), "http://example.com:8080");
 
     let rel = d.get_element_by_id("rel").unwrap();
-    assert_eq!(d.hyperlink_component(rel, "href"), "http://base.example.org/dir/x.html");
+    assert_eq!(
+        d.hyperlink_component(rel, "href"),
+        "http://base.example.org/dir/x.html"
+    );
     assert_eq!(d.hyperlink_component(rel, "hostname"), "base.example.org");
 }
 
@@ -230,7 +520,9 @@ fn a_hyperlink_with_no_href_answers_a_bare_colon_for_its_protocol() {
     let d = page();
     let bare = d.get_element_by_id("bare").unwrap();
     assert_eq!(d.hyperlink_component(bare, "protocol"), ":");
-    for n in ["href", "host", "hostname", "port", "pathname", "search", "hash", "origin"] {
+    for n in [
+        "href", "host", "hostname", "port", "pathname", "search", "hash", "origin",
+    ] {
         assert_eq!(d.hyperlink_component(bare, n), "", "{n}");
     }
 }

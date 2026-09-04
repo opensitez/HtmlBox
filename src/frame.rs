@@ -42,8 +42,8 @@
 //! 4. Call update_frame() on vsync — it returns true when pixels changed
 //! 5. Paint using renderer.render() when update_frame() returns true
 
-use crate::types::Document;
 use crate::layout::LayoutEngine;
+use crate::types::Document;
 
 /// Callbacks the engine fires to notify the host of state changes.
 /// The host implements this trait — the engine calls it, never the other way around.
@@ -138,7 +138,10 @@ impl EngineFrame {
     /// Load HTML with a base URL for resolving relative links and resources.
     pub fn load_html_with_base(&mut self, html: &str, base_url: &str) {
         self.doc = crate::load_html_with_registry(
-            html, base_url, self.viewport_w, self.viewport_h,
+            html,
+            base_url,
+            self.viewport_w,
+            self.viewport_h,
             self.engine.component_registry.clone(),
         );
         self.first_paint_done = false;
@@ -205,7 +208,8 @@ impl EngineFrame {
             if self.needs_style {
                 self.engine.layout(&mut self.doc, self.viewport_w);
             } else {
-                self.engine.layout_no_cascade(&mut self.doc, self.viewport_w);
+                self.engine
+                    .layout_no_cascade(&mut self.doc, self.viewport_w);
             }
             self.needs_style = false;
             self.needs_layout = false;
@@ -241,8 +245,11 @@ impl EngineFrame {
 
     /// Check if the engine needs a repaint without consuming the flag.
     pub fn needs_render(&self) -> bool {
-        self.needs_paint || self.needs_style || self.needs_layout
-            || self.doc.hover_changed || self.doc.needs_animation_frame
+        self.needs_paint
+            || self.needs_style
+            || self.needs_layout
+            || self.doc.hover_changed
+            || self.doc.needs_animation_frame
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -259,7 +266,7 @@ impl EngineFrame {
             // `window.onresize`. It resolved as a handler name and nothing ever
             // fired it, so a page that laid itself out on resize never ran.
             self.doc.fire_window_event("resize");
-            self.needs_style = true;  // media queries may change
+            self.needs_style = true; // media queries may change
             self.needs_layout = true;
             self.needs_paint = true;
         }
@@ -278,8 +285,16 @@ impl EngineFrame {
         let view_h = self.viewport_h;
         let view_w = self.viewport_w;
 
-        let new_y = (self.doc.scroll_y + dy).max(0.0).min((doc_h - view_h).max(0.0));
-        let new_x = (self.doc.scroll_x + dx).max(0.0).min((doc_w - view_w).max(0.0));
+        let new_y = if self.doc.viewport_y_scroll_locked() {
+            self.doc.scroll_y
+        } else {
+            (self.doc.scroll_y + dy)
+                .max(0.0)
+                .min((doc_h - view_h).max(0.0))
+        };
+        let new_x = (self.doc.scroll_x + dx)
+            .max(0.0)
+            .min((doc_w - view_w).max(0.0));
 
         if (new_y - self.doc.scroll_y).abs() > 0.01 || (new_x - self.doc.scroll_x).abs() > 0.01 {
             self.doc.scroll_y = new_y;
@@ -296,7 +311,11 @@ impl EngineFrame {
         let doc_h = crate::types::Document::scroll_height(&self.doc.root)
             .max(self.doc.root.layout.margin_rect.h);
         let doc_w = self.doc.root.layout.margin_rect.w;
-        let new_y = y.max(0.0).min((doc_h - self.viewport_h).max(0.0));
+        let new_y = if self.doc.viewport_y_scroll_locked() {
+            self.doc.scroll_y
+        } else {
+            y.max(0.0).min((doc_h - self.viewport_h).max(0.0))
+        };
         let new_x = x.max(0.0).min((doc_w - self.viewport_w).max(0.0));
         if (new_y - self.doc.scroll_y).abs() > 0.01 || (new_x - self.doc.scroll_x).abs() > 0.01 {
             self.doc.scroll_y = new_y;
@@ -307,9 +326,8 @@ impl EngineFrame {
 
     /// Mouse moved to document-space coordinates. Handles hover tracking.
     pub fn mouse_move(&mut self, doc_x: f32, doc_y: f32) {
-        let new_hovered = crate::layout::hit_test::hit_test_box_at(
-            &self.doc.root, (doc_x, doc_y), 0,
-        );
+        let new_hovered =
+            crate::layout::hit_test::hit_test_box_at(&self.doc.root, (doc_x, doc_y), 0);
         if new_hovered != self.doc.hovered_box {
             self.doc.hovered_box = new_hovered;
             self.doc.hover_changed = true;
@@ -317,7 +335,12 @@ impl EngineFrame {
     }
 
     /// Process a mouse event (click, mousedown, mouseup) and mark dirty if needed.
-    pub fn mouse_event(&mut self, etype: crate::dom::HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+    pub fn mouse_event(
+        &mut self,
+        etype: crate::dom::HtmlEventType,
+        doc_pt: (f32, f32),
+        button: u8,
+    ) -> bool {
         let redraw = self.doc.process_mouse_event(etype, doc_pt, button);
         if redraw {
             self.needs_paint = true;
@@ -465,7 +488,8 @@ impl EngineFrame {
     /// Set a CSS variable on the root element.
     pub fn set_css_var(&mut self, name: &str, value: &str) {
         std::sync::Arc::make_mut(&mut self.doc.root.style)
-            .custom_props.insert(name.to_string(), value.to_string());
+            .custom_props
+            .insert(name.to_string(), value.to_string());
         self.mark_style_dirty();
         self.engine.invalidate_cascade();
     }
@@ -474,7 +498,8 @@ impl EngineFrame {
     pub fn set_theme(&mut self, vars: &[(&str, &str)]) {
         for &(name, value) in vars {
             std::sync::Arc::make_mut(&mut self.doc.root.style)
-            .custom_props.insert(name.to_string(), value.to_string());
+                .custom_props
+                .insert(name.to_string(), value.to_string());
         }
         self.mark_style_dirty();
         self.engine.invalidate_cascade();
@@ -485,15 +510,27 @@ impl EngineFrame {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Register an event listener on a node. Returns listener ID.
-    pub fn on(&mut self, node_id: u32, event_type: &str,
-              handler: crate::dom::events::EventHandler) -> u32 {
-        self.doc.event_targets.add_event_listener(node_id, event_type, handler, false)
+    pub fn on(
+        &mut self,
+        node_id: u32,
+        event_type: &str,
+        handler: crate::dom::events::EventHandler,
+    ) -> u32 {
+        self.doc
+            .event_targets
+            .add_event_listener(node_id, event_type, handler, false)
     }
 
     /// Register a capture-phase event listener. Returns listener ID.
-    pub fn on_capture(&mut self, node_id: u32, event_type: &str,
-                      handler: crate::dom::events::EventHandler) -> u32 {
-        self.doc.event_targets.add_event_listener(node_id, event_type, handler, true)
+    pub fn on_capture(
+        &mut self,
+        node_id: u32,
+        event_type: &str,
+        handler: crate::dom::events::EventHandler,
+    ) -> u32 {
+        self.doc
+            .event_targets
+            .add_event_listener(node_id, event_type, handler, true)
     }
 
     /// Remove an event listener by ID.
@@ -517,12 +554,16 @@ impl EngineFrame {
 
     /// Get the text content of an element.
     pub fn get_text_content(&self, id: u32) -> Option<String> {
-        self.doc.get_node(id).map(|n| crate::dom::get_text_content(n))
+        self.doc
+            .get_node(id)
+            .map(|n| crate::dom::get_text_content(n))
     }
 
     /// Get an attribute value.
     pub fn get_attribute(&self, id: u32, key: &str) -> Option<String> {
-        self.doc.get_node(id).and_then(|n| n.attributes.get(key).cloned())
+        self.doc
+            .get_node(id)
+            .and_then(|n| n.attributes.get(key).cloned())
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -587,7 +628,11 @@ impl EngineFrame {
         // Tab / Shift+Tab → focus navigation
         if key == "Tab" {
             let shift = modifiers & 1 != 0;
-            return if shift { self.focus_prev() } else { self.focus_next() };
+            return if shift {
+                self.focus_prev()
+            } else {
+                self.focus_next()
+            };
         }
 
         // Escape → blur
@@ -602,7 +647,8 @@ impl EngineFrame {
             let node = self.doc.get_node(focused);
             if let Some(n) = node {
                 let pt = (n.layout.content_rect.x + 1.0, n.layout.content_rect.y + 1.0);
-                self.doc.process_mouse_event(crate::dom::HtmlEventType::Click, pt, 0);
+                self.doc
+                    .process_mouse_event(crate::dom::HtmlEventType::Click, pt, 0);
                 self.mark_style_dirty();
                 return true;
             }
@@ -708,7 +754,8 @@ impl EngineFrame {
             };
 
             // Add to document's active transitions
-            self.doc.transition_states
+            self.doc
+                .transition_states
                 .entry(node_id)
                 .or_insert_with(Vec::new)
                 .push(transition);
@@ -746,7 +793,10 @@ impl EngineFrame {
 
     /// Feed a chunk of HTML to the streaming parser.
     /// Returns resource hints (URLs to fetch in parallel).
-    pub fn feed_html_chunk(&mut self, chunk: &[u8]) -> Vec<(String, crate::html::streaming::ResourceKind)> {
+    pub fn feed_html_chunk(
+        &mut self,
+        chunk: &[u8],
+    ) -> Vec<(String, crate::html::streaming::ResourceKind)> {
         use crate::html::streaming::DomMutation;
 
         let mut parser = crate::html::streaming::StreamingParser::new(&self.doc.base_url);

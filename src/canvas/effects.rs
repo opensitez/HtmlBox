@@ -200,7 +200,7 @@ pub fn apply_filter_op(pixmap: &mut Pixmap, op: &FilterOp) {
 ///
 /// Unlike `shadowBlur`, CSS names the standard deviation directly here, so the
 /// radius is passed through rather than halved.
-fn drop_shadow(pixmap: &mut Pixmap, dx: f32, dy: f32, blur: f32, color: CssColor) {
+pub(crate) fn drop_shadow(pixmap: &mut Pixmap, dx: f32, dy: f32, blur: f32, color: CssColor) {
     let Some(shadow) = shadow_layer(
         pixmap,
         Color::rgba(color.r, color.g, color.b, color.a),
@@ -297,6 +297,31 @@ mod tests {
         let before: Vec<u8> = p.data().to_vec();
         blur_pixmap(&mut p, 0.0);
         assert_eq!(p.data(), before.as_slice());
+    }
+
+    #[test]
+    fn replay_blur_filter_uses_the_shared_blur_primitive() {
+        let mut p = opaque_square();
+        assert_eq!(p.pixel(10, 20).expect("in bounds").alpha(), 0);
+        crate::renderer::display_list_replay::apply_pixel_filter(&mut p, 0, 4.0);
+        assert!(
+            p.pixel(10, 20).expect("in bounds").alpha() > 0,
+            "display-list blur should spread alpha just like canvas blur"
+        );
+    }
+
+    #[test]
+    fn drop_shadow_paints_offset_shadow_under_source() {
+        let mut p = opaque_square();
+        drop_shadow(&mut p, 10.0, 0.0, 0.0, CssColor::rgba(0, 0, 255, 255));
+
+        let offset = p.pixel(30, 20).expect("in bounds");
+        assert!(
+            offset.blue() > 0 && offset.alpha() > 0,
+            "offset shadow should be painted at the requested dx"
+        );
+        let source = p.pixel(20, 20).expect("in bounds");
+        assert_eq!(source.red(), 255, "source must remain above the shadow");
     }
 
     #[test]

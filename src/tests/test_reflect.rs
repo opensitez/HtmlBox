@@ -37,22 +37,44 @@ fn page() -> Document {
     let mut d = parse_html_with_base(PAGE, "http://example.com/dir/index.html");
     let body = d.body().unwrap();
     for (id, tag, attrs) in [
-        ("l1", "link", &[("rel", "stylesheet"), ("href", "s.css"), ("media", "screen"),
-                         ("as", "style"), ("crossorigin", "anonymous"),
-                         ("integrity", "sha"), ("disabled", "")][..]),
+        (
+            "l1",
+            "link",
+            &[
+                ("rel", "stylesheet"),
+                ("href", "s.css"),
+                ("media", "screen"),
+                ("as", "style"),
+                ("crossorigin", "anonymous"),
+                ("integrity", "sha"),
+                ("disabled", ""),
+            ][..],
+        ),
         ("l2", "link", &[][..]),
-        ("s1", "script", &[("src", "j.js"), ("defer", ""), ("type", "module"),
-                           ("nomodule", "")][..]),
+        (
+            "s1",
+            "script",
+            &[
+                ("src", "j.js"),
+                ("defer", ""),
+                ("type", "module"),
+                ("nomodule", ""),
+            ][..],
+        ),
         ("s2", "script", &[][..]),
     ] {
         let e = d.create_element(tag);
         d.set_attribute(e, "id", id);
-        for (k, v) in attrs { d.set_attribute(e, k, v); }
+        for (k, v) in attrs {
+            d.set_attribute(e, k, v);
+        }
         d.append_child(body, e);
     }
     d
 }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 fn s(d: &Document, id: &str, idl: &str) -> String {
     match d.reflect_get(el(d, id), idl) {
@@ -61,11 +83,13 @@ fn s(d: &Document, id: &str, idl: &str) -> String {
     }
 }
 fn b(d: &Document, id: &str, idl: &str) -> bool {
-    d.reflect_get(el(d, id), idl).and_then(|r| r.as_bool())
+    d.reflect_get(el(d, id), idl)
+        .and_then(|r| r.as_bool())
         .unwrap_or_else(|| panic!("#{id}.{idl} is not a boolean"))
 }
 fn n(d: &Document, id: &str, idl: &str) -> i64 {
-    d.reflect_get(el(d, id), idl).and_then(|r| r.as_long())
+    d.reflect_get(el(d, id), idl)
+        .and_then(|r| r.as_long())
         .unwrap_or_else(|| panic!("#{id}.{idl} is not a long"))
 }
 
@@ -75,17 +99,28 @@ fn n(d: &Document, id: &str, idl: &str) -> i64 {
 fn a_string_attribute_is_verbatim_and_empty_when_absent() {
     let d = page();
     for (id, idl, want) in [
-        ("i1", "alt", "A"), ("i2", "alt", ""),
-        ("i1", "useMap", "#m"), ("i2", "useMap", ""),
-        ("i3", "srcset", "p2.png"), ("i2", "srcset", ""),
-        ("a1", "rel", "noopener"), ("a2", "rel", ""),
-        ("a1", "hreflang", "en"), ("a2", "hreflang", ""),
-        ("a1", "target", "_blank"), ("a2", "target", ""),
-        ("a1", "download", "f"), ("a2", "download", ""),
-        ("l1", "media", "screen"), ("l2", "media", ""),
-        ("l1", "integrity", "sha"), ("l2", "integrity", ""),
-        ("f1", "acceptCharset", "utf-8"), ("f2", "acceptCharset", ""),
-        ("n1", "dirName", "d.dir"), ("n2", "dirName", ""),
+        ("i1", "alt", "A"),
+        ("i2", "alt", ""),
+        ("i1", "useMap", "#m"),
+        ("i2", "useMap", ""),
+        ("i3", "srcset", "p2.png"),
+        ("i2", "srcset", ""),
+        ("a1", "rel", "noopener"),
+        ("a2", "rel", ""),
+        ("a1", "hreflang", "en"),
+        ("a2", "hreflang", ""),
+        ("a1", "target", "_blank"),
+        ("a2", "target", ""),
+        ("a1", "download", "f"),
+        ("a2", "download", ""),
+        ("l1", "media", "screen"),
+        ("l2", "media", ""),
+        ("l1", "integrity", "sha"),
+        ("l2", "integrity", ""),
+        ("f1", "acceptCharset", "utf-8"),
+        ("f2", "acceptCharset", ""),
+        ("n1", "dirName", "d.dir"),
+        ("n2", "dirName", ""),
     ] {
         assert_eq!(s(&d, id, idl), want, "#{id}.{idl}");
     }
@@ -102,13 +137,22 @@ fn a_url_attribute_resolves_against_the_base_and_is_empty_when_absent() {
     // `src` CONTENT ATTRIBUTE with the chosen candidate — so `img.src`
     // answers the srcset URL. Chrome keeps `src` as authored and exposes the
     // chosen one as `currentSrc`. Pinned as it behaves today.
-    assert_eq!(s(&d, "i3", "src"), "http://example.com/dir/p2.png",
-        "Chrome answers .../p.png here — see architecture.md");
+    assert_eq!(
+        s(&d, "i3", "src"),
+        "http://example.com/dir/p2.png",
+        "Chrome answers .../p.png here — see architecture.md"
+    );
     assert_eq!(s(&d, "a1", "href"), "http://example.com/dir/x.html");
     assert_eq!(s(&d, "l1", "href"), "http://example.com/dir/s.css");
     assert_eq!(s(&d, "s1", "src"), "http://example.com/dir/j.js");
     assert_eq!(s(&d, "fr1", "src"), "http://example.com/dir/e.html");
-    for (id, idl) in [("i2", "src"), ("a2", "href"), ("l2", "href"), ("s2", "src"), ("fr2", "src")] {
+    for (id, idl) in [
+        ("i2", "src"),
+        ("a2", "href"),
+        ("l2", "href"),
+        ("s2", "src"),
+        ("fr2", "src"),
+    ] {
         assert_eq!(s(&d, id, idl), "", "#{id}.{idl} absent");
     }
 }
@@ -117,14 +161,22 @@ fn a_url_attribute_resolves_against_the_base_and_is_empty_when_absent() {
 fn a_boolean_attribute_is_its_presence_and_not_its_value() {
     let d = page();
     for (id, idl, want) in [
-        ("i1", "isMap", true), ("i2", "isMap", false),
-        ("l1", "disabled", true), ("l2", "disabled", false),
-        ("s1", "defer", true), ("s2", "defer", false),
-        ("s1", "noModule", true), ("s2", "noModule", false),
-        ("f1", "noValidate", true), ("f2", "noValidate", false),
-        ("n1", "formNoValidate", true), ("n2", "formNoValidate", false),
-        ("n1", "defaultChecked", true), ("n2", "defaultChecked", false),
-        ("fr1", "allowFullscreen", true), ("fr2", "allowFullscreen", false),
+        ("i1", "isMap", true),
+        ("i2", "isMap", false),
+        ("l1", "disabled", true),
+        ("l2", "disabled", false),
+        ("s1", "defer", true),
+        ("s2", "defer", false),
+        ("s1", "noModule", true),
+        ("s2", "noModule", false),
+        ("f1", "noValidate", true),
+        ("f2", "noValidate", false),
+        ("n1", "formNoValidate", true),
+        ("n2", "formNoValidate", false),
+        ("n1", "defaultChecked", true),
+        ("n2", "defaultChecked", false),
+        ("fr1", "allowFullscreen", true),
+        ("fr2", "allowFullscreen", false),
     ] {
         assert_eq!(b(&d, id, idl), want, "#{id}.{idl}");
     }
@@ -158,7 +210,11 @@ fn an_enumerated_attribute_folds_case_and_has_two_separate_defaults() {
     assert_eq!(s(&d, "i2", "decoding"), "auto", "missing-value default");
     assert_eq!(s(&d, "f1", "method"), "post", "lowercased from POST");
     assert_eq!(s(&d, "i1", "referrerPolicy"), "no-referrer");
-    assert_eq!(s(&d, "i2", "referrerPolicy"), "", "missing default is empty here");
+    assert_eq!(
+        s(&d, "i2", "referrerPolicy"),
+        "",
+        "missing default is empty here"
+    );
 
     // ⛔ The INVALID-value default is a separate rule from the missing one.
     let mut d = page();
@@ -183,8 +239,15 @@ fn the_invalid_and_missing_defaults_are_separate_even_when_most_enums_share_them
     assert_eq!(s(&d, "n2", "formEnctype"), "");
     d.set_attribute(n2, "formmethod", "sideways");
     d.set_attribute(n2, "formenctype", "sideways");
-    assert_eq!(s(&d, "n2", "formMethod"), "get", "invalid is NOT the same as absent");
-    assert_eq!(s(&d, "n2", "formEnctype"), "application/x-www-form-urlencoded");
+    assert_eq!(
+        s(&d, "n2", "formMethod"),
+        "get",
+        "invalid is NOT the same as absent"
+    );
+    assert_eq!(
+        s(&d, "n2", "formEnctype"),
+        "application/x-www-form-urlencoded"
+    );
 }
 
 #[test]
@@ -192,8 +255,14 @@ fn crossorigin_is_null_when_absent_which_no_other_kind_can_answer() {
     // ⛔ The only nullable one in the set. `""` is a DIFFERENT answer that it
     // can also give, so `None`-vs-empty-string is a real distinction here.
     let d = page();
-    assert_eq!(d.reflect_get(el(&d, "l2"), "crossOrigin"), Some(Reflected::Null));
-    assert_eq!(d.reflect_get(el(&d, "s2"), "crossOrigin"), Some(Reflected::Null));
+    assert_eq!(
+        d.reflect_get(el(&d, "l2"), "crossOrigin"),
+        Some(Reflected::Null)
+    );
+    assert_eq!(
+        d.reflect_get(el(&d, "s2"), "crossOrigin"),
+        Some(Reflected::Null)
+    );
     assert_eq!(s(&d, "l1", "crossOrigin"), "anonymous");
     // An unrecognised value is the invalid-value default, not null.
     let mut d = page();
@@ -233,7 +302,11 @@ fn encoding_is_a_second_name_for_the_same_attribute() {
     assert_eq!(s(&d, "f1", "encoding"), "text/plain");
     let f1 = el(&d, "f1");
     d.reflect_set(f1, "encoding", Reflected::Str("multipart/form-data".into()));
-    assert_eq!(s(&d, "f1", "enctype"), "multipart/form-data", "one attribute, two names");
+    assert_eq!(
+        s(&d, "f1", "enctype"),
+        "multipart/form-data",
+        "one attribute, two names"
+    );
 }
 
 #[test]
@@ -264,7 +337,11 @@ fn setting_writes_through_to_the_content_attribute() {
     assert_eq!(s(&d, "i2", "alt"), "hello");
 
     d.reflect_set(i2, "isMap", Reflected::Bool(true));
-    assert_eq!(d.get_attribute(i2, "ismap").as_deref(), Some(""), "a boolean attribute");
+    assert_eq!(
+        d.get_attribute(i2, "ismap").as_deref(),
+        Some(""),
+        "a boolean attribute"
+    );
     d.reflect_set(i2, "isMap", Reflected::Bool(false));
     assert!(!d.has_attribute(i2, "ismap"), "false REMOVES it");
 
@@ -286,8 +363,16 @@ fn an_element_without_a_reflected_name_answers_none_rather_than_empty() {
     // `Some(Null)`. Collapsing the three would make the table unfalsifiable.
     let d = page();
     assert_eq!(d.reflect_get(el(&d, "i1"), "noSuchThing"), None);
-    assert_eq!(d.reflect_get(el(&d, "i1"), "method"), None, "img has no `method`");
-    assert_eq!(d.reflect_get(el(&d, "f1"), "alt"), None, "form has no `alt`");
+    assert_eq!(
+        d.reflect_get(el(&d, "i1"), "method"),
+        None,
+        "img has no `method`"
+    );
+    assert_eq!(
+        d.reflect_get(el(&d, "f1"), "alt"),
+        None,
+        "form has no `alt`"
+    );
     assert!(d.reflect_get(el(&d, "i1"), "alt").is_some());
 }
 

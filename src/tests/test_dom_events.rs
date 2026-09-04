@@ -9,11 +9,13 @@
 //   3. `Document::process_mouse_event` calls `recascade()` before layout whenever
 //      an event handler fires.
 
+use crate::dom::{
+    self, add_class, apply_inline_style_str, has_class, query_selector, remove_class,
+    set_style_property, toggle_class,
+};
 use crate::html::parse_html;
 use crate::layout::LayoutEngine;
 use crate::types::{Color, Document};
-use crate::dom::{self, add_class, remove_class, toggle_class, has_class,
-                  set_style_property, apply_inline_style_str, query_selector};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,14 +95,22 @@ fn recascade_toggle_class_round_trip() {
     assert!(has_class(&doc.root, "active"));
     doc.recascade();
     let div = query_selector(&doc.root, "div").unwrap();
-    assert_eq!(div.style.color, Color::rgb(0xff, 0, 0), "color should be red when active");
+    assert_eq!(
+        div.style.color,
+        Color::rgb(0xff, 0, 0),
+        "color should be red when active"
+    );
 
     // Toggle off.
     toggle_class(&mut doc.root, "active");
     assert!(!has_class(&doc.root, "active"));
     doc.recascade();
     let div = query_selector(&doc.root, "div").unwrap();
-    assert_eq!(div.style.color, Color::rgb(0, 0, 0), "color should return to black");
+    assert_eq!(
+        div.style.color,
+        Color::rgb(0, 0, 0),
+        "color should return to black"
+    );
 }
 
 // ── 2. set_style_property persists to style attribute ─────────────────────────
@@ -152,9 +162,19 @@ fn set_style_property_upserts_not_duplicates() {
 
     let style_attr = div.attributes.get("style").cloned().unwrap_or_default();
     // Should contain exactly one "width" declaration.
-    let count = style_attr.split(';').filter(|s| s.contains("width")).count();
-    assert_eq!(count, 1, "style attribute should have exactly one 'width'; got: {:?}", style_attr);
-    assert!(style_attr.contains("80%"), "style attribute should reflect the latest value");
+    let count = style_attr
+        .split(';')
+        .filter(|s| s.contains("width"))
+        .count();
+    assert_eq!(
+        count, 1,
+        "style attribute should have exactly one 'width'; got: {:?}",
+        style_attr
+    );
+    assert!(
+        style_attr.contains("80%"),
+        "style attribute should reflect the latest value"
+    );
 }
 
 #[test]
@@ -173,8 +193,14 @@ fn set_style_property_multiple_props_survive_recascade() {
 
     let div = query_selector(&doc.root, "div").unwrap();
     let style_attr = div.attributes.get("style").cloned().unwrap_or_default();
-    assert!(style_attr.contains("background"), "background should survive recascade");
-    assert!(style_attr.contains("color"),      "color should survive recascade");
+    assert!(
+        style_attr.contains("background"),
+        "background should survive recascade"
+    );
+    assert!(
+        style_attr.contains("color"),
+        "color should survive recascade"
+    );
 }
 
 // ── 3. apply_inline_style_str persists to style attribute ─────────────────────
@@ -192,8 +218,11 @@ fn apply_inline_style_str_survives_recascade() {
 
     let div = query_selector(&doc.root, "div").unwrap();
     let style_attr = div.attributes.get("style").cloned().unwrap_or_default();
-    assert!(style_attr.contains("width"),  "width must survive recascade");
-    assert!(style_attr.contains("height"), "height must survive recascade");
+    assert!(style_attr.contains("width"), "width must survive recascade");
+    assert!(
+        style_attr.contains("height"),
+        "height must survive recascade"
+    );
 }
 
 // ── 4. class helpers (add / remove / toggle / has) ────────────────────────────
@@ -224,7 +253,10 @@ fn has_class_partial_match_rejected() {
     let html = "<html><body><div class=\"foobar\"></div></body></html>";
     let mut doc = parse_and_layout(html);
     let div = dom::query_selector_mut(&mut doc.root, "div").unwrap();
-    assert!(!has_class(div, "foo"),    "has_class must not match partial token");
+    assert!(
+        !has_class(div, "foo"),
+        "has_class must not match partial token"
+    );
     assert!(has_class(div, "foobar"), "has_class must match exact token");
 }
 

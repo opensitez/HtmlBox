@@ -2,14 +2,18 @@
 
 #![allow(unused_imports)]
 use super::*;
-use std::collections::{HashMap, HashSet};
 use crate::css::*;
 use crate::dom::*;
 use crate::html::*;
+use std::collections::{HashMap, HashSet};
 
 pub fn is_focusable_node(node: &WebCore) -> bool {
-    if matches!(node.style.display, Display::None) { return false; }
-    if !node.style.visibility { return false; }
+    if matches!(node.style.display, Display::None) {
+        return false;
+    }
+    if !node.style.visibility {
+        return false;
+    }
     let tag = node.tag.as_str();
     matches!(tag, "button" | "input" | "textarea" | "select")
         || (tag == "a" && node.attributes.contains_key("href"))
@@ -29,28 +33,36 @@ pub fn is_focusable_node(node: &WebCore) -> bool {
 pub(crate) fn collect_focusable_ordered(
     node: &WebCore,
     positive: &mut Vec<(u32, i32)>,
-    normal:   &mut Vec<u32>,
+    normal: &mut Vec<u32>,
 ) {
-    if matches!(node.style.display, Display::None) { return; }
-    if !node.style.visibility { return; }
+    if matches!(node.style.display, Display::None) {
+        return;
+    }
+    if !node.style.visibility {
+        return;
+    }
     let tag = node.tag.as_str();
 
-    let tabindex = node.attributes.get("tabindex")
+    let tabindex = node
+        .attributes
+        .get("tabindex")
         .and_then(|v| v.parse::<i32>().ok());
 
     // Determine whether this element is in the tab order.
     let native = matches!(tag, "button" | "input" | "textarea" | "select")
         || (tag == "a" && node.attributes.contains_key("href"))
-        || node.attributes.get("contenteditable")
+        || node
+            .attributes
+            .get("contenteditable")
             .map(|v| v == "true" || v == "")
             .unwrap_or(false);
 
     match tabindex {
-        Some(n) if n > 0  => positive.push((node.node_id, n)),
-        Some(0)           => normal.push(node.node_id),
-        Some(_)           => {} // tabindex < 0: excluded from tab order
-        None if native    => normal.push(node.node_id),
-        None              => {}
+        Some(n) if n > 0 => positive.push((node.node_id, n)),
+        Some(0) => normal.push(node.node_id),
+        Some(_) => {} // tabindex < 0: excluded from tab order
+        None if native => normal.push(node.node_id),
+        None => {}
     }
 
     for child in &node.children {

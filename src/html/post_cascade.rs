@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Post-cascade fixup ──────────────────────────────────────────────────────
 
@@ -16,7 +16,8 @@ pub(crate) fn apply_details_summary_post_cascade(node: &mut WebCore) {
         for child in &mut node.children {
             if child.tag == "summary" {
                 std::sync::Arc::make_mut(&mut child.style).display = Display::ListItem;
-                std::sync::Arc::make_mut(&mut child.style).list_style_type = ListStyleType::Disclosure;
+                std::sync::Arc::make_mut(&mut child.style).list_style_type =
+                    ListStyleType::Disclosure;
             } else if !is_open {
                 std::sync::Arc::make_mut(&mut child.style).display = Display::None;
             }

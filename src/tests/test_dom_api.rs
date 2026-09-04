@@ -1,7 +1,7 @@
 //! Tests for the public DOM API (query, read, mutate, classList, style, query_selector).
 
-use crate::html::parse_html;
 use crate::dom::arena::NodeId;
+use crate::html::parse_html;
 
 // ── Query ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,10 @@ fn query_selector_by_class() {
     let doc = parse_html(r#"<div><span class="a">x</span><span class="b">y</span></div>"#);
     let b = doc.query_selector(".b");
     assert!(b.is_some());
-    assert_eq!(doc.get_attribute(b.unwrap(), "class"), Some("b".to_string()));
+    assert_eq!(
+        doc.get_attribute(b.unwrap(), "class"),
+        Some("b".to_string())
+    );
 }
 
 #[test]
@@ -215,7 +218,10 @@ fn set_attribute_updates_both_trees() {
 
     // WebCore updated
     let div_box = doc.get_box_by_id(div).unwrap();
-    assert_eq!(div_box.attributes.get("data-value").map(|s| s.as_str()), Some("42"));
+    assert_eq!(
+        div_box.attributes.get("data-value").map(|s| s.as_str()),
+        Some("42")
+    );
 }
 
 #[test]
@@ -327,11 +333,20 @@ fn set_and_get_style_property() {
     let div = doc.query_selector("div").unwrap();
 
     doc.set_style_property(div, "color", "red");
-    assert_eq!(doc.get_style_property(div, "color"), Some("red".to_string()));
+    assert_eq!(
+        doc.get_style_property(div, "color"),
+        Some("red".to_string())
+    );
 
     doc.set_style_property(div, "font-size", "16px");
-    assert_eq!(doc.get_style_property(div, "font-size"), Some("16px".to_string()));
-    assert_eq!(doc.get_style_property(div, "color"), Some("red".to_string()));
+    assert_eq!(
+        doc.get_style_property(div, "font-size"),
+        Some("16px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "color"),
+        Some("red".to_string())
+    );
 }
 
 #[test]
@@ -339,9 +354,72 @@ fn set_style_property_overwrites() {
     let mut doc = parse_html(r#"<div style="color: blue"></div>"#);
     let div = doc.query_selector("div").unwrap();
 
-    assert_eq!(doc.get_style_property(div, "color"), Some("blue".to_string()));
+    assert_eq!(
+        doc.get_style_property(div, "color"),
+        Some("blue".to_string())
+    );
     doc.set_style_property(div, "color", "red");
-    assert_eq!(doc.get_style_property(div, "color"), Some("red".to_string()));
+    assert_eq!(
+        doc.get_style_property(div, "color"),
+        Some("red".to_string())
+    );
+}
+
+#[test]
+fn set_style_property_ignores_unknown_properties_but_keeps_custom_properties() {
+    let mut doc = parse_html(r#"<div style="color: blue"></div>"#);
+    let div = doc.query_selector("div").unwrap();
+
+    doc.set_style_property(div, "colour", "red");
+    assert_eq!(doc.get_style_property(div, "colour"), None);
+    assert!(!doc.get_attribute(div, "style").unwrap().contains("colour"));
+
+    doc.set_style_property(div, "--brand-color", "red");
+    assert_eq!(
+        doc.get_style_property(div, "--brand-color"),
+        Some("red".to_string())
+    );
+}
+
+#[test]
+fn inline_style_property_value_strips_important_priority() {
+    let doc = parse_html(r#"<div style="color: red !important; width: 10px"></div>"#);
+    let div = doc.query_selector("div").unwrap();
+
+    assert_eq!(
+        doc.get_style_property(div, "color"),
+        Some("red".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property_priority(div, "color"),
+        Some("important".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "width"),
+        Some("10px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property_priority(div, "width"),
+        Some(String::new())
+    );
+}
+
+#[test]
+fn set_style_property_serializes_trailing_semicolons() {
+    let mut doc = parse_html("<div></div>");
+    let div = doc.query_selector("div").unwrap();
+
+    doc.set_style_property(div, "color", "red");
+    assert_eq!(
+        doc.get_attribute(div, "style").as_deref(),
+        Some("color: red;")
+    );
+
+    doc.set_style_property(div, "font-size", "16px");
+    assert_eq!(
+        doc.get_attribute(div, "style").as_deref(),
+        Some("color: red; font-size: 16px;")
+    );
 }
 
 #[test]
@@ -349,9 +427,147 @@ fn remove_style_property() {
     let mut doc = parse_html(r#"<div style="color: red; font-size: 14px"></div>"#);
     let div = doc.query_selector("div").unwrap();
 
-    doc.remove_style_property(div, "color");
+    assert_eq!(
+        doc.remove_style_property(div, "color"),
+        Some("red".to_string())
+    );
     assert_eq!(doc.get_style_property(div, "color"), None);
-    assert_eq!(doc.get_style_property(div, "font-size"), Some("14px".to_string()));
+    assert_eq!(
+        doc.get_style_property(div, "font-size"),
+        Some("14px".to_string())
+    );
+}
+
+#[test]
+fn inline_style_enumerates_items_and_remove_returns_old_value() {
+    let mut doc = parse_html(r#"<div style="color: red !important; margin-left: 2px"></div>"#);
+    let div = doc.query_selector("div").unwrap();
+
+    assert_eq!(doc.style_property_len(div), 2);
+    assert_eq!(doc.style_property_item(div, 0), Some("color".to_string()));
+    assert_eq!(
+        doc.style_property_item(div, 1),
+        Some("margin-left".to_string())
+    );
+    assert_eq!(doc.style_property_item(div, 2), None);
+
+    assert_eq!(
+        doc.remove_style_property(div, "color"),
+        Some("red".to_string())
+    );
+    assert_eq!(doc.remove_style_property(div, "missing"), None);
+    assert_eq!(
+        doc.get_attribute(div, "style").as_deref(),
+        Some("margin-left: 2px;")
+    );
+}
+
+#[test]
+fn inline_style_parser_keeps_semicolons_inside_url_and_strings() {
+    let mut doc = parse_html(
+        r#"<div style='background-image: url("data:image/svg+xml;base64,AAAA"); content: "a;b"; color: red'></div>"#,
+    );
+    let div = doc.query_selector("div").unwrap();
+
+    assert_eq!(
+        doc.get_style_property(div, "background-image").as_deref(),
+        Some(r#"url("data:image/svg+xml;base64,AAAA")"#)
+    );
+    assert_eq!(
+        doc.get_style_property(div, "content").as_deref(),
+        Some(r#""a;b""#)
+    );
+
+    doc.set_style_property(div, "color", "blue");
+    let style = doc.get_attribute(div, "style").unwrap();
+    assert!(style.contains(r#"background-image: url("data:image/svg+xml;base64,AAAA");"#));
+    assert!(style.contains(r#"content: "a;b";"#));
+    assert!(style.contains("color: blue;"));
+}
+
+#[test]
+fn set_style_property_expands_box_and_pair_shorthands() {
+    let mut doc = parse_html("<div></div>");
+    let div = doc.query_selector("div").unwrap();
+
+    doc.set_style_property(div, "margin", "10px 20px");
+    assert_eq!(doc.get_style_property(div, "margin"), None);
+    assert_eq!(
+        doc.get_style_property(div, "margin-top"),
+        Some("10px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "margin-right"),
+        Some("20px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "margin-bottom"),
+        Some("10px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "margin-left"),
+        Some("20px".to_string())
+    );
+
+    doc.set_style_property(div, "gap", "4px 8px !important");
+    assert_eq!(doc.get_style_property(div, "gap"), None);
+    assert_eq!(
+        doc.get_style_property(div, "row-gap"),
+        Some("4px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property_priority(div, "row-gap"),
+        Some("important".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "column-gap"),
+        Some("8px".to_string())
+    );
+
+    doc.set_style_property(div, "border", "2px solid red !important");
+    assert_eq!(doc.get_style_property(div, "border"), None);
+    assert_eq!(
+        doc.get_style_property(div, "border-top-width"),
+        Some("2px".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "border-right-style"),
+        Some("solid".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "border-bottom-color"),
+        Some("red".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property_priority(div, "border-left-width"),
+        Some("important".to_string())
+    );
+
+    doc.set_style_property(div, "border-left", "thick dashed blue");
+    assert_eq!(
+        doc.get_style_property(div, "border-left-width"),
+        Some("thick".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "border-left-style"),
+        Some("dashed".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "border-left-color"),
+        Some("blue".to_string())
+    );
+    assert_eq!(
+        doc.get_style_property(div, "border-right-style"),
+        Some("solid".to_string())
+    );
+
+    doc.set_style_property(div, "margin", "");
+    assert_eq!(doc.get_style_property(div, "margin-top"), None);
+    assert_eq!(doc.get_style_property(div, "margin-left"), None);
+    assert_eq!(
+        doc.get_style_property(div, "row-gap"),
+        Some("4px".to_string())
+    );
 }
 
 // ── Layout queries ─────────────────────────────────────────────────────────
@@ -399,7 +615,11 @@ fn attribute_mutation_sets_dirty_flag() {
     doc.set_attribute(div, "class", "active");
 
     // Should be style-dirty now
-    assert!(doc.arena.get(NodeId(div)).dirty.contains(crate::dom::arena::DirtyFlags::STYLE));
+    assert!(doc
+        .arena
+        .get(NodeId(div))
+        .dirty
+        .contains(crate::dom::arena::DirtyFlags::STYLE));
 }
 
 // ─── WHATWG conformance ─────────────────────────────────────────────────────
@@ -488,18 +708,31 @@ fn get_attribute_ns_tells_apart_two_attributes_sharing_a_local_name() {
     doc.set_attribute(a, "href", "plain");
     doc.set_attribute_ns(a, XLINK, "xlink:href", "linked");
 
-    assert_eq!(doc.get_attribute_ns(a, XLINK, "href").as_deref(), Some("linked"));
+    assert_eq!(
+        doc.get_attribute_ns(a, XLINK, "href").as_deref(),
+        Some("linked")
+    );
     // The null namespace is a DIFFERENT attribute, not a fallback.
-    assert_eq!(doc.get_attribute_ns(a, "", "href").as_deref(), Some("plain"));
+    assert_eq!(
+        doc.get_attribute_ns(a, "", "href").as_deref(),
+        Some("plain")
+    );
     // A namespace nothing was written under matches nothing.
-    assert_eq!(doc.get_attribute_ns(a, "http://example.invalid/ns", "href"), None);
+    assert_eq!(
+        doc.get_attribute_ns(a, "http://example.invalid/ns", "href"),
+        None
+    );
 }
 
 #[test]
 fn an_html_document_folds_names_but_an_xml_document_does_not() {
     let mut doc = parse_html("<div id='d'></div>");
     let upper = doc.create_element("DIV");
-    assert_eq!(doc.tag_name(upper), Some("div"), "HTML lowercases tag names");
+    assert_eq!(
+        doc.tag_name(upper),
+        Some("div"),
+        "HTML lowercases tag names"
+    );
 
     let d = doc.get_element_by_id("d").unwrap();
     doc.set_attribute(d, "DATA-X", "1");
@@ -513,7 +746,10 @@ fn an_html_document_folds_names_but_an_xml_document_does_not() {
     let rect = xml.create_element("Rect");
     assert_eq!(xml.tag_name(rect), Some("Rect"));
     xml.set_attribute(rect, "viewBox", "0 0 1 1");
-    assert_eq!(xml.get_attribute(rect, "viewBox").as_deref(), Some("0 0 1 1"));
+    assert_eq!(
+        xml.get_attribute(rect, "viewBox").as_deref(),
+        Some("0 0 1 1")
+    );
     assert_eq!(xml.get_attribute(rect, "viewbox"), None);
 }
 
@@ -525,16 +761,25 @@ fn clone_node_is_detached_and_deep_only_when_asked() {
 
     let shallow = doc.clone_node(host, false);
     assert_ne!(shallow, host, "a clone is a NEW node");
-    assert!(!doc.is_connected(shallow), "a clone has no parent until inserted");
+    assert!(
+        !doc.is_connected(shallow),
+        "a clone has no parent until inserted"
+    );
     assert_eq!(
         doc.get_attribute(shallow, "data-k").as_deref(),
         Some("v"),
         "attributes are copied even by a shallow clone"
     );
-    assert!(doc.child_nodes(shallow).is_empty(), "shallow copies no children");
+    assert!(
+        doc.child_nodes(shallow).is_empty(),
+        "shallow copies no children"
+    );
 
     let deep = doc.clone_node(host, true);
-    assert!(!doc.child_nodes(deep).is_empty(), "a deep clone copies the subtree");
+    assert!(
+        !doc.child_nodes(deep).is_empty(),
+        "a deep clone copies the subtree"
+    );
 }
 
 #[test]
@@ -594,7 +839,11 @@ fn a_dialog_is_closed_until_shown_and_only_a_modal_is_fixed() {
     // write — so it passed while the `dialog:modal` rule the comment describes
     // did not exist and `:modal` matched nothing. Modality is top-layer
     // membership now, and the COMPUTED value is what shows the rule applying.
-    assert_eq!(doc.top_layer_nodes(), &[modal], "only the modal is in the top layer");
+    assert_eq!(
+        doc.top_layer_nodes(),
+        &[modal],
+        "only the modal is in the top layer"
+    );
     // The rule applies through the CASCADE, so it has to run.
     doc.recascade();
     // ⛔ Read from the CASCADED style, not `computed_style_property` — that
@@ -602,11 +851,12 @@ fn a_dialog_is_closed_until_shown_and_only_a_modal_is_fixed() {
     // INLINE style, so it reports `""` for a `position` that came from a
     // stylesheet. Noted in `architecture.md`; asserting through it here would
     // have tested the fallback rather than the rule.
-    let pos = |d: &crate::types::Document, id: u32| {
-        d.get_computed_style(id).map(|s| s.position)
-    };
-    assert_eq!(pos(&doc, modal), Some(crate::types::Position::Fixed),
-        "through the UA sheet's `dialog:modal` rule");
+    let pos = |d: &crate::types::Document, id: u32| d.get_computed_style(id).map(|s| s.position);
+    assert_eq!(
+        pos(&doc, modal),
+        Some(crate::types::Position::Fixed),
+        "through the UA sheet's `dialog:modal` rule"
+    );
     assert_ne!(pos(&doc, plain), Some(crate::types::Position::Fixed));
 
     doc.close_dialog(plain);
@@ -685,7 +935,10 @@ fn contains_includes_the_node_itself() {
     let outer = doc.get_element_by_id("outer").unwrap();
     let inner = doc.get_element_by_id("inner").unwrap();
 
-    assert!(doc.contains(outer, inner), "an ancestor contains a descendant");
+    assert!(
+        doc.contains(outer, inner),
+        "an ancestor contains a descendant"
+    );
     // DOM §4.4: a node contains ITSELF. The part that surprises.
     assert!(doc.contains(outer, outer));
     assert!(!doc.contains(inner, outer), "not the other way round");
@@ -793,10 +1046,10 @@ fn a_misplaced_head_does_not_move_the_head_element() {
     // This is why `head` is the first child and `body` the second in EVERY
     // document, and why nothing downstream has to cope with a third order.
     for source in [
-        "<div>x</div>",                                    // no head at all
-        "<head><title>t</title></head><div>x</div>",       // head where it belongs
-        "<div>x</div><head><title>t</title></head>",       // head at the END
-        "<body><div>x</div></body><head></head>",          // after an explicit body
+        "<div>x</div>",                              // no head at all
+        "<head><title>t</title></head><div>x</div>", // head where it belongs
+        "<div>x</div><head><title>t</title></head>", // head at the END
+        "<body><div>x</div></body><head></head>",    // after an explicit body
     ] {
         let doc = parse_html(source);
         let tags: Vec<&str> = doc.root.children.iter().map(|c| c.tag.as_str()).collect();
@@ -839,7 +1092,11 @@ fn focus_and_blur_move_active_element() {
     doc.focus(a);
     assert_eq!(doc.active_element(), Some(a));
     doc.focus(b);
-    assert_eq!(doc.active_element(), Some(b), "focus MOVES, it does not add");
+    assert_eq!(
+        doc.active_element(),
+        Some(b),
+        "focus MOVES, it does not add"
+    );
     doc.blur(b);
     assert_eq!(doc.active_element(), None);
 }
@@ -959,7 +1216,10 @@ fn inner_html_serialises_children_only() {
     let doc = parse_html(r#"<div id="d"><p>a</p><span>b</span></div>"#);
     let d = doc.get_element_by_id("d").unwrap();
     let html = doc.inner_html(d);
-    assert!(html.contains("<p"), "innerHTML holds the children: {html:?}");
+    assert!(
+        html.contains("<p"),
+        "innerHTML holds the children: {html:?}"
+    );
     assert!(html.contains("span"));
     assert!(
         !html.starts_with("<div"),
@@ -1024,10 +1284,18 @@ fn a_removed_node_survives_and_can_be_inserted_elsewhere() {
 
     doc.remove_child(moved);
     assert!(doc.child_nodes(from).is_empty(), "it left its old parent");
-    assert_eq!(doc.local_name(moved), "p", "…and is still a <p>, not a dead slot");
+    assert_eq!(
+        doc.local_name(moved),
+        "p",
+        "…and is still a <p>, not a dead slot"
+    );
 
     doc.append_child(to, moved);
-    let tags: Vec<String> = doc.child_nodes(to).iter().map(|&c| doc.local_name(c)).collect();
+    let tags: Vec<String> = doc
+        .child_nodes(to)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(tags, vec!["p"]);
     assert_eq!(doc.text_content(moved), "text", "the subtree came with it");
 }
@@ -1051,7 +1319,11 @@ fn appending_a_fragment_moves_its_children_and_not_itself() {
 
     // The fragment is NOT in the tree — its children are, in order, and at the
     // level the caller asked for rather than one deeper.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
+    let tags: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(tags, vec!["i", "div", "b"]);
     assert!(
         !tags.iter().any(|t| t == "#document-fragment"),
@@ -1078,7 +1350,11 @@ fn inserting_a_fragment_splices_it_in_order() {
 
     // Each child goes before the SAME reference, so they arrive in the order
     // they were in — not reversed.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
+    let tags: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(tags, vec!["div", "b", "i"]);
 }
 
@@ -1124,7 +1400,10 @@ fn is_equal_node_ignores_identity_and_attribute_order() {
 
     // Two distinct nodes, written with their attributes in opposite orders.
     assert_ne!(ps[0], ps[1], "these must be different NODES");
-    assert!(doc.is_equal_node(ps[0], ps[1]), "attribute order is not part of equality");
+    assert!(
+        doc.is_equal_node(ps[0], ps[1]),
+        "attribute order is not part of equality"
+    );
 
     // Same attributes, different text.
     assert!(!doc.is_equal_node(ps[0], ps[2]));
@@ -1161,7 +1440,11 @@ fn prepend_keeps_the_given_order() {
 
     // The naive implementation — insert each before the CURRENT first child —
     // yields b, a, z. The nodes must arrive in the order they were given.
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
+    let tags: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(tags, vec!["a", "b", "i"]);
 }
 
@@ -1175,13 +1458,25 @@ fn before_after_and_replace_with_place_nodes_around_a_sibling() {
     let b = doc.create_element("b");
     doc.before(pivot, &[a]);
     doc.after(pivot, &[b]);
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
+    let tags: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(tags, vec!["a", "i", "b"]);
 
     let u = doc.create_element("u");
     doc.replace_with(pivot, &[u]);
-    let tags: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
-    assert_eq!(tags, vec!["a", "u", "b"], "the pivot is gone and `u` sits where it was");
+    let tags: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
+    assert_eq!(
+        tags,
+        vec!["a", "u", "b"],
+        "the pivot is gone and `u` sits where it was"
+    );
 }
 
 #[test]
@@ -1205,10 +1500,18 @@ fn insert_adjacent_element_places_at_all_four_positions() {
     }
 
     // `beforebegin`/`afterend` are p's SIBLINGS…
-    let outer: Vec<String> = doc.child_nodes(d).iter().map(|&c| doc.local_name(c)).collect();
+    let outer: Vec<String> = doc
+        .child_nodes(d)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(outer, vec!["a", "p", "s"]);
     // …and `afterbegin`/`beforeend` are its children, around the text.
-    let inner: Vec<String> = doc.child_nodes(p).iter().map(|&c| doc.local_name(c)).collect();
+    let inner: Vec<String> = doc
+        .child_nodes(p)
+        .iter()
+        .map(|&c| doc.local_name(c))
+        .collect();
     assert_eq!(inner, vec!["b", "#text", "u"]);
 
     assert_eq!(doc.insert_adjacent_element(p, "sideways", d), None);
@@ -1232,7 +1535,10 @@ fn dataset_maps_camel_case_to_data_attributes() {
     );
 
     doc.set_dataset(d, "roleName", "admin");
-    assert_eq!(doc.get_attribute(d, "data-role-name").as_deref(), Some("admin"));
+    assert_eq!(
+        doc.get_attribute(d, "data-role-name").as_deref(),
+        Some("admin")
+    );
     doc.remove_dataset(d, "roleName");
     assert_eq!(doc.dataset_get(d, "roleName"), None);
 }
@@ -1277,8 +1583,14 @@ fn outer_html_includes_the_element_itself() {
     let inner = doc.inner_html(d);
     let outer = doc.outer_html(d);
     assert!(inner.contains("<p>"), "got {inner:?}");
-    assert!(!inner.contains("<div"), "innerHTML is the CHILDREN only: {inner:?}");
-    assert!(outer.contains("<div"), "outerHTML includes the element: {outer:?}");
+    assert!(
+        !inner.contains("<div"),
+        "innerHTML is the CHILDREN only: {inner:?}"
+    );
+    assert!(
+        outer.contains("<div"),
+        "outerHTML includes the element: {outer:?}"
+    );
     assert!(outer.contains("<p>"), "…and its children: {outer:?}");
 }
 
@@ -1298,5 +1610,25 @@ fn has_and_remove_attribute_ns_match_by_local_name() {
         doc.get_attribute(d, "href").as_deref(),
         Some("/here"),
         "the un-namespaced attribute shares a local name and must survive"
+    );
+}
+
+#[test]
+fn window_device_pixel_ratio_defaults_and_can_be_set_by_host() {
+    let w = crate::window::open("dpr-test", "width=320,height=200");
+    assert_eq!(
+        crate::window::device_pixel_ratio(w),
+        1.0,
+        "a headless/default browsing context reports a standard 1x ratio"
+    );
+
+    crate::window::set_device_pixel_ratio(w, 2.0);
+    assert_eq!(crate::window::device_pixel_ratio(w), 2.0);
+
+    crate::window::set_device_pixel_ratio(w, 0.0);
+    assert_eq!(
+        crate::window::device_pixel_ratio(w),
+        2.0,
+        "invalid host ratios are ignored"
     );
 }

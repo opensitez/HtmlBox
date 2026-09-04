@@ -10,7 +10,9 @@ use crate::dom::events::*;
 use crate::parse_html;
 use std::sync::{Arc, Mutex};
 
-fn doc_with(html: &str) -> crate::Document { parse_html(html) }
+fn doc_with(html: &str) -> crate::Document {
+    parse_html(html)
+}
 
 // ─── Event handler IDL attributes ───────────────────────────────────────────
 
@@ -33,8 +35,14 @@ fn handler_names_map_to_their_event_type() {
     assert_eq!(event_type_for_handler("onnotathing"), None);
     // The webkit aliases handle the UNPREFIXED type — `onwebkitanimationend`
     // fires on `animationend`, not on `webkitanimationend`.
-    assert_eq!(event_type_for_handler("onwebkitanimationend").as_deref(), Some("animationend"));
-    assert_eq!(event_type_for_handler("onwebkittransitionend").as_deref(), Some("transitionend"));
+    assert_eq!(
+        event_type_for_handler("onwebkitanimationend").as_deref(),
+        Some("animationend")
+    );
+    assert_eq!(
+        event_type_for_handler("onwebkittransitionend").as_deref(),
+        Some("transitionend")
+    );
     assert_eq!(handler_name_for_event_type("click"), Some("onclick"));
     assert_eq!(handler_name_for_event_type("notathing"), None);
 }
@@ -46,11 +54,19 @@ fn a_handler_slot_holds_exactly_one_listener() {
     let hits = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
     let h1 = hits.clone();
-    doc.set_event_handler(a, "onclick", Box::new(move |_, _d: &mut crate::Document| h1.lock().unwrap().push("first")))
-        .expect("onclick is a handler attribute");
+    doc.set_event_handler(
+        a,
+        "onclick",
+        Box::new(move |_, _d: &mut crate::Document| h1.lock().unwrap().push("first")),
+    )
+    .expect("onclick is a handler attribute");
     let h2 = hits.clone();
-    doc.set_event_handler(a, "onclick", Box::new(move |_, _d: &mut crate::Document| h2.lock().unwrap().push("second")))
-        .expect("setting it again replaces");
+    doc.set_event_handler(
+        a,
+        "onclick",
+        Box::new(move |_, _d: &mut crate::Document| h2.lock().unwrap().push("second")),
+    )
+    .expect("setting it again replaces");
 
     assert!(doc.has_event_handler(a, "onclick"));
     let mut e = DomEvent::new("click", a);
@@ -63,14 +79,20 @@ fn a_handler_slot_holds_exactly_one_listener() {
     assert!(!doc.has_event_handler(a, "onclick"));
     let mut e2 = DomEvent::new("click", a);
     doc.dispatch_event(&mut e2);
-    assert_eq!(hits.lock().unwrap().len(), 1, "a cleared handler does not fire");
+    assert_eq!(
+        hits.lock().unwrap().len(),
+        1,
+        "a cleared handler does not fire"
+    );
 }
 
 #[test]
 fn a_name_that_is_not_a_handler_attribute_is_rejected() {
     let mut doc = doc_with("<div id=a>x</div>");
     let a = doc.query_selector("#a").unwrap();
-    assert!(doc.set_event_handler(a, "onnotathing", Box::new(|_, _d: &mut crate::Document| {})).is_none());
+    assert!(doc
+        .set_event_handler(a, "onnotathing", Box::new(|_, _d: &mut crate::Document| {}))
+        .is_none());
     assert!(doc.event_handler_names(a).is_empty());
 }
 
@@ -86,7 +108,7 @@ fn bubbles_and_cancelable_come_from_the_event_type() {
         ("focus", false, false),
         ("mouseenter", false, false),
         ("scroll", false, false),
-        ("beforeunload", false, true),   // the odd one
+        ("beforeunload", false, true), // the odd one
     ] {
         let e = DomEvent::new(ty, 1);
         assert_eq!(e.bubbles, bubbles, "{ty}.bubbles");
@@ -102,11 +124,19 @@ fn a_non_bubbling_event_does_not_reach_ancestors() {
     let seen = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let s1 = seen.clone();
-    doc.add_event_listener(outer, "load", Box::new(move |_, _d: &mut crate::Document| s1.lock().unwrap().push("outer".into())),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        outer,
+        "load",
+        Box::new(move |_, _d: &mut crate::Document| s1.lock().unwrap().push("outer".into())),
+        ListenerOptions::default(),
+    );
     let s2 = seen.clone();
-    doc.add_event_listener(inner, "load", Box::new(move |_, _d: &mut crate::Document| s2.lock().unwrap().push("inner".into())),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "load",
+        Box::new(move |_, _d: &mut crate::Document| s2.lock().unwrap().push("inner".into())),
+        ListenerOptions::default(),
+    );
 
     let mut e = DomEvent::new("load", inner);
     doc.dispatch_event(&mut e);
@@ -122,15 +152,22 @@ fn prevent_default_only_works_on_a_cancelable_event() {
 
     let mut load = DomEvent::new("load", 1);
     load.prevent_default();
-    assert!(!load.default_prevented(), "load is not cancelable — the call is a no-op");
+    assert!(
+        !load.default_prevented(),
+        "load is not cancelable — the call is a no-op"
+    );
 }
 
 #[test]
 fn dispatch_event_reports_cancellation_and_is_untrusted() {
     let mut doc = doc_with("<div id=a>x</div>");
     let a = doc.query_selector("#a").unwrap();
-    doc.add_event_listener(a, "click", Box::new(|e, _d: &mut crate::Document| e.prevent_default()),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(|e, _d: &mut crate::Document| e.prevent_default()),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", a);
     // Returns false when a handler cancelled it, per the IDL.
     assert!(!doc.dispatch_event(&mut e));
@@ -148,23 +185,51 @@ fn event_phase_and_composed_path_follow_the_spec() {
     let log = Arc::new(Mutex::new(Vec::<(u16, usize)>::new()));
 
     let l1 = log.clone();
-    doc.add_event_listener(outer, "click",
-        Box::new(move |e, _d: &mut crate::Document| l1.lock().unwrap().push((e.event_phase(), e.composed_path().len()))),
-        ListenerOptions { capture: true, ..Default::default() });
+    doc.add_event_listener(
+        outer,
+        "click",
+        Box::new(move |e, _d: &mut crate::Document| {
+            l1.lock()
+                .unwrap()
+                .push((e.event_phase(), e.composed_path().len()))
+        }),
+        ListenerOptions {
+            capture: true,
+            ..Default::default()
+        },
+    );
     let l2 = log.clone();
-    doc.add_event_listener(inner, "click",
-        Box::new(move |e, _d: &mut crate::Document| l2.lock().unwrap().push((e.event_phase(), e.composed_path().len()))),
-        ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "click",
+        Box::new(move |e, _d: &mut crate::Document| {
+            l2.lock()
+                .unwrap()
+                .push((e.event_phase(), e.composed_path().len()))
+        }),
+        ListenerOptions::default(),
+    );
     let l3 = log.clone();
-    doc.add_event_listener(outer, "click",
-        Box::new(move |e, _d: &mut crate::Document| l3.lock().unwrap().push((e.event_phase(), e.composed_path().len()))),
-        ListenerOptions::default());
+    doc.add_event_listener(
+        outer,
+        "click",
+        Box::new(move |e, _d: &mut crate::Document| {
+            l3.lock()
+                .unwrap()
+                .push((e.event_phase(), e.composed_path().len()))
+        }),
+        ListenerOptions::default(),
+    );
 
     let mut e = DomEvent::new("click", inner);
     doc.dispatch_event(&mut e);
 
     let seen = log.lock().unwrap();
-    assert_eq!(seen.len(), 3, "capture on outer, target on inner, bubble on outer");
+    assert_eq!(
+        seen.len(),
+        3,
+        "capture on outer, target on inner, bubble on outer"
+    );
     assert_eq!(seen[0].0, 1, "CAPTURING_PHASE");
     assert_eq!(seen[1].0, 2, "AT_TARGET");
     assert_eq!(seen[2].0, 3, "BUBBLING_PHASE");
@@ -184,15 +249,33 @@ fn at_the_target_capture_listeners_run_before_bubble_listeners() {
     // the bubble traversal, so its capture listeners fire first even when a
     // bubble listener was registered earlier. Confirmed against Chrome.
     let o1 = order.clone();
-    doc.add_event_listener(a, "click", Box::new(move |_, _d: &mut crate::Document| o1.lock().unwrap().push("bubble-registered-first")),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| {
+            o1.lock().unwrap().push("bubble-registered-first")
+        }),
+        ListenerOptions::default(),
+    );
     let o2 = order.clone();
-    doc.add_event_listener(a, "click", Box::new(move |_, _d: &mut crate::Document| o2.lock().unwrap().push("capture-registered-second")),
-                           ListenerOptions { capture: true, ..Default::default() });
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| {
+            o2.lock().unwrap().push("capture-registered-second")
+        }),
+        ListenerOptions {
+            capture: true,
+            ..Default::default()
+        },
+    );
 
     let mut e = DomEvent::new("click", a);
     doc.dispatch_event(&mut e);
-    assert_eq!(*order.lock().unwrap(), vec!["capture-registered-second", "bubble-registered-first"]);
+    assert_eq!(
+        *order.lock().unwrap(),
+        vec!["capture-registered-second", "bubble-registered-first"]
+    );
 }
 
 #[test]
@@ -203,8 +286,12 @@ fn a_non_bubbling_event_still_fires_bubble_listeners_on_the_target() {
     let h = hit.clone();
     // `bubbles` gates the ANCESTOR traversal, not the target. A plain (bubble)
     // listener on the target of a `load` event still runs.
-    doc.add_event_listener(inner, "load", Box::new(move |_, _d: &mut crate::Document| *h.lock().unwrap() = true),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "load",
+        Box::new(move |_, _d: &mut crate::Document| *h.lock().unwrap() = true),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("load", inner);
     doc.dispatch_event(&mut e);
     assert!(*hit.lock().unwrap());
@@ -216,8 +303,15 @@ fn once_fires_a_listener_exactly_once() {
     let a = doc.query_selector("#a").unwrap();
     let n = Arc::new(Mutex::new(0));
     let c = n.clone();
-    doc.add_event_listener(a, "click", Box::new(move |_, _d: &mut crate::Document| *c.lock().unwrap() += 1),
-                           ListenerOptions { once: true, ..Default::default() });
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| *c.lock().unwrap() += 1),
+        ListenerOptions {
+            once: true,
+            ..Default::default()
+        },
+    );
     for _ in 0..3 {
         let mut e = DomEvent::new("click", a);
         doc.dispatch_event(&mut e);
@@ -229,10 +323,20 @@ fn once_fires_a_listener_exactly_once() {
 fn a_passive_listener_cannot_cancel() {
     let mut doc = doc_with("<div id=a>x</div>");
     let a = doc.query_selector("#a").unwrap();
-    doc.add_event_listener(a, "click", Box::new(|e, _d: &mut crate::Document| e.prevent_default()),
-                           ListenerOptions { passive: true, ..Default::default() });
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(|e, _d: &mut crate::Document| e.prevent_default()),
+        ListenerOptions {
+            passive: true,
+            ..Default::default()
+        },
+    );
     let mut e = DomEvent::new("click", a);
-    assert!(doc.dispatch_event(&mut e), "passive preventDefault is ignored");
+    assert!(
+        doc.dispatch_event(&mut e),
+        "passive preventDefault is ignored"
+    );
     assert!(!e.default_prevented());
 }
 
@@ -245,17 +349,36 @@ fn stop_propagation_and_stop_immediate_propagation_differ() {
     // stopPropagation: siblings on the same node still run, ancestors do not.
     let hits = Arc::new(Mutex::new(0));
     let h1 = hits.clone();
-    doc.add_event_listener(inner, "click", Box::new(move |e, _d: &mut crate::Document| { *h1.lock().unwrap() += 1; e.stop_propagation(); }),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "click",
+        Box::new(move |e, _d: &mut crate::Document| {
+            *h1.lock().unwrap() += 1;
+            e.stop_propagation();
+        }),
+        ListenerOptions::default(),
+    );
     let h2 = hits.clone();
-    doc.add_event_listener(inner, "click", Box::new(move |_, _d: &mut crate::Document| *h2.lock().unwrap() += 1),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| *h2.lock().unwrap() += 1),
+        ListenerOptions::default(),
+    );
     let h3 = hits.clone();
-    doc.add_event_listener(outer, "click", Box::new(move |_, _d: &mut crate::Document| *h3.lock().unwrap() += 1),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        outer,
+        "click",
+        Box::new(move |_, _d: &mut crate::Document| *h3.lock().unwrap() += 1),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", inner);
     doc.dispatch_event(&mut e);
-    assert_eq!(*hits.lock().unwrap(), 2, "both on the target, none on the ancestor");
+    assert_eq!(
+        *hits.lock().unwrap(),
+        2,
+        "both on the target, none on the ancestor"
+    );
 }
 
 #[test]
@@ -274,11 +397,16 @@ fn legacy_event_aliases_answer() {
 fn init_event_is_ignored_once_dispatch_has_begun() {
     let mut doc = doc_with("<div id=a>x</div>");
     let a = doc.query_selector("#a").unwrap();
-    doc.add_event_listener(a, "click", Box::new(|e, _d: &mut crate::Document| {
-        e.init_event("other", true, true);
-        // Ignored mid-dispatch, so the type is unchanged.
-        assert_eq!(e.event_type, "click");
-    }), ListenerOptions::default());
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(|e, _d: &mut crate::Document| {
+            e.init_event("other", true, true);
+            // Ignored mid-dispatch, so the type is unchanged.
+            assert_eq!(e.event_type, "click");
+        }),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", a);
     doc.dispatch_event(&mut e);
 }
@@ -324,7 +452,12 @@ fn time_stamp_advances() {
     std::thread::sleep(std::time::Duration::from_millis(2));
     let b = DomEvent::new("click", 1);
     // Every event used to report 0.0, so nothing could be ordered or rate-limited.
-    assert!(b.time_stamp() > a.time_stamp(), "{} !> {}", b.time_stamp(), a.time_stamp());
+    assert!(
+        b.time_stamp() > a.time_stamp(),
+        "{} !> {}",
+        b.time_stamp(),
+        a.time_stamp()
+    );
 }
 
 #[test]
@@ -389,8 +522,8 @@ fn mouse_coordinate_families_are_distinct() {
 #[test]
 fn button_and_buttons_are_different_questions() {
     let mut e = DomEvent::new("mousedown", 1);
-    e.button = 2;                 // the RIGHT button changed state
-    e.set_buttons(1 | 2);         // left AND right are currently held
+    e.button = 2; // the RIGHT button changed state
+    e.set_buttons(1 | 2); // left AND right are currently held
     assert_eq!(e.button(), 2);
     assert_eq!(e.buttons(), 3);
     // `buttons` bit 2 is RIGHT and bit 4 is MIDDLE — not `button`'s numbering.
@@ -481,14 +614,21 @@ fn window_events_fire() {
     for ty in ["load", "resize", "scroll", "popstate", "hashchange"] {
         let s = seen.clone();
         let t = ty.to_string();
-        doc.add_event_listener(win, ty, Box::new(move |_, _d| s.lock().unwrap().push(t.clone())),
-                               ListenerOptions::default());
+        doc.add_event_listener(
+            win,
+            ty,
+            Box::new(move |_, _d| s.lock().unwrap().push(t.clone())),
+            ListenerOptions::default(),
+        );
     }
     for ty in ["load", "resize", "scroll", "popstate", "hashchange"] {
         doc.fire_window_event(ty);
     }
-    assert_eq!(seen.lock().unwrap().len(), 5,
-        "every WindowEventHandlers type must actually fire");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        5,
+        "every WindowEventHandlers type must actually fire"
+    );
 }
 
 #[test]
@@ -497,8 +637,12 @@ fn window_handler_attributes_work() {
     let win = doc.window_target();
     let n = Arc::new(Mutex::new(0));
     let c = n.clone();
-    doc.set_event_handler(win, "onload", Box::new(move |_, _d| *c.lock().unwrap() += 1))
-        .expect("onload is a WindowEventHandlers attribute");
+    doc.set_event_handler(
+        win,
+        "onload",
+        Box::new(move |_, _d| *c.lock().unwrap() += 1),
+    )
+    .expect("onload is a WindowEventHandlers attribute");
     doc.fire_window_event("load");
     assert_eq!(*n.lock().unwrap(), 1);
 }
@@ -507,8 +651,12 @@ fn window_handler_attributes_work() {
 fn beforeunload_can_be_cancelled() {
     let mut doc = doc_with("<div>x</div>");
     let win = doc.window_target();
-    doc.add_event_listener(win, "beforeunload", Box::new(|e, _d| e.prevent_default()),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        win,
+        "beforeunload",
+        Box::new(|e, _d| e.prevent_default()),
+        ListenerOptions::default(),
+    );
     // `beforeunload` is the one non-bubbling event that IS cancelable, and the
     // return value is what decides whether navigation continues.
     assert!(!doc.fire_window_event("beforeunload"));
@@ -522,14 +670,19 @@ fn an_event_cannot_be_dispatched_while_it_is_dispatching() {
     let a = doc.query_selector("#a").unwrap();
     let depth = Arc::new(Mutex::new(0));
     let d = depth.clone();
-    doc.add_event_listener(a, "click", Box::new(move |e, doc2| {
-        *d.lock().unwrap() += 1;
-        // Re-dispatching the SAME event must be refused, not recursed into.
-        assert!(e.is_dispatching());
-        // Re-dispatching THIS event is refused by `dispatch_dom_event`,
-        // which checks the flag — the recursion simply does not happen.
-        let _ = doc2;
-    }), ListenerOptions::default());
+    doc.add_event_listener(
+        a,
+        "click",
+        Box::new(move |e, doc2| {
+            *d.lock().unwrap() += 1;
+            // Re-dispatching the SAME event must be refused, not recursed into.
+            assert!(e.is_dispatching());
+            // Re-dispatching THIS event is refused by `dispatch_dom_event`,
+            // which checks the flag — the recursion simply does not happen.
+            let _ = doc2;
+        }),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", a);
     doc.dispatch_event(&mut e);
     assert_eq!(*depth.lock().unwrap(), 1);
@@ -550,7 +703,9 @@ fn find_in_shadow(node: &crate::types::WebCore, id: &str) -> Option<u32> {
     }
     if let Some(sr) = &node.shadow_root {
         for c in &sr.children {
-            if let Some(f) = find_in_shadow(c, id) { return Some(f); }
+            if let Some(f) = find_in_shadow(c, id) {
+                return Some(f);
+            }
         }
     }
     node.children.iter().find_map(|c| find_in_shadow(c, id))
@@ -559,38 +714,57 @@ fn find_in_shadow(node: &crate::types::WebCore, id: &str) -> Option<u32> {
 #[test]
 fn an_event_inside_a_shadow_tree_dispatches_at_all() {
     let mut doc = doc_with(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
     let inner = find_in_shadow(&doc.root, "inner").expect("the shadow node exists");
     let hit = Arc::new(Mutex::new(false));
     let h = hit.clone();
-    doc.add_event_listener(inner, "click", Box::new(move |_, _d| *h.lock().unwrap() = true),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "click",
+        Box::new(move |_, _d| *h.lock().unwrap() = true),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", inner);
     doc.dispatch_event(&mut e);
     // The propagation path used to walk `children` only, so a node inside a
     // shadow tree was unreachable and the event dispatched nowhere.
-    assert!(*hit.lock().unwrap(), "a listener inside a shadow tree must fire");
+    assert!(
+        *hit.lock().unwrap(),
+        "a listener inside a shadow tree must fire"
+    );
 }
 
 #[test]
 fn a_listener_outside_the_shadow_tree_sees_the_host_as_target() {
     let mut doc = doc_with(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
-    let host = doc.query_selector("#host").expect("the host is in the light tree");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
+    let host = doc
+        .query_selector("#host")
+        .expect("the host is in the light tree");
     let inner = find_in_shadow(&doc.root, "inner").expect("the shadow node exists");
     assert_ne!(host, inner);
 
     let seen = Arc::new(Mutex::new(0u32));
     let s = seen.clone();
-    doc.add_event_listener(host, "click", Box::new(move |e, _d| *s.lock().unwrap() = e.target),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        host,
+        "click",
+        Box::new(move |e, _d| *s.lock().unwrap() = e.target),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", inner);
     doc.dispatch_event(&mut e);
 
     // Retargeting (DOM §2.9): outside the shadow tree the target is the HOST,
     // never the internal node — otherwise encapsulation leaks and a document
     // handler is handed a node it has no business seeing.
-    assert_eq!(*seen.lock().unwrap(), host, "target must be retargeted to the host");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        host,
+        "target must be retargeted to the host"
+    );
     // And it is restored afterwards for anyone reading the event later.
     assert_eq!(e.target, inner);
 }
@@ -598,12 +772,17 @@ fn a_listener_outside_the_shadow_tree_sees_the_host_as_target() {
 #[test]
 fn a_listener_inside_the_shadow_tree_sees_the_real_target() {
     let mut doc = doc_with(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
     let inner = find_in_shadow(&doc.root, "inner").expect("the shadow node exists");
     let seen = Arc::new(Mutex::new(0u32));
     let s = seen.clone();
-    doc.add_event_listener(inner, "click", Box::new(move |e, _d| *s.lock().unwrap() = e.target),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        inner,
+        "click",
+        Box::new(move |e, _d| *s.lock().unwrap() = e.target),
+        ListenerOptions::default(),
+    );
     let mut e = DomEvent::new("click", inner);
     doc.dispatch_event(&mut e);
     // Retargeting applies OUTSIDE the tree. Within it, the target is the node.
@@ -613,26 +792,39 @@ fn a_listener_inside_the_shadow_tree_sees_the_real_target() {
 #[test]
 fn a_non_composed_event_does_not_leave_the_shadow_tree() {
     let mut doc = doc_with(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
     let host = doc.query_selector("#host").unwrap();
     let inner = find_in_shadow(&doc.root, "inner").expect("the shadow node exists");
     let outside = Arc::new(Mutex::new(false));
     let o = outside.clone();
-    doc.add_event_listener(host, "notcomposed", Box::new(move |_, _d| *o.lock().unwrap() = true),
-                           ListenerOptions::default());
+    doc.add_event_listener(
+        host,
+        "notcomposed",
+        Box::new(move |_, _d| *o.lock().unwrap() = true),
+        ListenerOptions::default(),
+    );
     // `composed: false` — the event is confined to the shadow tree.
     let mut e = DomEvent::new_with_flags("notcomposed", inner, true, false, false);
     doc.dispatch_event(&mut e);
-    assert!(!*outside.lock().unwrap(), "a non-composed event must not cross the boundary");
+    assert!(
+        !*outside.lock().unwrap(),
+        "a non-composed event must not cross the boundary"
+    );
 
     // The same event with `composed: true` does reach the host.
     let o2 = outside.clone();
     let mut doc2 = doc_with(
-        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>");
+        "<div id=host><template shadowrootmode=open><span id=inner>s</span></template></div>",
+    );
     let host2 = doc2.query_selector("#host").unwrap();
     let inner2 = find_in_shadow(&doc2.root, "inner").unwrap();
-    doc2.add_event_listener(host2, "iscomposed", Box::new(move |_, _d| *o2.lock().unwrap() = true),
-                            ListenerOptions::default());
+    doc2.add_event_listener(
+        host2,
+        "iscomposed",
+        Box::new(move |_, _d| *o2.lock().unwrap() = true),
+        ListenerOptions::default(),
+    );
     let mut e2 = DomEvent::new_with_flags("iscomposed", inner2, true, false, true);
     doc2.dispatch_event(&mut e2);
     assert!(*outside.lock().unwrap(), "a composed event crosses it");

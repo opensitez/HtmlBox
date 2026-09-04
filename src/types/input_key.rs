@@ -3,10 +3,10 @@
 #![allow(unused_imports)]
 use super::*;
 use crate::css::*;
-use std::collections::{HashMap, HashSet};
-use crate::layout::LayoutEngine;
 use crate::dom::*;
 use crate::html::*;
+use crate::layout::LayoutEngine;
+use std::collections::{HashMap, HashSet};
 
 impl Document {
     /// High-level keyboard event entry point.
@@ -32,7 +32,11 @@ impl Document {
         let (handled, mut evt) = self.dispatch_input_event(evt);
 
         // Also dispatch through NodeId-based event system (capture/bubble).
-        let target = if self.focused_box != 0 { self.focused_box } else { self.root.node_id };
+        let target = if self.focused_box != 0 {
+            self.focused_box
+        } else {
+            self.root.node_id
+        };
         {
             let mut dom_evt = crate::dom::events::DomEvent::new(etype.as_str(), target);
             dom_evt.key_code = key_code;
@@ -51,7 +55,9 @@ impl Document {
             if self.dispatch_dom_event(&mut dom_evt) {
                 // handled via new system
             }
-            if dom_evt.default_prevented() { evt.default_prevented = true; }
+            if dom_evt.default_prevented() {
+                evt.default_prevented = true;
+            }
         }
 
         let mut redraw = handled;
@@ -76,9 +82,16 @@ impl Document {
                     if !options.is_empty() {
                         // With nothing selected — a list box's resting state —
                         // Down starts at the first option and Up at the last.
-                        let cur = self.find_webcore(fid).map(crate::html::forms::selected_index).unwrap_or(-1);
+                        let cur = self
+                            .find_webcore(fid)
+                            .map(crate::html::forms::selected_index)
+                            .unwrap_or(-1);
                         let new_idx = if cur < 0 {
-                            if key_code == 40 { 0 } else { options.len() - 1 }
+                            if key_code == 40 {
+                                0
+                            } else {
+                                options.len() - 1
+                            }
                         } else if key_code == 40 {
                             ((cur as usize) + 1).min(options.len() - 1)
                         } else {
@@ -91,7 +104,9 @@ impl Document {
                             .unwrap_or_default();
                         if let Some(sel) = self.find_webcore_mut(fid) {
                             let changed = crate::html::forms::pick_option(sel, option_id);
-                            if let Some(tn) = sel.children.iter_mut().rev().find(|c| c.tag == "#text") {
+                            if let Some(tn) =
+                                sel.children.iter_mut().rev().find(|c| c.tag == "#text")
+                            {
                                 tn.text = new_text;
                             }
                             sel.layout.layout_dirty = true;
@@ -110,36 +125,66 @@ impl Document {
                 {
                     let fid = self.focused_box;
                     fn find_n<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-                        if n.node_id == t { return Some(n); }
-                        for c in &mut n.children { if let Some(r) = find_n(c, t) { return Some(r); } }
+                        if n.node_id == t {
+                            return Some(n);
+                        }
+                        for c in &mut n.children {
+                            if let Some(r) = find_n(c, t) {
+                                return Some(r);
+                            }
+                        }
                         None
                     }
                     if let Some(input) = find_n(&mut self.root, fid) {
                         // Read the VALUE, not the default value — an arrow key
                         // after typing used to step from whatever the markup
                         // said rather than from what the field shows.
-                        let val: f64 = crate::html::forms::parse_floating_point(&input_value(input)).unwrap_or(0.0);
-                        let step: f64 = input.attributes.get("step").and_then(|s| s.parse().ok()).unwrap_or(1.0);
-                        let min: Option<f64> = input.attributes.get("min").and_then(|s| s.parse().ok());
-                        let max: Option<f64> = input.attributes.get("max").and_then(|s| s.parse().ok());
-                        let new_val = if key_code == 38 { val + step } else { val - step };
-                        let new_val = if let Some(mx) = max { new_val.min(mx) } else { new_val };
-                        let new_val = if let Some(mn) = min { new_val.max(mn) } else { new_val };
+                        let val: f64 =
+                            crate::html::forms::parse_floating_point(&input_value(input))
+                                .unwrap_or(0.0);
+                        let step: f64 = input
+                            .attributes
+                            .get("step")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(1.0);
+                        let min: Option<f64> =
+                            input.attributes.get("min").and_then(|s| s.parse().ok());
+                        let max: Option<f64> =
+                            input.attributes.get("max").and_then(|s| s.parse().ok());
+                        let new_val = if key_code == 38 {
+                            val + step
+                        } else {
+                            val - step
+                        };
+                        let new_val = if let Some(mx) = max {
+                            new_val.min(mx)
+                        } else {
+                            new_val
+                        };
+                        let new_val = if let Some(mn) = min {
+                            new_val.max(mn)
+                        } else {
+                            new_val
+                        };
                         if new_val != val {
-                            input.value_state = Some(crate::html::forms::best_representation(new_val));
+                            input.value_state =
+                                Some(crate::html::forms::best_representation(new_val));
                             input.dirty_value = true;
                             input.layout.layout_dirty = true;
                         }
                     }
                     true
-                }
-                else if is_text_input(focused) {
+                } else if is_text_input(focused) {
                     // Find the focused node mutably and process the key
                     let fid = self.focused_box;
                     fn find_input<'a>(n: &'a mut WebCore, t: u32) -> Option<&'a mut WebCore> {
-                        if n.node_id == t { return Some(n); }
+                        if n.node_id == t {
+                            return Some(n);
+                        }
                         for c in &mut n.children {
-                            if let Some(r) = find_input(c, t) { return Some(r); }
+                            if let Some(r) = find_input(c, t) {
+                                return Some(r);
+                            }
                         }
                         None
                     }
@@ -160,9 +205,15 @@ impl Document {
                             }
                         }
                         changed
-                    } else { false }
-                } else { false }
-            } else { false };
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
 
             if form_handled {
                 redraw = true;

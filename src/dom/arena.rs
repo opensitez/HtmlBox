@@ -20,19 +20,29 @@ impl NodeId {
     pub const NONE: NodeId = NodeId(0);
 
     #[inline]
-    pub fn is_none(self) -> bool { self.0 == 0 }
+    pub fn is_none(self) -> bool {
+        self.0 == 0
+    }
     #[inline]
-    pub fn is_some(self) -> bool { self.0 != 0 }
+    pub fn is_some(self) -> bool {
+        self.0 != 0
+    }
     #[inline]
-    pub fn index(self) -> usize { self.0 as usize }
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl From<u32> for NodeId {
-    fn from(v: u32) -> Self { NodeId(v) }
+    fn from(v: u32) -> Self {
+        NodeId(v)
+    }
 }
 
 impl From<NodeId> for u32 {
-    fn from(v: NodeId) -> Self { v.0 }
+    fn from(v: NodeId) -> Self {
+        v.0
+    }
 }
 
 // ─── Node Types ─────────────────────────────────────────────────────────────
@@ -73,9 +83,9 @@ pub struct Node {
     pub tag: String,
 
     // ── Tree structure (linked-list children for O(1) insert/remove) ──
-    pub parent:       NodeId,
-    pub first_child:  NodeId,
-    pub last_child:   NodeId,
+    pub parent: NodeId,
+    pub first_child: NodeId,
+    pub last_child: NodeId,
     pub next_sibling: NodeId,
     pub prev_sibling: NodeId,
 
@@ -176,26 +186,41 @@ impl Node {
 pub struct DirtyFlags(pub u8);
 
 impl DirtyFlags {
-    pub const NONE:   DirtyFlags = DirtyFlags(0);
-    pub const STYLE:  DirtyFlags = DirtyFlags(0b0001);
+    pub const NONE: DirtyFlags = DirtyFlags(0);
+    pub const STYLE: DirtyFlags = DirtyFlags(0b0001);
     pub const LAYOUT: DirtyFlags = DirtyFlags(0b0010);
-    pub const PAINT:  DirtyFlags = DirtyFlags(0b0100);
-    pub const ALL:    DirtyFlags = DirtyFlags(0b0111);
+    pub const PAINT: DirtyFlags = DirtyFlags(0b0100);
+    pub const ALL: DirtyFlags = DirtyFlags(0b0111);
 
-    #[inline] pub fn contains(self, other: DirtyFlags) -> bool { self.0 & other.0 == other.0 }
-    #[inline] pub fn is_empty(self) -> bool { self.0 == 0 }
-    #[inline] pub fn any(self) -> bool { self.0 != 0 }
+    #[inline]
+    pub fn contains(self, other: DirtyFlags) -> bool {
+        self.0 & other.0 == other.0
+    }
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+    #[inline]
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
 }
 
 impl std::ops::BitOr for DirtyFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self { DirtyFlags(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self {
+        DirtyFlags(self.0 | rhs.0)
+    }
 }
 impl std::ops::BitOrAssign for DirtyFlags {
-    fn bitor_assign(&mut self, rhs: Self) { self.0 |= rhs.0; }
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
 }
 impl Default for DirtyFlags {
-    fn default() -> Self { DirtyFlags::NONE }
+    fn default() -> Self {
+        DirtyFlags::NONE
+    }
 }
 
 // ─── Arena ──────────────────────────────────────────────────────────────────
@@ -238,7 +263,9 @@ impl DomArena {
             dirty: DirtyFlags::NONE,
             alive: false,
         };
-        DomArena { nodes: vec![sentinel] }
+        DomArena {
+            nodes: vec![sentinel],
+        }
     }
 
     // ── Allocation ──
@@ -360,13 +387,21 @@ impl DomArena {
     /// Detach a node from its parent (if any).
     pub fn detach(&mut self, node: NodeId) {
         let parent = self.get(node).parent;
-        if parent.is_none() { return; }
+        if parent.is_none() {
+            return;
+        }
         let prev = self.get(node).prev_sibling;
         let next = self.get(node).next_sibling;
-        if prev.is_some() { self.get_mut(prev).next_sibling = next; }
-        else { self.get_mut(parent).first_child = next; }
-        if next.is_some() { self.get_mut(next).prev_sibling = prev; }
-        else { self.get_mut(parent).last_child = prev; }
+        if prev.is_some() {
+            self.get_mut(prev).next_sibling = next;
+        } else {
+            self.get_mut(parent).first_child = next;
+        }
+        if next.is_some() {
+            self.get_mut(next).prev_sibling = prev;
+        } else {
+            self.get_mut(parent).last_child = prev;
+        }
         self.get_mut(node).parent = NodeId::NONE;
         self.get_mut(node).prev_sibling = NodeId::NONE;
         self.get_mut(node).next_sibling = NodeId::NONE;
@@ -395,7 +430,10 @@ impl DomArena {
 
     /// Insert `child` before `reference` (which must be a child of `parent`).
     pub fn insert_before(&mut self, parent: NodeId, child: NodeId, reference: NodeId) {
-        debug_assert!(self.get(child).parent.is_none(), "child already has a parent");
+        debug_assert!(
+            self.get(child).parent.is_none(),
+            "child already has a parent"
+        );
         debug_assert_eq!(self.get(reference).parent, parent);
 
         let prev = self.get(reference).prev_sibling;
@@ -415,7 +453,9 @@ impl DomArena {
     /// Remove `child` from its parent.  The node stays in the arena (detached).
     pub fn remove_child(&mut self, child: NodeId) {
         let parent = self.get(child).parent;
-        if parent.is_none() { return; }
+        if parent.is_none() {
+            return;
+        }
 
         let prev = self.get(child).prev_sibling;
         let next = self.get(child).next_sibling;
@@ -445,7 +485,9 @@ impl DomArena {
     /// node. Callers must reach the node through [`DomArena::try_get`] to see
     /// it as gone.
     pub fn free(&mut self, id: NodeId) {
-        if !self.is_alive(id) { return; }
+        if !self.is_alive(id) {
+            return;
+        }
         // Free children first
         let mut child = self.get(id).first_child;
         while child.is_some() {
@@ -459,7 +501,9 @@ impl DomArena {
     // ── Dirty Flag Propagation ──
 
     fn mark_dirty(&mut self, id: NodeId, flags: DirtyFlags) {
-        if id.is_none() { return; }
+        if id.is_none() {
+            return;
+        }
         self.get_mut(id).dirty |= flags;
         // Propagate up: parent needs to know a child changed
         let parent = self.get(id).parent;
@@ -490,7 +534,10 @@ impl DomArena {
 
     /// Iterate child NodeIds of `parent`.
     pub fn children(&self, parent: NodeId) -> ChildIter<'_> {
-        ChildIter { arena: self, next: self.get(parent).first_child }
+        ChildIter {
+            arena: self,
+            next: self.get(parent).first_child,
+        }
     }
 
     /// Count children.
@@ -513,7 +560,9 @@ impl DomArena {
     pub fn is_ancestor_of(&self, ancestor: NodeId, descendant: NodeId) -> bool {
         let mut cur = self.get(descendant).parent;
         while cur.is_some() {
-            if cur == ancestor { return true; }
+            if cur == ancestor {
+                return true;
+            }
             cur = self.get(cur).parent;
         }
         false
@@ -545,7 +594,9 @@ pub struct ChildIter<'a> {
 impl<'a> Iterator for ChildIter<'a> {
     type Item = NodeId;
     fn next(&mut self) -> Option<NodeId> {
-        if self.next.is_none() { return None; }
+        if self.next.is_none() {
+            return None;
+        }
         let id = self.next;
         self.next = self.arena.get(id).next_sibling;
         Some(id)

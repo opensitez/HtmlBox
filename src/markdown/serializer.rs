@@ -24,8 +24,12 @@ fn collect_inline_text(b: &WebCore) -> String {
 fn serialize_inline(b: &WebCore, block_style: Option<&ComputedStyle>) -> String {
     let mut result = String::new();
 
-    let block_is_bold = block_style.map(|s| s.font_weight == FontWeight::Bold).unwrap_or(false);
-    let block_is_italic = block_style.map(|s| s.font_style == FontStyle::Italic).unwrap_or(false);
+    let block_is_bold = block_style
+        .map(|s| s.font_weight == FontWeight::Bold)
+        .unwrap_or(false);
+    let block_is_italic = block_style
+        .map(|s| s.font_style == FontStyle::Italic)
+        .unwrap_or(false);
     let block_is_mono = block_style
         .map(|s| s.font_family == "monospace")
         .unwrap_or(false);
@@ -73,12 +77,20 @@ fn serialize_inline(b: &WebCore, block_style: Option<&ComputedStyle>) -> String 
                 suffix = format!("***{}", suffix);
             } else {
                 if is_bold {
-                    let delim = b.data.get("md-bold-delim").map(|s| s.as_str()).unwrap_or("**");
+                    let delim = b
+                        .data
+                        .get("md-bold-delim")
+                        .map(|s| s.as_str())
+                        .unwrap_or("**");
                     prefix.push_str(delim);
                     suffix = format!("{}{}", delim, suffix);
                 }
                 if is_italic {
-                    let delim = b.data.get("md-italic-delim").map(|s| s.as_str()).unwrap_or("*");
+                    let delim = b
+                        .data
+                        .get("md-italic-delim")
+                        .map(|s| s.as_str())
+                        .unwrap_or("*");
                     prefix.push_str(delim);
                     suffix = format!("{}{}", delim, suffix);
                 }
@@ -109,7 +121,11 @@ fn serialize_inline(b: &WebCore, block_style: Option<&ComputedStyle>) -> String 
     // Process child boxes (images, etc.)
     for child in &b.children {
         if child.tag == "img" {
-            let src = child.attributes.get("src").map(|s| s.as_str()).unwrap_or("");
+            let src = child
+                .attributes
+                .get("src")
+                .map(|s| s.as_str())
+                .unwrap_or("");
             let alt = child.data.get("md-alt").map(|s| s.as_str()).unwrap_or("");
             result.push_str(&format!("![{}]({})", alt, src));
         } else {
@@ -170,7 +186,9 @@ fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_lin
                     out.push_str(&content);
                     out.push('\n');
                     let under_char = if level == 1 { '=' } else { '-' };
-                    let under_char = b.data.get("md-setext-char")
+                    let under_char = b
+                        .data
+                        .get("md-setext-char")
                         .and_then(|s| s.chars().next())
                         .unwrap_or(under_char);
                     // Use unicode-aware length for the underline
@@ -224,7 +242,11 @@ fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_lin
         if *needs_blank_line {
             out.push('\n');
         }
-        if b.data.get("md-code-style").map(|s| s == "indented").unwrap_or(false) {
+        if b.data
+            .get("md-code-style")
+            .map(|s| s == "indented")
+            .unwrap_or(false)
+        {
             let code_text = collect_inline_text(b);
             for line in code_text.split('\n') {
                 out.push_str("    ");
@@ -297,7 +319,9 @@ fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_lin
             out.push('\n');
         }
         let bullet = b.data.get("md-bullet").map(|s| s.as_str()).unwrap_or("-");
-        let start_num: i32 = b.data.get("md-start")
+        let start_num: i32 = b
+            .data
+            .get("md-start")
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
         let mut item_num = start_num;
@@ -316,7 +340,11 @@ fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_lin
 
             // Task list prefix
             let task_prefix = if let Some(task) = child.data.get("md-task") {
-                if task == "checked" { "[x] " } else { "[ ] " }
+                if task == "checked" {
+                    "[x] "
+                } else {
+                    "[ ] "
+                }
             } else {
                 ""
             };
@@ -364,7 +392,9 @@ fn serialize_block(b: &WebCore, out: &mut String, indent: usize, needs_blank_lin
                 if row.tag != "tr" {
                     continue;
                 }
-                let cells: Vec<String> = row.children.iter()
+                let cells: Vec<String> = row
+                    .children
+                    .iter()
                     .map(|cell| serialize_inline(cell, Some(&cell.style)))
                     .collect();
                 rows.push(cells);

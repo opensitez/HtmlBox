@@ -30,8 +30,12 @@ const PAGE: &str = r#"<div id=root>
 <div id=live><button id=livebtn></button></div>
 </div>"#;
 
-fn page() -> Document { parse_html(PAGE) }
-fn el(d: &Document, id: &str) -> u32 { d.get_element_by_id(id).unwrap() }
+fn page() -> Document {
+    parse_html(PAGE)
+}
+fn el(d: &Document, id: &str) -> u32 {
+    d.get_element_by_id(id).unwrap()
+}
 
 // ─── draggable ──────────────────────────────────────────────────────────────
 
@@ -42,10 +46,10 @@ fn draggable_defaults_per_element_and_an_invalid_value_falls_back_to_that() {
     let cases: &[(&str, bool)] = &[
         ("dtrue", true),
         ("dfalse", false),
-        ("dbogus", false),   // invalid → `auto` → the <div> default
+        ("dbogus", false), // invalid → `auto` → the <div> default
         ("plain", false),
-        ("ahref", true),     // ⛔ an <a> WITH an href
-        ("abare", false),    // and without one
+        ("ahref", true),  // ⛔ an <a> WITH an href
+        ("abare", false), // and without one
         ("arhref", true),
         ("arbare", false),
         ("img", true),
@@ -60,7 +64,11 @@ fn the_draggable_setter_writes_a_keyword_rather_than_removing_the_attribute() {
     let mut d = page();
     let e = el(&d, "plain");
     d.set_draggable(e, false);
-    assert_eq!(d.get_attribute(e, "draggable").as_deref(), Some("false"), "not removed");
+    assert_eq!(
+        d.get_attribute(e, "draggable").as_deref(),
+        Some("false"),
+        "not removed"
+    );
     assert!(!d.draggable(e));
     d.set_draggable(e, true);
     assert_eq!(d.get_attribute(e, "draggable").as_deref(), Some("true"));
@@ -74,9 +82,9 @@ fn spellcheck_is_inherited_and_defaults_to_true() {
     let cases: &[(&str, bool)] = &[
         ("sctrue", true),
         ("scfalse", false),
-        ("scbogus", true),   // invalid → keep asking upwards → the default
-        ("plain", true),     // absent → true
-        ("scchild", false),  // ⛔ inherited from the parent's `false`
+        ("scbogus", true),  // invalid → keep asking upwards → the default
+        ("plain", true),    // absent → true
+        ("scchild", false), // ⛔ inherited from the parent's `false`
     ];
     for (id, want) in cases {
         assert_eq!(d.spellcheck(el(&d, id)), *want, "{id}");
@@ -126,7 +134,11 @@ fn autocapitalize_is_empty_when_absent_and_sentences_when_invalid() {
     assert_eq!(d.autocapitalize(el(&d, "plain")), "", "absent");
     assert_eq!(d.autocapitalize(el(&d, "acbogus")), "sentences", "invalid");
     assert_eq!(d.autocapitalize(el(&d, "acwords")), "words");
-    assert_eq!(d.autocapitalize(el(&d, "acupper")), "words", "case-insensitive");
+    assert_eq!(
+        d.autocapitalize(el(&d, "acupper")),
+        "words",
+        "case-insensitive"
+    );
 }
 
 // ─── accessKey ──────────────────────────────────────────────────────────────
@@ -153,11 +165,17 @@ fn the_inert_property_is_not_inherited_even_though_its_effect_is() {
     // be focused.
     let d = page();
     assert!(d.inert(el(&d, "inertbox")));
-    assert!(!d.inert(el(&d, "inertmid")), "the IDL reflects the OWN attribute");
+    assert!(
+        !d.inert(el(&d, "inertmid")),
+        "the IDL reflects the OWN attribute"
+    );
     assert!(!d.inert(el(&d, "inertbtn")));
 
     assert!(d.is_inert(el(&d, "inertbox")));
-    assert!(d.is_inert(el(&d, "inertmid")), "but the EFFECT reaches every descendant");
+    assert!(
+        d.is_inert(el(&d, "inertmid")),
+        "but the EFFECT reaches every descendant"
+    );
     assert!(d.is_inert(el(&d, "inertbtn")));
     assert!(!d.is_inert(el(&d, "livebtn")));
 }
@@ -170,7 +188,11 @@ fn setting_inert_false_removes_the_attribute() {
     assert!(!d.has_attribute(e, "inert"));
     assert!(!d.inert(e));
     d.set_inert(e, true);
-    assert_eq!(d.get_attribute(e, "inert").as_deref(), Some(""), "a boolean attribute");
+    assert_eq!(
+        d.get_attribute(e, "inert").as_deref(),
+        Some(""),
+        "a boolean attribute"
+    );
 }
 
 #[test]
@@ -216,11 +238,23 @@ fn an_inert_subtree_takes_no_hits() {
     let dead_pt = centre(&doc, dead);
     assert_ne!(live_pt, dead_pt, "the two boxes must not overlap");
     assert_eq!(hit_test_box_at(&doc.root, live_pt, 0), live);
-    assert_eq!(hit_test_box_at(&doc.root, dead_pt, 0), dead, "until it goes inert");
+    assert_eq!(
+        hit_test_box_at(&doc.root, dead_pt, 0),
+        dead,
+        "until it goes inert"
+    );
 
     doc.set_inert(dead, true);
-    assert_eq!(hit_test_box_at(&doc.root, live_pt, 0), live, "its sibling is unaffected");
-    assert_ne!(hit_test_box_at(&doc.root, dead_pt, 0), dead, "an inert box takes no hits");
+    assert_eq!(
+        hit_test_box_at(&doc.root, live_pt, 0),
+        live,
+        "its sibling is unaffected"
+    );
+    assert_ne!(
+        hit_test_box_at(&doc.root, dead_pt, 0),
+        dead,
+        "an inert box takes no hits"
+    );
 }
 
 #[test]
@@ -238,7 +272,9 @@ fn an_inert_subtree_yields_no_link_either() {
         400.0,
     );
     let box_ = doc.get_element_by_id("box").unwrap();
-    let rect = doc.get_bounding_client_rect(box_).expect("a laid-out block");
+    let rect = doc
+        .get_bounding_client_rect(box_)
+        .expect("a laid-out block");
     let pt = (rect.x + 4.0, rect.y + rect.h / 2.0);
     assert_eq!(
         hit_test_link(&doc.root, pt, 0).as_deref(),
@@ -261,14 +297,20 @@ fn a_walk_rooted_at_an_inert_node_finds_nothing_in_it() {
         400.0,
     );
     let box_ = doc.get_element_by_id("box").unwrap();
-    let rect = doc.get_bounding_client_rect(box_).expect("a laid-out block");
+    let rect = doc
+        .get_bounding_client_rect(box_)
+        .expect("a laid-out block");
     let pt = (rect.x + 4.0, rect.y + rect.h / 2.0);
 
     fn find<'a>(node: &'a crate::types::WebCore, id: u32) -> Option<&'a crate::types::WebCore> {
-        if node.node_id == id { return Some(node); }
+        if node.node_id == id {
+            return Some(node);
+        }
         node.children.iter().find_map(|c| find(c, id))
     }
-    let subtree = find(&doc.root, box_).expect("the box in the render tree").clone();
+    let subtree = find(&doc.root, box_)
+        .expect("the box in the render tree")
+        .clone();
     assert_eq!(
         hit_test_link(&subtree, pt, 0).as_deref(),
         Some("http://example.com/x"),
@@ -277,7 +319,11 @@ fn a_walk_rooted_at_an_inert_node_finds_nothing_in_it() {
 
     doc.set_inert(box_, true);
     let subtree = find(&doc.root, box_).expect("the box in the render tree");
-    assert_eq!(hit_test_link(subtree, pt, 0), None, "rooted AT the inert node");
+    assert_eq!(
+        hit_test_link(subtree, pt, 0),
+        None,
+        "rooted AT the inert node"
+    );
 }
 
 #[test]
@@ -295,9 +341,15 @@ fn an_inert_positioned_overlay_takes_no_hits_either() {
     );
     let over = doc.get_element_by_id("over").unwrap();
     let under = doc.get_element_by_id("under").unwrap();
-    let r = doc.get_bounding_client_rect(over).expect("a laid-out overlay");
+    let r = doc
+        .get_bounding_client_rect(over)
+        .expect("a laid-out overlay");
     let pt = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-    assert_eq!(hit_test_box_at(&doc.root, pt, 0), over, "the overlay wins on top");
+    assert_eq!(
+        hit_test_box_at(&doc.root, pt, 0),
+        over,
+        "the overlay wins on top"
+    );
 
     doc.set_inert(over, true);
     let hit = hit_test_box_at(&doc.root, pt, 0);
@@ -323,7 +375,9 @@ fn an_inert_positioned_overlay_is_skipped_by_the_z_index_pass_too() {
         400.0,
     );
     let over = doc.get_element_by_id("over").unwrap();
-    let r = doc.get_bounding_client_rect(over).expect("a laid-out overlay");
+    let r = doc
+        .get_bounding_client_rect(over)
+        .expect("a laid-out overlay");
     let pt = (r.x + 4.0, r.y + r.h / 2.0);
     assert_eq!(
         hit_test_link(&doc.root, pt, 0).as_deref(),

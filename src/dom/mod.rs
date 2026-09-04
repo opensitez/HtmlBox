@@ -2,7 +2,6 @@
 //!
 //! This module ports the C++ `wxHtmlEditWidget` DOM/events/editing API to Rust.
 
-
 /// The HTML namespace — DOM §1.5. An element created without a namespace in an
 /// HTML document is in it, which is why `namespace: None` counts as HTML.
 ///
@@ -10,46 +9,46 @@
 /// elements, and `createElementNS` with this URI is an ordinary HTML element.
 pub const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 
+pub mod api;
+pub mod arena;
 pub mod attr_nodes;
+pub mod attrs;
 pub mod canvas_api;
 pub mod computed_style;
 pub mod dialog;
-pub mod query;
-pub mod select;
-pub mod xml;
 pub mod document_meta;
+pub mod event_handlers;
+pub mod events;
 pub mod form_association;
 pub mod html_element;
-pub mod selection;
-pub mod tables;
-pub mod token_list_api;
-pub mod top_layer;
-pub mod validation_api;
+pub mod query;
 pub mod range;
 pub mod reclaim;
 pub mod reflect;
-pub mod url;
-pub mod traversal;
-pub mod attrs;
-pub mod token_list;
-pub mod arena;
-pub mod api;
-pub mod event_handlers;
-pub mod events;
 pub mod registry;
+pub mod select;
+pub mod selection;
+pub mod tables;
+pub mod token_list;
+pub mod token_list_api;
+pub mod top_layer;
+pub mod traversal;
+pub mod url;
+pub mod validation_api;
+pub mod xml;
 
 // Re-exported at `dom::` so the path matches the other engine's:
 // `webcore::dom::new_document` and `vybe_widgets::dom::new_document` are the
 // same call under a different browser.
 pub use registry::{
-    DocumentId, close_document, is_open, new_document, new_xml_document, with_document,
+    close_document, is_open, new_document, new_xml_document, with_document, DocumentId,
 };
 
-use std::time::{Duration, Instant};
-use std::sync::{Arc, RwLock};
-use crate::types::{WebCore, Document, Color, Display, FontWeight, FontStyle, CssLength, Position};
 use crate::css::apply_property;
 use crate::layout::hit_test::point_to_hit;
+use crate::types::{Color, CssLength, Display, Document, FontStyle, FontWeight, Position, WebCore};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 const CARET_BLINK_MS: u64 = 500;
 
@@ -58,7 +57,11 @@ const CARET_BLINK_MS: u64 = 500;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlEventType {
     // Mouse
-    Click, DblClick, MouseDown, MouseUp, MouseMove,
+    Click,
+    DblClick,
+    MouseDown,
+    MouseUp,
+    MouseMove,
     /// Fires when cursor enters element or any descendant (bubbles). Mirror of CSS :hover.
     MouseOver,
     /// Fires when cursor leaves element or any descendant (bubbles).
@@ -69,18 +72,33 @@ pub enum HtmlEventType {
     MouseLeave,
     ContextMenu,
     // Pointer (unified mouse/touch/stylus — fired alongside mouse events on desktop)
-    PointerDown, PointerUp, PointerMove, PointerCancel,
-    PointerEnter, PointerLeave, PointerOver, PointerOut,
+    PointerDown,
+    PointerUp,
+    PointerMove,
+    PointerCancel,
+    PointerEnter,
+    PointerLeave,
+    PointerOver,
+    PointerOut,
     // Drag
-    DragStart, Drag, DragEnter, DragOver, DragLeave, Drop, DragEnd,
+    DragStart,
+    Drag,
+    DragEnter,
+    DragOver,
+    DragLeave,
+    Drop,
+    DragEnd,
     // Keyboard
-    KeyDown, KeyUp, KeyPress,
+    KeyDown,
+    KeyUp,
+    KeyPress,
     // Wheel / scroll
     /// Raw wheel input from mouse or trackpad (fires before Scroll).
     Wheel,
     Scroll,
     // Content / form / focus
-    Input, Change,
+    Input,
+    Change,
     /// Fires on the focused element (does not bubble).
     Focus,
     /// Fires on the focused element when it loses focus (does not bubble).
@@ -103,26 +121,46 @@ impl HtmlEventType {
     /// DOM event type string (e.g. "click", "mousedown", "keydown").
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Click => "click", Self::DblClick => "dblclick",
-            Self::MouseDown => "mousedown", Self::MouseUp => "mouseup",
-            Self::MouseMove => "mousemove", Self::MouseOver => "mouseover",
-            Self::MouseOut => "mouseout", Self::MouseEnter => "mouseenter",
-            Self::MouseLeave => "mouseleave", Self::ContextMenu => "contextmenu",
-            Self::PointerDown => "pointerdown", Self::PointerUp => "pointerup",
-            Self::PointerMove => "pointermove", Self::PointerCancel => "pointercancel",
-            Self::PointerEnter => "pointerenter", Self::PointerLeave => "pointerleave",
-            Self::PointerOver => "pointerover", Self::PointerOut => "pointerout",
-            Self::DragStart => "dragstart", Self::Drag => "drag",
-            Self::DragEnter => "dragenter", Self::DragOver => "dragover",
-            Self::DragLeave => "dragleave", Self::Drop => "drop", Self::DragEnd => "dragend",
-            Self::KeyDown => "keydown", Self::KeyUp => "keyup", Self::KeyPress => "keypress",
-            Self::Wheel => "wheel", Self::Scroll => "scroll",
-            Self::Input => "input", Self::Change => "change",
-            Self::Focus => "focus", Self::Blur => "blur",
-            Self::FocusIn => "focusin", Self::FocusOut => "focusout",
+            Self::Click => "click",
+            Self::DblClick => "dblclick",
+            Self::MouseDown => "mousedown",
+            Self::MouseUp => "mouseup",
+            Self::MouseMove => "mousemove",
+            Self::MouseOver => "mouseover",
+            Self::MouseOut => "mouseout",
+            Self::MouseEnter => "mouseenter",
+            Self::MouseLeave => "mouseleave",
+            Self::ContextMenu => "contextmenu",
+            Self::PointerDown => "pointerdown",
+            Self::PointerUp => "pointerup",
+            Self::PointerMove => "pointermove",
+            Self::PointerCancel => "pointercancel",
+            Self::PointerEnter => "pointerenter",
+            Self::PointerLeave => "pointerleave",
+            Self::PointerOver => "pointerover",
+            Self::PointerOut => "pointerout",
+            Self::DragStart => "dragstart",
+            Self::Drag => "drag",
+            Self::DragEnter => "dragenter",
+            Self::DragOver => "dragover",
+            Self::DragLeave => "dragleave",
+            Self::Drop => "drop",
+            Self::DragEnd => "dragend",
+            Self::KeyDown => "keydown",
+            Self::KeyUp => "keyup",
+            Self::KeyPress => "keypress",
+            Self::Wheel => "wheel",
+            Self::Scroll => "scroll",
+            Self::Input => "input",
+            Self::Change => "change",
+            Self::Focus => "focus",
+            Self::Blur => "blur",
+            Self::FocusIn => "focusin",
+            Self::FocusOut => "focusout",
             Self::SelectionChange => "selectionchange",
             Self::DOMContentLoaded => "DOMContentLoaded",
-            Self::Unload => "unload", Self::Resize => "resize",
+            Self::Unload => "unload",
+            Self::Resize => "resize",
         }
     }
 }
@@ -130,31 +168,31 @@ impl HtmlEventType {
 // ─── HtmlEvent ────────────────────────────────────────────────────────────────
 
 pub struct HtmlEvent {
-    pub event_type:  HtmlEventType,
+    pub event_type: HtmlEventType,
     /// Stable node_id of the deepest box hit.
-    pub target:          u32,
+    pub target: u32,
     /// Stable node_id of the current listener's element.
-    pub current_target:  u32,
+    pub current_target: u32,
     /// Position in window coordinates.
-    pub client_pos:  (f32, f32),
+    pub client_pos: (f32, f32),
     /// Position in document coordinates.
-    pub doc_pos:     (f32, f32),
+    pub doc_pos: (f32, f32),
     /// Mouse button: 0=left, 1=middle, 2=right.
-    pub button:      u8,
-    pub key_code:    u32,
-    pub char_code:   Option<char>,
-    pub ctrl_key:    bool,
-    pub shift_key:   bool,
-    pub alt_key:     bool,
-    pub meta_key:    bool,
+    pub button: u8,
+    pub key_code: u32,
+    pub char_code: Option<char>,
+    pub ctrl_key: bool,
+    pub shift_key: bool,
+    pub alt_key: bool,
+    pub meta_key: bool,
     /// Wheel scroll delta in logical pixels (positive = scroll down/right).
     pub delta_x: f32,
     pub delta_y: f32,
     /// Source node_id for drag events.
-    pub drag_source:     u32,
+    pub drag_source: u32,
     /// Related target node_id (e.g. focus/blur counterpart).
-    pub related_target:  u32,
-    pub default_prevented:   bool,
+    pub related_target: u32,
+    pub default_prevented: bool,
     pub propagation_stopped: bool,
 }
 
@@ -162,29 +200,32 @@ impl HtmlEvent {
     pub fn new(event_type: HtmlEventType) -> Self {
         Self {
             event_type,
-            target:          0,
-            current_target:  0,
-            client_pos:      (0.0, 0.0),
-            doc_pos:         (0.0, 0.0),
-            button:          0,
-            key_code:        0,
-            char_code:       None,
-            ctrl_key:        false,
-            shift_key:       false,
-            alt_key:         false,
-            meta_key:        false,
-            delta_x:         0.0,
-            delta_y:         0.0,
-            drag_source:     0,
-            related_target:  0,
-            default_prevented:   false,
+            target: 0,
+            current_target: 0,
+            client_pos: (0.0, 0.0),
+            doc_pos: (0.0, 0.0),
+            button: 0,
+            key_code: 0,
+            char_code: None,
+            ctrl_key: false,
+            shift_key: false,
+            alt_key: false,
+            meta_key: false,
+            delta_x: 0.0,
+            delta_y: 0.0,
+            drag_source: 0,
+            related_target: 0,
+            default_prevented: false,
             propagation_stopped: false,
         }
     }
 
-    pub fn stop_propagation(&mut self) { self.propagation_stopped = true; }
-    pub fn prevent_default(&mut self) { self.default_prevented = true; }
-
+    pub fn stop_propagation(&mut self) {
+        self.propagation_stopped = true;
+    }
+    pub fn prevent_default(&mut self) {
+        self.default_prevented = true;
+    }
 }
 
 // ─── Event listener registry ──────────────────────────────────────────────────
@@ -195,9 +236,13 @@ impl HtmlEvent {
 
 /// Find a node by node_id in the tree (immutable).
 fn find_node_ref(node: &WebCore, id: u32) -> Option<&WebCore> {
-    if node.node_id == id { return Some(node); }
+    if node.node_id == id {
+        return Some(node);
+    }
     for child in &node.children {
-        if let Some(f) = find_node_ref(child, id) { return Some(f); }
+        if let Some(f) = find_node_ref(child, id) {
+            return Some(f);
+        }
     }
     None
 }
@@ -205,9 +250,13 @@ fn find_node_ref(node: &WebCore, id: u32) -> Option<&WebCore> {
 /// Build path of node_ids `[root, ..., parent, target]` from root down to target.
 fn collect_id_path(node: &WebCore, target_id: u32, path: &mut Vec<u32>) -> bool {
     path.push(node.node_id);
-    if node.node_id == target_id { return true; }
+    if node.node_id == target_id {
+        return true;
+    }
     for child in &node.children {
-        if collect_id_path(child, target_id, path) { return true; }
+        if collect_id_path(child, target_id, path) {
+            return true;
+        }
     }
     path.pop();
     false
@@ -215,12 +264,16 @@ fn collect_id_path(node: &WebCore, target_id: u32, path: &mut Vec<u32>) -> bool 
 
 /// Simple CSS selector matching: `tag`, `#id`, `.class`, `*`.
 pub fn matches_simple_selector(b: &WebCore, selector: &str) -> bool {
-    if selector == "*" { return true; }
+    if selector == "*" {
+        return true;
+    }
     if let Some(id_sel) = selector.strip_prefix('#') {
         return b.attributes.get("id").map(|s| s == id_sel).unwrap_or(false);
     }
     if let Some(cls_sel) = selector.strip_prefix('.') {
-        return b.attributes.get("class")
+        return b
+            .attributes
+            .get("class")
             .map(|s| s.split_whitespace().any(|c| c == cls_sel))
             .unwrap_or(false);
     }
@@ -231,7 +284,9 @@ pub fn matches_simple_selector(b: &WebCore, selector: &str) -> bool {
 
 /// Add a CSS class to a box.
 pub fn add_class(b: &mut WebCore, cls: &str) {
-    if has_class(b, cls) { return; }
+    if has_class(b, cls) {
+        return;
+    }
     let entry = b.attributes.entry_or_default("class");
     if entry.is_empty() {
         *entry = cls.to_string();
@@ -251,12 +306,17 @@ pub fn remove_class(b: &mut WebCore, cls: &str) {
 
 /// Toggle a CSS class on a box.
 pub fn toggle_class(b: &mut WebCore, cls: &str) {
-    if has_class(b, cls) { remove_class(b, cls); } else { add_class(b, cls); }
+    if has_class(b, cls) {
+        remove_class(b, cls);
+    } else {
+        add_class(b, cls);
+    }
 }
 
 /// Returns true if the box has the given CSS class.
 pub fn has_class(b: &WebCore, cls: &str) -> bool {
-    b.attributes.get("class")
+    b.attributes
+        .get("class")
         .map(|s| s.split_whitespace().any(|c| c == cls))
         .unwrap_or(false)
 }
@@ -266,27 +326,41 @@ pub fn has_class(b: &WebCore, cls: &str) -> bool {
 /// Set an attribute on a box.  Handles `id`, `class`, `style`, `href` specially.
 pub fn set_attribute(b: &mut WebCore, attr: &str, value: &str) {
     match attr {
-        "id"    => { b.attributes.insert("id", value); }
-        "class" => { b.attributes.insert("class", value); }
-        "style" => { apply_inline_style_str(b, value); }
-        _       => { b.attributes.insert(attr, value); }
+        "id" => {
+            b.attributes.insert("id", value);
+        }
+        "class" => {
+            b.attributes.insert("class", value);
+        }
+        "style" => {
+            apply_inline_style_str(b, value);
+        }
+        _ => {
+            b.attributes.insert(attr, value);
+        }
     }
 }
 
 /// Get an attribute from a box.  Returns `None` if not present.
 pub fn get_attribute<'a>(b: &'a WebCore, attr: &str) -> Option<&'a str> {
     match attr {
-        "tag"   => Some(b.tag.as_str()),
-        _       => b.attributes.get(attr).map(|s| s.as_str()),
+        "tag" => Some(b.tag.as_str()),
+        _ => b.attributes.get(attr).map(|s| s.as_str()),
     }
 }
 
 /// Remove an attribute from a box.
 pub fn remove_attribute(b: &mut WebCore, attr: &str) {
     match attr {
-        "id"    => { b.attributes.remove("id"); }
-        "class" => { b.attributes.remove("class"); }
-        _       => { b.attributes.remove(attr); }
+        "id" => {
+            b.attributes.remove("id");
+        }
+        "class" => {
+            b.attributes.remove("class");
+        }
+        _ => {
+            b.attributes.remove(attr);
+        }
     }
 }
 
@@ -342,11 +416,13 @@ pub fn set_style_property(b: &mut WebCore, prop: &str, value: &str) {
 fn upsert_style_attr_prop(style_str: &mut String, prop: &str, value: &str) {
     let prop_lc = prop.trim().to_ascii_lowercase();
     let mut replaced = false;
-    let rebuilt: String = style_str
-        .split(';')
+    let rebuilt: String = crate::css::parser::split_declarations(style_str)
+        .into_iter()
         .filter_map(|decl| {
             let t = decl.trim();
-            if t.is_empty() { return None; }
+            if t.is_empty() {
+                return None;
+            }
             if let Some(colon) = t.find(':') {
                 if t[..colon].trim().to_ascii_lowercase() == prop_lc {
                     replaced = true;
@@ -369,12 +445,14 @@ fn upsert_style_attr_prop(style_str: &mut String, prop: &str, value: &str) {
 /// Apply a `key: val; key: val` style string to a box.
 /// Also persists each property in the `style` attribute so re-cascade is lossless.
 pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
-    for decl in css.split(';') {
+    for decl in crate::css::parser::split_declarations(css) {
         let decl = decl.trim();
-        if decl.is_empty() { continue; }
+        if decl.is_empty() {
+            continue;
+        }
         if let Some(colon) = decl.find(':') {
             let prop = decl[..colon].trim();
-            let val  = decl[colon+1..].trim();
+            let val = decl[colon + 1..].trim();
             if !prop.is_empty() && !val.is_empty() {
                 apply_property(std::sync::Arc::make_mut(&mut b.style), prop, val);
                 let style_str = b.attributes.entry_or_default("style");
@@ -396,7 +474,9 @@ pub fn apply_inline_style_str(b: &mut WebCore, css: &str) {
 pub fn query_selector<'a>(root: &'a WebCore, selector: &str) -> Option<&'a WebCore> {
     let id = *crate::dom::query::matching_ids_from(root, selector, true).first()?;
     fn find<'a>(node: &'a WebCore, id: u32) -> Option<&'a WebCore> {
-        if node.node_id == id { return Some(node); }
+        if node.node_id == id {
+            return Some(node);
+        }
         node.children.iter().find_map(|c| find(c, id))
     }
     find(root, id)
@@ -411,11 +491,21 @@ pub fn query_selector_mut<'a>(root: &'a mut WebCore, selector: &str) -> Option<&
 /// Returns all boxes matching the selector, in document order.
 pub fn query_selector_all<'a>(root: &'a WebCore, selector: &str) -> Vec<&'a WebCore> {
     let ids: std::collections::HashSet<u32> =
-        crate::dom::query::matching_ids_from(root, selector, false).into_iter().collect();
+        crate::dom::query::matching_ids_from(root, selector, false)
+            .into_iter()
+            .collect();
     let mut out = Vec::new();
-    fn collect<'a>(node: &'a WebCore, ids: &std::collections::HashSet<u32>, out: &mut Vec<&'a WebCore>) {
-        if node.node_id != 0 && ids.contains(&node.node_id) { out.push(node); }
-        for child in &node.children { collect(child, ids, out); }
+    fn collect<'a>(
+        node: &'a WebCore,
+        ids: &std::collections::HashSet<u32>,
+        out: &mut Vec<&'a WebCore>,
+    ) {
+        if node.node_id != 0 && ids.contains(&node.node_id) {
+            out.push(node);
+        }
+        for child in &node.children {
+            collect(child, ids, out);
+        }
     }
     collect(root, &ids, &mut out);
     out
@@ -454,8 +544,15 @@ pub fn append_child(parent: &mut WebCore, child: WebCore) {
 /// Position comes from the `Vec` — there is no other order here. The DOM's
 /// `insertBefore`/`after` are `Document`'s, and go through `DomArena`.
 pub fn insert_after(parent: &mut WebCore, reference_id: u32, new_node: WebCore) -> bool {
-    match parent.children.iter().position(|c| c.node_id == reference_id) {
-        Some(idx) => { parent.children.insert(idx + 1, new_node); true }
+    match parent
+        .children
+        .iter()
+        .position(|c| c.node_id == reference_id)
+    {
+        Some(idx) => {
+            parent.children.insert(idx + 1, new_node);
+            true
+        }
         None => false,
     }
 }
@@ -537,39 +634,55 @@ pub fn set_text_content(b: &mut WebCore, text: &str) {
 /// Describes a text range within a single `WebCore` (local byte offsets).
 pub struct TextRange {
     pub start: usize,
-    pub end:   usize,
+    pub end: usize,
 }
 
 /// Toggle `font-weight: bold` on the inline runs that overlap `range`.
 pub fn toggle_bold(b: &mut WebCore, range: &TextRange) {
-    let was_bold = b.layout.inline_runs.iter()
+    let was_bold = b
+        .layout
+        .inline_runs
+        .iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_weight.is_bold());
 
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
-            run.style.font_weight = if was_bold { FontWeight::Normal } else { FontWeight::Bold };
+            run.style.font_weight = if was_bold {
+                FontWeight::Normal
+            } else {
+                FontWeight::Bold
+            };
         }
     }
 }
 
 /// Toggle `font-style: italic` on the inline runs that overlap `range`.
 pub fn toggle_italic(b: &mut WebCore, range: &TextRange) {
-    let was_italic = b.layout.inline_runs.iter()
+    let was_italic = b
+        .layout
+        .inline_runs
+        .iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.font_style == FontStyle::Italic);
 
     for run in &mut b.layout.inline_runs {
         if run.text_offset < range.end && run.text_offset + run.length > range.start {
-            run.style.font_style =
-                if was_italic { FontStyle::Normal } else { FontStyle::Italic };
+            run.style.font_style = if was_italic {
+                FontStyle::Normal
+            } else {
+                FontStyle::Italic
+            };
         }
     }
 }
 
 /// Toggle `text-decoration: underline` on overlapping runs.
 pub fn toggle_underline(b: &mut WebCore, range: &TextRange) {
-    let was_underline = b.layout.inline_runs.iter()
+    let was_underline = b
+        .layout
+        .inline_runs
+        .iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.underline);
 
@@ -582,7 +695,10 @@ pub fn toggle_underline(b: &mut WebCore, range: &TextRange) {
 
 /// Toggle `text-decoration: line-through` on overlapping runs.
 pub fn toggle_strikethrough(b: &mut WebCore, range: &TextRange) {
-    let was = b.layout.inline_runs.iter()
+    let was = b
+        .layout
+        .inline_runs
+        .iter()
         .filter(|r| r.text_offset < range.end && r.text_offset + r.length > range.start)
         .all(|r| r.style.text_decoration.strikethrough);
 
@@ -634,10 +750,10 @@ pub fn set_bg_color(b: &mut WebCore, range: &TextRange, color: Color) {
 /// A snapshot for undo/redo (clones the whole document tree).
 pub struct UndoEntry {
     /// Serialized snapshot (caret/selection positions baked in as metadata).
-    pub doc:        Document,
-    pub caret_pos:  usize,
-    pub sel_start:  usize,
-    pub sel_end:    usize,
+    pub doc: Document,
+    pub caret_pos: usize,
+    pub sel_start: usize,
+    pub sel_end: usize,
 }
 
 /// Simple undo/redo stack (max 500 entries).
@@ -647,21 +763,39 @@ pub struct UndoStack {
 }
 
 impl Default for UndoStack {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UndoStack {
-    pub fn new() -> Self { Self { undo: Vec::new(), redo: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+        }
+    }
 
     /// Snapshot the current document state before a mutation.
     pub fn push(&mut self, doc: Document, caret_pos: usize, sel_start: usize, sel_end: usize) {
-        self.undo.push(UndoEntry { doc, caret_pos, sel_start, sel_end });
-        if self.undo.len() > 500 { self.undo.remove(0); }
+        self.undo.push(UndoEntry {
+            doc,
+            caret_pos,
+            sel_start,
+            sel_end,
+        });
+        if self.undo.len() > 500 {
+            self.undo.remove(0);
+        }
         self.redo.clear();
     }
 
-    pub fn can_undo(&self) -> bool { !self.undo.is_empty() }
-    pub fn can_redo(&self) -> bool { !self.redo.is_empty() }
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
 
     /// Undo: moves current doc → redo, returns previous entry.
     pub fn undo(
@@ -674,9 +808,9 @@ impl UndoStack {
         let entry = self.undo.pop()?;
         self.redo.push(UndoEntry {
             doc: current_doc,
-            caret_pos:  current_caret,
-            sel_start:  current_sel_start,
-            sel_end:    current_sel_end,
+            caret_pos: current_caret,
+            sel_start: current_sel_start,
+            sel_end: current_sel_end,
         });
         Some(entry)
     }
@@ -692,9 +826,9 @@ impl UndoStack {
         let entry = self.redo.pop()?;
         self.undo.push(UndoEntry {
             doc: current_doc,
-            caret_pos:  current_caret,
-            sel_start:  current_sel_start,
-            sel_end:    current_sel_end,
+            caret_pos: current_caret,
+            sel_start: current_sel_start,
+            sel_end: current_sel_end,
         });
         Some(entry)
     }
@@ -705,16 +839,16 @@ impl UndoStack {
 /// High-level editor state and operations.
 #[derive(Debug, Clone)]
 pub struct Editor {
-    pub caret_box:    Option<u32>,
-    pub caret_local:  usize,
-    pub sel_anchor:   usize,
-    pub sel_start:    usize,
-    pub sel_end:      usize,
+    pub caret_box: Option<u32>,
+    pub caret_local: usize,
+    pub sel_anchor: usize,
+    pub sel_start: usize,
+    pub sel_end: usize,
     pub caret_visible: bool,
-    pub last_blink:   Instant,
-    pub mouse_down:   bool,
-    pub has_focus:    bool,
-    pub read_only:    bool,
+    pub last_blink: Instant,
+    pub mouse_down: bool,
+    pub has_focus: bool,
+    pub read_only: bool,
     /// Set to `true` immediately after `insert_br` so that:
     /// (a) rendering prefers the start of the next line over the end of
     ///     the previous one when the caret sits at an exact line boundary,
@@ -727,25 +861,29 @@ pub struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Self {
-            caret_box:    None,
-            caret_local:  0,
-            sel_anchor:   0,
-            sel_start:    0,
-            sel_end:      0,
+            caret_box: None,
+            caret_local: 0,
+            sel_anchor: 0,
+            sel_start: 0,
+            sel_end: 0,
             caret_visible: true,
-            last_blink:   Instant::now(),
-            mouse_down:   false,
-            has_focus:    false,
-            read_only:    false,
+            last_blink: Instant::now(),
+            mouse_down: false,
+            has_focus: false,
+            read_only: false,
             caret_at_line_start: false,
         }
     }
 }
 
 impl Editor {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    pub fn has_selection(&self) -> bool { self.sel_start < self.sel_end }
+    pub fn has_selection(&self) -> bool {
+        self.sel_start < self.sel_end
+    }
 
     pub fn caret_info(&self) -> Option<(u32, usize)> {
         self.caret_box.map(|id| (id, self.caret_local))
@@ -761,18 +899,18 @@ impl Editor {
 
     pub fn set_caret_from_hit(&mut self, node_id: u32, local: usize, extend: bool) {
         if !extend {
-            self.sel_anchor  = local;
-            self.sel_start   = local;
-            self.sel_end     = local;
+            self.sel_anchor = local;
+            self.sel_start = local;
+            self.sel_end = local;
         }
-        self.caret_box   = Some(node_id);
+        self.caret_box = Some(node_id);
         self.caret_local = local;
         if extend && self.caret_box == Some(node_id) {
             self.sel_start = self.sel_anchor.min(local);
-            self.sel_end   = self.sel_anchor.max(local);
+            self.sel_end = self.sel_anchor.max(local);
         }
         self.caret_visible = true;
-        self.last_blink    = Instant::now();
+        self.last_blink = Instant::now();
     }
 
     pub fn move_left(&mut self, flat: &str, extend: bool) {
@@ -801,30 +939,30 @@ impl Editor {
         self.caret_local = new_pos;
         if !extend {
             self.sel_anchor = new_pos;
-            self.sel_start  = new_pos;
-            self.sel_end    = new_pos;
+            self.sel_start = new_pos;
+            self.sel_end = new_pos;
         } else {
             self.sel_start = self.sel_anchor.min(new_pos);
-            self.sel_end   = self.sel_anchor.max(new_pos);
+            self.sel_end = self.sel_anchor.max(new_pos);
         }
         self.caret_visible = true;
-        self.last_blink    = Instant::now();
+        self.last_blink = Instant::now();
     }
 
     pub fn collapse_to(&mut self, pos: usize) {
         self.caret_local = pos;
-        self.sel_anchor  = pos;
-        self.sel_start   = pos;
-        self.sel_end     = pos;
+        self.sel_anchor = pos;
+        self.sel_start = pos;
+        self.sel_end = pos;
         self.caret_visible = true;
-        self.last_blink    = Instant::now();
+        self.last_blink = Instant::now();
         self.caret_at_line_start = false;
     }
 
     pub fn blink_update(&mut self) -> bool {
         if self.last_blink.elapsed() >= Duration::from_millis(CARET_BLINK_MS) {
             self.caret_visible = !self.caret_visible;
-            self.last_blink    = Instant::now();
+            self.last_blink = Instant::now();
             true
         } else {
             false
@@ -836,11 +974,17 @@ impl Editor {
     }
 
     /// Primary mouse event handler for selection/caret.
-    pub fn handle_mouse_event(&mut self, root: &WebCore, etype: HtmlEventType, doc_pt: (f32, f32), button: u8) -> bool {
+    pub fn handle_mouse_event(
+        &mut self,
+        root: &WebCore,
+        etype: HtmlEventType,
+        doc_pt: (f32, f32),
+        button: u8,
+    ) -> bool {
         match etype {
             HtmlEventType::MouseDown => {
                 self.mouse_down = true;
-                self.has_focus  = true;
+                self.has_focus = true;
                 if let Some(hit) = point_to_hit(root, doc_pt, button) {
                     self.set_caret_from_hit(hit.node_id, hit.local_offset, false);
                     return true;
@@ -852,7 +996,7 @@ impl Editor {
                         if self.caret_box == Some(hit.node_id) {
                             self.caret_local = hit.local_offset;
                             self.sel_start = self.sel_anchor.min(hit.local_offset);
-                            self.sel_end   = self.sel_anchor.max(hit.local_offset);
+                            self.sel_end = self.sel_anchor.max(hit.local_offset);
                             self.caret_visible = true;
                             return true;
                         }
@@ -868,21 +1012,37 @@ impl Editor {
     }
 
     /// Primary keyboard event handler. Returns true if redraw needed.
-    pub fn handle_key_event(&mut self, root: &mut WebCore, etype: HtmlEventType, key_code: u32, ch: Option<char>, _ctrl: bool) -> bool {
+    pub fn handle_key_event(
+        &mut self,
+        root: &mut WebCore,
+        etype: HtmlEventType,
+        key_code: u32,
+        ch: Option<char>,
+        _ctrl: bool,
+    ) -> bool {
         if self.read_only {
             // Allow editing inside contenteditable="true" elements even when the document is read-only.
             // The caret_box may be a child text node, so we walk the tree from root to check ancestry.
-            let is_editable = self.caret_box
+            let is_editable = self
+                .caret_box
                 .map(|id| is_in_contenteditable_by_id(root, id))
                 .unwrap_or(false);
-            if !is_editable { return false; }
+            if !is_editable {
+                return false;
+            }
         }
-        if etype != HtmlEventType::KeyDown && etype != HtmlEventType::KeyPress { return false; }
+        if etype != HtmlEventType::KeyDown && etype != HtmlEventType::KeyPress {
+            return false;
+        }
 
-        let caret_id = match self.caret_box { Some(id) => id, None => return false };
+        let caret_id = match self.caret_box {
+            Some(id) => id,
+            None => return false,
+        };
 
         match key_code {
-            37 => { // ArrowLeft
+            37 => {
+                // ArrowLeft
                 if let Some(b) = find_box_mut(root, caret_id) {
                     let flat = crate::layout::inline_layout::collect_flat_text(b);
                     self.move_left(&flat, false);
@@ -890,7 +1050,8 @@ impl Editor {
                 }
                 return false;
             }
-            39 => { // ArrowRight
+            39 => {
+                // ArrowRight
                 if let Some(b) = find_box_mut(root, caret_id) {
                     let flat = crate::layout::inline_layout::collect_flat_text(b);
                     self.move_right(&flat, false);
@@ -898,15 +1059,18 @@ impl Editor {
                 }
                 return false;
             }
-            8 => { // Backspace
+            8 => {
+                // Backspace
                 self.delete_selection_or_before(root);
                 return true;
             }
-            46 => { // Delete
+            46 => {
+                // Delete
                 self.delete_selection_or_at(root);
                 return true;
             }
-            13 => { // Enter — split the current block into two siblings
+            13 => {
+                // Enter — split the current block into two siblings
                 self.insert_newline(root);
                 return true;
             }
@@ -923,7 +1087,10 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, root: &mut WebCore, ch: char) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         // Consume the line-start flag before any mutation (collapse_to will clear it too).
         let at_line_start = self.caret_at_line_start;
         if let Some(container) = find_box_mut(root, caret_nid) {
@@ -961,7 +1128,10 @@ impl Editor {
     }
 
     pub fn delete_selection_or_before(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
                 let s = self.sel_start;
@@ -980,7 +1150,10 @@ impl Editor {
     }
 
     pub fn delete_selection_or_at(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         if let Some(node) = find_box_mut(root, caret_nid) {
             if self.has_selection() {
                 let s = self.sel_start;
@@ -1004,19 +1177,24 @@ impl Editor {
     /// Uses the DOM API (create_element, insert_after, set_text_content) instead of
     /// direct Vec manipulation.
     pub fn insert_newline(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
 
         // Delete selection first.
         if self.has_selection() {
             let (s, e) = (self.sel_start, self.sel_end);
-            if let Some(b) = find_box_mut(root, caret_nid) { delete_range_full(b, s, e); }
+            if let Some(b) = find_box_mut(root, caret_nid) {
+                delete_range_full(b, s, e);
+            }
             self.collapse_to(s);
         }
 
         // Peek at the tag.
         let block_tag = match find_box_mut(root, caret_nid) {
             Some(b) => b.tag.clone(),
-            None    => return,
+            None => return,
         };
 
         // Non-prose containers get a <br> instead.
@@ -1042,7 +1220,11 @@ impl Editor {
         };
 
         // Create new sibling block via DOM API, inheriting style from the original.
-        let new_tag = if is_block_tag(&tag) { tag.as_str() } else { "p" };
+        let new_tag = if is_block_tag(&tag) {
+            tag.as_str()
+        } else {
+            "p"
+        };
         let mut new_block = create_element(new_tag);
         // Copy the computed style from the source block so the new block inherits
         // font, color, etc. without needing a full cascade.
@@ -1074,11 +1256,16 @@ impl Editor {
     /// Insert a `<br>` at the caret position (soft line break within the current block).
     /// Insert a `<br>` at the caret position. Uses DOM API.
     pub fn insert_br(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
 
         if self.has_selection() {
             let (s, e) = (self.sel_start, self.sel_end);
-            if let Some(b) = find_box_mut(root, caret_nid) { delete_range_full(b, s, e); }
+            if let Some(b) = find_box_mut(root, caret_nid) {
+                delete_range_full(b, s, e);
+            }
             self.collapse_to(s);
         }
 
@@ -1088,7 +1275,10 @@ impl Editor {
         let leaf_nid;
         let local_off;
         {
-            let container = match find_box_mut(root, caret_nid) { Some(c) => c, None => return };
+            let container = match find_box_mut(root, caret_nid) {
+                Some(c) => c,
+                None => return,
+            };
             match find_node_offset_mut(container, caret) {
                 Ok((leaf, local)) => {
                     leaf_nid = leaf.node_id;
@@ -1107,34 +1297,43 @@ impl Editor {
 
         // Split the text node at the caret and insert <br> between the halves.
         split_node_with_br(root, leaf_nid, local_off);
-        if let Some(b) = find_box_mut(root, caret_nid) { mark_layout_dirty(b); }
+        if let Some(b) = find_box_mut(root, caret_nid) {
+            mark_layout_dirty(b);
+        }
         self.collapse_to(caret);
         self.caret_at_line_start = true;
     }
 
     /// Toggle the current block between a plain block (`<p>`) and a list item (`<ul><li>`).
     pub fn toggle_bullet_list(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
 
-        let is_li = find_box_mut(root, caret_nid).map(|b| b.tag == "li").unwrap_or(false);
+        let is_li = find_box_mut(root, caret_nid)
+            .map(|b| b.tag == "li")
+            .unwrap_or(false);
 
         if is_li {
             // Unwrap: convert <li> back to <p>, remove <ul> wrapper if now empty.
             if let Some(ul) = find_parent_mut_by_id(root, caret_nid) {
                 if ul.tag == "ul" || ul.tag == "ol" {
                     let ul_nid = ul.node_id;
-                    if let Some(li_idx) = ul.children.iter()
-                        .position(|c| c.node_id == caret_nid)
-                    {
+                    if let Some(li_idx) = ul.children.iter().position(|c| c.node_id == caret_nid) {
                         ul.children[li_idx].tag = "p".to_string();
-                        apply_property(std::sync::Arc::make_mut(&mut ul.children[li_idx].style), "display", "block");
+                        apply_property(
+                            std::sync::Arc::make_mut(&mut ul.children[li_idx].style),
+                            "display",
+                            "block",
+                        );
                         self.caret_box = Some(ul.children[li_idx].node_id);
 
                         // If the list now has only this one element, unwrap the <ul>
                         if ul.children.len() == 1 {
                             if let Some(gp) = find_parent_mut_by_id(root, ul_nid) {
-                                if let Some(ul_idx) = gp.children.iter()
-                                    .position(|c| c.node_id == ul_nid)
+                                if let Some(ul_idx) =
+                                    gp.children.iter().position(|c| c.node_id == ul_nid)
                                 {
                                     let mut ul_box = gp.children.remove(ul_idx);
                                     let p_box = ul_box.children.remove(0);
@@ -1150,20 +1349,22 @@ impl Editor {
         } else {
             // Wrap block in <ul><li>.
             if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
-                if let Some(idx) = parent.children.iter()
-                    .position(|c| c.node_id == caret_nid)
-                {
+                if let Some(idx) = parent.children.iter().position(|c| c.node_id == caret_nid) {
                     let block = parent.children.remove(idx);
                     let mut li = WebCore::new("li");
-                    apply_property(std::sync::Arc::make_mut(&mut li.style), "display", "list-item");
-                    li.text       = block.text;
-                    li.children   = block.children;
+                    apply_property(
+                        std::sync::Arc::make_mut(&mut li.style),
+                        "display",
+                        "list-item",
+                    );
+                    li.text = block.text;
+                    li.children = block.children;
                     li.layout.inline_runs = block.layout.inline_runs;
                     let mut ul = WebCore::new("ul");
                     apply_property(std::sync::Arc::make_mut(&mut ul.style), "display", "block");
                     ul.children.push(li);
                     parent.children.insert(idx, ul);
-                    
+
                     self.caret_box = Some(parent.children[idx].children[0].node_id);
                 }
             }
@@ -1172,11 +1373,21 @@ impl Editor {
 
     /// Increase the left indent of the current block by `step_px` pixels.
     pub fn increase_indent(&mut self, root: &mut WebCore, step_px: f32) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         if let Some(b) = find_box_mut(root, caret_nid) {
-            let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
+            let current = match b.style.margin_left {
+                CssLength::Px(v) => v,
+                _ => 0.0,
+            };
             let new_val = format!("{}px", current + step_px);
-            apply_property(std::sync::Arc::make_mut(&mut b.style), "margin-left", &new_val);
+            apply_property(
+                std::sync::Arc::make_mut(&mut b.style),
+                "margin-left",
+                &new_val,
+            );
             let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
@@ -1184,11 +1395,21 @@ impl Editor {
 
     /// Decrease the left indent of the current block by `step_px` pixels (minimum 0).
     pub fn decrease_indent(&mut self, root: &mut WebCore, step_px: f32) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         if let Some(b) = find_box_mut(root, caret_nid) {
-            let current = match b.style.margin_left { CssLength::Px(v) => v, _ => 0.0 };
+            let current = match b.style.margin_left {
+                CssLength::Px(v) => v,
+                _ => 0.0,
+            };
             let new_val = format!("{}px", (current - step_px).max(0.0));
-            apply_property(std::sync::Arc::make_mut(&mut b.style), "margin-left", &new_val);
+            apply_property(
+                std::sync::Arc::make_mut(&mut b.style),
+                "margin-left",
+                &new_val,
+            );
             let style_str = b.attributes.entry_or_default("style");
             upsert_style_attr_prop(style_str, "margin-left", &new_val);
         }
@@ -1196,18 +1417,23 @@ impl Editor {
 
     /// Wrap the current block in a `<blockquote>`.
     pub fn increase_quote_level(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
         if let Some(parent) = find_parent_mut_by_id(root, caret_nid) {
-            if let Some(idx) = parent.children.iter()
-                .position(|c| c.node_id == caret_nid)
-            {
+            if let Some(idx) = parent.children.iter().position(|c| c.node_id == caret_nid) {
                 let block = parent.children.remove(idx);
                 let mut bq = WebCore::new("blockquote");
                 apply_property(std::sync::Arc::make_mut(&mut bq.style), "display", "block");
-                apply_property(std::sync::Arc::make_mut(&mut bq.style), "margin-left", "40px");
+                apply_property(
+                    std::sync::Arc::make_mut(&mut bq.style),
+                    "margin-left",
+                    "40px",
+                );
                 bq.children.push(block);
                 parent.children.insert(idx, bq);
-                
+
                 self.caret_box = Some(parent.children[idx].children[0].node_id);
             }
         }
@@ -1215,7 +1441,10 @@ impl Editor {
 
     /// Unwrap one level of `<blockquote>` around the current block.
     pub fn decrease_quote_level(&mut self, root: &mut WebCore) {
-        let caret_nid = match self.caret_box { Some(id) => id, None => return };
+        let caret_nid = match self.caret_box {
+            Some(id) => id,
+            None => return,
+        };
 
         // Confirm the immediate parent is a <blockquote>.
         let bq_nid = match find_parent_mut_by_id(root, caret_nid) {
@@ -1224,9 +1453,7 @@ impl Editor {
         };
 
         if let Some(gp) = find_parent_mut_by_id(root, bq_nid) {
-            if let Some(bq_idx) = gp.children.iter()
-                .position(|c| c.node_id == bq_nid)
-            {
+            if let Some(bq_idx) = gp.children.iter().position(|c| c.node_id == bq_nid) {
                 let bq_box = gp.children.remove(bq_idx);
                 let n = bq_box.children.len();
                 for (i, child) in bq_box.children.into_iter().enumerate() {
@@ -1234,7 +1461,7 @@ impl Editor {
                 }
                 if n > 0 {
                     // Point to the first extracted child (closest to original caret position).
-                    
+
                     self.caret_box = Some(gp.children[bq_idx].node_id);
                 }
             }
@@ -1245,39 +1472,73 @@ impl Editor {
 // ─── Internal Editor helpers ──────────────────────────────────────────────────
 
 fn prev_char_boundary(s: &str, mut idx: usize) -> usize {
-    if idx == 0 { return 0; }
+    if idx == 0 {
+        return 0;
+    }
     idx -= 1;
-    while idx > 0 && !s.is_char_boundary(idx) { idx -= 1; }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
     idx
 }
 
 fn next_char_boundary(s: &str, idx: usize) -> usize {
-    if idx >= s.len() { return s.len(); }
+    if idx >= s.len() {
+        return s.len();
+    }
     let mut i = idx + 1;
-    while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
     i
 }
 
 /// Returns true if `tag` is a block-level element that the editor treats as a paragraph unit.
 fn is_block_tag(tag: &str) -> bool {
-    matches!(tag, "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-               | "li" | "blockquote" | "pre" | "address" | "article" | "aside"
-               | "section" | "header" | "footer" | "main" | "figure" | "figcaption"
-               | "dt" | "dd")
+    matches!(
+        tag,
+        "p" | "div"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "li"
+            | "blockquote"
+            | "pre"
+            | "address"
+            | "article"
+            | "aside"
+            | "section"
+            | "header"
+            | "footer"
+            | "main"
+            | "figure"
+            | "figcaption"
+            | "dt"
+            | "dd"
+    )
 }
 
 /// Tags where Enter creates a new sibling of the same type (paragraph splitting).
 /// Structural containers — `div`, table cells, flex/grid children, `blockquote`,
 /// sectioning elements, etc. — are intentionally excluded: Enter inserts `<br>` there.
 fn is_prose_tag(tag: &str) -> bool {
-    matches!(tag, "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-               | "li" | "dt" | "dd" | "pre")
+    matches!(
+        tag,
+        "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "dt" | "dd" | "pre"
+    )
 }
 
 pub fn find_box_mut<'a>(root: &'a mut WebCore, node_id: u32) -> Option<&'a mut WebCore> {
-    if root.node_id == node_id { return Some(root); }
+    if root.node_id == node_id {
+        return Some(root);
+    }
     for child in &mut root.children {
-        if let Some(b) = find_box_mut(child, node_id) { return Some(b); }
+        if let Some(b) = find_box_mut(child, node_id) {
+            return Some(b);
+        }
     }
     None
 }
@@ -1288,13 +1549,18 @@ pub fn find_parent_mut_by_id<'a>(root: &'a mut WebCore, child_id: u32) -> Option
         return Some(root);
     }
     for child in &mut root.children {
-        if let Some(p) = find_parent_mut_by_id(child, child_id) { return Some(p); }
+        if let Some(p) = find_parent_mut_by_id(child, child_id) {
+            return Some(p);
+        }
     }
     None
 }
 
 /// Resolves a global offset (from collect_flat_text) to a specific leaf node and local offset.
-fn find_node_offset_mut(node: &mut WebCore, mut offset: usize) -> Result<(&mut WebCore, usize), usize> {
+fn find_node_offset_mut(
+    node: &mut WebCore,
+    mut offset: usize,
+) -> Result<(&mut WebCore, usize), usize> {
     if node.is_text_node() {
         if offset <= node.text.len() {
             return Ok((node, offset));
@@ -1302,8 +1568,12 @@ fn find_node_offset_mut(node: &mut WebCore, mut offset: usize) -> Result<(&mut W
             return Err(offset - node.text.len());
         }
     }
-    if matches!(node.style.display, Display::None) { return Err(offset); }
-    if node.tag == "br" { return Err(offset); }
+    if matches!(node.style.display, Display::None) {
+        return Err(offset);
+    }
+    if node.tag == "br" {
+        return Err(offset);
+    }
 
     if !node.text.is_empty() {
         if offset <= node.text.len() {
@@ -1314,7 +1584,9 @@ fn find_node_offset_mut(node: &mut WebCore, mut offset: usize) -> Result<(&mut W
     }
 
     for child in &mut node.children {
-        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
         match find_node_offset_mut(child, offset) {
             Ok(res) => return Ok(res),
             Err(rem) => offset = rem,
@@ -1327,22 +1599,36 @@ fn find_node_offset_mut(node: &mut WebCore, mut offset: usize) -> Result<(&mut W
 /// elements when the document-level editor is otherwise read-only.
 pub fn is_in_contenteditable_by_id(node: &WebCore, target_id: u32) -> bool {
     if node.node_id == target_id {
-        return node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
+        return node
+            .attributes
+            .get("contenteditable")
+            .map(|v| v == "true")
+            .unwrap_or(false);
     }
-    let editable_root = node.attributes.get("contenteditable").map(|v| v == "true").unwrap_or(false);
+    let editable_root = node
+        .attributes
+        .get("contenteditable")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     if editable_root && node_contains_id(node, target_id) {
         return true;
     }
     for child in &node.children {
-        if is_in_contenteditable_by_id(child, target_id) { return true; }
+        if is_in_contenteditable_by_id(child, target_id) {
+            return true;
+        }
     }
     false
 }
 
 fn node_contains_id(node: &WebCore, target_id: u32) -> bool {
-    if node.node_id == target_id { return true; }
+    if node.node_id == target_id {
+        return true;
+    }
     for child in &node.children {
-        if node_contains_id(child, target_id) { return true; }
+        if node_contains_id(child, target_id) {
+            return true;
+        }
     }
     false
 }
@@ -1352,7 +1638,10 @@ fn node_contains_id(node: &WebCore, target_id: u32) -> bool {
 /// falls through to the next sibling.  Used by `insert_char` when
 /// `caret_at_line_start` is true — i.e. after `insert_br` placed the caret at
 /// the logical start of the new visual line.
-fn find_node_offset_after_br(node: &mut WebCore, mut offset: usize) -> Result<(&mut WebCore, usize), usize> {
+fn find_node_offset_after_br(
+    node: &mut WebCore,
+    mut offset: usize,
+) -> Result<(&mut WebCore, usize), usize> {
     if node.is_text_node() {
         // Strict: offset must be *inside* the text (< not <=).
         // offset == text.len() falls through so the caller can try the next sibling.
@@ -1362,8 +1651,12 @@ fn find_node_offset_after_br(node: &mut WebCore, mut offset: usize) -> Result<(&
             return Err(offset - node.text.len());
         }
     }
-    if matches!(node.style.display, Display::None) { return Err(offset); }
-    if node.tag == "br" { return Err(offset); }
+    if matches!(node.style.display, Display::None) {
+        return Err(offset);
+    }
+    if node.tag == "br" {
+        return Err(offset);
+    }
 
     if !node.text.is_empty() {
         if offset < node.text.len() {
@@ -1374,7 +1667,9 @@ fn find_node_offset_after_br(node: &mut WebCore, mut offset: usize) -> Result<(&
     }
 
     for child in &mut node.children {
-        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
         match find_node_offset_after_br(child, offset) {
             Ok(res) => return Ok(res),
             Err(rem) => offset = rem,
@@ -1386,13 +1681,17 @@ fn find_node_offset_after_br(node: &mut WebCore, mut offset: usize) -> Result<(&
 /// Delete bytes `[start, end)` from the flat text of `container`.
 /// Handles ranges that span multiple child text nodes (fixes the single-node bug).
 fn delete_range_full(container: &mut WebCore, start: usize, end: usize) {
-    if start >= end { return; }
+    if start >= end {
+        return;
+    }
     let mut pos = 0usize;
     delete_flat_range(container, &mut pos, start, end);
 }
 
 fn delete_flat_range(node: &mut WebCore, pos: &mut usize, start: usize, end: usize) {
-    if *pos >= end { return; }
+    if *pos >= end {
+        return;
+    }
 
     if node.is_text_node() {
         let orig_len = node.text.len();
@@ -1400,13 +1699,17 @@ fn delete_flat_range(node: &mut WebCore, pos: &mut usize, start: usize, end: usi
         if *pos < end && node_end > start {
             let local_s = if start > *pos { start - *pos } else { 0 };
             let local_e = if end < node_end { end - *pos } else { orig_len };
-            if local_s < local_e { node.text.drain(local_s..local_e); }
+            if local_s < local_e {
+                node.text.drain(local_s..local_e);
+            }
         }
         *pos = node_end;
         return;
     }
 
-    if matches!(node.style.display, Display::None) || node.tag == "br" { return; }
+    if matches!(node.style.display, Display::None) || node.tag == "br" {
+        return;
+    }
 
     if !node.text.is_empty() {
         let orig_len = node.text.len();
@@ -1414,14 +1717,20 @@ fn delete_flat_range(node: &mut WebCore, pos: &mut usize, start: usize, end: usi
         if *pos < end && node_end > start {
             let local_s = if start > *pos { start - *pos } else { 0 };
             let local_e = if end < node_end { end - *pos } else { orig_len };
-            if local_s < local_e { node.text.drain(local_s..local_e); }
+            if local_s < local_e {
+                node.text.drain(local_s..local_e);
+            }
         }
         *pos = node_end;
     }
 
     for child in &mut node.children {
-        if *pos >= end { break; }
-        if matches!(child.style.position, Position::Absolute | Position::Fixed) { continue; }
+        if *pos >= end {
+            break;
+        }
+        if matches!(child.style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
         delete_flat_range(child, pos, start, end);
     }
 }
@@ -1436,27 +1745,27 @@ fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) 
     // Only apply when the child is a pure text node (#text).  Element nodes
     // that happen to carry `.text` (e.g. <td>) must NOT be removed from their
     // parent — they are handled by Case B via recursion.
-    if let Some(idx) = node.children.iter()
-        .position(|c| c.node_id == leaf_nid)
-    {
+    if let Some(idx) = node.children.iter().position(|c| c.node_id == leaf_nid) {
         if node.children[idx].is_text_node() {
             let text = node.children[idx].text.clone();
             let old_id = node.children[idx].node_id;
             let split = local_off.min(text.len());
             let before = text[..split].to_string();
-            let after  = text[split..].to_string();
+            let after = text[split..].to_string();
 
             // Remove the original leaf, then insert [before, br, after] via DOM API.
             remove_child(node, old_id);
             // Build the replacement nodes
             let mut new_children = Vec::new();
             if !before.is_empty() {
-                let mut bn = WebCore::new("#text"); bn.text = before;
+                let mut bn = WebCore::new("#text");
+                bn.text = before;
                 new_children.push(bn);
             }
             new_children.push(WebCore::new("br"));
             if !after.is_empty() {
-                let mut an = WebCore::new("#text"); an.text = after;
+                let mut an = WebCore::new("#text");
+                an.text = after;
                 new_children.push(an);
             }
             // Insert at the position where the old node was
@@ -1472,9 +1781,10 @@ fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) 
     // Case B: the leaf is this node itself (has its own .text, no children)
     if node.node_id == leaf_nid && !node.text.is_empty() {
         let split = local_off.min(node.text.len());
-        let after  = node.text[split..].to_string();
-        node.text  = node.text[..split].to_string();
-        let mut after_node = WebCore::new("#text"); after_node.text = after;
+        let after = node.text[split..].to_string();
+        node.text = node.text[..split].to_string();
+        let mut after_node = WebCore::new("#text");
+        after_node.text = after;
         node.children.insert(0, after_node);
         node.children.insert(0, WebCore::new("br"));
         return true;
@@ -1482,7 +1792,9 @@ fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) 
 
     // Recurse
     for child in &mut node.children {
-        if split_node_with_br_impl(child, leaf_nid, local_off) { return true; }
+        if split_node_with_br_impl(child, leaf_nid, local_off) {
+            return true;
+        }
     }
     false
 }
@@ -1491,11 +1803,12 @@ fn split_node_with_br_impl(node: &mut WebCore, leaf_nid: u32, local_off: usize) 
 
 /// Insert a `<hr>` element after the block that currently contains the caret.
 pub fn insert_hr(editor: &Editor, root: &mut WebCore) {
-    let caret_id = match editor.caret_box { Some(id) => id, None => return };
+    let caret_id = match editor.caret_box {
+        Some(id) => id,
+        None => return,
+    };
     if let Some(parent) = find_parent_mut_by_id(root, caret_id) {
-        if let Some(idx) = parent.children.iter()
-            .position(|c| c.node_id == caret_id)
-        {
+        if let Some(idx) = parent.children.iter().position(|c| c.node_id == caret_id) {
             let mut hr = WebCore::new("hr");
             apply_property(std::sync::Arc::make_mut(&mut hr.style), "display", "block");
             parent.children.insert(idx + 1, hr);

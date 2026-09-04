@@ -18,7 +18,10 @@ fn initial_frame_runs_cascade_and_layout() {
 
     // After initial frame, layout should produce valid geometry
     let div = frame.doc.query_selector("div").unwrap();
-    assert!(frame.doc.offset_width(div) > 0.0, "div should have width after layout");
+    assert!(
+        frame.doc.offset_width(div) > 0.0,
+        "div should have width after layout"
+    );
 }
 
 #[test]
@@ -44,7 +47,12 @@ fn viewport_resize_triggers_relayout() {
 
     let w2 = frame.doc.offset_width(div);
     // Width should change since viewport halved
-    assert!(w2 < w1, "div should be narrower after viewport shrink: {} vs {}", w2, w1);
+    assert!(
+        w2 < w1,
+        "div should be narrower after viewport shrink: {} vs {}",
+        w2,
+        w1
+    );
 }
 
 // ─── DOM mutation batching ──────────────────────────────────────────────────
@@ -73,8 +81,10 @@ fn multiple_mutations_single_frame() {
 
     // All items should have valid layout
     for &child_id in &children {
-        assert!(frame.doc.offset_height(child_id) > 0.0,
-            "list item should have height after layout");
+        assert!(
+            frame.doc.offset_height(child_id) > 0.0,
+            "list item should have height after layout"
+        );
     }
 }
 
@@ -123,23 +133,35 @@ fn inline_style_change_triggers_relayout() {
     frame.set_style(div, "padding", "50px");
     // Verify the attribute was set
     let style_attr = frame.doc.get_attribute(div, "style").unwrap_or_default();
-    assert!(style_attr.contains("padding"), "style attr should contain padding: {}", style_attr);
+    assert!(
+        style_attr.contains("padding"),
+        "style attr should contain padding: {}",
+        style_attr
+    );
     assert!(frame.update_frame(), "style change should trigger redraw");
 
     let h2 = frame.doc.offset_height(div);
     // padding: 50px adds 100px total (top + bottom) to the border rect
-    assert!(h2 > h1 + 50.0, "padding should increase height significantly: {} → {}", h1, h2);
+    assert!(
+        h2 > h1 + 50.0,
+        "padding should increase height significantly: {} → {}",
+        h1,
+        h2
+    );
 }
 
 // ─── Proper HTML rendering tests ────────────────────────────────────────────
 
 #[test]
 fn block_elements_stack_vertically() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div id="a" style="height: 50px">A</div>
         <div id="b" style="height: 50px">B</div>
         <div id="c" style="height: 50px">C</div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let a = frame.doc.get_element_by_id("a").unwrap();
@@ -150,15 +172,28 @@ fn block_elements_stack_vertically() {
     let rb = frame.doc.get_bounding_client_rect(b).unwrap();
     let rc = frame.doc.get_bounding_client_rect(c).unwrap();
 
-    assert!(rb.y >= ra.y + ra.h, "B should be below A: B.y={} A.bottom={}", rb.y, ra.y + ra.h);
-    assert!(rc.y >= rb.y + rb.h, "C should be below B: C.y={} B.bottom={}", rc.y, rb.y + rb.h);
+    assert!(
+        rb.y >= ra.y + ra.h,
+        "B should be below A: B.y={} A.bottom={}",
+        rb.y,
+        ra.y + ra.h
+    );
+    assert!(
+        rc.y >= rb.y + rb.h,
+        "C should be below B: C.y={} B.bottom={}",
+        rc.y,
+        rb.y + rb.h
+    );
 }
 
 #[test]
 fn inline_elements_flow_horizontally() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <span id="a">Hello</span><span id="b">World</span>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let a = frame.doc.get_element_by_id("a").unwrap();
@@ -168,17 +203,30 @@ fn inline_elements_flow_horizontally() {
     let rb = frame.doc.get_bounding_client_rect(b).unwrap();
 
     // Inline spans should be on the same line (same y)
-    assert!((ra.y - rb.y).abs() < 5.0, "spans should be on same line: a.y={} b.y={}", ra.y, rb.y);
+    assert!(
+        (ra.y - rb.y).abs() < 5.0,
+        "spans should be on same line: a.y={} b.y={}",
+        ra.y,
+        rb.y
+    );
     // B should be to the right of A
-    assert!(rb.x >= ra.x, "B should be right of A: b.x={} a.x={}", rb.x, ra.x);
+    assert!(
+        rb.x >= ra.x,
+        "B should be right of A: b.x={} a.x={}",
+        rb.x,
+        ra.x
+    );
 }
 
 #[test]
 fn display_none_has_zero_size() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div id="visible" style="height: 50px">V</div>
         <div id="hidden" style="display: none; height: 50px">H</div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let hidden = frame.doc.get_element_by_id("hidden").unwrap();
@@ -188,39 +236,56 @@ fn display_none_has_zero_size() {
 
 #[test]
 fn percentage_width_resolves_to_parent() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div style="width: 400px">
             <div id="half" style="width: 50%">half</div>
         </div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let half = frame.doc.get_element_by_id("half").unwrap();
     let w = frame.doc.offset_width(half);
-    assert!((w - 200.0).abs() < 2.0, "50% of 400px should be ~200px, got {}", w);
+    assert!(
+        (w - 200.0).abs() < 2.0,
+        "50% of 400px should be ~200px, got {}",
+        w
+    );
 }
 
 #[test]
 fn margin_auto_centers_block() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div id="centered" style="width: 200px; margin: 0 auto">centered</div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let c = frame.doc.get_element_by_id("centered").unwrap();
     let rect = frame.doc.get_bounding_client_rect(c).unwrap();
     // Should be centered: (800 - 200) / 2 = 300
-    assert!((rect.x - 300.0).abs() < 5.0, "margin:auto should center. x={}", rect.x);
+    assert!(
+        (rect.x - 300.0).abs() < 5.0,
+        "margin:auto should center. x={}",
+        rect.x
+    );
 }
 
 #[test]
 fn flex_row_distributes_children() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div style="display: flex; width: 300px">
             <div id="a" style="flex: 1">A</div>
             <div id="b" style="flex: 2">B</div>
         </div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let a = frame.doc.get_element_by_id("a").unwrap();
@@ -229,9 +294,20 @@ fn flex_row_distributes_children() {
     let wb = frame.doc.offset_width(b);
 
     // B should be roughly 2x the width of A
-    assert!(wb > wa, "flex:2 should be wider than flex:1: {}px vs {}px", wb, wa);
+    assert!(
+        wb > wa,
+        "flex:2 should be wider than flex:1: {}px vs {}px",
+        wb,
+        wa
+    );
     // Total should be close to 300px
-    assert!((wa + wb - 300.0).abs() < 5.0, "flex children should fill container: {} + {} = {}", wa, wb, wa + wb);
+    assert!(
+        (wa + wb - 300.0).abs() < 5.0,
+        "flex children should fill container: {} + {} = {}",
+        wa,
+        wb,
+        wa + wb
+    );
 }
 
 #[test]
@@ -247,16 +323,24 @@ fn dynamic_dom_mutation_updates_layout() {
     frame.update_frame();
 
     let h2 = frame.doc.offset_height(container);
-    assert!(h2 > h1, "container should grow after adding content: {} → {}", h1, h2);
+    assert!(
+        h2 > h1,
+        "container should grow after adding content: {} → {}",
+        h1,
+        h2
+    );
 }
 
 #[test]
 fn remove_child_shrinks_layout() {
-    let mut frame = make_frame(r#"
+    let mut frame = make_frame(
+        r#"
         <div id="parent">
             <div id="child" style="height: 100px">big</div>
         </div>
-    "#, 800.0);
+    "#,
+        800.0,
+    );
     frame.update_frame();
 
     let parent = frame.doc.get_element_by_id("parent").unwrap();
@@ -267,5 +351,10 @@ fn remove_child_shrinks_layout() {
     frame.update_frame();
 
     let h2 = frame.doc.offset_height(parent);
-    assert!(h2 < h1, "parent should shrink after removing child: {} → {}", h1, h2);
+    assert!(
+        h2 < h1,
+        "parent should shrink after removing child: {} → {}",
+        h1,
+        h2
+    );
 }

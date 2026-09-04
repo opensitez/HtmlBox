@@ -7,8 +7,6 @@
 //! keep ONE path to each item rather than scattering module paths
 //! through the crate.
 
-
-
 // ─── Container Query Evaluation ──────────────────────────────────────────────
 
 /// Evaluate a `@container` condition string against known container dimensions.
@@ -18,8 +16,19 @@
 /// - Modern range syntax: `(width > Xpx)`, `(width >= Xpx)`, `(width < Xpx)`, `(width <= Xpx)`
 /// - Logical: `and`, `or`, `not`
 pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
+    evaluate_container_for_type(condition, w, h, crate::types::ContainerType::Size)
+}
+
+pub(crate) fn evaluate_container_for_type(
+    condition: &str,
+    w: f32,
+    h: f32,
+    container_type: crate::types::ContainerType,
+) -> bool {
     let cond = condition.trim();
-    if cond.is_empty() { return true; }
+    if cond.is_empty() {
+        return true;
+    }
 
     // Comma = OR at top level
     {
@@ -28,10 +37,14 @@ pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
         for (i, &b) in bytes.iter().enumerate() {
             match b {
                 b'(' => depth += 1,
-                b')' => { if depth > 0 { depth -= 1; } }
+                b')' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                }
                 b',' if depth == 0 => {
-                    return evaluate_container(&cond[..i], w, h)
-                        || evaluate_container(&cond[i+1..], w, h);
+                    return evaluate_container_for_type(&cond[..i], w, h, container_type)
+                        || evaluate_container_for_type(&cond[i + 1..], w, h, container_type);
                 }
                 _ => {}
             }
@@ -39,18 +52,20 @@ pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
     }
 
     if let Some(rest) = cond.strip_prefix("not ") {
-        return !evaluate_container(rest.trim(), w, h);
+        return !evaluate_container_for_type(rest.trim(), w, h, container_type);
     }
     if let Some(idx) = find_keyword_outside_parens(cond, " and ") {
-        return evaluate_container(&cond[..idx], w, h) && evaluate_container(&cond[idx+5..], w, h);
+        return evaluate_container_for_type(&cond[..idx], w, h, container_type)
+            && evaluate_container_for_type(&cond[idx + 5..], w, h, container_type);
     }
     if let Some(idx) = find_keyword_outside_parens(cond, " or ") {
-        return evaluate_container(&cond[..idx], w, h) || evaluate_container(&cond[idx+4..], w, h);
+        return evaluate_container_for_type(&cond[..idx], w, h, container_type)
+            || evaluate_container_for_type(&cond[idx + 4..], w, h, container_type);
     }
 
     // Strip outer parens
     let inner = if cond.starts_with('(') && cond.ends_with(')') {
-        &cond[1..cond.len()-1]
+        &cond[1..cond.len() - 1]
     } else {
         cond
     };
@@ -61,25 +76,75 @@ pub fn evaluate_container(condition: &str, w: f32, h: f32) -> bool {
     crate::css::media_query::set_media_viewport(w, h);
 
     // Legacy min-/max- syntax
-    if let Some(rest) = lower.strip_prefix("min-width:")  { return w >= parse_media_px(rest.trim()); }
-    if let Some(rest) = lower.strip_prefix("max-width:")  { return w <= parse_media_px(rest.trim()); }
-    if let Some(rest) = lower.strip_prefix("min-height:") { return h >= parse_media_px(rest.trim()); }
-    if let Some(rest) = lower.strip_prefix("max-height:") { return h <= parse_media_px(rest.trim()); }
+    if let Some(rest) = lower.strip_prefix("min-width:") {
+        return w >= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("max-width:") {
+        return w <= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("min-height:") {
+        if container_type == crate::types::ContainerType::InlineSize {
+            return false;
+        }
+        return h >= parse_media_px(rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("max-height:") {
+        if container_type == crate::types::ContainerType::InlineSize {
+            return false;
+        }
+        return h <= parse_media_px(rest.trim());
+    }
 
     // Modern range syntax: `width >= 300px`, `width > 300px`, etc.
     fn parse_range(expr: &str, dim: f32) -> Option<bool> {
         let e = expr.trim();
-        if let Some(rest) = e.strip_prefix(">=") { return Some(dim >= parse_media_px(rest.trim())); }
-        if let Some(rest) = e.strip_prefix("<=") { return Some(dim <= parse_media_px(rest.trim())); }
-        if let Some(rest) = e.strip_prefix('>')  { return Some(dim >  parse_media_px(rest.trim())); }
-        if let Some(rest) = e.strip_prefix('<')  { return Some(dim <  parse_media_px(rest.trim())); }
-        if let Some(rest) = e.strip_prefix(':')  { return Some((dim - parse_media_px(rest.trim())).abs() < 0.5); }
+        if let Some(rest) = e.strip_prefix(">=") {
+            return Some(dim >= parse_media_px(rest.trim()));
+        }
+        if let Some(rest) = e.strip_prefix("<=") {
+            return Some(dim <= parse_media_px(rest.trim()));
+        }
+        if let Some(rest) = e.strip_prefix('>') {
+            return Some(dim > parse_media_px(rest.trim()));
+        }
+        if let Some(rest) = e.strip_prefix('<') {
+            return Some(dim < parse_media_px(rest.trim()));
+        }
+        if let Some(rest) = e.strip_prefix(':') {
+            return Some((dim - parse_media_px(rest.trim())).abs() < 0.5);
+        }
         None
     }
-    if let Some(rest) = lower.strip_prefix("width")  { if let Some(v) = parse_range(rest, w) { return v; } }
-    if let Some(rest) = lower.strip_prefix("height") { if let Some(v) = parse_range(rest, h) { return v; } }
-    if let Some(rest) = lower.strip_prefix("inline-size")  { if let Some(v) = parse_range(rest, w) { return v; } }
-    if let Some(rest) = lower.strip_prefix("block-size")   { if let Some(v) = parse_range(rest, h) { return v; } }
+    if let Some(rest) = lower.strip_prefix("width") {
+        if let Some(v) = parse_range(rest, w) {
+            return v;
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("height") {
+        if container_type == crate::types::ContainerType::InlineSize {
+            return false;
+        }
+        if let Some(v) = parse_range(rest, h) {
+            return v;
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("inline-size") {
+        if let Some(v) = parse_range(rest, w) {
+            return v;
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("block-size") {
+        if container_type == crate::types::ContainerType::InlineSize {
+            return false;
+        }
+        if let Some(v) = parse_range(rest, h) {
+            return v;
+        }
+    }
+
+    if lower.starts_with("style(") {
+        return false;
+    }
 
     // Unknown — fail-open
     true
@@ -91,6 +156,7 @@ pub mod calc;
 pub mod cascade;
 pub mod cascade_incremental;
 pub mod cascade_parallel;
+pub mod color_spaces;
 pub mod container;
 pub mod font;
 pub mod font_face;

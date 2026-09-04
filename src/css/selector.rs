@@ -1,10 +1,10 @@
 //! Selectors: parsing them into parts, and matching them against a node.
 
 #![allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
-use crate::types::*;
 use super::*;
+use crate::types::*;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── CSS Rule & Selector ─────────────────────────────────────────────────────
 
@@ -26,7 +26,12 @@ pub enum SelectorPart {
     /// case-insensitive on its own (`type`, `dir`, `align`, …) — the UA
     /// stylesheet spells those `[type=hidden i]`, and without the flag the
     /// parser folded the ` i` into the value and the rule matched nothing.
-    Attribute { name: String, op: AttrOp, value: String, case_sensitive: Option<bool> },
+    Attribute {
+        name: String,
+        op: AttrOp,
+        value: String,
+        case_sensitive: Option<bool>,
+    },
     Combinator(Combinator),
     /// :not(selector)
     Not(Box<CssSelector>),
@@ -35,11 +40,19 @@ pub enum SelectorPart {
     /// :where(selector-list)  — same as Is but zero specificity
     Where(Vec<CssSelector>),
     /// :has(selector) — matches if any descendant matches
-    Has(Box<CssSelector>),
+    Has(Vec<CssSelector>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum AttrOp { Exists, Eq, Contains, StartsWith, EndsWith, Includes, DashMatch }
+pub enum AttrOp {
+    Exists,
+    Eq,
+    Contains,
+    StartsWith,
+    EndsWith,
+    Includes,
+    DashMatch,
+}
 
 /// Is `name` a pseudo-class this engine RECOGNISES? Functional forms arrive
 /// spelled `nth-child(2n+1)`, so the name is taken up to the `(`.
@@ -58,8 +71,11 @@ pub enum AttrOp { Exists, Eq, Contains, StartsWith, EndsWith, Includes, DashMatc
 /// more damaging of the two wrong answers.
 pub fn is_known_pseudo_class(name: &str) -> bool {
     let base = name.split('(').next().unwrap_or(name);
-    if base.starts_with('-') { return true; }
-    matches!(base,
+    if base.starts_with('-') {
+        return true;
+    }
+    matches!(
+        base,
         // Selectors §6 — structural
         "root" | "empty" | "scope"
         | "first-child" | "last-child" | "only-child"
@@ -93,17 +109,23 @@ pub fn is_known_pseudo_class(name: &str) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Combinator { Descendant, Child, AdjacentSibling, GeneralSibling }
+pub enum Combinator {
+    Descendant,
+    Child,
+    AdjacentSibling,
+    GeneralSibling,
+    Column,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CssSelector {
     pub parts: Vec<SelectorPart>,
     /// Pre-computed state pseudo-class flags (set during parse, avoids per-match scan).
-    pub has_hover:   bool,
-    pub has_active:  bool,
+    pub has_hover: bool,
+    pub has_active: bool,
     pub has_visited: bool,
     /// Parts with :hover/:active/:visited stripped. Cached to avoid per-match allocation.
-    pub base_parts:  Vec<SelectorPart>,
+    pub base_parts: Vec<SelectorPart>,
     /// True when selector is a single simple selector (`.class`, `tag`, `#id`) with
     /// no combinators. The candidate_rules index already matched it → skip full matching.
     pub is_simple: bool,
@@ -118,13 +140,22 @@ pub struct CssSelector {
 impl CssSelector {
     /// Create a selector with pre-computed state pseudo-class flags.
     pub fn new(parts: Vec<SelectorPart>) -> Self {
-        let has_hover = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
-        let has_active = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
-        let has_visited = parts.iter().any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
+        let has_hover = parts
+            .iter()
+            .any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "hover"));
+        let has_active = parts
+            .iter()
+            .any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "active"));
+        let has_visited = parts
+            .iter()
+            .any(|p| matches!(p, SelectorPart::PseudoClass(n) if n == "visited"));
         let base_parts = if has_hover || has_active || has_visited {
-            parts.iter()
-                .filter(|p| !matches!(p, SelectorPart::PseudoClass(n)
-                    if matches!(n.as_str(), "hover" | "active" | "visited")))
+            parts
+                .iter()
+                .filter(|p| {
+                    !matches!(p, SelectorPart::PseudoClass(n)
+                    if matches!(n.as_str(), "hover" | "active" | "visited"))
+                })
                 .cloned()
                 .collect()
         } else {
@@ -132,11 +163,27 @@ impl CssSelector {
         };
         // Simple selector: no combinators, no pseudo-classes, just class/tag/id parts
         let is_simple = !parts.is_empty()
-            && !parts.iter().any(|p| matches!(p,
-                SelectorPart::Combinator(_) | SelectorPart::PseudoClass(_) |
-                SelectorPart::PseudoElement(_) | SelectorPart::Attribute { .. }))
-            && !has_hover && !has_active && !has_visited;
-        Self { parts, has_hover, has_active, has_visited, base_parts, is_simple, valid: true }
+            && !parts.iter().any(|p| {
+                matches!(
+                    p,
+                    SelectorPart::Combinator(_)
+                        | SelectorPart::PseudoClass(_)
+                        | SelectorPart::PseudoElement(_)
+                        | SelectorPart::Attribute { .. }
+                )
+            })
+            && !has_hover
+            && !has_active
+            && !has_visited;
+        Self {
+            parts,
+            has_hover,
+            has_active,
+            has_visited,
+            base_parts,
+            is_simple,
+            valid: true,
+        }
     }
 
     /// `new`, but carrying a validity verdict the parser worked out.
@@ -152,34 +199,35 @@ impl CssSelector {
         let mut elements = 0u32;
         for part in &self.parts {
             match part {
-                SelectorPart::Id(_)             => ids     += 1,
+                SelectorPart::Id(_) => ids += 1,
                 SelectorPart::Class(_)
                 | SelectorPart::PseudoClass(_)
                 | SelectorPart::Attribute { .. } => classes += 1,
                 SelectorPart::Tag(t) if t != "*" => elements += 1,
-                SelectorPart::PseudoElement(_)   => elements += 1,
+                SelectorPart::PseudoElement(_) => elements += 1,
                 // :not() contributes the inner selector's specificity
-                SelectorPart::Not(inner)         => {
+                SelectorPart::Not(inner) => {
                     let s = inner.specificity();
-                    ids     += s / 100;
+                    ids += s / 100;
                     classes += (s % 100) / 10;
-                    elements+= s % 10;
+                    elements += s % 10;
                 }
                 // :is() contributes the most-specific inner selector
-                SelectorPart::Is(list)           => {
+                SelectorPart::Is(list) => {
                     let max_sp = list.iter().map(|s| s.specificity()).max().unwrap_or(0);
-                    ids     += max_sp / 100;
+                    ids += max_sp / 100;
                     classes += (max_sp % 100) / 10;
-                    elements+= max_sp % 10;
+                    elements += max_sp % 10;
                 }
                 // :where() contributes zero specificity
-                SelectorPart::Where(_)           => {}
+                SelectorPart::Where(_) => {}
                 // :has() contributes the inner selector's specificity
-                SelectorPart::Has(inner)         => {
-                    let s = inner.specificity();
-                    ids     += s / 100;
+                SelectorPart::Has(inner) => {
+                    // Most specific branch, like :is() (selectors-4 §16).
+                    let s = inner.iter().map(|x| x.specificity()).max().unwrap_or(0);
+                    ids += s / 100;
                     classes += (s % 100) / 10;
-                    elements+= s % 10;
+                    elements += s % 10;
                 }
                 _ => {}
             }
@@ -199,6 +247,7 @@ impl CssSelector {
             hover_chain: &empty_hover,
             element_id: b.node_id,
             prev_siblings: &[],
+            next_siblings: &[],
         };
         matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, 0, 1, &[], &ctx)
     }
@@ -221,8 +270,17 @@ impl CssSelector {
             hover_chain: &empty_hover,
             element_id: b.node_id,
             prev_siblings: &[],
+            next_siblings: &[],
         };
-        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, &ctx)
+        matches_selector_with_ancestors(
+            &self.parts,
+            &b.tag,
+            &b.attributes,
+            child_index,
+            sibling_count,
+            ancestors,
+            &ctx,
+        )
     }
 
     /// Match against `b` with full ancestor chain and extra context.
@@ -234,7 +292,15 @@ impl CssSelector {
         ancestors: &[AncestorInfo],
         ctx: &MatchContext<'_>,
     ) -> bool {
-        matches_selector_with_ancestors(&self.parts, &b.tag, &b.attributes, child_index, sibling_count, ancestors, ctx)
+        matches_selector_with_ancestors(
+            &self.parts,
+            &b.tag,
+            &b.attributes,
+            child_index,
+            sibling_count,
+            ancestors,
+            ctx,
+        )
     }
 
     /// Internal: match using raw tag/attrs (used from :not/:is/:where to avoid re-borrowing WebCore).
@@ -247,6 +313,14 @@ impl CssSelector {
         ancestors: &[AncestorInfo],
         ctx: &MatchContext<'_>,
     ) -> bool {
-        matches_selector_with_ancestors(&self.parts, tag, attrs, child_index, sibling_count, ancestors, ctx)
+        matches_selector_with_ancestors(
+            &self.parts,
+            tag,
+            attrs,
+            child_index,
+            sibling_count,
+            ancestors,
+            ctx,
+        )
     }
 }

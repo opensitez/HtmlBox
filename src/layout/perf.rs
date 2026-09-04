@@ -3,8 +3,8 @@
 //! Measures time spent in each phase of the rendering pipeline.
 //! Enable with `LayoutEngine::enable_perf_tracking()`.
 
-use std::time::Instant;
 use std::cell::RefCell;
+use std::time::Instant;
 
 /// Performance counters for one layout pass.
 #[derive(Clone, Debug, Default)]
@@ -41,19 +41,32 @@ impl PerfCounters {
         let total = self.cascade_ms + self.layout_ms + self.display_list_ms + self.paint_ms;
         let cache_rate = if self.layout_calls + self.layout_skipped > 0 {
             self.layout_skipped as f32 / (self.layout_calls + self.layout_skipped) as f32 * 100.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         let text_cache_rate = if self.text_measure_calls > 0 {
             self.text_cache_hits as f32 / self.text_measure_calls as f32 * 100.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         format!(
             "Total: {:.1}ms | Cascade: {:.1}ms | Layout: {:.1}ms | DL: {:.1}ms | Paint: {:.1}ms\n\
              Nodes: {} | Rules: {} | Depth: {}\n\
              Layout calls: {} (skipped: {} = {:.0}%)\n\
              Text measurements: {} (cache: {:.0}%)",
-            total, self.cascade_ms, self.layout_ms, self.display_list_ms, self.paint_ms,
-            self.node_count, self.rule_count, self.max_depth,
-            self.layout_calls, self.layout_skipped, cache_rate,
-            self.text_measure_calls, text_cache_rate,
+            total,
+            self.cascade_ms,
+            self.layout_ms,
+            self.display_list_ms,
+            self.paint_ms,
+            self.node_count,
+            self.rule_count,
+            self.max_depth,
+            self.layout_calls,
+            self.layout_skipped,
+            cache_rate,
+            self.text_measure_calls,
+            text_cache_rate,
         )
     }
 
@@ -163,7 +176,9 @@ pub fn end_paint() {
 pub fn record_layout_call() {
     PERF.with(|p| {
         let mut s = p.borrow_mut();
-        if s.enabled { s.counters.layout_calls += 1; }
+        if s.enabled {
+            s.counters.layout_calls += 1;
+        }
     });
 }
 
@@ -171,7 +186,9 @@ pub fn record_layout_call() {
 pub fn record_layout_skip() {
     PERF.with(|p| {
         let mut s = p.borrow_mut();
-        if s.enabled { s.counters.layout_skipped += 1; }
+        if s.enabled {
+            s.counters.layout_skipped += 1;
+        }
     });
 }
 
@@ -181,7 +198,9 @@ pub fn record_text_measure(cache_hit: bool) {
         let mut s = p.borrow_mut();
         if s.enabled {
             s.counters.text_measure_calls += 1;
-            if cache_hit { s.counters.text_cache_hits += 1; }
+            if cache_hit {
+                s.counters.text_cache_hits += 1;
+            }
         }
     });
 }

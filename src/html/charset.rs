@@ -2,8 +2,8 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Charset detection ─────────────────────────────────────────────────────
 
@@ -17,7 +17,9 @@ fn detect_charset(data: &[u8]) -> &'static str {
     if let Some(pos) = find_subsequence(&lower, b"charset") {
         let mut p = pos + 7;
         // Skip whitespace and '='
-        while p < scan_len && (lower[p] == b' ' || lower[p] == b'=') { p += 1; }
+        while p < scan_len && (lower[p] == b' ' || lower[p] == b'=') {
+            p += 1;
+        }
         // Skip quote
         let quote = if p < scan_len && (head[p] == b'"' || head[p] == b'\'') {
             let q = head[p];
@@ -29,26 +31,35 @@ fn detect_charset(data: &[u8]) -> &'static str {
         let start = p;
         while p < scan_len {
             if let Some(q) = quote {
-                if head[p] == q { break; }
-            } else if head[p] == b'"' || head[p] == b'\'' || head[p] == b';'
-                   || head[p] == b'>' || head[p] == b' ' { break; }
+                if head[p] == q {
+                    break;
+                }
+            } else if head[p] == b'"'
+                || head[p] == b'\''
+                || head[p] == b';'
+                || head[p] == b'>'
+                || head[p] == b' '
+            {
+                break;
+            }
             p += 1;
         }
         if p > start {
             let charset_raw = std::str::from_utf8(&head[start..p]).unwrap_or("");
-            let stripped: String = charset_raw.chars()
+            let stripped: String = charset_raw
+                .chars()
                 .filter(|&c| c != '-' && c != '_')
                 .flat_map(|c| c.to_lowercase())
                 .collect();
             return match stripped.as_str() {
                 "utf8" => "UTF-8",
-                "iso88591" | "latin1" => "windows-1252",  // web compat
+                "iso88591" | "latin1" => "windows-1252", // web compat
                 "iso88592" => "ISO-8859-2",
                 "iso88595" => "ISO-8859-5",
                 "iso88596" => "ISO-8859-6",
                 "iso88597" => "ISO-8859-7",
                 "iso88598" => "ISO-8859-8",
-                "iso88599" => "windows-1254",  // web compat
+                "iso88599" => "windows-1254", // web compat
                 "iso885915" => "ISO-8859-15",
                 "windows1250" => "windows-1250",
                 "windows1251" => "windows-1251",
@@ -99,8 +110,8 @@ pub fn parse_html_bytes_with_base(data: &[u8], base_url: &str) -> Document {
         };
         String::from_utf8_lossy(&data[start..]).into_owned()
     } else {
-        let encoding = encoding_rs::Encoding::for_label(charset.as_bytes())
-            .unwrap_or(encoding_rs::UTF_8);
+        let encoding =
+            encoding_rs::Encoding::for_label(charset.as_bytes()).unwrap_or(encoding_rs::UTF_8);
         let (cow, _, _) = encoding.decode(data);
         cow.into_owned()
     };

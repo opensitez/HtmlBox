@@ -1,4 +1,3 @@
-
 /// Browser version — bump periodically to stay current with real Chrome releases.
 const CHROME_MAJOR: u32 = 131;
 
@@ -21,9 +20,13 @@ fn build_user_agent() -> String {
 
 /// Platform string for Sec-CH-UA-Platform header.
 fn platform_hint() -> &'static str {
-    if cfg!(target_os = "macos") { "\"macOS\"" }
-    else if cfg!(target_os = "windows") { "\"Windows\"" }
-    else { "\"Linux\"" }
+    if cfg!(target_os = "macos") {
+        "\"macOS\""
+    } else if cfg!(target_os = "windows") {
+        "\"Windows\""
+    } else {
+        "\"Linux\""
+    }
 }
 
 /// Sec-CH-UA header matching the Chrome version we claim.
@@ -32,55 +35,63 @@ fn sec_ch_ua() -> String {
 }
 
 /// User-Agent sent with all HTTP requests.
-pub fn user_agent() -> String { build_user_agent() }
+pub fn user_agent() -> String {
+    build_user_agent()
+}
 
 /// Legacy constant — prefer `user_agent()`.
 pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 pub mod types;
 
-pub mod css;
-pub mod html;
-pub mod layout;
-pub mod woff2;
-pub mod renderer;
+#[cfg(feature = "accessibility")]
+pub mod accessibility;
 /// HTML §4.12.5 — the `<canvas>` element's 2D rendering context.
 ///
 /// The engine owns its own rasteriser, the way a browser engine does. It is a
 /// sibling of `renderer` rather than a part of it: `renderer` paints the boxes
 /// the cascade produced, this paints whatever a script asks for inside one box.
 pub mod canvas;
-pub mod platform;
+pub mod css;
 pub mod dom;
+pub mod frame;
+pub mod html;
+pub mod layout;
+pub mod markdown;
+pub mod platform;
+pub mod renderer;
+pub mod widgets;
 /// WHATWG HTML §7 — browsing contexts and the `Window` interface.
 pub mod window;
-pub mod frame;
-pub mod widgets;
-pub mod markdown;
-#[cfg(feature = "accessibility")]
-pub mod accessibility;
+pub mod woff2;
 
 #[cfg(test)]
 pub mod tests;
 
-pub use types::{Document, WebCore, ComputedStyle, Rect, Color, CSSCursor, ShadowRoot, ShadowMode, LivePoliteness, Announcement,
-                KeyframeStop, EasingFn, AnimDirection, FillMode, ParsedAnimation, ParsedTransition,
-                AnimState, TransitionState, MatchedRule,
-                FormEvent, FormEventKind, FormEventCallback, CanvasContext,
-                Component, ComponentEvent, ComponentRegistry,
-                is_text_input, input_value, process_form_input_key,
-                find_parent_form_action, collect_form_data, reset_form,
-                encode_form_urlencoded, build_form_submit_url, apply_autofocus};
-pub use markdown::{parse_markdown, serializer::serialize_markdown};
-pub use html::{parse_html, parse_html_with_base, parse_html_with_hooks, parse_html_with_scripts, parse_html_bytes, parse_html_bytes_with_base, resolve_url};
-pub use html::streaming::{StreamingParser, DomMutation, ResourceKind};
-pub use layout::{LayoutEngine, Constraints, IntrinsicSizes, FormattingContext};
-pub use layout::perf::PerfCounters;
-pub use frame::{EngineFrame, EngineCallbacks};
-pub use layout::hit_test::{HitResult, point_to_hit, offset_to_point, hit_test_box_at, hit_test_link, get_caret_x, get_offset_from_x};
-pub use renderer::{Renderer, draw_inspect_overlay};
-pub use renderer::compositor::{Compositor, CompositorLayer, LayerId, LayerReason};
 pub use dom::HtmlEventType;
+pub use frame::{EngineCallbacks, EngineFrame};
+pub use html::streaming::{DomMutation, ResourceKind, StreamingParser};
+pub use html::{
+    parse_html, parse_html_bytes, parse_html_bytes_with_base, parse_html_with_base,
+    parse_html_with_hooks, parse_html_with_scripts, resolve_url,
+};
+pub use layout::hit_test::{
+    get_caret_x, get_offset_from_x, hit_test_box_at, hit_test_link, offset_to_point, point_to_hit,
+    HitResult,
+};
+pub use layout::perf::PerfCounters;
+pub use layout::{Constraints, FormattingContext, IntrinsicSizes, LayoutEngine};
+pub use markdown::{parse_markdown, serializer::serialize_markdown};
+pub use renderer::compositor::{Compositor, CompositorLayer, LayerId, LayerReason};
+pub use renderer::{draw_inspect_overlay, Renderer};
+pub use types::{
+    apply_autofocus, build_form_submit_url, collect_form_data, encode_form_urlencoded,
+    find_parent_form_action, input_value, is_text_input, process_form_input_key, reset_form,
+    AnimDirection, AnimState, Announcement, CSSCursor, CanvasContext, Color, Component,
+    ComponentEvent, ComponentRegistry, ComputedStyle, Document, EasingFn, FillMode, FormEvent,
+    FormEventCallback, FormEventKind, KeyframeStop, LivePoliteness, MatchedRule, ParsedAnimation,
+    ParsedTransition, Rect, ShadowMode, ShadowRoot, TransitionState, WebCore,
+};
 
 /// High-level convenience: parse HTML, layout, ready to render.
 pub fn load_html(html: &str, viewport_width: f32) -> Document {
@@ -93,8 +104,19 @@ pub fn load_html_vp(html: &str, viewport_width: f32, viewport_height: f32) -> Do
 }
 
 /// Parse HTML with a base URL, fetch external CSS, layout, ready to render.
-pub fn load_html_with_base(html: &str, base_url: &str, viewport_width: f32, viewport_height: f32) -> Document {
-    load_html_with_registry(html, base_url, viewport_width, viewport_height, types::ComponentRegistry::default())
+pub fn load_html_with_base(
+    html: &str,
+    base_url: &str,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> Document {
+    load_html_with_registry(
+        html,
+        base_url,
+        viewport_width,
+        viewport_height,
+        types::ComponentRegistry::default(),
+    )
 }
 
 /// Parse HTML and layout with custom component registry.
@@ -107,7 +129,14 @@ pub fn load_html_with_registry(
     viewport_height: f32,
     registry: types::ComponentRegistry,
 ) -> Document {
-    load_html_reusing(html, base_url, viewport_width, viewport_height, registry, None)
+    load_html_reusing(
+        html,
+        base_url,
+        viewport_width,
+        viewport_height,
+        registry,
+        None,
+    )
 }
 
 /// The same load, but laying out with a renderer the caller ALREADY has.
@@ -126,30 +155,36 @@ pub fn load_html_reusing(
     registry: types::ComponentRegistry,
     reuse: Option<&mut Renderer>,
 ) -> Document {
-    use std::sync::{mpsc, atomic::{AtomicUsize, Ordering}, Arc};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    };
 
     // Channel for CSS results — fetches start during parsing via the hook.
     let (css_tx, css_rx) = mpsc::channel::<(usize, String, String, String)>(); // idx, url, css, media
-    let css_tx2  = css_tx.clone();
-    let css_idx  = Arc::new(AtomicUsize::new(0));
+    let css_tx2 = css_tx.clone();
+    let css_idx = Arc::new(AtomicUsize::new(0));
     let css_idx2 = css_idx.clone();
     let base_owned = base_url.to_string();
 
     let t0 = std::time::Instant::now();
     let mut doc = parse_html_with_hooks(html, base_url, move |tag, attrs| {
-        if tag == "link"
-            && attrs.get("rel").map(|s| s == "stylesheet").unwrap_or(false)
-        {
+        if tag == "link" && attrs.get("rel").map(|s| s == "stylesheet").unwrap_or(false) {
             if let Some(href) = attrs.get("href") {
-                let abs    = resolve_css_url(&base_owned, href);
-                let media  = attrs.get("media").cloned().unwrap_or_default();
+                let abs = resolve_css_url(&base_owned, href);
+                let media = attrs.get("media").cloned().unwrap_or_default();
                 eprintln!("  CSS fetch: {abs}");
                 let sender = css_tx2.clone();
-                let idx    = css_idx2.fetch_add(1, Ordering::SeqCst);
+                let idx = css_idx2.fetch_add(1, Ordering::SeqCst);
                 std::thread::spawn(move || {
                     let t = std::time::Instant::now();
                     let text = fetch_text(&abs).unwrap_or_default();
-                    eprintln!("  CSS done:  {} ({:.0}ms, {} bytes)", abs, t.elapsed().as_millis(), text.len());
+                    eprintln!(
+                        "  CSS done:  {} ({:.0}ms, {} bytes)",
+                        abs,
+                        t.elapsed().as_millis(),
+                        text.len()
+                    );
                     let _ = sender.send((idx, abs, text, media));
                 });
             }
@@ -169,25 +204,35 @@ pub fn load_html_reusing(
             Err(_) => break, // timeout or disconnected
         }
     }
-    eprintln!("CSS wait: {:.0}ms ({}/{} sheets)", t1.elapsed().as_millis(), css_results.len(), expected_count);
+    eprintln!(
+        "CSS wait: {:.0}ms ({}/{} sheets)",
+        t1.elapsed().as_millis(),
+        css_results.len(),
+        expected_count
+    );
     css_results.sort_by_key(|(idx, _, _, _)| *idx);
     for (_, css_url, sheet, media) in &css_results {
         if !sheet.is_empty() {
-            doc.stylesheet.parse_and_add_with_base_media(sheet, css_url, media);
+            doc.stylesheet
+                .parse_and_add_with_base_media(sheet, css_url, media);
         }
     }
 
     // Re-run cascade with the real viewport so @media queries (min-width, max-width, etc.)
     // are evaluated against the actual window size rather than the default vw=0, vh=0.
     let t2 = std::time::Instant::now();
-    doc.stylesheet.resolve_variables_for_viewport(viewport_width, viewport_height);
+    doc.stylesheet
+        .resolve_variables_for_viewport(viewport_width, viewport_height);
     doc.stylesheet.rebuild_index();
     eprintln!("  Cascade start ({} rules)...", doc.stylesheet.rules.len());
     // ⛔ No cascade here. `layout()` runs one itself — a better one, with the
     // hover chain and focus — whenever the engine has not cascaded at this
     // viewport or the DOM is style-dirty, which is always true on a first
     // load. Running one here too meant every page load cascaded TWICE.
-    eprintln!("  Cascade: {:.0}ms (deferred to layout)", t2.elapsed().as_millis());
+    eprintln!(
+        "  Cascade: {:.0}ms (deferred to layout)",
+        t2.elapsed().as_millis()
+    );
 
     // Resolve <picture> elements with real viewport dimensions before image fetching
     let base = doc.base_url.clone();
@@ -227,7 +272,9 @@ pub fn load_html_reusing(
 fn start_async_image_fetches(doc: &mut types::Document) {
     let mut pending: Vec<(Vec<usize>, String)> = Vec::new();
     collect_remote_images(&doc.root, &mut Vec::new(), &mut pending);
-    if pending.is_empty() { return; }
+    if pending.is_empty() {
+        return;
+    }
 
     let (tx, rx) = std::sync::mpsc::channel::<(Vec<usize>, html::DecodedImage)>();
     let in_flight = doc.images_in_flight.clone();
@@ -240,7 +287,8 @@ fn start_async_image_fetches(doc: &mut types::Document) {
             let result = http_client()
                 .get(&url)
                 .header("Sec-Fetch-Dest", "image")
-                .send().ok()
+                .send()
+                .ok()
                 .and_then(|r| r.bytes().ok())
                 .and_then(|bytes| html::decode_image_bytes_ex(&bytes));
             if let Some(decoded) = result {
@@ -342,14 +390,19 @@ fn fetch_text(url: &str) -> Result<String, String> {
         return std::fs::read_to_string(path).map_err(|e| e.to_string());
     }
     let do_fetch = |client: &reqwest::blocking::Client| -> Result<Vec<u8>, String> {
-        let resp = client.get(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        let resp = client
+            .get(url)
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("Sec-Fetch-Dest", "document")
             .header("Sec-Fetch-Mode", "navigate")
             .header("Sec-Fetch-Site", "none")
             .header("Sec-Fetch-User", "?1")
             .header("Upgrade-Insecure-Requests", "1")
-            .send().map_err(|e| e.to_string())?;
+            .send()
+            .map_err(|e| e.to_string())?;
         let bytes = resp.bytes().map_err(|e| e.to_string())?;
         Ok(bytes.to_vec())
     };

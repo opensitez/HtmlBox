@@ -2,16 +2,22 @@
 
 #![allow(unused_imports)]
 use super::*;
-use crate::types::*;
 use crate::css::*;
+use crate::types::*;
 
 // ─── Image loading ─────────────────────────────────────────────────────────
 
 /// Resolve a URL against a base URL.
 pub fn resolve_url(src: &str, base_url: &str) -> String {
-    if src.is_empty() { return base_url.to_string(); }
-    if src.starts_with("data:") { return src.to_string(); }
-    if src.contains("://") { return src.to_string(); }
+    if src.is_empty() {
+        return base_url.to_string();
+    }
+    if src.starts_with("data:") {
+        return src.to_string();
+    }
+    if src.contains("://") {
+        return src.to_string();
+    }
 
     // Strip "./" prefix
     let src = src.strip_prefix("./").unwrap_or(src);
@@ -51,16 +57,19 @@ pub fn resolve_url(src: &str, base_url: &str) -> String {
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    if base_dir.is_empty() { src.to_string() }
-    else { format!("{}/{}", base_dir, src) }
+    if base_dir.is_empty() {
+        src.to_string()
+    } else {
+        format!("{}/{}", base_dir, src)
+    }
 }
 
 /// Set decoded image data on a node.
 /// Dimensions are NOT baked into the style here — the layout engine handles
 /// aspect-ratio sizing after the CSS cascade has set any explicit width/height.
 pub fn set_image_on_node(node: &mut WebCore, data: Vec<u8>, w: u32, h: u32) {
-    node.image_data   = Some(data);
-    node.image_width  = w;
+    node.image_data = Some(data);
+    node.image_width = w;
     node.image_height = h;
 }
 
@@ -69,18 +78,18 @@ pub fn set_image_on_node(node: &mut WebCore, data: Vec<u8>, w: u32, h: u32) {
 pub fn set_decoded_image_on_node(node: &mut WebCore, decoded: DecodedImage) {
     match decoded {
         DecodedImage::Raster(data, w, h) => {
-            node.image_data   = Some(data);
-            node.image_width  = w;
+            node.image_data = Some(data);
+            node.image_width = w;
             node.image_height = h;
         }
         DecodedImage::Svg(markup, iw, ih) => {
             // Store SVG for paint-time rasterization at the layout-determined size
-            node.svg_markup    = Some(markup);
+            node.svg_markup = Some(markup);
             node.svg_viewbox_w = iw;
             node.svg_viewbox_h = ih;
             // Set intrinsic dimensions so layout can compute aspect ratio
-            node.image_width   = iw.ceil() as u32;
-            node.image_height  = ih.ceil() as u32;
+            node.image_width = iw.ceil() as u32;
+            node.image_height = ih.ceil() as u32;
         }
     }
 }
@@ -100,7 +109,8 @@ pub(crate) fn load_image_from_src(src: &str, base_url: &str) -> Option<(Vec<u8>,
         let bytes = crate::http_client()
             .get(&path)
             .header("Sec-Fetch-Dest", "image")
-            .send().ok()
+            .send()
+            .ok()
             .and_then(|r| r.bytes().ok())
             .map(|b| b.to_vec())?;
         return decode_image_bytes(&bytes);
@@ -116,7 +126,9 @@ fn load_image_data_url(src: &str) -> Option<(Vec<u8>, u32, u32)> {
     let header = &src[5..comma]; // strip "data:"
     let encoded = &src[comma + 1..];
     let is_base64 = header.contains("base64");
-    if !is_base64 { return None; }
+    if !is_base64 {
+        return None;
+    }
     // Decode base64
     let bytes = base64_decode(encoded)?;
     // SVG: the image crate can't decode SVGs, so extract dimensions from XML
@@ -148,8 +160,11 @@ fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
                 // Strip units like "px"
                 let num_str = val_str.trim_end_matches("px").trim();
                 if let Ok(n) = num_str.parse::<f32>() {
-                    if attr == "width" { w = Some(n); }
-                    else { h = Some(n); }
+                    if attr == "width" {
+                        w = Some(n);
+                    } else {
+                        h = Some(n);
+                    }
                 }
             }
         }
@@ -161,12 +176,17 @@ fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
             let val_start = pos + 9;
             if let Some(val_end) = svg_tag[val_start..].find('"') {
                 let vb = &svg_tag[val_start..val_start + val_end];
-                let parts: Vec<f32> = vb.split_whitespace()
+                let parts: Vec<f32> = vb
+                    .split_whitespace()
                     .filter_map(|s| s.parse().ok())
                     .collect();
                 if parts.len() == 4 {
-                    if w.is_none() { w = Some(parts[2]); }
-                    if h.is_none() { h = Some(parts[3]); }
+                    if w.is_none() {
+                        w = Some(parts[2]);
+                    }
+                    if h.is_none() {
+                        h = Some(parts[3]);
+                    }
                 }
             }
         }
@@ -174,7 +194,9 @@ fn parse_svg_dimensions(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
     let wi = w? as u32;
     let hi = h? as u32;
-    if wi == 0 || hi == 0 { return None; }
+    if wi == 0 || hi == 0 {
+        return None;
+    }
     // Return a 1×1 transparent pixel — we only need the dimensions
     Some((vec![0u8; 4], wi, hi))
 }
@@ -196,7 +218,9 @@ pub fn decode_image_bytes_ex(bytes: &[u8]) -> Option<DecodedImage> {
             for pixel in raw.chunks_exact_mut(4) {
                 let a = pixel[3] as u16;
                 if a == 0 {
-                    pixel[0] = 0; pixel[1] = 0; pixel[2] = 0;
+                    pixel[0] = 0;
+                    pixel[1] = 0;
+                    pixel[2] = 0;
                 } else if a < 255 {
                     pixel[0] = ((pixel[0] as u16 * a) / 255) as u8;
                     pixel[1] = ((pixel[1] as u16 * a) / 255) as u8;
@@ -221,12 +245,13 @@ pub fn decode_image_bytes_ex(bytes: &[u8]) -> Option<DecodedImage> {
 fn svg_intrinsic_size(svg: &str) -> (f32, f32) {
     use resvg::usvg;
     let opt = usvg::Options::default();
-    match usvg::Tree::from_str(svg, &opt) { Ok(tree) => {
-        let size = tree.size();
-        (size.width(), size.height())
-    } _ => {
-        (0.0, 0.0)
-    }}
+    match usvg::Tree::from_str(svg, &opt) {
+        Ok(tree) => {
+            let size = tree.size();
+            (size.width(), size.height())
+        }
+        _ => (0.0, 0.0),
+    }
 }
 
 pub fn decode_image_bytes(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -246,22 +271,46 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 \x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff\
 \xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\
 \x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff";
-    let clean: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
+    let clean: Vec<u8> = s
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ')
+        .collect();
     let mut out = Vec::with_capacity(clean.len() * 3 / 4);
     let mut i = 0;
     while i + 3 < clean.len() {
         let b0 = clean[i] as usize;
-        let b1 = clean[i+1] as usize;
-        let b2 = clean[i+2] as usize;
-        let b3 = clean[i+3] as usize;
-        if b0 >= 128 || b1 >= 128 { return None; }
-        let v0 = TABLE[b0]; let v1 = TABLE[b1];
-        let v2 = if clean[i+2] == b'=' { 0 } else if b2 < 128 { TABLE[b2] } else { return None; };
-        let v3 = if clean[i+3] == b'=' { 0 } else if b3 < 128 { TABLE[b3] } else { return None; };
-        if v0 == 0xff || v1 == 0xff { return None; }
+        let b1 = clean[i + 1] as usize;
+        let b2 = clean[i + 2] as usize;
+        let b3 = clean[i + 3] as usize;
+        if b0 >= 128 || b1 >= 128 {
+            return None;
+        }
+        let v0 = TABLE[b0];
+        let v1 = TABLE[b1];
+        let v2 = if clean[i + 2] == b'=' {
+            0
+        } else if b2 < 128 {
+            TABLE[b2]
+        } else {
+            return None;
+        };
+        let v3 = if clean[i + 3] == b'=' {
+            0
+        } else if b3 < 128 {
+            TABLE[b3]
+        } else {
+            return None;
+        };
+        if v0 == 0xff || v1 == 0xff {
+            return None;
+        }
         out.push((v0 << 2) | (v1 >> 4));
-        if clean[i+2] != b'=' { out.push(((v1 & 0xf) << 4) | (v2 >> 2)); }
-        if clean[i+3] != b'=' { out.push(((v2 & 0x3) << 6) | v3); }
+        if clean[i + 2] != b'=' {
+            out.push(((v1 & 0xf) << 4) | (v2 >> 2));
+        }
+        if clean[i + 3] != b'=' {
+            out.push(((v2 & 0x3) << 6) | v3);
+        }
         i += 4;
     }
     Some(out)

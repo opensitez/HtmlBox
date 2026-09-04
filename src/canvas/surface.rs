@@ -78,7 +78,8 @@ impl CanvasSurfaces {
             .get_or_insert_with(|| Box::new((FontSystem::new(), SwashCache::new())));
         let (font_system, swash_cache) = &mut **fonts;
 
-        let mut canvas = TinySkiaCanvas::resume(&mut pixmap, saved, Some((font_system, swash_cache)));
+        let mut canvas =
+            TinySkiaCanvas::resume(&mut pixmap, saved, Some((font_system, swash_cache)));
         let out = f(&mut canvas);
         self.states.insert(node_id, canvas.suspend());
 
@@ -285,7 +286,10 @@ mod tests {
         assert!(doc.get_context_2d(id));
         let node = doc.get_node(id).expect("node");
         assert_eq!((node.image_width, node.image_height), (300, 150));
-        assert_eq!(node.image_data.as_ref().map(|d| d.len()), Some(300 * 150 * 4));
+        assert_eq!(
+            node.image_data.as_ref().map(|d| d.len()),
+            Some(300 * 150 * 4)
+        );
 
         // And it draws, which is the thing the size is for.
         doc.with_canvas_2d(id, |ctx| {
@@ -308,12 +312,17 @@ mod tests {
         })
         .expect("canvas");
 
-        let list = crate::renderer::display_list_builder::build_display_list(&doc.root, 800.0, 600.0);
+        let list =
+            crate::renderer::display_list_builder::build_display_list(&doc.root, 800.0, 600.0);
         let painted = list.commands.iter().any(|cmd| match cmd {
             crate::renderer::display_list::PaintCmd::Image { data, .. } => {
                 let (bytes, w, h) = match data {
-                    crate::renderer::display_list::ImageRef::Owned(d, w, h) => (d.as_slice(), *w, *h),
-                    crate::renderer::display_list::ImageRef::Shared(d, w, h) => (d.as_slice(), *w, *h),
+                    crate::renderer::display_list::ImageRef::Owned(d, w, h) => {
+                        (d.as_slice(), *w, *h)
+                    }
+                    crate::renderer::display_list::ImageRef::Shared(d, w, h) => {
+                        (d.as_slice(), *w, *h)
+                    }
                 };
                 (w, h) == (40, 20) && bytes[..4] == [255, 0, 0, 255]
             }

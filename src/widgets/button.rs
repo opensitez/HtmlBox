@@ -1,7 +1,7 @@
 //! Button widget — standalone tiny-skia rendered button.
 
+use super::{rounded_rect_path, WidgetColors};
 use tiny_skia::*;
-use super::{WidgetColors, rounded_rect_path};
 
 pub struct Button {
     pub label: String,
@@ -48,7 +48,11 @@ impl Button {
         }
 
         // Border
-        let (r, g, b, a) = if self.focused { self.colors.focus_ring } else { self.colors.border };
+        let (r, g, b, a) = if self.focused {
+            self.colors.focus_ring
+        } else {
+            self.colors.border
+        };
         paint.set_color_rgba8(r, g, b, a);
         let mut stroke = Stroke::default();
         stroke.width = 1.0;
@@ -62,7 +66,9 @@ impl Button {
     }
 
     pub fn click(&mut self, x: f32, y: f32) -> bool {
-        if self.disabled { return false; }
+        if self.disabled {
+            return false;
+        }
         x >= 0.0 && y >= 0.0 && x <= self.width && y <= self.height
     }
 }

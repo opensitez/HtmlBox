@@ -71,16 +71,28 @@ impl Reflected {
         }
     }
     pub fn as_bool(&self) -> Option<bool> {
-        match self { Reflected::Bool(b) => Some(*b), _ => None }
+        match self {
+            Reflected::Bool(b) => Some(*b),
+            _ => None,
+        }
     }
     pub fn as_long(&self) -> Option<i64> {
-        match self { Reflected::Long(n) => Some(*n), _ => None }
+        match self {
+            Reflected::Long(n) => Some(*n),
+            _ => None,
+        }
     }
 }
 
 const REFERRER_POLICY: &[&str] = &[
-    "", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin",
-    "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin",
+    "",
+    "no-referrer",
+    "no-referrer-when-downgrade",
+    "same-origin",
+    "origin",
+    "strict-origin",
+    "origin-when-cross-origin",
+    "strict-origin-when-cross-origin",
     "unsafe-url",
 ];
 const CROSS_ORIGIN: &[&str] = &["anonymous", "use-credentials"];
@@ -98,10 +110,30 @@ pub const REFLECTED: &[(&str, &str, &str, Kind)] = &[
     ("img", "sizes", "sizes", Kind::Str),
     ("img", "useMap", "usemap", Kind::Str),
     ("img", "isMap", "ismap", Kind::Bool),
-    ("img", "crossOrigin", "crossorigin", Kind::NullableEnum(CROSS_ORIGIN, "anonymous")),
-    ("img", "decoding", "decoding", Kind::Enum(&["sync", "async", "auto"], "auto", "auto")),
-    ("img", "loading", "loading", Kind::Enum(&["lazy", "eager"], "auto", "auto")),
-    ("img", "referrerPolicy", "referrerpolicy", Kind::Enum(REFERRER_POLICY, "", "")),
+    (
+        "img",
+        "crossOrigin",
+        "crossorigin",
+        Kind::NullableEnum(CROSS_ORIGIN, "anonymous"),
+    ),
+    (
+        "img",
+        "decoding",
+        "decoding",
+        Kind::Enum(&["sync", "async", "auto"], "auto", "auto"),
+    ),
+    (
+        "img",
+        "loading",
+        "loading",
+        Kind::Enum(&["lazy", "eager"], "auto", "auto"),
+    ),
+    (
+        "img",
+        "referrerPolicy",
+        "referrerpolicy",
+        Kind::Enum(REFERRER_POLICY, "", ""),
+    ),
     // ── HTMLAnchorElement ──
     ("a", "href", "href", Kind::Url),
     ("a", "rel", "rel", Kind::Str),
@@ -109,7 +141,12 @@ pub const REFLECTED: &[(&str, &str, &str, Kind)] = &[
     ("a", "type", "type", Kind::Str),
     ("a", "target", "target", Kind::Str),
     ("a", "download", "download", Kind::Str),
-    ("a", "referrerPolicy", "referrerpolicy", Kind::Enum(REFERRER_POLICY, "", "")),
+    (
+        "a",
+        "referrerPolicy",
+        "referrerpolicy",
+        Kind::Enum(REFERRER_POLICY, "", ""),
+    ),
     // ── HTMLLinkElement ──
     ("link", "href", "href", Kind::Url),
     ("link", "rel", "rel", Kind::Str),
@@ -119,32 +156,84 @@ pub const REFLECTED: &[(&str, &str, &str, Kind)] = &[
     ("link", "type", "type", Kind::Str),
     ("link", "integrity", "integrity", Kind::Str),
     ("link", "disabled", "disabled", Kind::Bool),
-    ("link", "crossOrigin", "crossorigin", Kind::NullableEnum(CROSS_ORIGIN, "anonymous")),
-    ("link", "referrerPolicy", "referrerpolicy", Kind::Enum(REFERRER_POLICY, "", "")),
+    (
+        "link",
+        "crossOrigin",
+        "crossorigin",
+        Kind::NullableEnum(CROSS_ORIGIN, "anonymous"),
+    ),
+    (
+        "link",
+        "referrerPolicy",
+        "referrerpolicy",
+        Kind::Enum(REFERRER_POLICY, "", ""),
+    ),
     // ── HTMLScriptElement (NOT `async` — see the module note) ──
     ("script", "src", "src", Kind::Url),
     ("script", "defer", "defer", Kind::Bool),
     ("script", "type", "type", Kind::Str),
     ("script", "noModule", "nomodule", Kind::Bool),
     ("script", "integrity", "integrity", Kind::Str),
-    ("script", "crossOrigin", "crossorigin", Kind::NullableEnum(CROSS_ORIGIN, "anonymous")),
-    ("script", "referrerPolicy", "referrerpolicy", Kind::Enum(REFERRER_POLICY, "", "")),
+    (
+        "script",
+        "crossOrigin",
+        "crossorigin",
+        Kind::NullableEnum(CROSS_ORIGIN, "anonymous"),
+    ),
+    (
+        "script",
+        "referrerPolicy",
+        "referrerpolicy",
+        Kind::Enum(REFERRER_POLICY, "", ""),
+    ),
     // ── HTMLFormElement (NOT `action` — see the module note) ──
-    ("form", "method", "method", Kind::Enum(&["get", "post", "dialog"], "get", "get")),
-    ("form", "enctype", "enctype", Kind::Enum(
-        &["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"],
-        "application/x-www-form-urlencoded", "application/x-www-form-urlencoded")),
+    (
+        "form",
+        "method",
+        "method",
+        Kind::Enum(&["get", "post", "dialog"], "get", "get"),
+    ),
+    (
+        "form",
+        "enctype",
+        "enctype",
+        Kind::Enum(
+            &[
+                "application/x-www-form-urlencoded",
+                "multipart/form-data",
+                "text/plain",
+            ],
+            "application/x-www-form-urlencoded",
+            "application/x-www-form-urlencoded",
+        ),
+    ),
     // `encoding` is a second name for the same attribute (HTML §4.10.3).
-    ("form", "encoding", "enctype", Kind::Enum(
-        &["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"],
-        "application/x-www-form-urlencoded", "application/x-www-form-urlencoded")),
+    (
+        "form",
+        "encoding",
+        "enctype",
+        Kind::Enum(
+            &[
+                "application/x-www-form-urlencoded",
+                "multipart/form-data",
+                "text/plain",
+            ],
+            "application/x-www-form-urlencoded",
+            "application/x-www-form-urlencoded",
+        ),
+    ),
     ("form", "noValidate", "novalidate", Kind::Bool),
     ("form", "acceptCharset", "accept-charset", Kind::Str),
     ("form", "target", "target", Kind::Str),
     ("form", "name", "name", Kind::Str),
     ("form", "rel", "rel", Kind::Str),
     // ⛔ `"on"` when absent — where `input.autocomplete` answers `""`.
-    ("form", "autocomplete", "autocomplete", Kind::Enum(&["on", "off"], "on", "on")),
+    (
+        "form",
+        "autocomplete",
+        "autocomplete",
+        Kind::Enum(&["on", "off"], "on", "on"),
+    ),
     // ── HTMLInputElement (NOT `formAction` — see the module note) ──
     ("input", "maxLength", "maxlength", Kind::Long(-1)),
     ("input", "minLength", "minlength", Kind::Long(-1)),
@@ -158,10 +247,26 @@ pub const REFLECTED: &[(&str, &str, &str, Kind)] = &[
     ("input", "formNoValidate", "formnovalidate", Kind::Bool),
     // ⛔ `""` when absent, where the FORM's own `method`/`enctype` answer a
     // keyword. Same concept, different default.
-    ("input", "formMethod", "formmethod", Kind::Enum(&["get", "post", "dialog"], "", "get")),
-    ("input", "formEnctype", "formenctype", Kind::Enum(
-        &["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"],
-        "", "application/x-www-form-urlencoded")),
+    (
+        "input",
+        "formMethod",
+        "formmethod",
+        Kind::Enum(&["get", "post", "dialog"], "", "get"),
+    ),
+    (
+        "input",
+        "formEnctype",
+        "formenctype",
+        Kind::Enum(
+            &[
+                "application/x-www-form-urlencoded",
+                "multipart/form-data",
+                "text/plain",
+            ],
+            "",
+            "application/x-www-form-urlencoded",
+        ),
+    ),
     // `defaultValue` and `defaultChecked` are the CONTENT attributes behind
     // `value` and `checked` — the values a reset returns to.
     ("input", "defaultValue", "value", Kind::Str),
@@ -174,7 +279,12 @@ pub const REFLECTED: &[(&str, &str, &str, Kind)] = &[
     // ⛔ DOMString here, where `img`'s are longs — measured `""`, not `0`.
     ("iframe", "width", "width", Kind::Str),
     ("iframe", "height", "height", Kind::Str),
-    ("iframe", "referrerPolicy", "referrerpolicy", Kind::Enum(REFERRER_POLICY, "", "")),
+    (
+        "iframe",
+        "referrerPolicy",
+        "referrerpolicy",
+        Kind::Enum(REFERRER_POLICY, "", ""),
+    ),
     // ── HTMLTextAreaElement / HTMLSelectElement / HTMLButtonElement ──
     ("textarea", "maxLength", "maxlength", Kind::Long(-1)),
     ("textarea", "minLength", "minlength", Kind::Long(-1)),
@@ -214,9 +324,7 @@ impl Document {
         Some(match kind {
             Kind::Str => Reflected::Str(raw.unwrap_or_default()),
             Kind::Url => Reflected::Str(match raw {
-                Some(v) if !v.is_empty() => {
-                    crate::html::resolve_url(&v, &self.base_url)
-                }
+                Some(v) if !v.is_empty() => crate::html::resolve_url(&v, &self.base_url),
                 // ⛔ An absent URL attribute is `""`, NOT the document's URL.
                 // The two exceptions — `form.action` and `input.formAction` —
                 // are deliberately not in the table.
@@ -224,10 +332,13 @@ impl Document {
             }),
             Kind::Bool => Reflected::Bool(raw.is_some()),
             Kind::Long(default) => Reflected::Long(
-                raw.and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(default),
+                raw.and_then(|v| v.trim().parse::<i64>().ok())
+                    .unwrap_or(default),
             ),
             Kind::Enum(keywords, missing, invalid) => {
-                let Some(v) = raw else { return Some(Reflected::Str(missing.to_string())) };
+                let Some(v) = raw else {
+                    return Some(Reflected::Str(missing.to_string()));
+                };
                 let lower = v.to_ascii_lowercase();
                 Reflected::Str(if keywords.contains(&lower.as_str()) {
                     lower
@@ -236,7 +347,9 @@ impl Document {
                 })
             }
             Kind::NullableEnum(keywords, invalid) => {
-                let Some(v) = raw else { return Some(Reflected::Null) };
+                let Some(v) = raw else {
+                    return Some(Reflected::Null);
+                };
                 let lower = v.to_ascii_lowercase();
                 Reflected::Str(if keywords.contains(&lower.as_str()) {
                     lower
@@ -255,9 +368,15 @@ impl Document {
     /// `Reflected::Null` removes it, which is how `img.crossOrigin = null`
     /// gets back to answering `null`.
     pub fn reflect_set(&mut self, id: u32, idl: &str, value: Reflected) -> bool {
-        let Some(tag) = self.tag_name(id).map(|t| t.to_string()) else { return false };
-        let Some(kind) = lookup(&tag, idl) else { return false };
-        let Some(attr) = attr_for(&tag, idl) else { return false };
+        let Some(tag) = self.tag_name(id).map(|t| t.to_string()) else {
+            return false;
+        };
+        let Some(kind) = lookup(&tag, idl) else {
+            return false;
+        };
+        let Some(attr) = attr_for(&tag, idl) else {
+            return false;
+        };
         match (kind, value) {
             (Kind::Bool, Reflected::Bool(true)) => self.set_attribute(id, attr, ""),
             (Kind::Bool, Reflected::Bool(false)) => self.remove_attribute(id, attr),
@@ -274,7 +393,9 @@ impl Document {
     /// Every reflected IDL name this element has, for enumeration and for the
     /// coverage tooling.
     pub fn reflected_names(&self, id: u32) -> Vec<&'static str> {
-        let Some(tag) = self.tag_name(id) else { return Vec::new() };
+        let Some(tag) = self.tag_name(id) else {
+            return Vec::new();
+        };
         REFLECTED
             .iter()
             .filter(|(t, ..)| *t == tag)

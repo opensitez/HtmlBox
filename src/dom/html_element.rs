@@ -48,9 +48,13 @@ impl Document {
     pub fn is_inert(&self, id: u32) -> bool {
         let mut cur = id;
         while cur != 0 {
-            if self.has_attribute(cur, "inert") { return true; }
+            if self.has_attribute(cur, "inert") {
+                return true;
+            }
             let parent = self.parent_node(cur);
-            if parent == cur { break; }
+            if parent == cur {
+                break;
+            }
             cur = parent;
         }
         false
@@ -58,14 +62,19 @@ impl Document {
 
     /// `element.draggable`.
     pub fn draggable(&self, id: u32) -> bool {
-        match self.get_attribute(id, "draggable").map(|v| v.to_ascii_lowercase()) {
+        match self
+            .get_attribute(id, "draggable")
+            .map(|v| v.to_ascii_lowercase())
+        {
             Some(v) if v == "true" => true,
             Some(v) if v == "false" => false,
             // Absent, or the `auto` state that an unrecognised value falls
             // into: the per-element default.
-            _ => matches!(self.tag_name(id), Some("img"))
-                || (matches!(self.tag_name(id), Some("a") | Some("area"))
-                    && self.has_attribute(id, "href")),
+            _ => {
+                matches!(self.tag_name(id), Some("img"))
+                    || (matches!(self.tag_name(id), Some("a") | Some("area"))
+                        && self.has_attribute(id, "href"))
+            }
         }
     }
 
@@ -78,7 +87,10 @@ impl Document {
     pub fn spellcheck(&self, id: u32) -> bool {
         let mut cur = id;
         while cur != 0 {
-            match self.get_attribute(cur, "spellcheck").map(|v| v.to_ascii_lowercase()) {
+            match self
+                .get_attribute(cur, "spellcheck")
+                .map(|v| v.to_ascii_lowercase())
+            {
                 Some(v) if v == "true" => return true,
                 Some(v) if v == "false" => return false,
                 // An unrecognised value is the `default` state, which keeps
@@ -86,7 +98,9 @@ impl Document {
                 _ => {}
             }
             let parent = self.parent_node(cur);
-            if parent == cur { break; }
+            if parent == cur {
+                break;
+            }
             cur = parent;
         }
         true
@@ -100,13 +114,18 @@ impl Document {
     pub fn translate(&self, id: u32) -> bool {
         let mut cur = id;
         while cur != 0 {
-            match self.get_attribute(cur, "translate").map(|v| v.to_ascii_lowercase()) {
+            match self
+                .get_attribute(cur, "translate")
+                .map(|v| v.to_ascii_lowercase())
+            {
                 Some(v) if v == "yes" => return true,
                 Some(v) if v == "no" => return false,
                 _ => {}
             }
             let parent = self.parent_node(cur);
-            if parent == cur { break; }
+            if parent == cur {
+                break;
+            }
             cur = parent;
         }
         true
